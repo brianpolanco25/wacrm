@@ -1,0 +1,29 @@
+# Alcance del grafo de conocimiento: SOLO codigo fuente.
+# Sintaxis de .gitignore. Se suma al .gitignore (solo puede excluir mas, nunca
+# incluir). Lo respetan tanto la construccion completa como el rebuild
+# incremental del hook post-commit.
+
+# Dependencias y artefactos de build (ya cubiertos por .gitignore; explicitos
+# aqui para que el alcance no dependa de que .gitignore no cambie)
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+*.tsbuildinfo
+.vercel/
+
+# Lockfiles: enormes y sin estructura que aporte al grafo
+package-lock.json
+
+# No es codigo
+public/
+messages/
+.claude/
+graphify-out/
+
+# Documentación: es prosa, no código. Va aquí y no como bandera porque
+# `graphify update` (el que corre el hook post-commit) no acepta --code-only:
+# sin esta linea reintroduce los .md en cada commit.
+*.md

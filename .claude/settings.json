@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_readme": [
+    "Config de equipo para Claude Code. Se commitea.",
+    "JSON no admite comentarios: las notas van en claves '_algo'.",
+    "NUNCA pongas notas dentro de un array: es JSON invalido y un settings.json",
+    "malformado desactiva TODA la config de este archivo, en silencio.",
+    "Valida: python3 -m json.tool .claude/settings.json > /dev/null"
+  ],
+  "_model_notes": [
+    "Modelo del agente leader (la sesion principal). Los subagentes conservan su",
+    "propio default: esta clave no los toca.",
+    "'fable' es el alias del ultimo Fable; se prefiere al id fijo",
+    "'claude-fable-5-1' para no quedar clavados en una version vieja.",
+    "Se cambia en caliente con /model sin tocar este archivo."
+  ],
+  "model": "fable",
+  "_permissions_notes": [
+    "Sintaxis: exacta 'Bash(npm test)', prefijo 'Bash(git *)', o la herramienta",
+    "sola 'Read'. Precedencia: deny > ask > allow.",
+    "En allow solo lo que NO cambia nada: lectura, y la compuerta de CI local.",
+    "Lo que sale al mundo o toca la base va en ask.",
+    "graphify: query/path/explain/affected solo leen graphify-out/. update,",
+    "extract y cluster-only reescriben graphify-out/, que esta gitignoreado y se",
+    "regenera solo; no tocan codigo fuente, por eso van en allow.",
+    "'graphify label' NO esta en allow a proposito: es el unico que gasta LLM."
+  ],
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(npm run lint *)",
+      "Bash(npm run typecheck *)",
+      "Bash(npm test *)",
+      "Bash(npm run test:watch *)",
+      "Bash(npm run format:check *)",
+      "Bash(npm run build *)",
+      "Bash(npx tsc --noEmit *)",
+      "Bash(npx vitest run *)",
+      "Bash(graphify query *)",
+      "Bash(graphify path *)",
+      "Bash(graphify explain *)",
+      "Bash(graphify affected *)",
+      "Bash(graphify tree *)",
+      "Bash(graphify update *)",
+      "Bash(graphify extract *)",
+      "Bash(graphify cluster-only *)",
+      "Bash(graphify reflect *)",
+      "Bash(graphify save-result *)",
+      "Bash(graphify benchmark *)",
+      "Bash(graphify hook status)"
+    ],
+    "ask": [
+      "Bash(npm install *)",
+      "Bash(npm ci *)",
+      "Bash(npx supabase db *)",
+      "Bash(npx supabase *)",
+      "Bash(supabase db *)",
+      "Bash(docker build *)",
+      "Bash(docker push *)",
+      "Bash(git push *)",
+      "Bash(gh pr *)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Read(./.env.local)",
+      "Read(./.env)",
+      "Read(./**/.env*)"
+    ]
+  },
+  "_autoMode_notes": [
+    "Hechos que el clasificador de auto mode no puede adivinar.",
+    "'$defaults' hereda las reglas integradas en esa posicion."
+  ],
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "Next.js 16 y React 19 son posteriores al corte de entrenamiento: la API real esta en node_modules/next/dist/docs/, no en la memoria del modelo.",
+      "Las migraciones de Supabase corren contra una base local en CI (db reset --no-seed); nunca contra produccion desde esta maquina.",
+      "graphify corre en modo gratis: extraccion AST determinista, sin API key y sin llamadas a ningun modelo."
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Cualquier comando de supabase que apunte a un proyecto remoto en vez de --local.",
+      "Etiquetar comunidades de graphify con un LLM ('graphify label', o cluster-only sin --no-label): gasta modelo y aqui el grafo se mantiene gratis."
+    ]
+  },
+  "_hooks_notes": [
+    "PreToolUse de graphify: antes de un grep o de leer fuentes, recuerda ir al",
+    "grafo primero. Nunca bloquea (siempre sale 0) y calla si no existe",
+    "graphify-out/graph.json.",
+    "El 'command -v' hace portable el archivo: si alguien del equipo no tiene",
+    "graphify instalado el hook no corre y no rompe la sesion. El instalador",
+    "escribe una ruta absoluta a /Users/brian; esto la reemplaza a proposito.",
+    "El rebuild del grafo NO vive aqui: son hooks de git (post-commit y",
+    "post-checkout) que instala 'graphify hook install' en cada clon."
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v graphify >/dev/null 2>&1 && graphify hook-guard search || exit 0"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v graphify >/dev/null 2>&1 && graphify hook-guard read || exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

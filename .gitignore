@@ -42,3 +42,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.claude/settings.local.json
+
+# graphify: grafo de conocimiento (derivado, se reconstruye con los hooks)
+graphify-out/
