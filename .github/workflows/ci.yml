@@ -51,3 +51,100 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # ---------------------------------------------------------------
+  # Publica la imagen a GHCR y avisa a Dokploy para que redespliegue.
+  #
+  # Vive en este workflow, y no en uno aparte, para poder colgar de
+  # `needs: check`: así la imagen solo se construye si la compuerta
+  # (lint → typecheck → test → build) pasó. Un `workflow_run` en otro
+  # archivo daría lo mismo, pero corriendo en el contexto de la rama
+  # por defecto, que es una fuente conocida de sorpresas.
+  #
+  # En pull requests el job se salta entero: los PR no publican nada.
+  # ---------------------------------------------------------------
+  release:
+    name: Publicar imagen y desplegar
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Iniciar sesión en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR rechaza mayúsculas en el nombre de la imagen y este repo
+      # las tiene (ArnasDon/wacrm). `${VAR,,}` las baja en bash.
+      - name: Normalizar el nombre de la imagen
+        id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # Dos etiquetas por build: el SHA completo (inmutable, es a lo que
+      # se vuelve para revertir) y `latest` (móvil, es a lo que apunta
+      # Dokploy). Sin la etiqueta del SHA no hay marcha atrás posible.
+      - name: Calcular etiquetas
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.img.outputs.name }}
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=latest
+
+      # Las NEXT_PUBLIC_* se incrustan en el bundle del navegador
+      # DURANTE el build, así que viajan como build-args desde aquí y no
+      # como variables de entorno de Dokploy: ponerlas allí no tiene
+      # ningún efecto sobre el cliente. Son públicas por diseño (acaban
+      # en el JavaScript que descarga cualquiera), por eso van en
+      # `vars` y no en `secrets`.
+      #
+      # Los secretos de servidor (SUPABASE_SERVICE_ROLE_KEY,
+      # ENCRYPTION_KEY, META_APP_SECRET, AUTOMATION_CRON_SECRET) NO
+      # entran aquí: se leen en tiempo de ejecución y viven en Dokploy.
+      - name: Construir y publicar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_SITE_URL=${{ vars.NEXT_PUBLIC_SITE_URL }}
+            NEXT_PUBLIC_APP_LOCALE=${{ vars.NEXT_PUBLIC_APP_LOCALE }}
+
+      # Webhook de despliegue de la aplicación en Dokploy: dispara el
+      # pull de `:latest` y el reinicio del contenedor. `--fail` para
+      # que un 4xx/5xx ponga el job en rojo en vez de fingir que
+      # desplegó.
+      - name: Avisar a Dokploy
+        run: curl --fail --silent --show-error -X POST "$DOKPLOY_WEBHOOK_URL"
+        env:
+          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_WEBHOOK_URL }}
+
+      - name: Resumen
+        run: |
+          {
+            echo "### Imagen publicada"
+            echo ""
+            echo '```'
+            echo "${{ steps.img.outputs.name }}:${{ github.sha }}"
+            echo "${{ steps.img.outputs.name }}:latest"
+            echo '```'
+            echo ""
+            echo "Para revertir: apunta la aplicación en Dokploy a la etiqueta del SHA anterior y redespliega."
+          } >> "$GITHUB_STEP_SUMMARY"
