@@ -149,6 +149,10 @@
       "clearAll": "Clear all",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
+      "filterUnattended": "Unattended",
+      "attentionAi": "AI replying",
+      "attentionAssigned": "Assigned",
+      "attentionUnattended": "Nobody on it",
       "unknown": "Unknown"
     },
     "messageThread": {

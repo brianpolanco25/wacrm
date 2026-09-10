@@ -41,8 +41,20 @@ interface UsePresenceResult {
  *
  * Account comes from useAuth; pass `enabled: false` to opt a consumer
  * out (e.g. while a parent sheet is closed).
+ *
+ * `channelKey` disambiguates the Realtime topic. It matters when two
+ * components on the same page both call this hook: realtime-js dedupes
+ * channels by topic (`RealtimeClient.channel()` hands back the existing
+ * one), so the second consumer would attach its `postgres_changes`
+ * binding to an already-joined channel — and a binding only gets its
+ * server id from the join reply, so that one would never fire. Giving
+ * each mount point its own key keeps them independent. Consumers that
+ * are never on screen together can leave the default.
  */
-export function usePresence(enabled = true): UsePresenceResult {
+export function usePresence(
+  enabled = true,
+  channelKey = "shared",
+): UsePresenceResult {
   const { accountId } = useAuth();
 
   // Presence rows keyed by user_id, held in immutable state — each
@@ -81,7 +93,7 @@ export function usePresence(enabled = true): UsePresenceResult {
     // rather than replacing the map — so an event that lands while the
     // fetch is in flight isn't clobbered by a staler snapshot row.
     const channel: RealtimeChannel = supabase
-      .channel(`presence:${accountId}`)
+      .channel(`presence:${accountId}:${channelKey}`)
       .on(
         "postgres_changes",
         {
@@ -152,7 +164,7 @@ export function usePresence(enabled = true): UsePresenceResult {
       clearInterval(tick);
       supabase.removeChannel(channel);
     };
-  }, [active, accountId]);
+  }, [active, accountId, channelKey]);
 
   const getRow = useCallback(
     (userId: string): PresenceRow | undefined => rows.get(userId),

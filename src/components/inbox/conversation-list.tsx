@@ -7,8 +7,17 @@ import {
   matchesContactFilters,
   normalizeConversations,
 } from "@/lib/inbox/conversations";
+import {
+  deriveAttentionState,
+  isUnattended,
+  type AttentionState,
+} from "@/lib/inbox/attention";
+import { AttentionBadge } from "@/components/inbox/attention-badge";
+import { useAiAccountStatus } from "@/hooks/use-ai-account-status";
+import { usePresence } from "@/hooks/use-presence";
+import { presenceLabel, type PresenceStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus, Tag } from "@/types";
+import type { Conversation, ConversationStatus, Profile, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -44,7 +53,7 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 
 
 
-type InboxFilter = ConversationStatus | "all" | "unread";
+type InboxFilter = ConversationStatus | "all" | "unread" | "unattended";
 
 export function ConversationList({
   activeConversationId,
@@ -58,10 +67,34 @@ export function ConversationList({
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
     { label: t("filterUnread"), value: "unread" },
+    // The one that turns the indicator into a tool: the queue nobody
+    // is on (fase 1 §3).
+    { label: t("filterUnattended"), value: "unattended" },
     { label: t("filterOpen"), value: "open" },
     { label: t("filterPending"), value: "pending" },
     { label: t("filterClosed"), value: "closed" },
   ], [t]);
+
+  // Account-wide "the bot is answering inbound" flag. ONE request per
+  // account, shared with the thread banner — nothing here is per
+  // conversation. `null` while it's still in flight; until it resolves
+  // the badge stays off the unassigned rows rather than flashing the
+  // alarm state at every chat the bot is quietly handling.
+  const aiStatus = useAiAccountStatus();
+  const accountAiOn = aiStatus === true;
+
+  // Presence for the assignee dot. Its own Realtime topic: the thread
+  // pane on this same page also calls usePresence, and realtime-js
+  // hands back the *existing* channel for a repeated topic (see the
+  // hook's doc comment).
+  const { getPresence, getRow, now } = usePresence(true, "inbox-list");
+
+  // Teammates, once — the list needs a name for `assigned_agent_id`,
+  // which realtime UPDATE payloads never carry (no joins). Resolving
+  // the name from this map rather than from an embedded join is what
+  // lets a row flip to "Operator X" the instant the assignment event
+  // lands. Same single query the thread pane already makes.
+  const [profiles, setProfiles] = useState<Profile[]>([]);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
@@ -140,6 +173,34 @@ export function ConversationList({
     };
   }, []);
 
+  useEffect(() => {
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .order("full_name");
+      if (cancelled) return;
+      if (error) {
+        // Not fatal: without names the rows fall back to a generic
+        // "Assigned" label, which still beats showing nothing.
+        console.error("Failed to fetch profiles:", error.message);
+        return;
+      }
+      setProfiles((data as Profile[]) ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const profilesByUserId = useMemo(() => {
+    const m = new Map<string, Profile>();
+    for (const p of profiles) m.set(p.user_id, p);
+    return m;
+  }, [profiles]);
+
   // Company options are derived from the loaded conversations — there's no
   // separate companies table, and only companies with a live conversation
   // are worth offering as an inbox filter.
@@ -163,6 +224,11 @@ export function ConversationList({
 
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
+    } else if (filter === "unattended") {
+      // No operator AND no AI — handed-off threads nobody picked up
+      // included. Resolved in memory over the rows already loaded, so
+      // it stays correct the moment a realtime UPDATE reassigns one.
+      result = result.filter((c) => isUnattended(c, accountAiOn));
     } else if (filter !== "all") {
       result = result.filter((c) => c.status === filter);
     }
@@ -188,7 +254,14 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [
+    conversations,
+    filter,
+    search,
+    selectedTagIds,
+    selectedCompany,
+    accountAiOn,
+  ]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -407,15 +480,50 @@ export function ConversationList({
           </div>
         ) : (
           <div className="flex flex-col">
-            {filtered.map((conv) => (
-              <ConversationItem
-                key={conv.id}
-                conversation={conv}
-                isActive={conv.id === activeConversationId}
-                onSelect={handleSelect}
-                t={t}
-              />
-            ))}
+            {filtered.map((conv) => {
+              // Everything the badge needs is already in hand: the row
+              // itself, the account flag, and the two account-wide maps
+              // (teammates + presence). No query per conversation.
+              const assigneeId = conv.assigned_agent_id ?? null;
+              // An assignee is knowable without the account flag; the
+              // AI/unattended split is not, so hold that one back
+              // until the flag lands.
+              const state =
+                assigneeId || aiStatus !== null
+                  ? deriveAttentionState(conv, accountAiOn)
+                  : null;
+              const presence: PresenceStatus | undefined = assigneeId
+                ? getPresence(assigneeId)
+                : undefined;
+              return (
+                <ConversationItem
+                  key={conv.id}
+                  conversation={conv}
+                  isActive={conv.id === activeConversationId}
+                  onSelect={handleSelect}
+                  attention={state}
+                  attentionLabel={
+                    state === "ai"
+                      ? t("attentionAi")
+                      : state === "assigned"
+                        ? (profilesByUserId.get(assigneeId ?? "")?.full_name ??
+                          t("attentionAssigned"))
+                        : t("attentionUnattended")
+                  }
+                  presence={presence}
+                  presenceTitle={
+                    presence && assigneeId
+                      ? presenceLabel(
+                          presence,
+                          getRow(assigneeId)?.last_seen_at ?? null,
+                          now,
+                        )
+                      : undefined
+                  }
+                  t={t}
+                />
+              );
+            })}
           </div>
         )}
       </ScrollArea>
@@ -427,6 +535,13 @@ interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
+  /** Who is attending this thread — see `lib/inbox/attention`.
+   *  `null` while the account's AI status is still unknown. */
+  attention: AttentionState | null;
+  /** Translated text for the badge (operator name when assigned). */
+  attentionLabel: string;
+  presence?: PresenceStatus;
+  presenceTitle?: string;
   t: ReturnType<typeof useTranslations>;
 }
 
@@ -434,6 +549,10 @@ function ConversationItem({
   conversation,
   isActive,
   onSelect,
+  attention,
+  attentionLabel,
+  presence,
+  presenceTitle,
   t,
 }: ConversationItemProps) {
   const contact = conversation.contact;
@@ -498,6 +617,18 @@ function ConversationItem({
             />
           </div>
         </div>
+        {/* Who is attending. Its own line so the operator's name isn't
+            fighting the message preview for the 320px the list gets. */}
+        {attention && (
+          <div className="mt-1 flex min-w-0 items-center">
+            <AttentionBadge
+              state={attention}
+              label={attentionLabel}
+              presence={presence}
+              presenceTitle={presenceTitle}
+            />
+          </div>
+        )}
       </div>
     </button>
   );

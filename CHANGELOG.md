@@ -42,6 +42,14 @@ behaviour changes**; nothing is limited by plan yet.
   had the assistant configured starts sending it on its next handoff
   without changing any setting. To keep handing off silently, clear the
   field in Settings → AI and save: an empty value means "send nothing".
+- **Who is attending, in the inbox list.** Every row now says whether the
+  AI assistant is on it, which teammate owns it (with their presence dot)
+  or that nobody is — so a chat the assistant handed off and no one picked
+  up no longer looks identical to one the assistant is handling. A new
+  "Unattended" filter in the list header shows exactly that queue. The
+  indicator costs no extra per-chat queries and follows the assignment
+  changes other members make, live. With the assistant switched off for
+  the account, "AI replying" never appears.
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are
