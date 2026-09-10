@@ -35,8 +35,8 @@ and polish.
 
 > **Migration (apply last):** `supabase/migrations/044_private_media_buckets.sql`
 > makes `chat-media` and `flow-media` private and scopes reads to the
-> owning account (legacy `<uid>/…` paths stay readable by their
-> uploader). Apply it **only after** this release is live and you have
+> owning account (legacy `<uid>/…` paths stay readable by every member of
+> the uploader's account). Apply it **only after** this release is live and you have
 > confirmed outbound attachments still arrive — see
 > `docs/security.md`, "Private attachments".
 

@@ -177,7 +177,7 @@ describe('resolveOutboundMedia', () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it('accepts a legacy <uid>/ path when the uploader belongs to the account', async () => {
+  it('lets an account member send a legacy <uid>/ path uploaded by another member', async () => {
     const { storage } = fakeStorage({
       [`flow-media/${LEGACY_UID}/1-old.pdf`]: { type: 'application/pdf' },
     });

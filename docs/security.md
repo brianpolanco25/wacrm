@@ -122,8 +122,9 @@ reason — Meta fetched outbound media from them at send time.
    The signing goes through the user's **own** Supabase session
    (`createSignedUrl`), not a server endpoint with the service role. The
    storage API evaluates the bucket's SELECT policy against the caller's
-   JWT before it signs, and migration 044's policy is "members of the
-   account named by the path's first segment (or the legacy uploader)" —
+   JWT before it signs, and migration 044's policy covers members of the
+   account named by the path's first segment (or the account of the legacy
+   uploader) —
    so isolation is enforced by the same rule that gates a direct read,
    with no service-role code path to audit and no new route. Signing
    works the same on a still-public bucket; if it fails for any reason
@@ -133,8 +134,9 @@ reason — Meta fetched outbound media from them at send time.
    two `… is publicly readable` policies and creates `Members can read
 chat media` / `Members can read flow media` with the write policies'
    predicate. Legacy `<auth.uid()>/…` paths from migration 016 stay
-   readable by their uploader. `verify-schema.sql` asserts both buckets
-   are private and both policies exist.
+   readable by every member of the uploader's account.
+   `verify-schema.sql` asserts both buckets are private and both policies
+   exist.
 
 ### Deploy order (production)
 
@@ -158,12 +160,48 @@ id IN ('chat-media','flow-media')` and re-create the two dropped policies
 from migrations 016/023; nothing in the application depends on the
 buckets being private.
 
-### What is verified manually
+### Verificación de Storage en un proyecto real
 
-Signed-URL expiry (a URL older than ten minutes must be refused) and the
-RLS policy itself (a user in account B asking to sign or read account
-A's object must fail) are enforced by Supabase, not by application code,
-so they are checked against a real project rather than in unit tests.
+La comprobación SQL reproducible de RLS está en
+`progress/checks_private-media.sql`; se ejecuta contra el Postgres local tras
+aplicar las migraciones. La emisión y caducidad de URLs firmadas la hace el
+servicio Storage, por lo que se verifica en un proyecto real **después** de
+aplicar 044 y nunca contra producción durante CI. Con un objeto de la cuenta A
+en `chat-media` y tokens de sesión desechables de A y B, ejecuta:
+
+```bash
+export SUPABASE_URL='https://<project>.supabase.co'
+export SUPABASE_ANON_KEY='<anon-key>'
+export A_ACCESS_TOKEN='<jwt-de-un-miembro-de-A>'
+export B_ACCESS_TOKEN='<jwt-de-un-miembro-de-B>'
+export OBJECT_PATH='account-<account-a>/private-media-check.txt'
+
+sign_json="$(curl --fail-with-body -sS -X POST \
+  "$SUPABASE_URL/storage/v1/object/sign/chat-media/$OBJECT_PATH" \
+  -H "apikey: $SUPABASE_ANON_KEY" \
+  -H "Authorization: Bearer $A_ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' --data '{"expiresIn":1}')"
+signed_path="$(node -e 'const x=JSON.parse(process.argv[1]); if (!x.signedURL) process.exit(1); process.stdout.write(x.signedURL)' "$sign_json")"
+
+# A puede descargar; una URL pública directa y B no pueden hacerlo.
+test "$(curl -sS -o /dev/null -w '%{http_code}' "$SUPABASE_URL/storage/v1$signed_path")" = 200
+test "$(curl -sS -o /dev/null -w '%{http_code}' "$SUPABASE_URL/storage/v1/object/public/chat-media/$OBJECT_PATH")" -ge 400
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $B_ACCESS_TOKEN" \
+  "$SUPABASE_URL/storage/v1/object/authenticated/chat-media/$OBJECT_PATH")" -ge 400
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "$SUPABASE_URL/storage/v1/object/sign/chat-media/$OBJECT_PATH" \
+  -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $B_ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' --data '{"expiresIn":1}')" -ge 400
+
+sleep 2
+test "$(curl -sS -o /dev/null -w '%{http_code}' "$SUPABASE_URL/storage/v1$signed_path")" = 403
+```
+
+El último `test` conserva evidencia explícita del criterio de expiración: la
+misma URL que funcionó debe devolver 403 tras su TTL de un segundo. Repite la
+emisión con un segundo miembro de A y un objeto legado
+`flow-media/<uid-del-uploader>/…` para confirmar que ambos siguen visibles.
 
 ### Known debt
 

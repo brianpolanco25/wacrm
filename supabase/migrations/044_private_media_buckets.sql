@@ -38,10 +38,10 @@
 --
 -- Legacy paths. Migration 016 wrote flow media under `<auth.uid()>/…`
 -- and 020 kept those writable by their uploader. The read policies below
--- accept that shape too (the uploader can read it), so attachments from
--- before 020 keep rendering. The same clause is included for chat-media
--- for uniformity; it never had uid-scoped paths, so it matches nothing
--- there.
+-- resolve that uploader's account and accept every member of it, so an old
+-- attachment remains visible after its uploader shares the account or leaves.
+-- The same clause is included for chat-media for uniformity; it never had
+-- uid-scoped paths, so it matches nothing there.
 --
 -- Rollback: `UPDATE storage.buckets SET public = TRUE WHERE id IN
 -- ('chat-media','flow-media')` plus re-creating the two dropped policies
@@ -63,7 +63,7 @@ WHERE id IN ('chat-media', 'flow-media')
 --
 -- Same predicate shape as the write policies from 020/023: the path's
 -- first segment must be `account-<account_id>` for the caller's account,
--- OR (legacy) the caller's own uid.
+-- OR (legacy) a uid whose account includes the caller.
 -- ============================================================
 DROP POLICY IF EXISTS "Chat media is publicly readable" ON storage.objects;
 DROP POLICY IF EXISTS "Flow media is publicly readable" ON storage.objects;
@@ -80,7 +80,11 @@ CREATE POLICY "Members can read chat media"
         WHERE p.user_id = auth.uid()
           AND ('account-' || p.account_id::text) = (storage.foldername(name))[1]
       )
-      OR auth.uid()::text = (storage.foldername(name))[1]
+      OR EXISTS (
+        SELECT 1 FROM public.profiles legacy_uploader
+        WHERE legacy_uploader.user_id::text = (storage.foldername(name))[1]
+          AND is_account_member(legacy_uploader.account_id)
+      )
     )
   );
 
@@ -96,6 +100,10 @@ CREATE POLICY "Members can read flow media"
         WHERE p.user_id = auth.uid()
           AND ('account-' || p.account_id::text) = (storage.foldername(name))[1]
       )
-      OR auth.uid()::text = (storage.foldername(name))[1]
+      OR EXISTS (
+        SELECT 1 FROM public.profiles legacy_uploader
+        WHERE legacy_uploader.user_id::text = (storage.foldername(name))[1]
+          AND is_account_member(legacy_uploader.account_id)
+      )
     )
   );
