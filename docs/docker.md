@@ -42,6 +42,24 @@ is included.
   `env_file` and is never baked into the image — safe to change with
   just a container restart.
 
+## Platform AI keys (optional)
+
+By default every account brings its own OpenAI / Anthropic key in
+Settings → AI. A deployment that wants to pay for AI on behalf of its
+accounts (the SaaS model) can set a platform-level key per provider:
+
+| Variable | Used when |
+|---|---|
+| `AI_PLATFORM_OPENAI_API_KEY` | an account's provider is `openai` and it has not saved its own key |
+| `AI_PLATFORM_ANTHROPIC_API_KEY` | an account's provider is `anthropic` and it has not saved its own key |
+
+Resolution order is always: the account's own key → the platform key
+for its provider → AI not configured. Both variables are server-only
+runtime secrets (never `NEXT_PUBLIC_*`); the app only ever tells the
+browser _whether_ a platform key exists, never its value. With neither
+variable set the behaviour is exactly the bring-your-own-key one: the
+key field is required when saving an AI configuration.
+
 ## Plain Docker (no Compose)
 
 ```bash

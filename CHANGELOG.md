@@ -9,6 +9,42 @@ Versions follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0, `MINOR` bumps cover new modules; `PATCH` bumps cover bug fixes
 and polish.
 
+## [Unreleased]
+
+Fase 0 of the SaaS programme (`docs/saas/fase-0-cimientos.md`): the
+database and server-side groundwork for billing. **No user-visible
+behaviour changes**; nothing is limited by plan yet.
+
+> **Migration required:** apply
+> `supabase/migrations/040_conversation_assignment_integrity.sql` and
+> `supabase/migrations/041_billing_model.sql`. 040 nulls any
+> `conversations.assigned_agent_id` that points at a deleted user before
+> adding the foreign key, so a handful of stale "Assigned" badges may
+> disappear — those chats return to the unassigned queue.
+
+### Added
+
+- **Billing model** (`plans`, `subscriptions`, `usage_counters`,
+  `billing_events`) with RLS, the atomic `increment_usage` RPC and the
+  seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are
+  provisional until the first paying customer.
+- **Entitlements helper** (`src/lib/billing/entitlements.ts`): resolves an
+  account's plan, limits, features and read-only state. Not called from
+  any route yet — that is fase 3.
+- **Platform AI keys.** New optional server variables
+  `AI_PLATFORM_OPENAI_API_KEY` / `AI_PLATFORM_ANTHROPIC_API_KEY`. When set,
+  an account may leave the API key blank in Settings → AI and the
+  platform's key is used; an account's own key still takes precedence.
+  Without them nothing changes. `ai_configs.api_key` is now nullable.
+
+### Fixed
+
+- **Dangling conversation assignments.** `conversations.assigned_agent_id`
+  now references `auth.users` with `ON DELETE SET NULL`, so removing an
+  operator returns their chats to the unassigned queue instead of leaving
+  a nameless "Assigned" badge. A new `(account_id, assigned_agent_id)`
+  index backs the "my chats" / "unassigned" lookups.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same
