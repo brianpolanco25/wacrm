@@ -707,8 +707,19 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
     op: 'update',
     by: ['id'],
     reason:
-      'Webhook profile-name refresh on the contact resolved one query ' +
-      "earlier with .eq('account_id', …) for the resolved tenant.",
+      'Reads as one route but covers ALL of them: waivers match on ' +
+      'table + op + filtered columns, so this one blesses every write to a ' +
+      "contact by bare row id — the webhook's profile-name refresh " +
+      '(/api/whatsapp/webhook), the working-phone rewrite of both ' +
+      'meta-send engines, and — since it already carries account_id and so ' +
+      "doesn't need the waiver today — the PATCH of /api/v1/contacts/[id] " +
+      'if that filter ever went away. Each of those updates a row read one ' +
+      "query earlier with .eq('account_id', …), which is where the tenancy " +
+      'is actually enforced; that previous read is what the audit still ' +
+      'guards. Known limit, and the price of it is that a lost filter on ' +
+      'a contacts UPDATE by id goes unnoticed. Adding the redundant ' +
+      'account filter to those call sites would retire the waiver ' +
+      '(implementation report, debt 2).',
   },
   {
     table: 'conversations',
@@ -773,11 +784,15 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
   {
     table: 'automations',
     op: 'select',
-    by: ['id'],
+    by: ['id', 'user_id'],
     reason:
-      '/api/automations/[id] scopes by user_id, not account_id — narrower ' +
-      'than the account, so it cannot leak across tenants (it hides ' +
-      "teammates' rows instead; noted as debt in the implementation report).",
+      'The read-only routes (/api/automations/[id] GET and its duplicate) ' +
+      'still scope by user_id, not account_id — narrower than the account, ' +
+      "so they cannot leak across tenants (they hide teammates' rows " +
+      'instead; noted as debt in the implementation report). `user_id` is ' +
+      'required in the match so the waiver stops at those two queries: any ' +
+      'other read of an automation by bare id — the automations engine ' +
+      'resuming a queued step, for one — has to carry account_id.',
   },
   {
     table: 'automations',
@@ -1485,6 +1500,32 @@ describe('/api/automations (service-role writes)', () => {
       params({ id: 'auto-b' })
     );
     expect(dup.status).toBe(404);
+    expectBUnchanged(before);
+  });
+
+  // The PATCH above 404s at the ownership guard, so it never reaches
+  // the service-role UPDATE underneath. This one does: it patches A's
+  // own automation, the write executes, and the audit in `afterEach`
+  // requires it to carry `account_id` — the same treatment flows got.
+  // `is_active: false` keeps the activation validator out of the way so
+  // the request gets all the way to the UPDATE.
+
+  it("PATCH edits A's own automation and leaves B's alone", async () => {
+    const before = h.db.snapshot(B);
+    const res = await automationById.PATCH(
+      req('PATCH', '/api/automations/auto-a', {
+        name: 'renamed by A',
+        is_active: false,
+      }),
+      params({ id: 'auto-a' })
+    );
+    expect(res.status).toBe(200);
+    expect(
+      h.db.rows('automations').find((a) => a.id === 'auto-a')
+    ).toMatchObject({ name: 'renamed by A', is_active: false, account_id: A });
+    expect(
+      h.db.rows('automations').find((a) => a.id === 'auto-b')
+    ).toMatchObject({ name: 'auto b', is_active: true });
     expectBUnchanged(before);
   });
 });

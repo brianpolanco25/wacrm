@@ -51,9 +51,13 @@ export async function PATCH(
 
   // Editing an automation is a write — the RLS automations_update policy
   // requires `agent`, but this route mutates via the service-role client
-  // which bypasses RLS, so enforce the role here.
+  // which bypasses RLS, so enforce the role here. `requireRole` also
+  // hands us the caller's account: with the admin client that filter,
+  // not RLS, is the tenant boundary, so both the ownership read and the
+  // update below carry it.
+  let accountId: string
   try {
-    await requireRole('agent')
+    ;({ accountId } = await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -67,11 +71,14 @@ export async function PATCH(
   const admin = supabaseAdmin()
 
   // Ownership check before we touch anything. Load the fields we need
-  // to compute the post-patch "effective" state for validation.
+  // to compute the post-patch "effective" state for validation. The
+  // account filter is the tenancy boundary; the `user_id` comparison
+  // below is the older, narrower per-author rule this route still keeps.
   const { data: existing } = await admin
     .from('automations')
     .select('id, user_id, is_active, trigger_type, trigger_config')
     .eq('id', id)
+    .eq('account_id', accountId)
     .maybeSingle()
   if (!existing || existing.user_id !== user.id) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -120,6 +127,7 @@ export async function PATCH(
       .from('automations')
       .update(update)
       .eq('id', id)
+      .eq('account_id', accountId)
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
   }
 

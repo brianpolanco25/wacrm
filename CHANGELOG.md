@@ -58,6 +58,11 @@ and polish.
   now resolved before the write and every query carries the caller's
   account. Same fix for the two lookups the runners did by id alone (the
   flow behind a live run, the automation behind a queued step).
+- **Automation editing scoped to the account.** Saving an automation
+  loaded and updated the row through the service-role client by row id
+  alone, leaning on a per-author check in application code. Both queries
+  now carry the caller's account, matching the RLS policy the
+  service-role client bypasses.
 
 ## [0.8.1] — 2026-07-10
 
