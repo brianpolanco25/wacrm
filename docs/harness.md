@@ -31,6 +31,10 @@ entera: agentes cortos, revisables y baratos.
 
 ## Dónde vive cada cosa
 
+Todo esto vive en el checkout principal (`/Users/brian/Documents/Dev/projects/wacrm/`), no en los
+worktrees de fase: es una sola fuente de verdad para todas las ramas. Los agentes lo leen y
+escriben por ruta absoluta.
+
 - `feature_list.json` — fases (rama, worktree, base) y features (id, status, spec, commits).
 - `progress/current.md` — feature en curso y estado de ramas. `progress/impl_<name>.md`,
   `progress/review_<name>.md`, `progress/checks_<name>.sql` — informes y SQL de comprobación.

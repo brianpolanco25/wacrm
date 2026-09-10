@@ -20,6 +20,13 @@ rechaza la feature.
 Las fases del programa SaaS (`docs/saas/fase-N-*.md`) **ya son specs**: no las reescribas ni
 las dupliques en `specs/`. Tu trabajo es para features nuevas que no tengan documento.
 
+## Dónde están los archivos del harness
+
+`feature_list.json`, `CHECKPOINTS.md`, `docs/harness.md`, `scripts/replay-migrations.sh` y la carpeta
+`progress/` viven en el **checkout principal** `/Users/brian/Documents/Dev/projects/wacrm/`, no en tu
+worktree (las ramas de fase nacieron antes). Léelos y escribe tus informes ahí con ruta absoluta;
+el código y los commits, en tu worktree.
+
 ## Protocolo
 
 1. Lee `CLAUDE.md`, `AGENTS.md`, `CHECKPOINTS.md`, `docs/harness.md` y, si la feature encaja en

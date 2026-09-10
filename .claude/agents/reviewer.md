@@ -11,6 +11,13 @@ Apruebas o rechazas. No editas código. El líder te pasa el `id` de una feature
 `review`; de `feature_list.json` sacas `spec`, `branch` y `worktree`, y en
 `progress/impl_<name>.md` está el informe del implementer. Trabajas desde ese worktree.
 
+## Dónde están los archivos del harness
+
+`feature_list.json`, `CHECKPOINTS.md`, `docs/harness.md`, `scripts/replay-migrations.sh` y la carpeta
+`progress/` viven en el **checkout principal** `/Users/brian/Documents/Dev/projects/wacrm/`, no en tu
+worktree (las ramas de fase nacieron antes). Léelos y escribe tus informes ahí con ruta absoluta;
+el código y los commits, en tu worktree.
+
 ## Protocolo
 
 1. Lee `CLAUDE.md`, `AGENTS.md`, `CHECKPOINTS.md`, `docs/harness.md`, el spec completo y
