@@ -19,9 +19,13 @@ and polish.
   `ENCRYPTION_KEY` stays the active key; a new optional
   `ENCRYPTION_KEY_PREVIOUS` (comma-separated) lets retired keys keep
   decrypting old rows, and values in the two pre-existing formats still
-  decrypt with any key in the ring. `node scripts/reencrypt-secrets.ts
-[--dry-run]` rewrites everything under the current key. See
-  `docs/security.md`.
+  decrypt with any key in the ring. `scripts/reencrypt-secrets.ts`
+  (`--dry-run` to report) rewrites everything under the current key.
+  See `docs/security.md`.
+- **Platform webhook verify token.** When `META_WEBHOOK_VERIFY_TOKEN` is
+  set, the WhatsApp webhook's `GET` verification compares against it and
+  never reads `whatsapp_config`. Unset, the existing per-tenant lookup is
+  unchanged.
 
 ## [0.8.1] — 2026-07-10
 

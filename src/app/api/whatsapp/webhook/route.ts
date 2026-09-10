@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
@@ -97,6 +98,17 @@ interface WhatsAppWebhookEntry {
   }>
 }
 
+/**
+ * Constant-time string compare for the platform verify token. Length is
+ * checked first because `timingSafeEqual` throws on mismatched lengths;
+ * the length itself is not sensitive.
+ */
+function verifyTokensMatch(supplied: string, expected: string): boolean {
+  const a = Buffer.from(supplied)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
 // GET - Webhook verification
 export async function GET(request: Request) {
   try {
@@ -109,6 +121,27 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: 'Missing verification parameters' },
         { status: 400 }
+      )
+    }
+
+    // Short path — platform mode. When the operator sets a single
+    // verify token for the whole deployment (one Meta app, one webhook
+    // URL, every tenant behind it), the per-tenant loop below is dead
+    // weight: it reads and decrypts EVERY whatsapp_config row on each
+    // subscribe just to find a match. With the platform token defined we
+    // compare against it and never touch the table. Without it (self-
+    // hosted, one config per install) the loop behaves exactly as before.
+    const platformToken = process.env.META_WEBHOOK_VERIFY_TOKEN
+    if (platformToken) {
+      if (verifyTokensMatch(verifyToken, platformToken)) {
+        return new Response(challenge, {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      }
+      return NextResponse.json(
+        { error: 'Verification token mismatch' },
+        { status: 403 }
       )
     }
 

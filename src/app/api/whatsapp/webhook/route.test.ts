@@ -29,6 +29,10 @@ const h = vi.hoisted(() => ({
     }[],
     /** Error the next storage upload resolves with, if any. */
     storageUploadError: null as { message: string } | null,
+    /** Every `.from(table)` call, so a test can assert a table was NOT read. */
+    fromCalls: [] as string[],
+    /** Plaintext verify tokens the GET loop "decrypts" from whatsapp_config. */
+    configVerifyTokens: ['tenant-verify-token'] as string[],
   },
 }))
 
@@ -44,24 +48,37 @@ vi.mock('next/server', () => ({
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
     from(table: string) {
+      h.state.fromCalls.push(table)
       switch (table) {
-        case 'whatsapp_config':
+        case 'whatsapp_config': {
+          // Two chains land here: the POST path's select().eq() by
+          // phone_number_id, and the GET verification loop's bare
+          // select() over every row. The select result is therefore a
+          // promise (the loop awaits it directly) that also carries `eq`.
+          const byPhone = () =>
+            Promise.resolve({
+              data: [
+                {
+                  account_id: 'acc-1',
+                  user_id: 'user-1',
+                  access_token: 'enc',
+                  mirror_inbound_media: h.state.mirrorInboundMedia,
+                },
+              ],
+              error: null,
+            })
+          const all = Promise.resolve({
+            data: h.state.configVerifyTokens.map((token, i) => ({
+              id: `cfg-${i}`,
+              verify_token: `enc:${token}`,
+            })),
+            error: null,
+          })
           return {
-            select: () => ({
-              eq: () =>
-                Promise.resolve({
-                  data: [
-                    {
-                      account_id: 'acc-1',
-                      user_id: 'user-1',
-                      access_token: 'enc',
-                      mirror_inbound_media: h.state.mirrorInboundMedia,
-                    },
-                  ],
-                  error: null,
-                }),
-            }),
+            select: () => Object.assign(all, { eq: byPhone }),
+            update: () => ({ eq: () => Promise.resolve({ error: null }) }),
           }
+        }
         case 'conversations':
           // findOrCreateConversation: select().eq().eq().order().limit()
           return {
@@ -166,7 +183,9 @@ vi.mock('@supabase/supabase-js', () => ({
 }))
 
 vi.mock('@/lib/whatsapp/encryption', () => ({
-  decrypt: () => 'plain-token',
+  // The GET loop stores verify tokens as `enc:<plaintext>` in this mock
+  // so each config row decrypts to a distinct value.
+  decrypt: (v: string) => (v.startsWith('enc:') ? v.slice(4) : 'plain-token'),
   encrypt: (v: string) => v,
   isLegacyFormat: () => false,
 }))
@@ -202,7 +221,7 @@ vi.mock('@/lib/webhooks/deliver', () => ({
   dispatchWebhookEvent: h.dispatchWebhookEvent,
 }))
 
-import { POST } from './route'
+import { GET, POST } from './route'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 
 const mockGetMediaUrl = vi.mocked(getMediaUrl)
@@ -260,6 +279,9 @@ beforeEach(() => {
   h.state.mirrorInboundMedia = true
   h.state.storageUploads = []
   h.state.storageUploadError = null
+  h.state.fromCalls = []
+  h.state.configVerifyTokens = ['tenant-verify-token']
+  vi.unstubAllEnvs()
   mockGetMediaUrl.mockResolvedValue({
     url: 'https://lookaside.fbsbx.com/whatsapp/abc',
     mimeType: 'image/jpeg',
@@ -536,5 +558,61 @@ describe('inbound webhook: after() awaits automations (#368)', () => {
     // If the dispatches were fire-and-forget, completed would still be 0
     // here — the callback would have resolved before the timers fired.
     expect(h.state.automationCompleted).toBe(3)
+  })
+})
+
+describe('webhook GET verification: platform token short path', () => {
+  function verifyRequest(token: string) {
+    const url = new URL('https://crm.example/api/whatsapp/webhook')
+    url.searchParams.set('hub.mode', 'subscribe')
+    url.searchParams.set('hub.challenge', 'challenge-123')
+    url.searchParams.set('hub.verify_token', token)
+    return { url: url.toString() } as unknown as Request
+  }
+
+  it('with META_WEBHOOK_VERIFY_TOKEN set, a matching token echoes the challenge without touching whatsapp_config', async () => {
+    vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN', 'platform-secret')
+
+    const res = (await GET(verifyRequest('platform-secret'))) as Response
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('challenge-123')
+    expect(h.state.fromCalls).not.toContain('whatsapp_config')
+  })
+
+  it('with META_WEBHOOK_VERIFY_TOKEN set, a tenant token that only exists in whatsapp_config is refused', async () => {
+    vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN', 'platform-secret')
+
+    // Would match a config row — but in platform mode the table is not
+    // consulted, so the per-tenant token is no longer a valid credential.
+    const res = (await GET(verifyRequest('tenant-verify-token'))) as {
+      init?: { status?: number }
+    }
+    expect(res.init?.status).toBe(403)
+    expect(h.state.fromCalls).not.toContain('whatsapp_config')
+  })
+
+  it('without META_WEBHOOK_VERIFY_TOKEN, the per-tenant loop is intact: a config token matches', async () => {
+    h.state.configVerifyTokens = ['other-tenant', 'tenant-verify-token']
+
+    const res = (await GET(verifyRequest('tenant-verify-token'))) as Response
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('challenge-123')
+    expect(h.state.fromCalls).toContain('whatsapp_config')
+  })
+
+  it('without META_WEBHOOK_VERIFY_TOKEN, an unknown token is a 403 after consulting the table', async () => {
+    const res = (await GET(verifyRequest('nobody-has-this'))) as {
+      init?: { status?: number }
+    }
+    expect(res.init?.status).toBe(403)
+    expect(h.state.fromCalls).toContain('whatsapp_config')
+  })
+
+  it('an empty META_WEBHOOK_VERIFY_TOKEN counts as unset', async () => {
+    vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN', '')
+
+    const res = (await GET(verifyRequest('tenant-verify-token'))) as Response
+    expect(res.status).toBe(200)
+    expect(h.state.fromCalls).toContain('whatsapp_config')
   })
 })

@@ -69,3 +69,17 @@ in the send path and the webhook), and by the script below.
 The same procedure recovers from a suspected key leak; the only
 difference is urgency. Until step 5 the old key can still read every
 row it ever wrote, so treat steps 2–5 as one change window.
+
+## Webhook verification token
+
+Meta verifies a webhook URL with a `GET ?hub.mode=subscribe&hub.verify_token=…`
+challenge. Two ways to answer it:
+
+| Mode                                                         | Configuration                                                                                              | What the `GET` does                                                                                                                             |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Platform (one Meta app, every tenant behind one webhook URL) | `META_WEBHOOK_VERIFY_TOKEN=<random string>` — the same value you type into the Meta app's webhook settings | Compares against the variable in constant time and answers. **Never reads `whatsapp_config`.** Per-tenant verify tokens stop being credentials. |
+| Self-hosted (one install per business)                       | variable unset                                                                                             | Unchanged: walks `whatsapp_config`, decrypts each `verify_token` and answers when one matches.                                                  |
+
+Set the variable once the deployment is registered as a single Meta app;
+leave it unset for a self-hosted instance where each tenant brings their
+own app. An empty value counts as unset.
