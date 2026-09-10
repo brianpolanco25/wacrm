@@ -8,9 +8,15 @@
 
 CRM con Next.js App Router y Supabase. Versión 0.8.0.
 
-**Stack**: Next 16.2.12, React 19.2.4, TypeScript 6, Tailwind 4, Supabase
-(Postgres + migraciones), vitest 4, ESLint 9. Gestor: **npm** (npm@10.9.9,
-declarado en `packageManager` — no uses pnpm ni yarn).
+**Stack**: **Node 24 LTS** ("Krypton"), Next 16.2.12, React 19.2.4, TypeScript 6,
+Tailwind 4, Supabase (Postgres + migraciones), vitest 4, ESLint 9. Gestor:
+**npm** (npm@10.9.9, declarado en `packageManager` — no uses pnpm ni yarn).
+
+La versión de Node está fijada en cuatro sitios y se mueven juntos: `.nvmrc`,
+`engines` de `package.json`, las tres etapas del `Dockerfile` y `node-version`
+en `ci.yml`. `mcp-server/package.json` queda aparte en `>=20.0.0` a propósito:
+es un paquete con `bin`, lo instala gente de fuera, y subirle el mínimo les
+cerraría la puerta a quienes están en Node 20 o 22.
 
 **Estructura**: `src/app` (App Router), `src/lib` (lógica y utilidades),
 `src/components`, `src/hooks`, `src/i18n` + `messages/` (traducciones),
