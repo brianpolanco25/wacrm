@@ -58,6 +58,34 @@ BEGIN
     RAISE EXCEPTION 'idx_conversations_account_assignee is missing (migration 040)';
   END IF;
 
+  -- Billing model (041): the four tables, the atomic counter RPC, the
+  -- seeded catalogue, and RLS on the one table a tenant must never write.
+  IF to_regclass('public.plans') IS NULL THEN
+    RAISE EXCEPTION 'public.plans is missing (migration 041)';
+  END IF;
+  IF to_regclass('public.subscriptions') IS NULL THEN
+    RAISE EXCEPTION 'public.subscriptions is missing (migration 041)';
+  END IF;
+  IF to_regclass('public.usage_counters') IS NULL THEN
+    RAISE EXCEPTION 'public.usage_counters is missing (migration 041)';
+  END IF;
+  IF to_regclass('public.billing_events') IS NULL THEN
+    RAISE EXCEPTION 'public.billing_events is missing (migration 041)';
+  END IF;
+  IF to_regprocedure('public.increment_usage(uuid, text, bigint)') IS NULL THEN
+    RAISE EXCEPTION 'increment_usage(uuid, text, bigint) is missing (migration 041)';
+  END IF;
+  -- The seed is an UPSERT, so a typo'd VALUES list would leave the
+  -- catalogue empty with a green run.
+  IF (SELECT count(*) FROM public.plans) <> 3 THEN
+    RAISE EXCEPTION
+      'expected exactly 3 rows in plans (inicio/pro/negocio), found % (migration 041)',
+      (SELECT count(*) FROM public.plans);
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.subscriptions'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on subscriptions (migration 041)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
