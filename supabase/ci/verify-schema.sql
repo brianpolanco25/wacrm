@@ -42,6 +42,22 @@ BEGIN
     RAISE EXCEPTION 'public.accounts is missing — migration 017 did not apply';
   END IF;
 
+  -- Assignment integrity (040): the FK is dropped-then-added, so a typo
+  -- in the ADD would leave the column unconstrained with no error.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'conversations_assigned_agent_id_fkey'
+      AND conrelid = 'public.conversations'::regclass
+      AND contype = 'f'
+      AND confdeltype = 'n'   -- ON DELETE SET NULL, never CASCADE
+  ) THEN
+    RAISE EXCEPTION
+      'conversations_assigned_agent_id_fkey is missing or not ON DELETE SET NULL (migration 040)';
+  END IF;
+  IF to_regclass('public.idx_conversations_account_assignee') IS NULL THEN
+    RAISE EXCEPTION 'idx_conversations_account_assignee is missing (migration 040)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
