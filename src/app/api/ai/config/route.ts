@@ -146,9 +146,10 @@ export async function POST(request: Request) {
       handoffAgentId = rawHandoff;
     }
 
-    // Handoff mode (fase 1, migration 043). `fixed` needs a target — a
-    // fixed handoff to nobody would silently degrade to the queue while
-    // the UI claims otherwise. Absent → left unchanged on update.
+    // Handoff mode (fase 1, migration 043). Absent → left unchanged on
+    // update. The "`fixed` needs a target" rule is checked further down,
+    // against the state the row will actually have after the merge —
+    // checking it here only caught bodies that carried the mode.
     const modeProvided = 'handoff_mode' in body;
     let handoffMode: HandoffMode | null = null;
     if (modeProvided) {
@@ -157,9 +158,6 @@ export async function POST(request: Request) {
         return bad('handoff_mode must be "fixed", "queue" or "auto"');
       }
       handoffMode = rawMode;
-      if (handoffMode === 'fixed' && !handoffAgentId) {
-        return bad('handoff_agent_id is required when handoff_mode is "fixed"');
-      }
     }
 
     // Transition message the bot sends right before handing off (fase 1,
@@ -198,9 +196,28 @@ export async function POST(request: Request) {
     // Reuse the stored key when the form didn't send a fresh one.
     const { data: existing } = await supabase
       .from('ai_configs')
-      .select('id, provider, model, api_key')
+      // `handoff_mode` / `handoff_agent_id` are read to validate a
+      // partial save against the merged state, not to write them back.
+      .select('id, provider, model, api_key, handoff_mode, handoff_agent_id')
       .eq('account_id', accountId)
       .maybeSingle();
+
+    // `fixed` needs a target: a fixed handoff to nobody silently degrades
+    // to the queue while the UI claims otherwise. Validate the row as it
+    // will end up, because either half can come from the stored row — a
+    // body with only `handoff_agent_id: null` over a stored `fixed` row
+    // would persist exactly the state this rule exists to prevent, and a
+    // body with only `handoff_mode: 'fixed'` over a row that already has
+    // a target is perfectly valid.
+    const effectiveMode = modeProvided
+      ? handoffMode
+      : ((existing?.handoff_mode as HandoffMode | null | undefined) ?? null);
+    const effectiveAgent = handoffProvided
+      ? handoffAgentId
+      : ((existing?.handoff_agent_id as string | null | undefined) ?? null);
+    if (effectiveMode === 'fixed' && !effectiveAgent) {
+      return bad('handoff_agent_id is required when handoff_mode is "fixed"');
+    }
 
     // Key resolution (supuesto S1): a freshly typed key, else the stored
     // key, else the platform key for the chosen provider. Only when none

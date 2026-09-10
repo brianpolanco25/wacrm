@@ -126,6 +126,19 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'ai_configs.handoff_message is missing (migration 043)';
   END IF;
+  -- The seeded default is the feature, not decoration: without it an
+  -- account that never opens Settings -> AI keeps handing off in silence.
+  -- It is deliberately English (the product ships en/ko catalogues) and
+  -- must stay byte-identical to DEFAULT_HANDOFF_MESSAGE in
+  -- src/lib/ai/handoff-message.ts.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'ai_configs'
+      AND column_name = 'handoff_message'
+      AND column_default LIKE '%Thanks for writing to us. A member of our team will continue this conversation shortly.%'
+  ) THEN
+    RAISE EXCEPTION 'ai_configs.handoff_message lost its seeded English default (migration 043)';
+  END IF;
 
   RAISE NOTICE 'schema verification passed';
 END

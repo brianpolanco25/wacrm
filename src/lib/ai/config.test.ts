@@ -8,10 +8,17 @@ vi.mock('@/lib/whatsapp/encryption', () => ({
 
 import { loadAiConfig } from './config';
 
+/** Columns the last `select()` asked for — the read is the only place
+ *  that decides what reaches `AiConfig`. */
+let selectedColumns = '';
+
 function dbReturning(row: Record<string, unknown> | null): SupabaseClient {
   const chain = {
     from: () => chain,
-    select: () => chain,
+    select: (columns: string) => {
+      selectedColumns = columns;
+      return chain;
+    },
     eq: () => chain,
     maybeSingle: () => Promise.resolve({ data: row, error: null }),
   };
@@ -87,5 +94,60 @@ describe('loadAiConfig platform key fallback (supuesto S1)', () => {
         'acct'
       )
     ).toBeNull();
+  });
+});
+
+describe('loadAiConfig handoff columns (fase 1)', () => {
+  const ACTIVE = { ...ROW, is_active: true };
+
+  it('selects the handoff columns — dropping one would kill the feature silently', async () => {
+    await loadAiConfig(dbReturning(ACTIVE), 'acct');
+    const columns = selectedColumns.split(',').map((c) => c.trim());
+    expect(columns).toContain('handoff_mode');
+    expect(columns).toContain('handoff_message');
+    expect(columns).toContain('handoff_agent_id');
+  });
+
+  it('maps the stored mode, target and transition message', async () => {
+    const config = await loadAiConfig(
+      dbReturning({
+        ...ACTIVE,
+        handoff_mode: 'auto',
+        handoff_agent_id: 'agent-7',
+        handoff_message: 'A teammate is taking over.',
+      }),
+      'acct'
+    );
+    expect(config).toMatchObject({
+      handoffMode: 'auto',
+      handoffAgentId: 'agent-7',
+      handoffMessage: 'A teammate is taking over.',
+    });
+  });
+
+  it('keeps an empty message as an opt-out, not as "unset"', async () => {
+    const config = await loadAiConfig(
+      dbReturning({ ...ACTIVE, handoff_mode: 'queue', handoff_message: '' }),
+      'acct'
+    );
+    expect(config!.handoffMessage).toBe('');
+  });
+
+  it('falls back to the pre-043 semantics on a row without the columns', async () => {
+    // No handoff_mode/handoff_message at all (a read against a database
+    // where 043 has not been applied yet).
+    const queued = await loadAiConfig(dbReturning(ACTIVE), 'acct');
+    expect(queued).toMatchObject({
+      handoffMode: 'queue',
+      handoffMessage: null,
+    });
+
+    const fixed = await loadAiConfig(
+      dbReturning({ ...ACTIVE, handoff_agent_id: 'agent-7' }),
+      'acct'
+    );
+    // A configured agent used to mean "fixed"; nothing else did.
+    expect(fixed!.handoffMode).toBe('fixed');
+    expect(fixed!.handoffMessage).toBeNull();
   });
 });

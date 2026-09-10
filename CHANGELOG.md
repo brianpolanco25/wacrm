@@ -30,6 +30,18 @@ behaviour changes**; nothing is limited by plan yet.
   assignment can route chats to the online owner, admin or agent with the
   lightest open/pending workload. If nobody is online, chats remain in the
   shared unassigned queue.
+- **Handoff notice.** When the AI assistant steps back and hands a chat to
+  a human, it now texts the customer first, so the conversation doesn't
+  just go quiet. The text is editable in Settings → AI ("Message when
+  handing off"); it is sent once per handoff, is marked as AI-generated
+  and does **not** count towards the per-conversation auto-reply cap.
+  **Heads-up for existing accounts:** migration 043 seeds the field with
+  a default English notice ("Thanks for writing to us. A member of our
+  team will continue this conversation shortly."), and Postgres applies
+  that default to rows that already exist — so an account that already
+  had the assistant configured starts sending it on its next handoff
+  without changing any setting. To keep handing off silently, clear the
+  field in Settings → AI and save: an empty value means "send nothing".
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are

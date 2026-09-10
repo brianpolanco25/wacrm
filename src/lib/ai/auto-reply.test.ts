@@ -15,6 +15,14 @@ const h = vi.hoisted(() => ({
     /** What `pick_available_agent` returns (null = nobody online). */
     pick: null as string | null,
     updatePayload: null as Record<string, unknown> | null,
+    /** Error the conditional handoff UPDATE resolves with (supabase-js
+     *  resolves `{ error }` instead of throwing). */
+    updateError: null as { message: string } | null,
+    /** How many UPDATEs were issued vs. how many matched a row — the
+     *  difference is what the `ai_autoreply_disabled = false` predicate
+     *  filters out. */
+    updateAttempts: 0,
+    updatesApplied: 0,
     conversationSelectFilters: [] as [string, unknown][],
     conversationUpdateFilters: [] as [string, unknown][],
     rpcCalls: [] as { name: string; args: unknown }[],
@@ -50,19 +58,46 @@ vi.mock('./admin-client', () => ({
         },
         maybeSingle: () => Promise.resolve({ data: h.state.conv, error: null }),
       };
-      const updateChain = {
-        eq: (column: string, value: unknown) => {
-          h.state.conversationUpdateFilters.push([column, value]);
-          return updateChain;
-        },
-        then: (onFulfilled: (value: unknown) => unknown) =>
-          Promise.resolve({ error: null }).then(onFulfilled),
+      // `update(...).eq(...).select('id')` — PostgREST returns the rows
+      // the UPDATE actually matched. Modelled faithfully (including the
+      // conditional `ai_autoreply_disabled = false` predicate against the
+      // shared conversation row) so two concurrent dispatches race here
+      // the way they would in Postgres.
+      const updateChain = (payload: Record<string, unknown>) => {
+        const filters: [string, unknown][] = [];
+        const chain = {
+          eq: (column: string, value: unknown) => {
+            h.state.conversationUpdateFilters.push([column, value]);
+            filters.push([column, value]);
+            return chain;
+          },
+          select: () => {
+            if (h.state.updateError) {
+              return Promise.resolve({
+                data: null,
+                error: h.state.updateError,
+              });
+            }
+            const guarded = filters.some(
+              ([column, value]) =>
+                column === 'ai_autoreply_disabled' && value === false
+            );
+            if (guarded && h.state.conv?.ai_autoreply_disabled) {
+              return Promise.resolve({ data: [], error: null }); // lost the race
+            }
+            h.state.updatePayload = payload;
+            h.state.updatesApplied += 1;
+            if (h.state.conv) h.state.conv = { ...h.state.conv, ...payload };
+            return Promise.resolve({ data: [{ id: 'conv-1' }], error: null });
+          },
+        };
+        return chain;
       };
       return {
         select: () => selectChain,
         update: (payload: Record<string, unknown>) => {
-          h.state.updatePayload = payload;
-          return updateChain;
+          h.state.updateAttempts += 1;
+          return updateChain(payload);
         },
       };
     },
@@ -112,6 +147,9 @@ beforeEach(() => {
   h.state.claim = true;
   h.state.pick = null;
   h.state.updatePayload = null;
+  h.state.updateError = null;
+  h.state.updateAttempts = 0;
+  h.state.updatesApplied = 0;
   h.state.conversationSelectFilters = [];
   h.state.conversationUpdateFilters = [];
   h.state.rpcCalls = [];
@@ -318,6 +356,9 @@ describe('dispatchInboundToAiReply — handoff', () => {
     expect(h.state.conversationUpdateFilters).toEqual([
       ['id', 'conv-1'],
       ['account_id', 'acct-1'],
+      // Concurrency guard, not tenancy — but it must not replace the
+      // account filter.
+      ['ai_autoreply_disabled', false],
     ]);
   });
 });
@@ -384,5 +425,37 @@ describe('dispatchInboundToAiReply — handoff transition message (fase 1)', () 
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     });
+  });
+
+  it('sends nothing when the handoff write fails (it would be re-sent on every inbound)', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: MSG }));
+    h.state.updateError = { message: 'permission denied for conversations' };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let logged: unknown[][] = [];
+    try {
+      await expect(dispatchInboundToAiReply(ARGS)).resolves.toBeUndefined();
+      logged = errorSpy.mock.calls; // mockRestore() wipes them
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(h.state.updateAttempts).toBe(1);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    // A lost UPDATE must be loud: it is what makes "the bot keeps
+    // re-announcing the handoff" diagnosable.
+    expect(logged.flat().join(' ')).toContain('handoff write failed');
+  });
+
+  it('sends exactly one notice when two inbounds hand off concurrently', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: MSG }));
+    await Promise.all([
+      dispatchInboundToAiReply(ARGS),
+      dispatchInboundToAiReply(ARGS),
+    ]);
+    // Both dispatches read `ai_autoreply_disabled = false` and both try
+    // to write; the conditional UPDATE lets exactly one through, and only
+    // the winner texts the customer.
+    expect(h.state.updateAttempts).toBe(2);
+    expect(h.state.updatesApplied).toBe(1);
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
   });
 });

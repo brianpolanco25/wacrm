@@ -34,6 +34,10 @@ import {
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
+import {
+  DEFAULT_HANDOFF_MESSAGE,
+  handoffMessagePayload,
+} from '@/lib/ai/handoff-message';
 import type { AiProvider, HandoffMode } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
@@ -94,7 +98,12 @@ export function AiConfig() {
   const [handoffAgentId, setHandoffAgentId] = useState('');
   // What the bot tells the customer right before handing off. Empty =
   // say nothing (the pre-fase-1 behaviour, kept as an explicit choice).
-  const [handoffMessage, setHandoffMessage] = useState('');
+  // Seeded with the same text migration 043 writes as the column default,
+  // so an account with no config row yet sees what it will actually send.
+  const [handoffMessage, setHandoffMessage] = useState(DEFAULT_HANDOFF_MESSAGE);
+  // Only a field the admin actually edited is sent: an untouched textarea
+  // must not overwrite the seeded default with '' on a first save.
+  const [handoffMessageEdited, setHandoffMessageEdited] = useState(false);
   const [members, setMembers] = useState<AccountMember[]>([]);
 
   // Guard keyed on the account (not a bare boolean) so an in-place
@@ -131,6 +140,7 @@ export function AiConfig() {
           data.handoff_mode ?? (data.handoff_agent_id ? 'fixed' : 'queue')
         );
         setHandoffMessage(data.handoff_message ?? '');
+        setHandoffMessageEdited(false);
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
         setKeyEdited(false);
@@ -185,7 +195,12 @@ export function AiConfig() {
     // The fixed target only means something in fixed mode; clear it
     // otherwise so a stale pick can't resurface later.
     handoff_agent_id: handoffMode === 'fixed' ? handoffAgentId || null : null,
-    handoff_message: handoffMessage.trim(),
+    // undefined = leave unchanged (JSON.stringify drops the key, so the
+    // route keeps the stored value / the column default).
+    handoff_message: handoffMessagePayload({
+      edited: handoffMessageEdited,
+      value: handoffMessage,
+    }),
   });
 
   const handleTest = async () => {
@@ -259,7 +274,13 @@ export function AiConfig() {
         setIsActive(false);
         setAutoReplyEnabled(false);
         setSystemPrompt('');
+        // Back to the state of an account that was never configured —
+        // otherwise the form keeps the deleted config's routing and, in
+        // `fixed` mode with no target, blocks the next save.
+        setHandoffMode('queue');
         setHandoffAgentId('');
+        setHandoffMessage(DEFAULT_HANDOFF_MESSAGE);
+        setHandoffMessageEdited(false);
       } else {
         const data = await res.json();
         toast.error(data.error ?? t('removeFailed'));
@@ -559,7 +580,10 @@ export function AiConfig() {
               <Textarea
                 id="ai-handoff-message"
                 value={handoffMessage}
-                onChange={(e) => setHandoffMessage(e.target.value)}
+                onChange={(e) => {
+                  setHandoffMessage(e.target.value);
+                  setHandoffMessageEdited(true);
+                }}
                 placeholder={t('handoffMessagePlaceholder')}
                 rows={2}
                 maxLength={1000}

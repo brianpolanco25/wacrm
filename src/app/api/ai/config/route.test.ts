@@ -305,6 +305,59 @@ describe('POST /api/ai/config — handoff mode (fase 1)', () => {
     expect(res.status).toBe(200);
     expect(mocks.state.updates[0]).not.toHaveProperty('handoff_mode');
   });
+
+  // The rule is about the row's end state, not about what the body
+  // happened to carry: either half can come from the stored row.
+  it('rejects clearing the fixed target when the stored mode stays fixed', async () => {
+    mocks.state.existing = {
+      id: 'cfg',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: null,
+      handoff_mode: 'fixed',
+      handoff_agent_id: 'agent-7',
+    };
+    const res = await POST(post({ ...BASE_BODY, handoff_agent_id: null }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'handoff_agent_id is required when handoff_mode is "fixed"',
+    });
+    expect(mocks.state.updates).toEqual([]);
+  });
+
+  it('accepts handoff_mode fixed on its own when the stored row already has a target', async () => {
+    mocks.state.existing = {
+      id: 'cfg',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: null,
+      handoff_mode: 'queue',
+      handoff_agent_id: 'agent-7',
+    };
+    const res = await POST(post({ ...BASE_BODY, handoff_mode: 'fixed' }));
+    expect(res.status).toBe(200);
+    expect(mocks.state.updates[0]).toMatchObject({ handoff_mode: 'fixed' });
+    expect(mocks.state.updates[0]).not.toHaveProperty('handoff_agent_id');
+  });
+
+  it('still allows switching a fixed row to queue in one save', async () => {
+    mocks.state.existing = {
+      id: 'cfg',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: null,
+      handoff_mode: 'fixed',
+      handoff_agent_id: 'agent-7',
+    };
+    const res = await POST(
+      post({ ...BASE_BODY, handoff_mode: 'queue', handoff_agent_id: null })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.state.updates[0]).toMatchObject({
+      handoff_mode: 'queue',
+      handoff_agent_id: null,
+    });
+  });
 });
 
 describe('POST /api/ai/config — handoff message (fase 1)', () => {
@@ -345,5 +398,15 @@ describe('POST /api/ai/config — handoff message (fase 1)', () => {
     const res = await POST(post(BASE_BODY));
     expect(res.status).toBe(200);
     expect(mocks.state.updates[0]).not.toHaveProperty('handoff_message');
+  });
+
+  // A first save that omits the field must let the column default
+  // (migration 043) stand: writing '' here would opt the brand-new
+  // account out of a notice nobody declined.
+  it('omits the column on a first save when the field is absent, so the seeded default survives', async () => {
+    const res = await POST(post(BASE_BODY));
+    expect(res.status).toBe(200);
+    expect(mocks.state.inserts).toHaveLength(1);
+    expect(mocks.state.inserts[0]).not.toHaveProperty('handoff_message');
   });
 });

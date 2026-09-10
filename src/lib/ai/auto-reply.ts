@@ -158,11 +158,38 @@ export async function dispatchInboundToAiReply(
         const target = await resolveHandoffTarget(db, accountId, config);
         if (target) update.assigned_agent_id = target;
       }
-      await db
+      // Conditional on the flag we are flipping, and asking for the
+      // affected rows back. That makes this the handoff's equivalent of
+      // `claim_ai_reply_slot`: exactly one concurrent dispatch can win.
+      // Two inbounds a second apart both read `ai_autoreply_disabled =
+      // false` and both reach here; without the predicate both would
+      // also send the notice and the customer would get it twice.
+      const { data: handedOff, error: handoffErr } = await db
         .from('conversations')
         .update(update)
         .eq('id', conversationId)
-        .eq('account_id', accountId);
+        .eq('account_id', accountId)
+        .eq('ai_autoreply_disabled', false)
+        .select('id');
+
+      if (handoffErr) {
+        // supabase-js resolves with `{ error }` instead of throwing, so a
+        // lost UPDATE used to be invisible. It no longer is: with the
+        // flag still false the next inbound hands off again and re-sends
+        // the notice, so the customer sees the failure. Loud log, no
+        // send — the inbound is still in the inbox for a human.
+        console.error(
+          '[ai auto-reply] handoff write failed — not sending the transition message:',
+          handoffErr
+        );
+        return;
+      }
+      if (!handedOff || handedOff.length === 0) {
+        // Somebody else (a concurrent dispatch, or an agent who turned
+        // the bot off from the thread) already owns the handoff. It is
+        // done; ours would only duplicate the notice.
+        return;
+      }
 
       // Tell the customer a person is taking over, so the thread doesn't
       // just go silent from their side. Deliberately AFTER the handoff
