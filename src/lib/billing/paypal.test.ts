@@ -99,25 +99,52 @@ describe('getAccessToken', () => {
 });
 
 describe('catalogue', () => {
-  it('lists existing products so the bootstrap reuses its one product', async () => {
-    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(
-      jsonResponse(
-        {
-          products: [{ id: 'PROD-1', name: 'wacrm' }],
-        },
-        200
-      )
+  it('lists all product pages so the bootstrap reuses its one product', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => ({
+      id: `PROD-${index}`,
+      name: `other-${index}`,
+    }));
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse({ products: firstPage }, 200));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ products: [{ id: 'PROD-21', name: 'wacrm' }] }, 200)
     );
 
     await expect(listProducts()).resolves.toEqual([
-      { id: 'PROD-1', name: 'wacrm' },
+      ...firstPage,
+      { id: 'PROD-21', name: 'wacrm' },
     ]);
 
-    const { url, init } = lastCall();
+    const [firstCatalogueCall, secondCatalogueCall] =
+      fetchMock.mock.calls.slice(1);
+    expect(String(firstCatalogueCall[0])).toBe(
+      'https://api-m.sandbox.paypal.com/v1/catalogs/products?page=1&page_size=20&total_required=false'
+    );
+    const { url, init } = {
+      url: String(secondCatalogueCall[0]),
+      init: (secondCatalogueCall[1] ?? {}) as RequestInit,
+    };
     expect(url).toBe(
-      'https://api-m.sandbox.paypal.com/v1/catalogs/products?page_size=20&total_required=false'
+      'https://api-m.sandbox.paypal.com/v1/catalogs/products?page=2&page_size=20&total_required=false'
     );
     expect(init.method).toBe('GET');
+  });
+
+  it('gives up instead of paging forever when the catalogue never ends', async () => {
+    const fullPage = Array.from({ length: 20 }, (_, index) => ({
+      id: `PROD-${index}`,
+      name: `other-${index}`,
+    }));
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes('/v1/oauth2/token')
+        ? tokenResponse()
+        : jsonResponse({ products: fullPage }, 200)
+    );
+
+    await expect(listProducts()).rejects.toBeInstanceOf(PayPalError);
+    // One token request plus the 25-page cap.
+    expect(fetchMock).toHaveBeenCalledTimes(26);
   });
 
   it('retries the catalogue request once with a fresh token after a 401', async () => {

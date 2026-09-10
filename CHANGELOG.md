@@ -30,8 +30,11 @@ behaviour changes**; nothing is limited by plan yet.
 
 - **PayPal catalogue bootstrap.** A server-only script creates one PayPal
   product and the six monthly/annual plan variants, then stores their provider
-  ids in `plans`. It targets the sandbox unless `PAYPAL_ENV=live`; billing,
-  checkout and webhooks are not enabled by this change.
+  ids in `plans`. It targets the sandbox unless `PAYPAL_ENV=live`, pages
+  through the PayPal catalogue so it reuses its product even when that product
+  is not on the first page, and expects sandbox and live to live in separate
+  databases (the stored ids belong to one environment). Billing, checkout and
+  webhooks are not enabled by this change.
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are

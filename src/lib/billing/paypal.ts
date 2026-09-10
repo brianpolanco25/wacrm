@@ -177,11 +177,42 @@ export interface PayPalProduct {
   name: string;
 }
 
+/** PayPal caps `page_size` at 20 for the catalogue listing. */
+const PRODUCT_PAGE_SIZE = 20;
+
+/**
+ * Stop after this many pages (500 products). A merchant catalogue that
+ * big is not ours; without the cap a provider that keeps answering full
+ * pages would spin the bootstrap forever.
+ */
+const MAX_PRODUCT_PAGES = 25;
+
+/**
+ * Every product in the merchant catalogue, following pagination.
+ *
+ * The bootstrap looks its product up by name here, so a partial listing
+ * would silently create a duplicate product: PayPal returns the first 20
+ * products on `page=1`, and an account that had a catalogue before wacrm
+ * can easily push ours past that boundary.
+ */
 export async function listProducts(): Promise<PayPalProduct[]> {
-  const { data } = await paypalFetch<{ products?: PayPalProduct[] }>(
-    '/v1/catalogs/products?page_size=20&total_required=false'
+  const products: PayPalProduct[] = [];
+
+  for (let page = 1; page <= MAX_PRODUCT_PAGES; page += 1) {
+    const { data } = await paypalFetch<{ products?: PayPalProduct[] }>(
+      `/v1/catalogs/products?page=${page}&page_size=${PRODUCT_PAGE_SIZE}&total_required=false`
+    );
+    const currentPage = data.products ?? [];
+    products.push(...currentPage);
+    // A short page is the last page; PayPal sends no next-page cursor.
+    if (currentPage.length < PRODUCT_PAGE_SIZE) return products;
+  }
+
+  throw new PayPalError(
+    `PayPal catalogue did not end after ${MAX_PRODUCT_PAGES} pages of ${PRODUCT_PAGE_SIZE} products`,
+    0,
+    null
   );
-  return data.products ?? [];
 }
 
 export async function createProduct(

@@ -64,8 +64,9 @@ key field is required when saving an AI configuration.
 
 Create the initial product and six plans in the PayPal sandbox with
 `node --env-file=.env.local scripts/paypal-bootstrap-catalog.ts`. It requires
-these server-only runtime variables; it is safe to run again because it keeps
-the stored provider ids and uses stable PayPal request ids:
+these server-only runtime variables; it is safe to run again **against the same
+environment's database** because it keeps the stored provider ids and uses
+stable PayPal request ids:
 
 | Variable               | Purpose                                                              |
 | ---------------------- | -------------------------------------------------------------------- |
@@ -77,6 +78,31 @@ the stored provider ids and uses stable PayPal request ids:
 The script also uses the existing `NEXT_PUBLIC_SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` only to read the global `plans` catalogue and save
 each resulting provider plan id. It does not run as part of the web app.
+
+### Going from sandbox to live
+
+`plans.provider_plan_id_month` and `plans.provider_plan_id_year` hold the ids
+of exactly **one** PayPal environment, and a sandbox id is indistinguishable
+from a live one by sight. So sandbox and live need **separate databases**
+(separate Supabase projects); never point a live run at the sandbox database,
+and never copy sandbox ids into production. The procedure:
+
+1. Against the sandbox database, with `PAYPAL_ENV=sandbox` and the sandbox
+   credentials, run the command and try checkout, payment failure and
+   cancellation with sandbox buyers.
+2. Apply the migrations up to `045_billing_provider_plans.sql` to the live
+   database and confirm its `plans` rows still have `NULL` provider ids.
+3. In the shell of that live deployment, set `PAYPAL_ENV=live`, the live PayPal
+   credentials and that database's `NEXT_PUBLIC_SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY`. Run the command once and record the six ids.
+4. Run it a second time as an idempotency check: it must log six `skipping`
+   lines and create nothing. A live run that finds ids already stored also
+   prints a `WARNING:` line — expected while resuming a crashed run, a red flag
+   if the database was supposed to be empty (usually the wrong database).
+
+Do not edit a stored id to change a price. PayPal plans are effectively
+immutable once they have subscribers; create a versioned replacement plan
+instead, in a later migration.
 
 ## Plain Docker (no Compose)
 
