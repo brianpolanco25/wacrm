@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   embedTexts: vi.fn(),
   state: {
     existing: null as Record<string, unknown> | null,
+    /** Row the `profiles` membership lookup returns (null = not a member). */
+    member: null as Record<string, unknown> | null,
     inserts: [] as Record<string, unknown>[],
     updates: [] as Record<string, unknown>[],
     filters: [] as [string, unknown][],
@@ -55,7 +57,12 @@ function supabaseMock() {
         },
         maybeSingle: () =>
           Promise.resolve({
-            data: table === 'ai_configs' ? mocks.state.existing : null,
+            data:
+              table === 'ai_configs'
+                ? mocks.state.existing
+                : table === 'profiles'
+                  ? mocks.state.member
+                  : null,
             error: null,
           }),
         insert: (row: Record<string, unknown>) => {
@@ -92,6 +99,7 @@ const BASE_BODY = { provider: 'openai', model: 'gpt-x', is_active: true };
 
 beforeEach(() => {
   mocks.state.existing = null;
+  mocks.state.member = null;
   mocks.state.inserts = [];
   mocks.state.updates = [];
   mocks.state.filters = [];
@@ -226,5 +234,75 @@ describe('GET /api/ai/config — platform key availability', () => {
     });
     expect(body).not.toHaveProperty('api_key');
     expect(JSON.stringify(body)).not.toContain('sk-');
+  });
+});
+
+describe('POST /api/ai/config — handoff mode (fase 1)', () => {
+  beforeEach(() => {
+    vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
+  });
+
+  it('rejects an unknown handoff_mode', async () => {
+    const res = await POST(post({ ...BASE_BODY, handoff_mode: 'roulette' }));
+    expect(res.status).toBe(400);
+    expect(mocks.state.inserts).toEqual([]);
+  });
+
+  it('stores auto mode with no fixed agent', async () => {
+    const res = await POST(
+      post({ ...BASE_BODY, handoff_mode: 'auto', handoff_agent_id: null })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.state.inserts[0]).toMatchObject({
+      handoff_mode: 'auto',
+      handoff_agent_id: null,
+    });
+  });
+
+  it('requires a member agent when handoff_mode is fixed', async () => {
+    const res = await POST(post({ ...BASE_BODY, handoff_mode: 'fixed' }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'handoff_agent_id is required when handoff_mode is "fixed"',
+    });
+  });
+
+  it('rejects a fixed agent who is not a member of the account', async () => {
+    mocks.state.member = null;
+    const res = await POST(
+      post({
+        ...BASE_BODY,
+        handoff_mode: 'fixed',
+        handoff_agent_id: 'stranger',
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'handoff_agent_id must be a member of this account',
+    });
+  });
+
+  it('stores fixed mode with a member agent', async () => {
+    mocks.state.member = { user_id: 'agent-7' };
+    const res = await POST(
+      post({ ...BASE_BODY, handoff_mode: 'fixed', handoff_agent_id: 'agent-7' })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.state.inserts[0]).toMatchObject({
+      handoff_mode: 'fixed',
+      handoff_agent_id: 'agent-7',
+    });
+  });
+
+  it('leaves handoff_mode untouched on a partial update that omits it', async () => {
+    mocks.state.existing = {
+      id: 'cfg',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: null,
+    };
+    const res = await POST(post(BASE_BODY));
+    expect(res.status).toBe(200);
+    expect(mocks.state.updates[0]).not.toHaveProperty('handoff_mode');
   });
 });

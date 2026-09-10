@@ -90,7 +90,9 @@ export async function POST(request: Request) {
         isActive: true,
         autoReplyEnabled: false,
         autoReplyMaxPerConversation: 3,
+        handoffMode: 'queue',
         handoffAgentId: null,
+        handoffMessage: null,
         embeddingsApiKey: null,
       });
     } catch (err) {

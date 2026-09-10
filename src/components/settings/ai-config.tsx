@@ -34,16 +34,17 @@ import {
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
-import type { AiProvider } from '@/lib/ai/types';
+import type { AiProvider, HandoffMode } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
 import { useTranslations } from 'next-intl';
 
 const MASKED_KEY = '••••••••••••••••';
 
-// Radix Select can't use an empty-string item value, so the "leave
-// unassigned" choice gets a sentinel that maps to null in the payload.
-const HANDOFF_QUEUE = '__queue__';
+// Radix Select can't use an empty-string item value, so the "no agent
+// chosen yet" placeholder of the fixed-target picker gets a sentinel that
+// maps to '' in state (and is rejected on save).
+const HANDOFF_UNSET = '__unset__';
 
 const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
@@ -86,7 +87,10 @@ export function AiConfig() {
   const [isActive, setIsActive] = useState(false);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [maxPerConversation, setMaxPerConversation] = useState(3);
-  // Empty string = leave unassigned (shared queue).
+  // Who the bot hands off to (fase 1): the least-loaded online agent,
+  // the shared queue, or a fixed teammate (then `handoffAgentId` applies).
+  const [handoffMode, setHandoffMode] = useState<HandoffMode>('queue');
+  // Target for `fixed` mode; empty string = none chosen yet.
   const [handoffAgentId, setHandoffAgentId] = useState('');
   const [members, setMembers] = useState<AccountMember[]>([]);
 
@@ -118,6 +122,11 @@ export function AiConfig() {
         setAutoReplyEnabled(data.auto_reply_enabled);
         setMaxPerConversation(data.auto_reply_max_per_conversation ?? 3);
         setHandoffAgentId(data.handoff_agent_id ?? '');
+        // Rows saved before migration 043 have no mode: a configured
+        // agent meant "fixed", none meant "queue".
+        setHandoffMode(
+          data.handoff_mode ?? (data.handoff_agent_id ? 'fixed' : 'queue')
+        );
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
         setKeyEdited(false);
@@ -168,7 +177,10 @@ export function AiConfig() {
     is_active: isActive,
     auto_reply_enabled: autoReplyEnabled,
     auto_reply_max_per_conversation: maxPerConversation,
-    handoff_agent_id: handoffAgentId || null,
+    handoff_mode: handoffMode,
+    // The fixed target only means something in fixed mode; clear it
+    // otherwise so a stale pick can't resurface later.
+    handoff_agent_id: handoffMode === 'fixed' ? handoffAgentId || null : null,
   });
 
   const handleTest = async () => {
@@ -202,6 +214,10 @@ export function AiConfig() {
     // chosen provider, in which case the server falls back to it.
     if (!configured && !keyEdited && !platformKeyAvailable[provider]) {
       toast.error(t('missingApiKey'));
+      return;
+    }
+    if (handoffMode === 'fixed' && !handoffAgentId) {
+      toast.error(t('handoffFixedNeedsAgent'));
       return;
     }
     setSaving(true);
@@ -479,31 +495,55 @@ export function AiConfig() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="ai-handoff">{t('handoffTo')}</Label>
+              <Label htmlFor="ai-handoff-mode">{t('handoffTo')}</Label>
               <p className="text-muted-foreground text-xs">
                 {t('handoffToDesc')}
               </p>
               <Select
-                value={handoffAgentId || HANDOFF_QUEUE}
-                onValueChange={(v) =>
-                  setHandoffAgentId(!v || v === HANDOFF_QUEUE ? '' : v)
-                }
+                value={handoffMode}
+                onValueChange={(v) => setHandoffMode(v as HandoffMode)}
                 disabled={disabled || !autoReplyEnabled}
               >
-                <SelectTrigger id="ai-handoff">
+                <SelectTrigger id="ai-handoff-mode">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={HANDOFF_QUEUE}>
-                    {t('handoffQueue')}
-                  </SelectItem>
-                  {members.map((m) => (
-                    <SelectItem key={m.user_id} value={m.user_id}>
-                      {memberLabel(m)}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="auto">{t('handoffModeAuto')}</SelectItem>
+                  <SelectItem value="queue">{t('handoffQueue')}</SelectItem>
+                  <SelectItem value="fixed">{t('handoffModeFixed')}</SelectItem>
                 </SelectContent>
               </Select>
+              {handoffMode === 'auto' && (
+                <p className="text-muted-foreground text-xs">
+                  {t('handoffModeAutoHint')}
+                </p>
+              )}
+              {handoffMode === 'fixed' && (
+                <Select
+                  value={handoffAgentId || HANDOFF_UNSET}
+                  onValueChange={(v) =>
+                    setHandoffAgentId(!v || v === HANDOFF_UNSET ? '' : v)
+                  }
+                  disabled={disabled || !autoReplyEnabled}
+                >
+                  <SelectTrigger
+                    id="ai-handoff"
+                    aria-label={t('handoffPickAgent')}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={HANDOFF_UNSET} disabled>
+                      {t('handoffPickAgent')}
+                    </SelectItem>
+                    {members.map((m) => (
+                      <SelectItem key={m.user_id} value={m.user_id}>
+                        {memberLabel(m)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </CardContent>
         </Card>

@@ -86,6 +86,33 @@ BEGIN
     RAISE EXCEPTION 'RLS is not enabled on subscriptions (migration 041)';
   END IF;
 
+  -- Fase 1 (042/043): the agent picker RPC and the two ai_configs
+  -- columns. CREATE OR REPLACE / ADD COLUMN IF NOT EXISTS would hide a
+  -- typo'd name behind a green run.
+  IF to_regprocedure('public.pick_available_agent(uuid, interval, boolean)') IS NULL THEN
+    RAISE EXCEPTION 'pick_available_agent(uuid, interval, boolean) is missing (migration 042)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'ai_configs' AND column_name = 'handoff_mode'
+  ) THEN
+    RAISE EXCEPTION 'ai_configs.handoff_mode is missing (migration 043)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ai_configs_handoff_mode_check'
+      AND conrelid = 'public.ai_configs'::regclass
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION 'ai_configs_handoff_mode_check is missing (migration 043)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'ai_configs' AND column_name = 'handoff_message'
+  ) THEN
+    RAISE EXCEPTION 'ai_configs.handoff_message is missing (migration 043)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

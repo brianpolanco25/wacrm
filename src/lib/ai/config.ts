@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { resolveAiApiKey } from './platform-key';
-import type { AiConfig } from './types';
+import type { AiConfig, HandoffMode } from './types';
 
 interface AiConfigRow {
   provider: 'openai' | 'anthropic';
@@ -13,11 +13,13 @@ interface AiConfigRow {
   auto_reply_enabled: boolean;
   auto_reply_max_per_conversation: number;
   handoff_agent_id: string | null;
+  handoff_mode: HandoffMode | null;
+  handoff_message: string | null;
   embeddings_api_key: string | null;
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key';
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, embeddings_api_key';
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -85,7 +87,12 @@ export async function loadAiConfig(
     isActive: row.is_active,
     autoReplyEnabled: row.auto_reply_enabled,
     autoReplyMaxPerConversation: row.auto_reply_max_per_conversation,
+    // A row written before migration 043 (column absent/null in a mocked
+    // read) keeps the pre-fase-1 semantics: a configured agent meant
+    // "fixed", none meant "queue".
+    handoffMode: row.handoff_mode ?? (row.handoff_agent_id ? 'fixed' : 'queue'),
     handoffAgentId: row.handoff_agent_id,
+    handoffMessage: row.handoff_message ?? null,
     embeddingsApiKey,
   };
 }

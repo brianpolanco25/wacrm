@@ -13,7 +13,7 @@ import { encrypt, decrypt } from '@/lib/whatsapp/encryption';
 import { validateAiCredentials } from '@/lib/ai/validate';
 import { embedTexts } from '@/lib/ai/embeddings';
 import { hasPlatformApiKey, platformApiKey } from '@/lib/ai/platform-key';
-import { AiError, type AiProvider } from '@/lib/ai/types';
+import { AiError, type AiProvider, type HandoffMode } from '@/lib/ai/types';
 
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -48,7 +48,7 @@ export async function GET() {
       // `api_key` is selected only to derive `has_key` — it is stripped
       // out below and never returned to the client.
       .select(
-        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, api_key, embeddings_api_key'
+        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, api_key, embeddings_api_key'
       )
       .eq('account_id', accountId)
       .maybeSingle();
@@ -142,6 +142,22 @@ export async function POST(request: Request) {
       handoffAgentId = rawHandoff;
     }
 
+    // Handoff mode (fase 1, migration 043). `fixed` needs a target — a
+    // fixed handoff to nobody would silently degrade to the queue while
+    // the UI claims otherwise. Absent → left unchanged on update.
+    const modeProvided = 'handoff_mode' in body;
+    let handoffMode: HandoffMode | null = null;
+    if (modeProvided) {
+      const rawMode = body.handoff_mode;
+      if (rawMode !== 'fixed' && rawMode !== 'queue' && rawMode !== 'auto') {
+        return bad('handoff_mode must be "fixed", "queue" or "auto"');
+      }
+      handoffMode = rawMode;
+      if (handoffMode === 'fixed' && !handoffAgentId) {
+        return bad('handoff_agent_id is required when handoff_mode is "fixed"');
+      }
+    }
+
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
 
     // Embeddings key (optional, for semantic KB search): a non-empty
@@ -201,7 +217,9 @@ export async function POST(request: Request) {
           isActive,
           autoReplyEnabled,
           autoReplyMaxPerConversation: maxPer,
+          handoffMode: 'queue',
           handoffAgentId: null,
+          handoffMessage: null,
           embeddingsApiKey: null,
         });
       } catch (err) {
@@ -245,6 +263,7 @@ export async function POST(request: Request) {
     // Only touch the handoff target when the form actually sent the field,
     // so a partial save (e.g. flipping a toggle) doesn't wipe it.
     if (handoffProvided) shared.handoff_agent_id = handoffAgentId;
+    if (modeProvided) shared.handoff_mode = handoffMode;
     if (rawEmbeddingsKey) {
       shared.embeddings_api_key = encrypt(rawEmbeddingsKey);
     } else if (clearEmbeddingsKey) {
