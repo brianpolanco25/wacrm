@@ -26,6 +26,19 @@ and polish.
   set, the WhatsApp webhook's `GET` verification compares against it and
   never reads `whatsapp_config`. Unset, the existing per-tenant lookup is
   unchanged.
+- **Private attachments.** Outbound media (inbox, public API, Flow
+  `send_media`, template media headers in broadcasts) is now uploaded to
+  Meta and sent by media id instead of a public bucket link, and the
+  attachment path is checked against the sending account. The UI renders
+  bucket-hosted attachments through 10-minute signed URLs that renew
+  while open. Works with the media buckets public or private.
+
+> **Migration (apply last):** `supabase/migrations/044_private_media_buckets.sql`
+> makes `chat-media` and `flow-media` private and scopes reads to the
+> owning account (legacy `<uid>/…` paths stay readable by their
+> uploader). Apply it **only after** this release is live and you have
+> confirmed outbound attachments still arrive — see
+> `docs/security.md`, "Private attachments".
 
 ## [0.8.1] — 2026-07-10
 

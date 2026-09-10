@@ -1,6 +1,27 @@
 import { uploadResumableMedia } from '@/lib/whatsapp/meta-api'
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
+import { MEDIA_BUCKETS, parseStorageObjectUrl } from '@/lib/media/storage-url'
+import {
+  assertMediaPathOwnedBy,
+  type OutboundMediaDb,
+  type OutboundMediaStorage,
+} from '@/lib/whatsapp/outbound-media'
+
+/**
+ * Where the sample bytes come from when `header_media_url` is one of our
+ * own bucket objects. Without it the helper can only fetch public URLs —
+ * which stops working for our buckets once migration 044 makes them
+ * private, so every route passes it.
+ */
+export interface HeaderHandleSource {
+  /** Tenant submitting the template; the object must belong to it. */
+  accountId: string
+  /** Service-role `supabase.storage`. */
+  storage: OutboundMediaStorage
+  /** Service-role client, for legacy `<uid>/…` path ownership. */
+  db?: OutboundMediaDb
+}
 
 /**
  * Meta requires an `example.header_handle` (from the Resumable Upload
@@ -22,6 +43,7 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png']
 export async function ensureImageHeaderHandle(
   payload: TemplatePayload,
   accessToken: string,
+  source?: HeaderHandleSource,
 ): Promise<void> {
   if (payload.header_type !== 'image') return
   if (payload.header_handle) return // already have one
@@ -32,6 +54,41 @@ export async function ensureImageHeaderHandle(
     throw new Error(
       'Image-header templates need META_APP_ID set (used for Meta’s Resumable Upload). Add it to your environment, or remove the image header.',
     )
+  }
+
+  // One of our own bucket objects: read it through Storage with the
+  // service role (after an ownership check) instead of over public HTTP,
+  // which stops working when the bucket is private.
+  const ref = parseStorageObjectUrl(payload.header_media_url, {
+    origin: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  })
+  if (ref && MEDIA_BUCKETS.has(ref.bucket) && source) {
+    await assertMediaPathOwnedBy(ref.path, source.accountId, source.db)
+    const { data, error } = await source.storage.from(ref.bucket).download(ref.path)
+    if (error || !data) {
+      throw new Error('Could not read the header image from storage. Upload it again.')
+    }
+    const contentType = data.type.split(';')[0].trim().toLowerCase()
+    if (contentType && !ALLOWED_IMAGE_TYPES.includes(contentType)) {
+      throw new Error(`Header image must be JPEG or PNG (got ${contentType}).`)
+    }
+    const bytes = new Uint8Array(await data.arrayBuffer())
+    if (bytes.byteLength === 0) throw new Error('Header image is empty.')
+    if (bytes.byteLength > IMAGE_MAX_BYTES) {
+      throw new Error(
+        `Header image is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — Meta's limit is 5 MB.`,
+      )
+    }
+    const mimeType = ALLOWED_IMAGE_TYPES.includes(contentType) ? contentType : 'image/jpeg'
+    const { handle } = await uploadResumableMedia({
+      appId,
+      accessToken,
+      fileName: mimeType === 'image/png' ? 'header.png' : 'header.jpg',
+      mimeType,
+      bytes,
+    })
+    payload.header_handle = handle
+    return
   }
 
   // SSRF guard: `header_media_url` is caller-supplied (any authenticated

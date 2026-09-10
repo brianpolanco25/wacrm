@@ -5,10 +5,14 @@ import {
   loadMediaBlob,
   MediaResponseError,
   type MediaFetch,
+  type MediaSigner,
 } from "./blob-cache";
 
 const PROXY = "/api/whatsapp/media/";
 const BUCKET = "https://x.supabase.co/storage/v1/object/public/chat-media/a/1-p.png";
+
+/** Signer that changes nothing — the bucket-URL tests below are about caching. */
+const identity: MediaSigner = async (url) => url;
 
 function okResponse(body: string): Response {
   return new Response(body, { status: 200 });
@@ -63,10 +67,27 @@ describe("loadMediaBlob", () => {
     // The browser's HTTP cache already covers these, and a 16 MB video has
     // no business being pinned in JS memory.
     const fetchImpl = trackingFetch();
-    await loadMediaBlob(BUCKET, fetchImpl);
-    await loadMediaBlob(BUCKET, fetchImpl);
+    await loadMediaBlob(BUCKET, fetchImpl, identity);
+    await loadMediaBlob(BUCKET, fetchImpl, identity);
 
     expect(fetchImpl.calls).toEqual([BUCKET, BUCKET]);
+  });
+
+  it("fetches a bucket object through the URL the signer hands back", async () => {
+    // Once the buckets are private the stored URL 400s; the signer swaps
+    // in a short-lived signed URL and that is what goes on the wire.
+    const fetchImpl = trackingFetch();
+    const signer: MediaSigner = async (url) => `${url}?token=signed`;
+    await loadMediaBlob(BUCKET, fetchImpl, signer);
+
+    expect(fetchImpl.calls).toEqual([`${BUCKET}?token=signed`]);
+  });
+
+  it("never signs proxy URLs", async () => {
+    const fetchImpl = trackingFetch();
+    const signer = vi.fn(async (url: string) => url);
+    await loadMediaBlob(`${PROXY}9`, fetchImpl, signer);
+    expect(signer).not.toHaveBeenCalled();
   });
 
   it("evicts the least-recently-used entry past the cap", async () => {
@@ -115,7 +136,7 @@ describe("loadMediaBlob", () => {
       throw new TypeError("Failed to fetch");
     });
     await expect(
-      loadMediaBlob(BUCKET, blocked as unknown as MediaFetch),
+      loadMediaBlob(BUCKET, blocked as unknown as MediaFetch, identity),
     ).rejects.not.toBeInstanceOf(MediaResponseError);
   });
 

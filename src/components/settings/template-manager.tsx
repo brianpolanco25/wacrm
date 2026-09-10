@@ -19,6 +19,7 @@ import {
   MEDIA_MAX_BYTES_BY_KIND,
 } from '@/lib/storage/upload-media';
 import { useAuth } from '@/hooks/use-auth';
+import { useMediaSrc } from '@/hooks/use-media-blob-url';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -150,6 +151,11 @@ export function TemplateManager() {
   // submit route turns that into a Meta Resumable-Upload handle.
   const [uploadingHeader, setUploadingHeader] = useState(false);
   const headerFileRef = useRef<HTMLInputElement>(null);
+  // Preview of a bucket-hosted header image needs a signed URL once the
+  // bucket is private; a pasted external link renders as-is.
+  const { src: headerPreviewSrc } = useMediaSrc(
+    form.header_media_url || undefined,
+  );
 
   // Body variable indices — `[1, 2, 3]` for "{{1}} {{2}} {{3}}". We
   // re-run the extractor on every render to keep the sample-value rows
@@ -844,7 +850,7 @@ export function TemplateManager() {
                   {form.header_format === 'image' && form.header_media_url && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={form.header_media_url}
+                      src={headerPreviewSrc ?? form.header_media_url}
                       alt="Header sample"
                       className="max-h-28 rounded-md border border-border object-contain"
                     />

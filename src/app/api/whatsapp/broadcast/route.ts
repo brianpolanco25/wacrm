@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveTemplateHeaderMedia } from '@/lib/whatsapp/outbound-media'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body'
 import {
@@ -177,6 +179,34 @@ export async function POST(request: Request) {
         continue
       }
 
+      // A bucket-hosted media header (the template's own or this
+      // recipient's override) goes to Meta by media id. Cached per
+      // (number, object), so the common "same header for everyone"
+      // case uploads once for the whole broadcast. Scoped to this
+      // account: an override naming another account's object is refused.
+      let messageParams = recipient.messageParams
+      try {
+        messageParams = await resolveTemplateHeaderMedia(
+          templateRow,
+          recipient.messageParams,
+          {
+            accountId,
+            phoneNumberId: config.phone_number_id,
+            accessToken,
+            storage: supabaseAdmin().storage,
+            db: supabaseAdmin(),
+          },
+        )
+      } catch (error) {
+        results.push({
+          phone: recipient.phone,
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        })
+        failedCount++
+        continue
+      }
+
       // Retry with phone variants on "not in allowed list" so numbers
       // that differ only in a trunk-prefix 0 still reach recipients.
       const variants = phoneVariants(sanitized)
@@ -192,7 +222,7 @@ export async function POST(request: Request) {
             templateName: template_name,
             language: resolvedTemplate.language,
             template: templateRow ?? undefined,
-            messageParams: recipient.messageParams,
+            messageParams,
             params: recipient.params ?? [],
           })
           sentMessageId = result.messageId

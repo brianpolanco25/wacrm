@@ -9,6 +9,7 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveOutboundMedia } from '@/lib/whatsapp/outbound-media'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -156,7 +157,7 @@ interface SendMediaEngineArgs {
   conversationId: string
   contactId: string
   kind: MediaKind
-  /** Public URL Meta fetches at send time. */
+  /** The node's `media_url`: one of our bucket objects, or an external link. */
   link: string
   caption?: string
   /** Document-only; ignored by Meta for image/video. */
@@ -203,13 +204,27 @@ export async function engineSendMedia(
 
   const accessToken = decrypt(config.access_token)
 
+  // A flow-media / chat-media object is uploaded to Meta and sent by id
+  // (cached per number + object, so a flow that sends the same file to
+  // every contact uploads it once); an external link passes through.
+  // Ownership is checked against the flow's account — throws otherwise.
+  const media = await resolveOutboundMedia({
+    mediaUrl: args.link,
+    accountId: args.accountId,
+    phoneNumberId: config.phone_number_id,
+    accessToken,
+    storage: db.storage,
+    db,
+    fileName: args.filename,
+  })
+
   const attempt = async (phone: string): Promise<string> => {
     const r = await sendMediaMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
       to: phone,
       kind: args.kind,
-      link: args.link,
+      ...('mediaId' in media ? { mediaId: media.mediaId } : { link: media.link }),
       caption: args.caption,
       filename: args.filename,
     })

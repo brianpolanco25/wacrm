@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media";
+import { useMediaSrc } from "@/hooks/use-media-blob-url";
 import { slugify, type BuilderNode } from "../shared";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
 
@@ -908,6 +909,9 @@ function SendMediaForm({
   const displayName =
     cfg.filename ||
     (cfg.media_url ? cfg.media_url.split("/").pop() ?? "" : "");
+  // The stored URL is the bucket's public shape; opening it needs a
+  // signed URL once the bucket is private.
+  const { src: mediaHref } = useMediaSrc(cfg.media_url || undefined);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -979,7 +983,7 @@ function SendMediaForm({
           <div className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs">
             <Paperclip className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
             <a
-              href={cfg.media_url}
+              href={mediaHref ?? cfg.media_url}
               target="_blank"
               rel="noopener noreferrer"
               className="min-w-0 flex-1 truncate text-foreground hover:text-cyan-300"
