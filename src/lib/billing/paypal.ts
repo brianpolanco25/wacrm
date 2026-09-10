@@ -284,3 +284,105 @@ function providerId(data: unknown, resource: string): string {
   }
   return id;
 }
+
+// ------------------------------------------------------------
+// Subscriptions (used by the checkout route, Fase 3 §2).
+//
+// The webhook that turns an approved subscription into service lives
+// in Fase 3 §3 — nothing here writes to our database.
+// ------------------------------------------------------------
+
+export interface CreateSubscriptionArgs {
+  /** PayPal billing plan id (`plans.provider_plan_id_month|_year`). */
+  planId: string;
+  /**
+   * Our own correlation id. PayPal echoes `custom_id` back on the
+   * subscription resource of every event, so the webhook can resolve
+   * the account even if the intent row were missing.
+   */
+  customId: string;
+  /** Where PayPal sends the approver back. Informational page only. */
+  returnUrl: string;
+  /** Where PayPal sends an approver who backs out. */
+  cancelUrl: string;
+  /** Shown on PayPal's approval screen. */
+  brandName?: string;
+  /** Idempotency key sent as PayPal-Request-Id. */
+  requestId: string;
+}
+
+export interface PayPalSubscription {
+  id: string;
+  status: string;
+  /** The `rel: "approve"` link the browser must be sent to. */
+  approvalUrl: string;
+}
+
+/**
+ * Create a subscription in APPROVAL_PENDING state and return its
+ * approval link.
+ *
+ * `IMMEDIATE_PAYMENT_REQUIRED` keeps eChecks out: a subscription that
+ * activates days later, after a bank transfer clears, would hand out
+ * service before the money is real. `NO_SHIPPING` because software has
+ * no address to ship to and the extra step loses conversions.
+ */
+export async function createSubscription(
+  args: CreateSubscriptionArgs
+): Promise<PayPalSubscription> {
+  const { data } = await paypalFetch<{
+    id?: unknown;
+    status?: unknown;
+    links?: Array<{ rel?: unknown; href?: unknown }>;
+  }>('/v1/billing/subscriptions', {
+    method: 'POST',
+    headers: { 'PayPal-Request-Id': args.requestId },
+    body: {
+      plan_id: args.planId,
+      custom_id: args.customId,
+      application_context: {
+        brand_name: args.brandName,
+        shipping_preference: 'NO_SHIPPING',
+        user_action: 'SUBSCRIBE_NOW',
+        payment_method: {
+          payer_selected: 'PAYPAL',
+          payee_preferred: 'IMMEDIATE_PAYMENT_REQUIRED',
+        },
+        return_url: args.returnUrl,
+        cancel_url: args.cancelUrl,
+      },
+    },
+  });
+
+  const id = providerId(data, 'subscription');
+  const approvalUrl = approvalLink(data.links);
+  if (!approvalUrl) {
+    // Without it the customer cannot pay. Failing here beats handing
+    // the UI a subscription it can never get approved.
+    throw new PayPalError(
+      `PayPal subscription ${id} came back without an approve link`,
+      200,
+      data
+    );
+  }
+  const status = typeof data.status === 'string' ? data.status : 'UNKNOWN';
+  return { id, status, approvalUrl };
+}
+
+/** Pick the `approve` link out of a PayPal HATEOAS `links` array. */
+export function approvalLink(
+  links: Array<{ rel?: unknown; href?: unknown }> | undefined
+): string | null {
+  if (!Array.isArray(links)) return null;
+  for (const link of links) {
+    if (
+      typeof link?.rel === 'string' &&
+      link.rel.toLowerCase() === 'approve' &&
+      typeof link.href === 'string' &&
+      link.href
+    ) {
+      return link.href;
+    }
+  }
+  return null;
+}

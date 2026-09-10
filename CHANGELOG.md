@@ -26,8 +26,23 @@ behaviour changes**; nothing is limited by plan yet.
 > `supabase/migrations/045_billing_provider_plans.sql` before running the
 > PayPal catalogue bootstrap script.
 
+> **Migration required:** apply
+> `supabase/migrations/048_checkout_intent.sql` before enabling checkout.
+> It adds the `checkout_intents` table; no existing data is touched.
+
 ### Added
 
+- **Plan checkout** (`/billing`). An owner or admin picks a plan and a
+  billing cycle, approves the payment on PayPal and comes back to
+  `/billing/return`, which only says "we are confirming your payment".
+  Activation is **not** done by that page: it waits for the PayPal
+  webhook, so closing the browser after approving loses nothing and
+  opening the return URL by hand grants nothing. Each attempt is recorded
+  in `checkout_intents` (plan, cycle, PayPal subscription id, account) so
+  the event can be matched to the right tenant. Contracting is refused
+  while the account already has a PayPal subscription being charged —
+  changing plan is a separate flow. Set `NEXT_PUBLIC_SITE_URL` so PayPal
+  returns customers to your deployment.
 - **PayPal catalogue bootstrap.** A server-only script creates one PayPal
   product and the six monthly/annual plan variants, then stores their provider
   ids in `plans`. It targets the sandbox unless `PAYPAL_ENV=live`, pages

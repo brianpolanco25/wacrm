@@ -104,6 +104,27 @@ Do not edit a stored id to change a price. PayPal plans are effectively
 immutable once they have subscribers; create a versioned replacement plan
 instead, in a later migration.
 
+## Checkout (`/billing`)
+
+Contracting a plan runs in the web app and needs the same
+`PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` / `PAYPAL_ENV` as the catalogue
+script, plus one variable that is not PayPal's:
+
+| Variable               | Purpose                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SITE_URL` | Canonical URL of this deployment. PayPal returns approvers to `<url>/billing/return`. |
+
+`NEXT_PUBLIC_SITE_URL` already existed for invite links, and checkout reuses
+it. Without it the return URL is derived from the request headers
+(`x-forwarded-host`, then `Host`), which works behind a well-configured proxy
+but breaks the moment one is misconfigured — the customer pays and lands
+nowhere. Set it. Being a `NEXT_PUBLIC_*` variable it is **baked into the
+image at build time** (see the build arguments below), not read at runtime.
+
+Nothing here activates a subscription: the return page only reports status
+and the plan turns on when the PayPal webhook arrives. `PAYPAL_WEBHOOK_ID`
+belongs to that webhook and is not needed yet.
+
 ## Plain Docker (no Compose)
 
 ```bash

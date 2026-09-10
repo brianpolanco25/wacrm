@@ -102,6 +102,48 @@ BEGIN
     RAISE EXCEPTION 'plans.provider_plan_id_year is missing (migration 045)';
   END IF;
 
+  -- Checkout intent (048): the table the webhook will use to match an
+  -- event with an account and a plan, its uniqueness guard, its
+  -- non-destructive FK, and the RLS that keeps tenants out of it.
+  IF to_regclass('public.checkout_intents') IS NULL THEN
+    RAISE EXCEPTION 'public.checkout_intents is missing (migration 048)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'checkout_intents_provider_subscription_key'
+      AND conrelid = 'public.checkout_intents'::regclass
+      AND contype = 'u'
+  ) THEN
+    RAISE EXCEPTION
+      'checkout_intents UNIQUE (provider, provider_subscription_id) is missing (migration 048)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'checkout_intents_account_id_fkey'
+      AND conrelid = 'public.checkout_intents'::regclass
+      AND contype = 'f'
+      AND confdeltype = 'r'   -- ON DELETE RESTRICT, never CASCADE
+  ) THEN
+    RAISE EXCEPTION
+      'checkout_intents_account_id_fkey is missing or not ON DELETE RESTRICT (migration 048)';
+  END IF;
+  IF to_regclass('public.checkout_intents_account_created_idx') IS NULL THEN
+    RAISE EXCEPTION 'checkout_intents_account_created_idx is missing (migration 048)';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.checkout_intents'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on checkout_intents (migration 048)';
+  END IF;
+  -- Write policies here would let a tenant claim someone else's paid
+  -- subscription; the only writer is the service role.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'checkout_intents'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'checkout_intents has a write policy — only the service role may write it (migration 048)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
