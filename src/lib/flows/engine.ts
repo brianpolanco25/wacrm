@@ -224,14 +224,21 @@ async function loadActiveRunForContact(
   return rows[0] ?? null;
 }
 
+/**
+ * `db` is the service role — RLS is off, so the account filter is the
+ * only thing that keeps a run from reading another tenant's flow. The
+ * caller always has the account (it comes off the run row).
+ */
 async function loadFlow(
   db: AdminClient,
   flowId: string,
+  accountId: string,
 ): Promise<FlowRow | null> {
   const { data, error } = await db
     .from("flows")
     .select("*")
     .eq("id", flowId)
+    .eq("account_id", accountId)
     .maybeSingle();
   if (error) {
     console.error("[flows] loadFlow error:", error.message);
@@ -1024,7 +1031,7 @@ async function handleReplyForActiveRun(
 
   // No match → fallback. Apply the policy.
   const policy = resolveFallbackPolicy(
-    (await loadFlow(db, run.flow_id))?.fallback_policy,
+    (await loadFlow(db, run.flow_id, run.account_id))?.fallback_policy,
   );
   const newReprompts = run.reprompt_count + 1;
   await db

@@ -139,10 +139,14 @@ export async function resumePendingExecution(pending: {
   context: AutomationContext
 }): Promise<void> {
   const db = supabaseAdmin()
+  // Service role: no RLS. The pending row carries the account it was
+  // queued for, so the automation is read under that account — an id
+  // that points anywhere else simply doesn't resolve.
   const { data: automation, error } = await db
     .from('automations')
     .select('*')
     .eq('id', pending.automation_id)
+    .eq('account_id', pending.account_id)
     .single()
 
   if (error || !automation) {

@@ -40,6 +40,15 @@ and polish.
 > confirmed outbound attachments still arrive — see
 > `docs/security.md`, "Private attachments".
 
+### Fixed
+
+- **Flow editing scoped to the account.** Saving, deleting and
+  activating a flow wrote through the service-role client filtering only
+  by row id, so the account was never part of the query. Ownership is
+  now resolved before the write and every query carries the caller's
+  account. Same fix for the two lookups the runners did by id alone (the
+  flow behind a live run, the automation behind a queued step).
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeDatabase, type Row } from './fake-supabase';
+import {
+  unscopedServiceRoleQueries,
+  type ScopeWaiver,
+} from './service-role-audit';
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { hashApiKey } from '@/lib/api-keys/keys';
 import { API_SCOPES } from '@/lib/api-keys/scopes';
@@ -17,6 +21,11 @@ import { API_SCOPES } from '@/lib/api-keys/scopes';
 //   2. addressing B's ids as A yields 404 (never 403, never the row);
 //   3. B's rows are byte-for-byte unchanged afterwards.
 //
+// And, after every single test, a fourth thing that does not depend on
+// the test having thought of the right case: every query the route ran
+// through the service role carried its account scope (see
+// `service-role-audit.ts` and GLOBAL_WAIVERS below).
+//
 // The database is `fake-supabase.ts`, which evaluates queries for real.
 // B's rows are deliberately seeded FIRST in each table and, where the
 // data allows it, B carries the same phone number / template name as A,
@@ -30,15 +39,20 @@ import { API_SCOPES } from '@/lib/api-keys/scopes';
 
 const A = 'acct-a';
 const B = 'acct-b';
-const USER_A = 'user-a';
-const USER_B = 'user-b';
+// Real UUIDs: the templates lifecycle route rejects a non-UUID template
+// id outright, and a legacy `<uid>/…` storage path is only recognised as
+// one when the first segment parses as a UUID.
+const USER_A = '11111111-1111-4111-8111-111111111111';
+const USER_B = '22222222-2222-4222-8222-222222222222';
+const TPL_A = 'aaaaaaaa-0000-4000-8000-000000000001';
+const TPL_B = 'bbbbbbbb-0000-4000-8000-000000000002';
 const SHARED_PHONE = '+15551230000';
 const KEY_A = 'wacrm_live_keyA_keyA_keyA_keyA_keyA_keyA_keyA';
 const KEY_B = 'wacrm_live_keyB_keyB_keyB_keyB_keyB_keyB_keyB';
 
 const h = vi.hoisted(() => ({
   db: null as unknown as import('./fake-supabase').FakeDatabase,
-  actor: { userId: 'user-a', accountId: 'acct-a' } as {
+  actor: { userId: '', accountId: 'acct-a' } as {
     userId: string;
     accountId: string;
   },
@@ -144,6 +158,18 @@ vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
       alreadyRegistered: false,
     }),
     subscribeWabaToApp: record('subscribeWabaToApp', undefined),
+    // Template lifecycle. Kept out of dry-run mode on purpose: the
+    // dry-run short-circuit skips the header-handle step, which is the
+    // one place those routes touch the service-role client.
+    submitMessageTemplate: record('submitMessageTemplate', {
+      id: 'meta-tpl-new',
+      status: 'PENDING',
+    }),
+    editMessageTemplate: record('editMessageTemplate', { success: true }),
+    deleteMessageTemplate: record('deleteMessageTemplate', { success: true }),
+    uploadResumableMedia: record('uploadResumableMedia', {
+      handle: 'HANDLE-1',
+    }),
   };
 });
 
@@ -203,6 +229,8 @@ import * as waBroadcast from '@/app/api/whatsapp/broadcast/route';
 import * as waBroadcastResume from '@/app/api/whatsapp/broadcast/[id]/resume/route';
 import * as waWebhook from '@/app/api/whatsapp/webhook/route';
 import * as waConfig from '@/app/api/whatsapp/config/route';
+import * as waTemplateById from '@/app/api/whatsapp/templates/[id]/route';
+import * as waTemplateSubmit from '@/app/api/whatsapp/templates/submit/route';
 import * as automationsCron from '@/app/api/automations/cron/route';
 import * as flowsCron from '@/app/api/flows/cron/route';
 import * as automations from '@/app/api/automations/route';
@@ -434,7 +462,8 @@ function seed(): FakeDatabase {
         updated_at: created,
       },
       template: {
-        id: `tpl-${tag}`,
+        id: acct === A ? TPL_A : TPL_B,
+        meta_template_id: `meta-tpl-${tag}`,
         account_id: acct,
         user_id: user,
         name: 'promo',
@@ -631,9 +660,153 @@ function inboundWebhookBody(phoneNumberId: string, text = 'hello') {
   };
 }
 
+// ---- the per-query property ------------------------------------------
+//
+// Case-by-case leak tests answer "does this route leak today". They say
+// nothing about the query a future patch adds. The audit below closes
+// that: after EVERY test, each query the routes ran through the service
+// role must carry its account scope — a filter on `account_id`, an
+// `account_id` on the rows it writes, the parent key of a table that has
+// no such column, or an account argument on an RPC.
+//
+// What is left is the handful of queries that genuinely cannot carry an
+// account: they are the ones that RESOLVE the account, or the cron
+// sweeps that run across all of them by design. Each is waived here by
+// name, with the reason, and the waiver is as narrow as the query.
+
+const GLOBAL_WAIVERS: ScopeWaiver[] = [
+  {
+    table: 'api_keys',
+    op: 'select',
+    by: ['key_hash'],
+    reason:
+      'This IS the tenant resolver: the presented key hash is what yields an ' +
+      'account_id (src/lib/api-keys/store.ts). Nothing upstream of it knows ' +
+      'the account yet.',
+  },
+  {
+    table: 'api_keys',
+    op: 'update',
+    by: ['id'],
+    reason:
+      'Fire-and-forget last_used_at bump on the exact row the hash lookup ' +
+      'above returned; the id never comes from the request.',
+  },
+  {
+    table: 'whatsapp_config',
+    op: 'select',
+    by: ['phone_number_id'],
+    reason:
+      'Tenant resolver for inbound webhooks (the account is whatever owns ' +
+      "Meta's phone_number_id) and, in /api/whatsapp/config POST, the " +
+      "uniqueness guard that refuses to claim another account's number — " +
+      'an account filter there would defeat the check.',
+  },
+  {
+    table: 'contacts',
+    op: 'update',
+    by: ['id'],
+    reason:
+      'Webhook profile-name refresh on the contact resolved one query ' +
+      "earlier with .eq('account_id', …) for the resolved tenant.",
+  },
+  {
+    table: 'conversations',
+    op: 'update',
+    by: ['id'],
+    reason:
+      'Bumps a conversation the handler already loaded under its account.',
+  },
+  {
+    table: 'rpc:bump_conversation_on_inbound',
+    reason:
+      'Takes the conversation id resolved under the account and touches the ' +
+      'counters of that single row (migration 038).',
+  },
+  {
+    table: 'broadcasts',
+    op: 'update',
+    by: ['id'],
+    reason:
+      'Progress and finalisation counters for the broadcast whose id came ' +
+      'from the account-scoped create RPC or an account-scoped read (resume).',
+  },
+  {
+    table: 'broadcast_recipients',
+    op: 'update',
+    by: ['id'],
+    reason:
+      'Per-recipient delivery result. The table has no account_id column and ' +
+      'the row id comes from the delivery plan, built off an account-scoped ' +
+      'broadcast_id.',
+  },
+  {
+    table: 'flow_runs',
+    op: 'update',
+    by: ['id'],
+    reason:
+      "Advances or pauses the run loaded with .eq('account_id', …) (flows " +
+      'engine, agent-stepped-in pause) or claimed by the cron sweep below.',
+  },
+  {
+    table: 'flow_runs',
+    op: 'select',
+    by: ['status'],
+    reason:
+      'Cron sweep: timing out stale runs is a cross-account job by design ' +
+      '(/api/flows/cron), and it writes back only to the runs it read.',
+  },
+  {
+    table: 'automation_pending_executions',
+    op: 'select',
+    by: ['status'],
+    reason:
+      'Cron sweep across accounts, same shape as the flow_runs one above ' +
+      '(/api/automations/cron).',
+  },
+  {
+    table: 'automation_pending_executions',
+    op: 'update',
+    by: ['id'],
+    reason: 'Claims / marks the queued row the sweep just read.',
+  },
+  {
+    table: 'automations',
+    op: 'select',
+    by: ['id'],
+    reason:
+      '/api/automations/[id] scopes by user_id, not account_id — narrower ' +
+      'than the account, so it cannot leak across tenants (it hides ' +
+      "teammates' rows instead; noted as debt in the implementation report).",
+  },
+  {
+    table: 'automations',
+    op: 'delete',
+    by: ['id', 'user_id'],
+    reason: 'Same legacy per-user scope as the read above.',
+  },
+];
+
+/** Extra waivers for the current test only; reset in `beforeEach`. */
+let extraWaivers: ScopeWaiver[] = [];
+
+afterEach(() => {
+  const violations = unscopedServiceRoleQueries(h.db.log, [
+    ...GLOBAL_WAIVERS,
+    ...extraWaivers,
+  ]);
+  expect(
+    violations.map((v) => v.message),
+    'service-role queries ran without an account scope; add the filter to ' +
+      'the route, or a waiver with its reason if the query resolves the ' +
+      'tenant'
+  ).toEqual([]);
+});
+
 beforeEach(() => {
   h.db = seed();
   h.actor = { userId: USER_A, accountId: A };
+  extraWaivers = [];
   h.after = [];
   h.meta.sends = [];
   h.webhookEvents = [];
@@ -650,6 +823,13 @@ beforeEach(() => {
 
 describe('fake database: leak detection mechanism', () => {
   it('an unscoped service-role query returns rows from both accounts, B first', async () => {
+    extraWaivers.push({
+      table: 'contacts',
+      op: 'select',
+      reason:
+        'The unscoped query IS the subject of this test — it demonstrates ' +
+        'what the audit catches everywhere else.',
+    });
     const { data } = await h.db.admin
       .from('contacts')
       .select('*')
@@ -841,7 +1021,7 @@ describe('/api/v1 (service role via API key)', () => {
     expect(recipients.map((r) => r.contact_id)).toEqual(['contact-a']);
     expect(h.meta.sends.map((s) => s.args.phoneNumberId)).toEqual(['pn-a']);
     // The template body persisted is A's template, not B's same-named one.
-    expect(h.meta.sends[0].args.template).toMatchObject({ id: 'tpl-a' });
+    expect(h.meta.sends[0].args.template).toMatchObject({ id: TPL_A });
     expectBUnchanged(before);
 
     const foreign = await v1BroadcastById.GET(
@@ -954,7 +1134,7 @@ describe('/api/whatsapp/send and /broadcast', () => {
     );
     expect(res.status).toBe(200);
     expect(h.meta.sends.map((s) => s.args.phoneNumberId)).toEqual(['pn-a']);
-    expect(h.meta.sends[0].args.template).toMatchObject({ id: 'tpl-a' });
+    expect(h.meta.sends[0].args.template).toMatchObject({ id: TPL_A });
     expectBUnchanged(before);
   });
 
@@ -1341,6 +1521,81 @@ describe('/api/flows (service-role writes)', () => {
     expect(act.status).toBe(404);
     expectBUnchanged(before);
   });
+
+  // The 404s above stop at the ownership guard, so they never reach the
+  // service-role writes underneath. These run them for real: every
+  // admin query in PUT / DELETE / activate executes, and the audit in
+  // `afterEach` requires each one to carry its account scope.
+
+  it("PUT rewrites A's flow and its node graph, leaving B's alone", async () => {
+    const before = h.db.snapshot(B);
+    const res = await flowById.PUT(
+      req('PUT', '/api/flows/flow-a', {
+        name: 'renamed by A',
+        nodes: [
+          { node_key: 'start', node_type: 'send_message', config: {} },
+          { node_key: 'bye', node_type: 'end', config: {} },
+        ],
+      }),
+      params({ id: 'flow-a' })
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.flow.id).toBe('flow-a');
+    expect(body.flow.name).toBe('renamed by A');
+    // The response is the re-read: only A's flow and only A's nodes.
+    expect(body.nodes.map((n: Row) => n.flow_id)).toEqual(['flow-a', 'flow-a']);
+    expectNoBIds(body);
+    // Delete-then-insert on flow_nodes is filtered by flow_id: B's node
+    // is still there, unedited.
+    expect(
+      h.db.rows('flow_nodes').find((n) => n.id === 'node-b')
+    ).toBeDefined();
+    expect(h.db.rows('flows').find((f) => f.id === 'flow-b')?.name).toBe(
+      'flow b'
+    );
+    expectBUnchanged(before);
+  });
+
+  it("DELETE removes A's flow and no other account's", async () => {
+    const before = h.db.snapshot(B);
+    const res = await flowById.DELETE(
+      req('DELETE', '/api/flows/flow-a'),
+      params({ id: 'flow-a' })
+    );
+    expect(res.status).toBe(200);
+    expect(h.db.rows('flows').map((f) => f.id)).toEqual(['flow-b']);
+    expectBUnchanged(before);
+  });
+
+  it("activate validates and flips A's flow; B's stays active", async () => {
+    const before = h.db.snapshot(B);
+    const res = await flowActivate.POST(
+      req('POST', '/api/flows/flow-a/activate', { status: 'active' }),
+      params({ id: 'flow-a' })
+    );
+    const body = await res.json();
+    // Both accounts have a node keyed 'start': had the node read not
+    // been scoped to this flow, the validator would have seen a
+    // duplicate node_key and refused with 422.
+    expect(res.status).toBe(200);
+    expect(body.flow.id).toBe('flow-a');
+    expect(body.flow.status).toBe('active');
+    expectNoBIds(body);
+
+    const archived = await flowActivate.POST(
+      req('POST', '/api/flows/flow-a/activate', { status: 'archived' }),
+      params({ id: 'flow-a' })
+    );
+    expect(archived.status).toBe(200);
+    expect(h.db.rows('flows').find((f) => f.id === 'flow-a')?.status).toBe(
+      'archived'
+    );
+    expect(h.db.rows('flows').find((f) => f.id === 'flow-b')?.status).toBe(
+      'active'
+    );
+    expectBUnchanged(before);
+  });
 });
 
 describe('/api/quick-replies (service-role writes)', () => {
@@ -1392,6 +1647,168 @@ describe('/api/whatsapp/config', () => {
     );
     expect(res.status).toBe(409);
     expect(h.meta.sends).toEqual([]);
+    expectBUnchanged(before);
+  });
+});
+
+// ============================================================
+// Template lifecycle. The rows go through the cookie-session client,
+// but both routes hand `supabaseAdmin()` (storage + db) to
+// `ensureImageHeaderHandle`, which reads the sample image straight out
+// of the bucket. That is a service-role read of another tenant's
+// attachment unless the ownership check holds.
+// ============================================================
+
+const storageUrl = (path: string, bucket = 'chat-media') =>
+  `https://fake.supabase.co/storage/v1/object/public/${bucket}/${path}`;
+
+/** Minimal valid payload; overrides carry whatever the test is about. */
+function templatePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    name: 'promo',
+    category: 'Marketing',
+    language: 'en_US',
+    body_text: 'Hello there',
+    ...overrides,
+  };
+}
+
+describe('/api/whatsapp/templates (service role in the header-handle path)', () => {
+  it("PATCH on B's template → 404, nothing sent to Meta", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waTemplateById.PATCH(
+      req('PATCH', `/api/whatsapp/templates/${TPL_B}`, templatePayload()),
+      params({ id: TPL_B })
+    );
+    expect(res.status).toBe(404);
+    expect(h.meta.sends).toEqual([]);
+    expectBUnchanged(before);
+  });
+
+  it('PATCH refuses a header image that belongs to B, before calling Meta', async () => {
+    const before = h.db.snapshot(B);
+    // A legacy `<uid>/…` object of B's: proving it is not A's takes a
+    // service-role read of `profiles`, which must be account-scoped.
+    h.db.storageObjects.push({
+      bucket: 'chat-media',
+      path: `${USER_B}/secret.png`,
+    });
+    const res = await waTemplateById.PATCH(
+      req(
+        'PATCH',
+        `/api/whatsapp/templates/${TPL_A}`,
+        templatePayload({
+          header_type: 'image',
+          header_media_url: storageUrl(`${USER_B}/secret.png`),
+        })
+      ),
+      params({ id: TPL_A })
+    );
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/another account/);
+    expect(h.meta.sends).toEqual([]);
+    expectBUnchanged(before);
+  });
+
+  it("PATCH accepts A's own attachment and edits only A's row", async () => {
+    const before = h.db.snapshot(B);
+    h.db.storageObjects.push({
+      bucket: 'chat-media',
+      path: `${USER_A}/header.png`,
+    });
+    const res = await waTemplateById.PATCH(
+      req(
+        'PATCH',
+        `/api/whatsapp/templates/${TPL_A}`,
+        templatePayload({
+          header_type: 'image',
+          header_media_url: storageUrl(`${USER_A}/header.png`),
+        })
+      ),
+      params({ id: TPL_A })
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.template.id).toBe(TPL_A);
+    expect(h.meta.sends.map((s) => s.fn)).toEqual([
+      'uploadResumableMedia',
+      'editMessageTemplate',
+    ]);
+    // Meta was told to edit A's template, not B's same-named one.
+    expect(h.meta.sends[1].args.metaTemplateId).toBe('meta-tpl-a');
+    const rows = h.db.rows('message_templates');
+    expect(rows.find((t) => t.id === TPL_A)?.status).toBe('PENDING');
+    expect(rows.find((t) => t.id === TPL_B)?.status).toBe('APPROVED');
+    expectNoBIds(body);
+    expectBUnchanged(before);
+  });
+
+  it("DELETE leaves B's template alone and removes A's", async () => {
+    const before = h.db.snapshot(B);
+    const foreign = await waTemplateById.DELETE(
+      req('DELETE', `/api/whatsapp/templates/${TPL_B}`),
+      params({ id: TPL_B })
+    );
+    expect(foreign.status).toBe(404);
+    expect(h.meta.sends).toEqual([]);
+    expectBUnchanged(before);
+
+    const own = await waTemplateById.DELETE(
+      req('DELETE', `/api/whatsapp/templates/${TPL_A}`),
+      params({ id: TPL_A })
+    );
+    expect(own.status).toBe(200);
+    expect(h.meta.sends.map((s) => s.args.metaTemplateId)).toEqual([
+      'meta-tpl-a',
+    ]);
+    expect(h.db.rows('message_templates').map((t) => t.id)).toEqual([TPL_B]);
+    expectBUnchanged(before);
+  });
+
+  it("submit refuses B's attachment and, with A's, submits under A", async () => {
+    const before = h.db.snapshot(B);
+    h.db.storageObjects.push({
+      bucket: 'chat-media',
+      path: `${USER_B}/secret.png`,
+    });
+    h.db.storageObjects.push({
+      bucket: 'chat-media',
+      path: `${USER_A}/header.png`,
+    });
+
+    const stolen = await waTemplateSubmit.POST(
+      req(
+        'POST',
+        '/api/whatsapp/templates/submit',
+        templatePayload({
+          name: 'new_promo',
+          header_type: 'image',
+          header_media_url: storageUrl(`${USER_B}/secret.png`),
+        })
+      )
+    );
+    expect(stolen.status).toBe(400);
+    expect((await stolen.json()).error).toMatch(/another account/);
+    expect(h.meta.sends).toEqual([]);
+    expectBUnchanged(before);
+
+    const own = await waTemplateSubmit.POST(
+      req(
+        'POST',
+        '/api/whatsapp/templates/submit',
+        templatePayload({
+          name: 'new_promo',
+          header_type: 'image',
+          header_media_url: storageUrl(`${USER_A}/header.png`),
+        })
+      )
+    );
+    const body = await own.json();
+    expect(own.status).toBe(200);
+    expect(body.template.account_id).toBe(A);
+    expect(body.template.header_handle).toBe('HANDLE-1');
+    expectNoBIds(body);
     expectBUnchanged(before);
   });
 });

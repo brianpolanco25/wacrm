@@ -21,6 +21,11 @@
  *                when they belong to the caller's account, resolved
  *                through the parent for tables without `account_id`.
  *
+ * Every query also lands in `db.log` with its filters, its written rows
+ * and the account it ran as — `service-role-audit.ts` reads that log to
+ * assert the scope of each service-role query, so the suite catches a
+ * missing filter even on a path no case-by-case test thought of.
+ *
  * Supported surface: `from().select/insert/update/delete/upsert`, the
  * common filters (`eq neq in is like ilike lt lte gt gte contains or`),
  * dotted filters on embedded relations, `order/limit/range`,
@@ -42,6 +47,14 @@ export interface QueryLogEntry {
   table: string;
   op: 'select' | 'insert' | 'update' | 'delete' | 'upsert' | 'rpc';
   filters: { column: string; op: string; value: unknown }[];
+  /**
+   * Rows written by insert/upsert, or the patch of an update. What
+   * scopes a write is the filter for updates/deletes and the payload for
+   * inserts, so the audit in `tenant-isolation.test.ts` needs both.
+   */
+  payload?: Row[];
+  /** Arguments of an `rpc()` call — where its account scope travels. */
+  args?: Record<string, unknown>;
   /** Account the SSR client ran as, or null for the service role. */
   rls: string | null;
 }
@@ -381,6 +394,7 @@ export class FakeClient {
       table: `rpc:${name}`,
       op: 'rpc',
       filters: [],
+      args,
       rls: this.actor?.accountId ?? null,
     });
     const handler = this.db.rpcHandlers[name];
@@ -665,10 +679,18 @@ export class FakeQuery implements PromiseLike<Result> {
   }
 
   private execute(): Result {
+    const written = this.mutation
+      ? this.mutation.kind === 'update'
+        ? [this.mutation.values]
+        : this.mutation.kind === 'delete'
+          ? undefined
+          : this.mutation.rows
+      : undefined;
     this.db.log.push({
       table: this.table,
       op: this.mutation?.kind ?? 'select',
       filters: [...this.filters],
+      payload: written?.map((r) => ({ ...r })),
       rls: this.actor?.accountId ?? null,
     });
 
