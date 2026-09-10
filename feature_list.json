@@ -1,0 +1,45 @@
+{
+  "_readme": [
+    "Fuente de verdad del estado del programa SaaS para el harness (leader/implementer/reviewer).",
+    "status: pending | spec_ready | in_progress | review | done | blocked.",
+    "spec: documento ya escrito (docs/saas/...#sección) o carpeta specs/<name>/ que redacta spec_author.",
+    "Las fases de docs/saas/ ya están aprobadas por el humano: van de spec_ready a in_progress sin spec_author.",
+    "branch/worktree: dónde vive el código de esa fase. Una fase que depende de otra parte de su rama."
+  ],
+  "phases": {
+    "0": { "doc": "docs/saas/fase-0-cimientos.md", "branch": "saas/fase-0-cimientos", "worktree": ".claude/worktrees/agent-a85d874ab350adc04", "base": "feat/saas-multiempresa", "blocks": ["1", "3", "4"] },
+    "1": { "doc": "docs/saas/fase-1-bandeja.md", "branch": "saas/fase-1-bandeja", "worktree": ".claude/worktrees/fase-1", "base": "saas/fase-0-cimientos" },
+    "2": { "doc": "docs/saas/fase-2-seguridad.md", "branch": "saas/fase-2-seguridad", "worktree": ".claude/worktrees/agent-a4220e4b5ba8896fd", "base": "feat/saas-multiempresa", "blocks": ["4"] },
+    "3": { "doc": "docs/saas/fase-3-facturacion.md", "branch": "saas/fase-3-facturacion", "worktree": ".claude/worktrees/fase-3", "base": "saas/fase-0-cimientos" },
+    "4": { "doc": "docs/saas/fase-4-plataforma.md", "branch": "saas/fase-4-plataforma", "worktree": ".claude/worktrees/fase-4", "base": "pendiente: rama que integre 0+2+3" },
+    "5": { "doc": "docs/saas/fase-5-escala.md", "note": "No se ejecuta por anticipación (lo dice la spec). Sin features." }
+  },
+  "features": [
+    { "id": "f0.1", "name": "assignment-integrity", "phase": "0", "status": "review", "spec": "docs/saas/fase-0-cimientos.md#1", "sdd": false, "commits": ["96474fc"] },
+    { "id": "f0.2", "name": "billing-model", "phase": "0", "status": "review", "spec": "docs/saas/fase-0-cimientos.md#2", "sdd": false, "commits": ["62a0742"] },
+    { "id": "f0.3", "name": "entitlements", "phase": "0", "status": "review", "spec": "docs/saas/fase-0-cimientos.md#3", "sdd": false, "commits": ["2645848"] },
+    { "id": "f0.4", "name": "platform-ai-key", "phase": "0", "status": "review", "spec": "docs/saas/fase-0-cimientos.md#4", "sdd": false, "commits": ["afbaecb", "8854c65"], "note": "Informe original en chat, no en progress/. El reviewer parte del diff." },
+
+    { "id": "f1.1", "name": "pick-available-agent", "phase": "1", "status": "review", "spec": "docs/saas/fase-1-bandeja.md#1", "sdd": false, "commits": ["20fbd9c"], "note": "Sin informe en progress/: el agente fue detenido antes de escribirlo." },
+    { "id": "f1.2", "name": "handoff-message", "phase": "1", "status": "review", "spec": "docs/saas/fase-1-bandeja.md#2", "sdd": false, "commits": ["1292984"], "note": "Sin informe en progress/." },
+    { "id": "f1.3", "name": "attention-state-list", "phase": "1", "status": "spec_ready", "spec": "docs/saas/fase-1-bandeja.md#3", "sdd": false },
+    { "id": "f1.4", "name": "per-message-guard", "phase": "1", "status": "spec_ready", "spec": "docs/saas/fase-1-bandeja.md#4", "sdd": false },
+    { "id": "f1.5", "name": "ai-replies-counter", "phase": "1", "status": "spec_ready", "spec": "docs/saas/fase-0-cimientos.md#4", "sdd": false, "acceptance": ["Cada respuesta de IA enviada con éxito llama increment_usage(account_id,'ai_replies',1) después del envío", "El mensaje de transición no cuenta", "No se aplica límite (eso es fase 3)"] },
+
+    { "id": "f2.1", "name": "private-media", "phase": "2", "status": "review", "spec": "docs/saas/fase-2-seguridad.md#1", "sdd": false, "commits": ["526d9d0"], "note": "Sin informe en progress/. Migración 044 solo se aplica en producción tras verificar envíos por media id." },
+    { "id": "f2.2", "name": "tenant-isolation-suite", "phase": "2", "status": "in_progress", "spec": "docs/saas/fase-2-seguridad.md#2", "sdd": false, "note": "Trabajo sin commitear en src/lib/security/ del worktree de la fase 2; retomar desde ahí." },
+    { "id": "f2.3", "name": "versioned-encryption", "phase": "2", "status": "review", "spec": "docs/saas/fase-2-seguridad.md#3", "sdd": false, "commits": ["dd39c90"], "note": "Sin informe en progress/." },
+    { "id": "f2.4", "name": "platform-verify-token", "phase": "2", "status": "review", "spec": "docs/saas/fase-2-seguridad.md#4", "sdd": false, "commits": ["31f10ea"], "note": "Sin informe en progress/." },
+
+    { "id": "f3.1", "name": "paypal-client-catalog", "phase": "3", "status": "in_progress", "spec": "docs/saas/fase-3-facturacion.md#1", "sdd": false, "note": "Sin commitear en el worktree de la fase 3: src/lib/billing/paypal.ts (+test), scripts/, migración 045, cambios en tsconfig.json y verify-schema.sql. Revisar el cambio de tsconfig antes de aceptarlo." },
+    { "id": "f3.2", "name": "checkout-flow", "phase": "3", "status": "spec_ready", "spec": "docs/saas/fase-3-facturacion.md#2", "sdd": false },
+    { "id": "f3.3", "name": "paypal-webhook", "phase": "3", "status": "spec_ready", "spec": "docs/saas/fase-3-facturacion.md#3", "sdd": false },
+    { "id": "f3.4", "name": "enforce-limits", "phase": "3", "status": "spec_ready", "spec": "docs/saas/fase-3-facturacion.md#4", "sdd": false, "note": "Incluye la escalera de vencimiento (#5) en la capa de permisos y la semilla de trials (migración 046)." },
+    { "id": "f3.5", "name": "subscription-settings-ui", "phase": "3", "status": "spec_ready", "spec": "docs/saas/fase-3-facturacion.md#6", "sdd": false },
+
+    { "id": "f4.1", "name": "embedded-signup", "phase": "4", "status": "spec_ready", "spec": "docs/saas/fase-4-plataforma.md#1", "sdd": false, "note": "Diseño abierto: pase previo de Plan (opus) antes del implementer." },
+    { "id": "f4.2", "name": "multi-number", "phase": "4", "status": "spec_ready", "spec": "docs/saas/fase-4-plataforma.md#1", "sdd": false, "note": "Retirar UNIQUE(account_id) de whatsapp_config; selector de número en envío, difusiones y config." },
+    { "id": "f4.3", "name": "platform-admins-panel", "phase": "4", "status": "spec_ready", "spec": "docs/saas/fase-4-plataforma.md#2", "sdd": false },
+    { "id": "f4.4", "name": "impersonation-audit", "phase": "4", "status": "spec_ready", "spec": "docs/saas/fase-4-plataforma.md#2", "sdd": false }
+  ]
+}

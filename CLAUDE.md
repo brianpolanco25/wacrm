@@ -66,6 +66,14 @@ No hay e2e ni Playwright: no lo propongas como si existiera.
 - **Pregunta antes de**: instalar dependencias, tocar migraciones, hacer push,
   abrir PRs, construir o publicar imágenes.
 
+## Harness de agentes
+
+El trabajo por fases lo reparten los agentes de `.claude/agents/` (`leader` en Fable;
+`implementer`, `reviewer` y `spec_author` en Opus). Estado en `feature_list.json` y
+`progress/`; checklist del revisor en `CHECKPOINTS.md`; flujo, ramas y compuerta en
+`docs/harness.md`. Las migraciones se validan en local con
+`scripts/replay-migrations.sh <ruta>` (Docker, sin CLI de Supabase).
+
 ## graphify — cómo se navega este repo
 
 Hay un grafo de conocimiento del código en `graphify-out/` (2.308 nodos, 6.513

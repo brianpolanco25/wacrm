@@ -46,3 +46,6 @@ next-env.d.ts
 
 # graphify: grafo de conocimiento (derivado, se reconstruye con los hooks)
 graphify-out/
+
+# Worktrees de los agentes del harness (docs/harness.md): derivados, uno por fase.
+.claude/worktrees/
