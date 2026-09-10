@@ -86,6 +86,22 @@ BEGIN
     RAISE EXCEPTION 'RLS is not enabled on subscriptions (migration 041)';
   END IF;
 
+  -- PayPal catalogue (045): ids per billing cycle.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans'
+      AND column_name = 'provider_plan_id_month'
+  ) THEN
+    RAISE EXCEPTION 'plans.provider_plan_id_month is missing (migration 045)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans'
+      AND column_name = 'provider_plan_id_year'
+  ) THEN
+    RAISE EXCEPTION 'plans.provider_plan_id_year is missing (migration 045)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

@@ -22,8 +22,16 @@ behaviour changes**; nothing is limited by plan yet.
 > adding the foreign key, so a handful of stale "Assigned" badges may
 > disappear — those chats return to the unassigned queue.
 
+> **Migration required:** apply
+> `supabase/migrations/045_billing_provider_plans.sql` before running the
+> PayPal catalogue bootstrap script.
+
 ### Added
 
+- **PayPal catalogue bootstrap.** A server-only script creates one PayPal
+  product and the six monthly/annual plan variants, then stores their provider
+  ids in `plans`. It targets the sandbox unless `PAYPAL_ENV=live`; billing,
+  checkout and webhooks are not enabled by this change.
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are

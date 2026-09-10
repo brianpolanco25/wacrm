@@ -60,6 +60,24 @@ browser _whether_ a platform key exists, never its value. With neither
 variable set the behaviour is exactly the bring-your-own-key one: the
 key field is required when saving an AI configuration.
 
+## PayPal catalogue (optional until billing is enabled)
+
+Create the initial product and six plans in the PayPal sandbox with
+`node --env-file=.env.local scripts/paypal-bootstrap-catalog.ts`. It requires
+these server-only runtime variables; it is safe to run again because it keeps
+the stored provider ids and uses stable PayPal request ids:
+
+| Variable               | Purpose                                                              |
+| ---------------------- | -------------------------------------------------------------------- |
+| `PAYPAL_CLIENT_ID`     | PayPal REST API client credential                                   |
+| `PAYPAL_CLIENT_SECRET` | PayPal REST API client secret                                       |
+| `PAYPAL_ENV`           | `sandbox` (default) or `live`; create and check sandbox plans first |
+| `PAYPAL_PRODUCT_NAME`  | Optional product name; defaults to `wacrm`                          |
+
+The script also uses the existing `NEXT_PUBLIC_SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` only to read the global `plans` catalogue and save
+each resulting provider plan id. It does not run as part of the web app.
+
 ## Plain Docker (no Compose)
 
 ```bash
