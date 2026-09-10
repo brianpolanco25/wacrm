@@ -1681,6 +1681,7 @@
       "provider": "Provider",
       "model": "Model",
       "apiKey": "API key",
+      "platformKeyHint": "Optional on this deployment: leave it blank to use the platform's key for this provider, or enter your own to use that instead.",
       "testKey": "Test key",
       "testSuccess": "Key works — the provider responded.",
       "testRejected": "The provider rejected the request.",
