@@ -169,10 +169,18 @@ export function encrypt(text: string): string {
  * hand back mojibake that a caller cannot tell from a real secret.
  * Everything this module encrypts went in as UTF-8, so a decode failure
  * means "these are not the plaintext bytes".
+ *
+ * `ignoreBOM: true` is not optional: WHATWG decoding strips a leading
+ * U+FEFF unless you ask it not to, which would make `decrypt(encrypt(x))`
+ * silently shorter than `x` for a secret pasted from a BOM'd file — and
+ * the opportunistic re-encrypts (`encrypt(decrypt(stored))`) would then
+ * persist the mutated value over the only copy. Validate, never rewrite.
  */
 function toUtf8(bytes: Buffer): string {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      bytes
+    );
   } catch {
     throw new Error('Decrypted bytes are not valid UTF-8');
   }

@@ -150,6 +150,21 @@ describe('encryption', () => {
       const ct = encrypt('token-✓-🔐-žąsis');
       expect(decrypt(ct)).toBe('token-✓-🔐-žąsis');
     });
+
+    // A secret pasted from a BOM'd file must come back byte for byte:
+    // WHATWG decoding eats a leading U+FEFF unless `ignoreBOM` is set,
+    // and `encrypt(decrypt(stored))` would persist the truncation.
+    it('roundtrips a leading U+FEFF instead of swallowing it', () => {
+      expect(decrypt(encrypt('\uFEFFsecret'))).toBe('\uFEFFsecret');
+      // A U+FEFF anywhere else was never at risk; pin it anyway.
+      expect(decrypt(encrypt('sec\uFEFFret'))).toBe('sec\uFEFFret');
+    });
+
+    it('keeps a leading U+FEFF on a legacy CBC blob read through the key ring', () => {
+      const cbcOld = cbcEncryptLegacy('\uFEFFsecret', OTHER_KEY_HEX);
+      process.env.ENCRYPTION_KEY_PREVIOUS = OTHER_KEY_HEX;
+      expect(decrypt(cbcOld)).toBe('\uFEFFsecret');
+    });
   });
 
   describe('GCM authentication', () => {
