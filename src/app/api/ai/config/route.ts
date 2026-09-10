@@ -15,6 +15,10 @@ import { embedTexts } from '@/lib/ai/embeddings';
 import { hasPlatformApiKey, platformApiKey } from '@/lib/ai/platform-key';
 import { AiError, type AiProvider, type HandoffMode } from '@/lib/ai/types';
 
+/** Upper bound for `ai_configs.handoff_message` (WhatsApp allows 4096; a
+ *  handoff notice should be a sentence or two). */
+const HANDOFF_MESSAGE_MAX_LEN = 1000;
+
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
 }
@@ -158,6 +162,28 @@ export async function POST(request: Request) {
       }
     }
 
+    // Transition message the bot sends right before handing off (fase 1,
+    // migration 043). An empty string is a deliberate opt-out ("say
+    // nothing"), so it is stored as-is rather than treated as "unchanged".
+    // Absent → left unchanged on update. Capped so a runaway paste can't
+    // become a wall of text on the customer's phone.
+    const messageProvided = 'handoff_message' in body;
+    let handoffMessage = '';
+    if (messageProvided) {
+      if (
+        body.handoff_message !== null &&
+        typeof body.handoff_message !== 'string'
+      ) {
+        return bad('handoff_message must be a string');
+      }
+      handoffMessage = (body.handoff_message ?? '').trim();
+      if (handoffMessage.length > HANDOFF_MESSAGE_MAX_LEN) {
+        return bad(
+          `handoff_message must be at most ${HANDOFF_MESSAGE_MAX_LEN} characters`
+        );
+      }
+    }
+
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
 
     // Embeddings key (optional, for semantic KB search): a non-empty
@@ -264,6 +290,7 @@ export async function POST(request: Request) {
     // so a partial save (e.g. flipping a toggle) doesn't wipe it.
     if (handoffProvided) shared.handoff_agent_id = handoffAgentId;
     if (modeProvided) shared.handoff_mode = handoffMode;
+    if (messageProvided) shared.handoff_message = handoffMessage;
     if (rawEmbeddingsKey) {
       shared.embeddings_api_key = encrypt(rawEmbeddingsKey);
     } else if (clearEmbeddingsKey) {

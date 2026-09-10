@@ -200,9 +200,10 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
 });
 
 describe('dispatchInboundToAiReply — handoff', () => {
-  it('disables auto-reply, writes a summary, and does not send on handoff', async () => {
+  it('disables auto-reply, writes a summary, and does not send a reply on handoff', async () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true });
     await dispatchInboundToAiReply(ARGS);
+    // No handoff message configured → nothing goes out, no slot claimed.
     expect(h.engineSendText).not.toHaveBeenCalled();
     expect(h.state.rpcCalls).toHaveLength(0);
     expect(h.state.updatePayload).toMatchObject({
@@ -286,5 +287,70 @@ describe('dispatchInboundToAiReply — handoff', () => {
     expect(h.generateReply).not.toHaveBeenCalled();
     expect(h.state.rpcCalls).toHaveLength(0);
     expect(h.state.updatePayload).toBeNull();
+  });
+});
+
+describe('dispatchInboundToAiReply — handoff transition message (fase 1)', () => {
+  const MSG =
+    'Gracias por escribirnos. Un miembro de nuestro equipo continuará.';
+
+  beforeEach(() => {
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+  });
+
+  it('sends exactly one transition message, marked as AI-generated', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: MSG }));
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+    expect(h.engineSendText).toHaveBeenCalledWith({
+      accountId: 'acct-1',
+      userId: 'user-1',
+      conversationId: 'conv-1',
+      contactId: 'contact-1',
+      text: MSG,
+      aiGenerated: true,
+    });
+    expect(h.state.updatePayload).toMatchObject({
+      ai_autoreply_disabled: true,
+    });
+  });
+
+  it('does not claim a reply slot nor count as an AI reply', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: MSG }));
+    await dispatchInboundToAiReply(ARGS);
+    const names = h.state.rpcCalls.map((c) => c.name);
+    expect(names).not.toContain('claim_ai_reply_slot');
+    expect(names).not.toContain('increment_usage');
+  });
+
+  it('sends nothing when the message is empty or whitespace, and still hands off', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: '   ' }));
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(h.state.updatePayload).toMatchObject({
+      ai_autoreply_disabled: true,
+    });
+  });
+
+  it('leaves the conversation handed off and assigned when the send fails', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({
+        handoffMessage: MSG,
+        handoffMode: 'fixed',
+        handoffAgentId: 'agent-7',
+      })
+    );
+    h.engineSendText.mockRejectedValue(new Error('Meta 500'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(dispatchInboundToAiReply(ARGS)).resolves.toBeUndefined();
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+    expect(h.state.updatePayload).toMatchObject({
+      ai_autoreply_disabled: true,
+      assigned_agent_id: 'agent-7',
+    });
   });
 });

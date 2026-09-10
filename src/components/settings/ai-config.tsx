@@ -92,6 +92,9 @@ export function AiConfig() {
   const [handoffMode, setHandoffMode] = useState<HandoffMode>('queue');
   // Target for `fixed` mode; empty string = none chosen yet.
   const [handoffAgentId, setHandoffAgentId] = useState('');
+  // What the bot tells the customer right before handing off. Empty =
+  // say nothing (the pre-fase-1 behaviour, kept as an explicit choice).
+  const [handoffMessage, setHandoffMessage] = useState('');
   const [members, setMembers] = useState<AccountMember[]>([]);
 
   // Guard keyed on the account (not a bare boolean) so an in-place
@@ -127,6 +130,7 @@ export function AiConfig() {
         setHandoffMode(
           data.handoff_mode ?? (data.handoff_agent_id ? 'fixed' : 'queue')
         );
+        setHandoffMessage(data.handoff_message ?? '');
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
         setKeyEdited(false);
@@ -181,6 +185,7 @@ export function AiConfig() {
     // The fixed target only means something in fixed mode; clear it
     // otherwise so a stale pick can't resurface later.
     handoff_agent_id: handoffMode === 'fixed' ? handoffAgentId || null : null,
+    handoff_message: handoffMessage.trim(),
   });
 
   const handleTest = async () => {
@@ -544,6 +549,22 @@ export function AiConfig() {
                   </SelectContent>
                 </Select>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ai-handoff-message">{t('handoffMessage')}</Label>
+              <p className="text-muted-foreground text-xs">
+                {t('handoffMessageDesc')}
+              </p>
+              <Textarea
+                id="ai-handoff-message"
+                value={handoffMessage}
+                onChange={(e) => setHandoffMessage(e.target.value)}
+                placeholder={t('handoffMessagePlaceholder')}
+                rows={2}
+                maxLength={1000}
+                disabled={disabled || !autoReplyEnabled}
+              />
             </div>
           </CardContent>
         </Card>

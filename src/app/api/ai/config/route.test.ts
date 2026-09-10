@@ -306,3 +306,44 @@ describe('POST /api/ai/config — handoff mode (fase 1)', () => {
     expect(mocks.state.updates[0]).not.toHaveProperty('handoff_mode');
   });
 });
+
+describe('POST /api/ai/config — handoff message (fase 1)', () => {
+  beforeEach(() => {
+    vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
+  });
+
+  it('stores the trimmed message', async () => {
+    const res = await POST(
+      post({ ...BASE_BODY, handoff_message: '  Un momento, por favor.  ' })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.state.inserts[0]).toMatchObject({
+      handoff_message: 'Un momento, por favor.',
+    });
+  });
+
+  it('stores an empty string as an explicit opt-out', async () => {
+    const res = await POST(post({ ...BASE_BODY, handoff_message: '' }));
+    expect(res.status).toBe(200);
+    expect(mocks.state.inserts[0]).toMatchObject({ handoff_message: '' });
+  });
+
+  it('rejects an over-long message', async () => {
+    const res = await POST(
+      post({ ...BASE_BODY, handoff_message: 'x'.repeat(1001) })
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('leaves the message untouched when the field is absent', async () => {
+    mocks.state.existing = {
+      id: 'cfg',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: null,
+    };
+    const res = await POST(post(BASE_BODY));
+    expect(res.status).toBe(200);
+    expect(mocks.state.updates[0]).not.toHaveProperty('handoff_message');
+  });
+});

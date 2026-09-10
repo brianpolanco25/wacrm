@@ -158,6 +158,31 @@ export async function dispatchInboundToAiReply(
         if (target) update.assigned_agent_id = target;
       }
       await db.from('conversations').update(update).eq('id', conversationId);
+
+      // Tell the customer a person is taking over, so the thread doesn't
+      // just go silent from their side. Deliberately AFTER the handoff
+      // write: losing the notice is annoying, losing the assignment is
+      // serious. It is an acknowledgement, not a reply — it does NOT
+      // claim a reply slot and does NOT count towards `ai_replies`.
+      // An empty message means the account opted out of the notice.
+      const handoffMessage = config.handoffMessage?.trim();
+      if (handoffMessage) {
+        try {
+          await engineSendText({
+            accountId,
+            userId: configOwnerUserId,
+            conversationId,
+            contactId,
+            text: handoffMessage,
+            aiGenerated: true,
+          });
+        } catch (err) {
+          console.error(
+            '[ai auto-reply] handoff message failed to send (conversation handed off anyway):',
+            err
+          );
+        }
+      }
       return;
     }
 
