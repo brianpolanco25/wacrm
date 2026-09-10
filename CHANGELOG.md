@@ -29,6 +29,9 @@ behaviour changes**; nothing is limited by plan yet.
 > **Migration required:** apply
 > `supabase/migrations/048_checkout_intent.sql` before enabling checkout.
 > It adds the `checkout_intents` table; no existing data is touched.
+> Apply `supabase/migrations/049_redeem_invitation_checkout_intents.sql`
+> together with it — 048 alone would break invitation redemption for
+> anyone who ever abandoned a checkout.
 
 ### Added
 
@@ -65,6 +68,21 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Fixed
 
+- **Accepting an invitation after abandoning a checkout.** Redeeming an
+  invitation dissolves the invitee's empty personal account; a checkout
+  they started and never approved used to block that with a raw database
+  error, locking them out of the team for good. Abandoned attempts are
+  now discarded with the account, while an account with a real
+  subscription behind it is refused as before ("sign up with a different
+  email") instead of being silently dissolved.
+- **Checkout guard against a second charge.** If the subscription of the
+  account could not be read, the check that stops a second PayPal
+  subscription was skipped; the checkout now stops with an error instead
+  of opening one.
+- **Return page wording.** It shows the plan's name ("Pro") rather than
+  its internal id, no longer claims a payment is active for an attempt it
+  has no record of, and the plan list stops spinning forever when the
+  catalogue request fails outright (offline, DNS): it says so.
 - **Dangling conversation assignments.** `conversations.assigned_agent_id`
   now references `auth.users` with `ON DELETE SET NULL`, so removing an
   operator returns their chats to the unassigned queue instead of leaving

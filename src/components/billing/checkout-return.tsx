@@ -30,7 +30,12 @@ const POLL_TIMEOUT_MS = 150_000;
 
 interface StatusPayload {
   intent: { planId: string; cycle: string; status: string } | null;
-  subscription: { planId: string; status: string } | null;
+  subscription: {
+    planId: string;
+    /** Catalogue name ('Pro'); null if the plan vanished from it. */
+    planName: string | null;
+    status: string;
+  } | null;
   activated: boolean;
 }
 
@@ -54,7 +59,14 @@ export function CheckoutReturn() {
     if (!res.ok) return false;
     const data = (await res.json()) as StatusPayload;
     if (data.activated) {
-      setPlanName(data.subscription?.planId ?? data.intent?.planId ?? null);
+      // The name the customer chose, not the internal id. Falling back
+      // to the id keeps the sentence readable if the catalogue lost it.
+      setPlanName(
+        data.subscription?.planName ??
+          data.subscription?.planId ??
+          data.intent?.planId ??
+          null
+      );
       setPhase('active');
       return true;
     }

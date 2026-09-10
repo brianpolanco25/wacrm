@@ -87,8 +87,23 @@ function intentPayload(row: IntentRow) {
 }
 
 /**
+ * Raised when `subscriptions` cannot be read. It is deliberately NOT
+ * "the account has no subscription": that conflation is what would let
+ * a transient read error (or a policy change) silently disable the
+ * double-charge guard in POST. Callers let it bubble to
+ * `toErrorResponse`, which answers 500.
+ */
+class SubscriptionReadError extends Error {
+  constructor() {
+    super('Failed to read the subscription');
+    this.name = 'SubscriptionReadError';
+  }
+}
+
+/**
  * The caller's own subscription row, scoped by account both in the
- * query and by RLS. Returns null when the account has none yet.
+ * query and by RLS. Returns null when the account has none yet, and
+ * throws when we could not find out.
  */
 async function loadSubscription(
   ctx: AccountContext
@@ -101,9 +116,34 @@ async function loadSubscription(
 
   if (error) {
     console.error('[api/billing/checkout] subscription fetch error:', error);
-    return null;
+    // Fail closed: "we don't know" must never read as "not subscribed".
+    throw new SubscriptionReadError();
   }
   return (data as SubscriptionRow | null) ?? null;
+}
+
+/**
+ * Display name of a catalogue plan. The return page shows it to the
+ * customer, and `plan_id` ('pro') is not a name ('Pro'). The catalogue
+ * is public, so this read needs no account scope; a missing row (a plan
+ * retired after the fact) just leaves the id.
+ */
+async function loadPlanName(
+  ctx: AccountContext,
+  planId: string
+): Promise<string | null> {
+  const { data, error } = await ctx.supabase
+    .from('plans')
+    .select('id, name')
+    .eq('id', planId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[api/billing/checkout] plan name fetch error:', error);
+    return null;
+  }
+  const name = (data as { name?: unknown } | null)?.name;
+  return typeof name === 'string' && name ? name : null;
 }
 
 export async function POST(request: Request) {
@@ -171,6 +211,11 @@ export async function POST(request: Request) {
     // Already paying? A second PayPal subscription would be a second
     // charge: PayPal cannot swap plans in place, so changing plan is
     // the settings flow (Fase 3 §6), not another checkout.
+    //
+    // If the read itself fails, `loadSubscription` throws and the
+    // request ends in 500 — before PayPal is called. On a path that
+    // moves money, "we could not check" has to stop the checkout, not
+    // wave it through.
     const existing = await loadSubscription(ctx);
     if (alreadyContracted(existing)) {
       return NextResponse.json(
@@ -317,19 +362,36 @@ export async function GET(request: Request) {
     // "Activated" means the webhook did it, and did it for *this*
     // attempt: the provider id on our subscription row is the one the
     // customer just approved.
+    //
+    // When the caller names an attempt (`?subscription_id=`), an intent
+    // for it is mandatory. Without that, an account that is already
+    // paying for a *different* PayPal subscription would be told "your
+    // plan is active" about an id we have never seen — which is exactly
+    // the "this page asserts nothing it cannot back" property the whole
+    // file is built on. With no id at all we answer about the account's
+    // latest attempt, and an account with no attempts on record but a
+    // live subscription is legitimately active.
+    const matchesAttempt = intent
+      ? subscription?.provider_subscription_id ===
+        intent.provider_subscription_id
+      : !subscriptionId;
+
     const activated = Boolean(
-      subscription &&
-      subscription.status === 'active' &&
-      (!intent ||
-        subscription.provider_subscription_id ===
-          intent.provider_subscription_id)
+      subscription && subscription.status === 'active' && matchesAttempt
     );
+
+    const planName = subscription
+      ? await loadPlanName(ctx, subscription.plan_id)
+      : null;
 
     return NextResponse.json({
       intent: intent ? intentPayload(intent) : null,
       subscription: subscription
         ? {
             planId: subscription.plan_id,
+            // The name the customer recognises ('Pro'), not the id
+            // ('pro'): the return page prints it verbatim.
+            planName,
             status: subscription.status,
             currentPeriodEnd: subscription.current_period_end,
             cancelAtPeriodEnd: subscription.cancel_at_period_end,

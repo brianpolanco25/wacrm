@@ -60,18 +60,22 @@ export function PlanPicker() {
   const cancelled = searchParams.get('checkout') === 'cancelled';
 
   const load = useCallback(async () => {
-    const res = await fetch('/api/billing/plans', { cache: 'no-store' });
-    if (!res.ok) {
+    // Offline, DNS failure or a body that is not JSON reject instead of
+    // returning `!res.ok`. Unhandled, that rejection escapes the effect
+    // below and leaves `plans` at null — a spinner that never stops and
+    // never says why. Same treatment as a refused response.
+    try {
+      const res = await fetch('/api/billing/plans', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`catalogue request failed: ${res.status}`);
+      const data = (await res.json()) as { plans?: CataloguePlan[] };
+      setPlans(data.plans ?? []);
+    } catch {
       toast.error(t('loadFailed'));
       setPlans([]);
-      return;
     }
-    const data = (await res.json()) as { plans: CataloguePlan[] };
-    setPlans(data.plans);
   }, [t]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 

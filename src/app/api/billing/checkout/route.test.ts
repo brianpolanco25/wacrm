@@ -41,6 +41,8 @@ let db: Db;
 let queries: QueryLog[];
 let currentUser: string;
 let insertFailure: { code: string } | null;
+/** Table whose SELECTs come back as an error, to test failing closed. */
+let selectFailure: keyof Db | null;
 
 function freshDb(): Db {
   return {
@@ -116,6 +118,11 @@ function builder(table: string, serviceRole: boolean) {
 
   const result = () => {
     record();
+    if (op === 'select' && selectFailure === table) {
+      // What a transient outage or a policy change looks like from
+      // here: no rows AND no way to tell whether there are any.
+      return { data: null, error: { code: '42501' } };
+    }
     if (op === 'insert') {
       if (insertFailure) return { data: null, error: insertFailure };
       const row = payload as Row;
@@ -172,13 +179,13 @@ function builder(table: string, serviceRole: boolean) {
   });
   b.maybeSingle = vi.fn(async () => {
     const res = result();
-    if (op === 'insert') return res;
+    if (op === 'insert' || res.error) return res;
     const rows = res.data as Row[];
     return { data: rows[0] ?? null, error: null };
   });
   b.single = vi.fn(async () => {
     const res = result();
-    if (op === 'insert') return res;
+    if (op === 'insert' || res.error) return res;
     const rows = res.data as Row[];
     return rows[0]
       ? { data: rows[0], error: null }
@@ -265,6 +272,7 @@ beforeEach(() => {
   queries = [];
   currentUser = 'user-a';
   insertFailure = null;
+  selectFailure = null;
   createSubscription.mockReset();
   createSubscription.mockResolvedValue({
     id: 'I-SUB-1',
@@ -446,6 +454,21 @@ describe('POST /api/billing/checkout', () => {
     expect(await res.json()).not.toHaveProperty('approvalUrl');
   });
 
+  it('500s instead of contracting when the subscription cannot be read', async () => {
+    // The double-charge guard must fail CLOSED. If `subscriptions` is
+    // unreadable we do not know whether this account is already paying,
+    // and "we do not know" cannot be allowed to read as "not paying" on
+    // a path that opens a recurring charge at PayPal.
+    selectFailure = 'subscriptions';
+
+    const res = await post({ planId: 'pro', cycle: 'month' });
+
+    expect(res.status).toBe(500);
+    expect(createSubscription).not.toHaveBeenCalled();
+    expect(db.checkout_intents).toHaveLength(0);
+    expect(await res.json()).not.toHaveProperty('approvalUrl');
+  });
+
   it('reports a PayPal refusal as a gateway error and writes nothing', async () => {
     createSubscription.mockRejectedValue(
       new PayPalError('nope', 422, { name: 'UNPROCESSABLE_ENTITY' })
@@ -545,6 +568,42 @@ describe('GET /api/billing/checkout (the return page status)', () => {
 
     const json = await (await get('?subscription_id=I-SUB-1')).json();
     expect(json.activated).toBe(false);
+  });
+
+  it('does not call an attempt we never recorded activated', async () => {
+    // The account pays for `I-PREVIOUS`. Someone opens the return URL
+    // with an id we have no intent for: there is nothing backing the
+    // claim "your plan is active for THAT", so the page keeps waiting.
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'active',
+      provider_subscription_id: 'I-PREVIOUS',
+      current_period_end: '2026-02-01T00:00:00.000Z',
+      cancel_at_period_end: false,
+    });
+
+    const json = await (await get('?subscription_id=I-UNKNOWN')).json();
+    expect(json.intent).toBeNull();
+    expect(json.activated).toBe(false);
+  });
+
+  it('reports the plan by name, not by id', async () => {
+    // `activeBody` prints this verbatim: 'Pro', never 'pro'.
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'active',
+      provider_subscription_id: 'I-SUB-1',
+      current_period_end: '2026-02-01T00:00:00.000Z',
+      cancel_at_period_end: false,
+    });
+
+    const json = await (await get('?subscription_id=I-SUB-1')).json();
+    expect(json.subscription).toMatchObject({
+      planId: 'pro',
+      planName: 'Pro',
+    });
   });
 
   it('never shows another account its checkout', async () => {

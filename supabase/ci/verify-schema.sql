@@ -144,6 +144,20 @@ BEGIN
       'checkout_intents has a write policy — only the service role may write it (migration 048)';
   END IF;
 
+  -- Redeeming an invitation (049): the RESTRICT above blocks the
+  -- DELETE of the invitee's empty personal account unless
+  -- `redeem_invitation()` knows about `checkout_intents`. If a future
+  -- migration replaces the function and forgets that clause, accepting
+  -- an invitation starts failing with a raw 23503 for anyone who ever
+  -- abandoned a checkout.
+  IF (
+    SELECT prosrc FROM pg_proc
+    WHERE oid = 'public.redeem_invitation(text)'::regprocedure
+  ) NOT LIKE '%checkout_intents%' THEN
+    RAISE EXCEPTION
+      'redeem_invitation() does not handle checkout_intents; the RESTRICT FK of 048 will break invitation redemption (migration 049)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

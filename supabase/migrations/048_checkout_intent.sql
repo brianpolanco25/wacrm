@@ -65,10 +65,23 @@ CREATE TABLE IF NOT EXISTS checkout_intents (
     UNIQUE (provider, provider_subscription_id)
 );
 
--- Mismo criterio que `subscriptions` y `usage_counters` en 041: el
--- rastro de facturación es dato contable. RESTRICT, nunca CASCADE;
--- borrar una cuenta con contrataciones registradas es una decisión
--- explícita, no un efecto colateral.
+-- Mismo criterio que `subscriptions` y `usage_counters`: el rastro de
+-- facturación es dato contable. RESTRICT, nunca CASCADE; borrar una
+-- cuenta con contrataciones registradas es una decisión explícita, no
+-- un efecto colateral.
+--
+-- Ojo con el precedente: 041 tal y como está EN ESTA RAMA todavía
+-- declara esas dos claves con `ON DELETE CASCADE`. La fase 0 ya las
+-- pasó a RESTRICT (commit 324f087 de `saas/fase-0-cimientos`) y el
+-- cambio llega aquí por merge; hasta entonces el criterio de 041 y el
+-- de esta tabla no coinciden en el árbol, aunque sí en la intención.
+--
+-- Consecuencia deliberada: borrar una cuenta con intentos registrados
+-- falla con 23503. El único flujo del producto que borra cuentas es
+-- `redeem_invitation()` (019), que disuelve la cuenta personal vacía
+-- del invitado; 049 le enseña a borrar sus intentos `pending` (una
+-- aprobación abandonada no vale nada) y a tratar cualquier otro estado
+-- como «la cuenta no está vacía».
 ALTER TABLE checkout_intents
   DROP CONSTRAINT IF EXISTS checkout_intents_account_id_fkey;
 ALTER TABLE checkout_intents
