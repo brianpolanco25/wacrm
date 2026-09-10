@@ -16,8 +16,9 @@ database and server-side groundwork for billing. **No user-visible
 behaviour changes**; nothing is limited by plan yet.
 
 > **Migration required:** apply
-> `supabase/migrations/040_conversation_assignment_integrity.sql` and
-> `supabase/migrations/041_billing_model.sql`. 040 nulls any
+> `supabase/migrations/040_conversation_assignment_integrity.sql`,
+> `supabase/migrations/041_billing_model.sql` and
+> `supabase/migrations/047_ai_platform_key.sql`. 040 nulls any
 > `conversations.assigned_agent_id` that points at a deleted user before
 > adding the foreign key, so a handful of stale "Assigned" badges may
 > disappear — those chats return to the unassigned queue.
@@ -27,7 +28,17 @@ behaviour changes**; nothing is limited by plan yet.
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are
-  provisional until the first paying customer.
+  provisional until the first paying customer. A tenant can read its own
+  subscription and never write it: only the service role does, from the
+  payment webhook.
+- **Billing rows outlive account deletion.** `subscriptions` and
+  `usage_counters` reference `accounts` with `ON DELETE RESTRICT`, so
+  `DELETE FROM accounts` now fails while an account still has billing
+  data instead of quietly taking it along. Closing an account is a
+  deliberate sequence: cancel with the provider, clear (or archive) its
+  `subscriptions` and `usage_counters` rows, then delete the account.
+  `billing_events` has no foreign key to `accounts` and is kept as the
+  audit trail.
 - **Entitlements helper** (`src/lib/billing/entitlements.ts`): resolves an
   account's plan, limits, features and read-only state. Not called from
   any route yet — that is fase 3.
@@ -35,7 +46,8 @@ behaviour changes**; nothing is limited by plan yet.
   `AI_PLATFORM_OPENAI_API_KEY` / `AI_PLATFORM_ANTHROPIC_API_KEY`. When set,
   an account may leave the API key blank in Settings → AI and the
   platform's key is used; an account's own key still takes precedence.
-  Without them nothing changes. `ai_configs.api_key` is now nullable.
+  Without them nothing changes. `ai_configs.api_key` is now nullable
+  (migration 047).
 
 ### Fixed
 

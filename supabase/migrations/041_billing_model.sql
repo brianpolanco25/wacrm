@@ -32,13 +32,18 @@
 --   usage_counters  SELECT para admin+. Escritura solo por RPC.
 --   billing_events  RLS activada sin políticas: nadie desde el cliente.
 --
--- Supuesto S1 (confirmado): la IA la paga el servicio. La clave del
--- proveedor pasa a poder venir de la plataforma (variable de entorno),
--- así que `ai_configs.api_key` deja de ser NOT NULL.
+-- Borrado de cuentas: ON DELETE RESTRICT, nunca CASCADE. Un registro de
+-- facturación no se destruye como efecto colateral de borrar la fila de
+-- `accounts`: `DELETE FROM accounts` falla mientras la cuenta tenga
+-- suscripción o contadores. Dar de baja una cuenta es un procedimiento
+-- explícito (cancelar en la pasarela → archivar/borrar `subscriptions` y
+-- `usage_counters` a mano, en una transacción → borrar la cuenta);
+-- `billing_events` no tiene FK a `accounts` a propósito y sobrevive como
+-- bitácora auditable. Ver `progress/impl_billing-model.md`.
 --
--- Idempotente — safe to re-run: CREATE TABLE IF NOT EXISTS, políticas
--- drop-then-create, CREATE OR REPLACE FUNCTION, semilla con
--- ON CONFLICT DO UPDATE, DROP NOT NULL es no-op si ya es nullable.
+-- Idempotente — safe to re-run: CREATE TABLE IF NOT EXISTS, FKs y
+-- políticas drop-then-create, CREATE OR REPLACE FUNCTION, semilla con
+-- ON CONFLICT DO UPDATE.
 -- ============================================================
 
 -- ============================================================
@@ -58,7 +63,7 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 
 CREATE TABLE IF NOT EXISTS subscriptions (
-  account_id               uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+  account_id               uuid PRIMARY KEY,
   plan_id                  text NOT NULL REFERENCES plans(id),
   provider                 text NOT NULL DEFAULT 'paypal',
   provider_subscription_id text UNIQUE,
@@ -74,6 +79,16 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   updated_at               timestamptz NOT NULL DEFAULT now()
 );
 
+-- La FK a `accounts` va con nombre explícito y drop-then-add (patrón de
+-- 040) para que la semántica de borrado sea reejecutable y corregible:
+-- RESTRICT, nunca CASCADE. Borrar una cuenta no puede llevarse por
+-- delante su historial de facturación sin que alguien lo decida.
+ALTER TABLE subscriptions
+  DROP CONSTRAINT IF EXISTS subscriptions_account_id_fkey;
+ALTER TABLE subscriptions
+  ADD CONSTRAINT subscriptions_account_id_fkey
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT;
+
 -- Mismo trigger de updated_at que usan el resto de tablas (001/006/017).
 DROP TRIGGER IF EXISTS set_updated_at ON subscriptions;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON subscriptions
@@ -81,12 +96,20 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON subscriptions
 
 -- Contadores de consumo del ciclo. Una fila por métrica y periodo.
 CREATE TABLE IF NOT EXISTS usage_counters (
-  account_id   uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  account_id   uuid NOT NULL,
   metric       text NOT NULL,      -- 'messages_out'|'ai_replies'|'broadcast_recipients'
   period_start date NOT NULL,
   value        bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (account_id, metric, period_start)
 );
+
+-- Mismo criterio que en subscriptions: el consumo facturado es dato
+-- contable. RESTRICT, no CASCADE.
+ALTER TABLE usage_counters
+  DROP CONSTRAINT IF EXISTS usage_counters_account_id_fkey;
+ALTER TABLE usage_counters
+  ADD CONSTRAINT usage_counters_account_id_fkey
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT;
 
 -- Bitácora de eventos de la pasarela. `provider_event_id` único es la
 -- idempotencia: PayPal reenvía eventos y no podemos procesarlos dos veces.
@@ -221,15 +244,3 @@ ON CONFLICT (id) DO UPDATE SET
   features        = EXCLUDED.features,
   is_public       = EXCLUDED.is_public,
   sort_order      = EXCLUDED.sort_order;
-
--- ============================================================
--- 5. Supuesto S1 — la IA la paga el servicio
---
--- La clave del proveedor puede venir ahora de la plataforma
--- (AI_PLATFORM_OPENAI_API_KEY / AI_PLATFORM_ANTHROPIC_API_KEY en el
--- servidor). Una cuenta que no trae clave propia guarda NULL aquí y el
--- código resuelve: clave propia → clave de plataforma → IA no
--- configurada. DROP NOT NULL es no-op si la columna ya es nullable.
--- ============================================================
-ALTER TABLE ai_configs
-  ALTER COLUMN api_key DROP NOT NULL;

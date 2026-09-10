@@ -85,6 +85,42 @@ BEGIN
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.subscriptions'::regclass) THEN
     RAISE EXCEPTION 'RLS is not enabled on subscriptions (migration 041)';
   END IF;
+  -- Billing rows must never be swept away by deleting an account: both
+  -- FKs are dropped-then-added with ON DELETE RESTRICT, so a regression
+  -- back to CASCADE (or a typo'd ADD) has to fail loudly here.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'subscriptions_account_id_fkey'
+      AND conrelid = 'public.subscriptions'::regclass
+      AND contype = 'f'
+      AND confdeltype = 'r'   -- ON DELETE RESTRICT, never CASCADE
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions_account_id_fkey is missing or not ON DELETE RESTRICT (migration 041)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'usage_counters_account_id_fkey'
+      AND conrelid = 'public.usage_counters'::regclass
+      AND contype = 'f'
+      AND confdeltype = 'r'   -- ON DELETE RESTRICT, never CASCADE
+  ) THEN
+    RAISE EXCEPTION
+      'usage_counters_account_id_fkey is missing or not ON DELETE RESTRICT (migration 041)';
+  END IF;
+
+  -- Platform AI keys (047): an account may leave its own key empty and
+  -- fall back to the deployment's. DROP NOT NULL is a no-op when it has
+  -- already run, which is exactly the silent case worth asserting.
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'ai_configs'
+      AND column_name = 'api_key'
+      AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION 'ai_configs.api_key is still NOT NULL (migration 047)';
+  END IF;
 
   RAISE NOTICE 'schema verification passed';
 END
