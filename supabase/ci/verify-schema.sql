@@ -92,6 +92,20 @@ BEGIN
   IF to_regprocedure('public.pick_available_agent(uuid, interval, boolean)') IS NULL THEN
     RAISE EXCEPTION 'pick_available_agent(uuid, interval, boolean) is missing (migration 042)';
   END IF;
+  IF has_function_privilege(
+    'authenticated',
+    'public.pick_available_agent(uuid, interval, boolean)'::regprocedure,
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'authenticated must not execute pick_available_agent (migration 042)';
+  END IF;
+  IF NOT has_function_privilege(
+    'service_role',
+    'public.pick_available_agent(uuid, interval, boolean)'::regprocedure,
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'service_role must execute pick_available_agent (migration 042)';
+  END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'ai_configs' AND column_name = 'handoff_mode'

@@ -15,6 +15,8 @@ const h = vi.hoisted(() => ({
     /** What `pick_available_agent` returns (null = nobody online). */
     pick: null as string | null,
     updatePayload: null as Record<string, unknown> | null,
+    conversationSelectFilters: [] as [string, unknown][],
+    conversationUpdateFilters: [] as [string, unknown][],
     rpcCalls: [] as { name: string; args: unknown }[],
   },
 }));
@@ -41,16 +43,26 @@ vi.mock('./admin-client', () => ({
         return chain;
       }
       // conversations
+      const selectChain = {
+        eq: (column: string, value: unknown) => {
+          h.state.conversationSelectFilters.push([column, value]);
+          return selectChain;
+        },
+        maybeSingle: () => Promise.resolve({ data: h.state.conv, error: null }),
+      };
+      const updateChain = {
+        eq: (column: string, value: unknown) => {
+          h.state.conversationUpdateFilters.push([column, value]);
+          return updateChain;
+        },
+        then: (onFulfilled: (value: unknown) => unknown) =>
+          Promise.resolve({ error: null }).then(onFulfilled),
+      };
       return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: () =>
-              Promise.resolve({ data: h.state.conv, error: null }),
-          }),
-        }),
+        select: () => selectChain,
         update: (payload: Record<string, unknown>) => {
           h.state.updatePayload = payload;
-          return { eq: () => Promise.resolve({ error: null }) };
+          return updateChain;
         },
       };
     },
@@ -100,6 +112,8 @@ beforeEach(() => {
   h.state.claim = true;
   h.state.pick = null;
   h.state.updatePayload = null;
+  h.state.conversationSelectFilters = [];
+  h.state.conversationUpdateFilters = [];
   h.state.rpcCalls = [];
   h.loadAiConfig.mockResolvedValue(aiConfig());
   h.buildConversationContext.mockResolvedValue([
@@ -287,6 +301,24 @@ describe('dispatchInboundToAiReply — handoff', () => {
     expect(h.generateReply).not.toHaveBeenCalled();
     expect(h.state.rpcCalls).toHaveLength(0);
     expect(h.state.updatePayload).toBeNull();
+  });
+
+  it('scopes the service-role conversation read and handoff write to its account', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ handoffMode: 'fixed', handoffAgentId: 'agent-7' })
+    );
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.state.conversationSelectFilters).toEqual([
+      ['id', 'conv-1'],
+      ['account_id', 'acct-1'],
+    ]);
+    expect(h.state.conversationUpdateFilters).toEqual([
+      ['id', 'conv-1'],
+      ['account_id', 'acct-1'],
+    ]);
   });
 });
 

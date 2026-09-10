@@ -73,6 +73,7 @@ export async function dispatchInboundToAiReply(
       .from('conversations')
       .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
       .eq('id', conversationId)
+      .eq('account_id', accountId)
       .maybeSingle();
     if (convErr || !conv) return;
     if (conv.assigned_agent_id) return; // a human owns this thread
@@ -157,7 +158,11 @@ export async function dispatchInboundToAiReply(
         const target = await resolveHandoffTarget(db, accountId, config);
         if (target) update.assigned_agent_id = target;
       }
-      await db.from('conversations').update(update).eq('id', conversationId);
+      await db
+        .from('conversations')
+        .update(update)
+        .eq('id', conversationId)
+        .eq('account_id', accountId);
 
       // Tell the customer a person is taking over, so the thread doesn't
       // just go silent from their side. Deliberately AFTER the handoff

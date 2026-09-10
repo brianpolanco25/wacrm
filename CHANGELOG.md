@@ -17,13 +17,19 @@ behaviour changes**; nothing is limited by plan yet.
 
 > **Migration required:** apply
 > `supabase/migrations/040_conversation_assignment_integrity.sql` and
-> `supabase/migrations/041_billing_model.sql`. 040 nulls any
+> `supabase/migrations/041_billing_model.sql`,
+> `supabase/migrations/042_pick_available_agent.sql` and
+> `supabase/migrations/043_ai_handoff_mode.sql`. 040 nulls any
 > `conversations.assigned_agent_id` that points at a deleted user before
 > adding the foreign key, so a handful of stale "Assigned" badges may
 > disappear — those chats return to the unassigned queue.
 
 ### Added
 
+- **Available-agent handoff.** AI handoffs and automation round-robin
+  assignment can route chats to the online owner, admin or agent with the
+  lightest open/pending workload. If nobody is online, chats remain in the
+  shared unassigned queue.
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are

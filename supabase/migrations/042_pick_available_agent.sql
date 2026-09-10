@@ -36,12 +36,10 @@
 -- decenas de operadores es irrelevante.
 --
 -- Permisos: SECURITY DEFINER fija con qué privilegios corre, no quién
--- puede llamarla. La llaman el webhook (service_role) y potencialmente
--- la interfaz (authenticated) — p. ej. un botón «asignar al disponible».
--- Un miembro autenticado solo puede pasar su propio account_id con
--- efecto útil: la función no expone datos, devuelve un uuid de un
--- compañero, y la escritura posterior sigue pasando por la RLS de
--- `conversations`.
+-- puede llamarla. Los dos llamadores actuales son procesos de servidor
+-- (webhook/auto-reply y motor de automatizaciones) que usan service_role.
+-- No se concede a authenticated: aceptar un account_id arbitrario desde
+-- el cliente expondría la disponibilidad de otra cuenta.
 --
 -- Idempotente — CREATE OR REPLACE y GRANT/REVOKE son re-ejecutables.
 -- ============================================================
@@ -79,4 +77,5 @@ $$;
 
 REVOKE ALL ON FUNCTION public.pick_available_agent(uuid, interval, boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.pick_available_agent(uuid, interval, boolean) FROM anon;
-GRANT EXECUTE ON FUNCTION public.pick_available_agent(uuid, interval, boolean) TO service_role, authenticated;
+REVOKE ALL ON FUNCTION public.pick_available_agent(uuid, interval, boolean) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.pick_available_agent(uuid, interval, boolean) TO service_role;
