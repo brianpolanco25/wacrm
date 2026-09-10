@@ -12,6 +12,15 @@ import { decrypt, encrypt, isLegacyFormat } from './encryption.ts';
  * specifiers literally.
  */
 
+/**
+ * Hard ceiling for `batchSize`. PostgREST caps every response at
+ * `db-max-rows` (1000 on Supabase by default) and says nothing about
+ * having done so: ask for more and you get a short page that looks
+ * exactly like the end of the table. Refusing the value is clearer than
+ * silently clamping it.
+ */
+export const MAX_PAGE_ROWS = 1000;
+
 /** Every column that holds an `encrypt()` output. Keep in sync with the schema. */
 export const ENCRYPTED_COLUMNS: ReadonlyArray<EncryptedTarget> = [
   { table: 'whatsapp_config', columns: ['access_token', 'verify_token'] },
@@ -53,7 +62,7 @@ export interface ReencryptDb {
 export interface ReencryptOptions {
   /** Report what would change without writing. */
   dryRun: boolean;
-  /** Rows per page. */
+  /** Rows per page, 1…{@link MAX_PAGE_ROWS}. */
   batchSize: number;
   log?: (line: string) => void;
 }
@@ -86,6 +95,11 @@ export function reencryptValue(stored: string): string | null {
  * column that is not yet under the current key. Never throws for a bad
  * row: the failure is counted, logged and the row is skipped so one
  * corrupt token can't stall the rest of the rotation.
+ *
+ * Paging stops at the first **empty** page, and the offset advances by
+ * the number of rows actually returned. A short page is not the end of
+ * the table — PostgREST truncates at `db-max-rows` — and advancing by
+ * `batchSize` after one would skip every row the server withheld.
  */
 export async function reencryptTable(
   db: ReencryptDb,
@@ -93,6 +107,15 @@ export async function reencryptTable(
   opts: ReencryptOptions
 ): Promise<ReencryptStats> {
   const log = opts.log ?? (() => {});
+  if (
+    !Number.isInteger(opts.batchSize) ||
+    opts.batchSize < 1 ||
+    opts.batchSize > MAX_PAGE_ROWS
+  ) {
+    throw new Error(
+      `batchSize must be an integer between 1 and ${MAX_PAGE_ROWS}`
+    );
+  }
   const stats: ReencryptStats = {
     table: target.table,
     scanned: 0,
@@ -102,7 +125,8 @@ export async function reencryptTable(
   };
   const columns = ['id', ...target.columns].join(', ');
 
-  for (let offset = 0; ; offset += opts.batchSize) {
+  let offset = 0;
+  for (;;) {
     const { data, error } = await db
       .from(target.table)
       .select(columns)
@@ -163,7 +187,7 @@ export async function reencryptTable(
       stats.rewritten += 1;
     }
 
-    if (data.length < opts.batchSize) break;
+    offset += data.length;
   }
 
   return stats;

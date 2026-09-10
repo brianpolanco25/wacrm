@@ -22,6 +22,15 @@ and polish.
   decrypt with any key in the ring. `scripts/reencrypt-secrets.ts`
   (`--dry-run` to report) rewrites everything under the current key.
   See `docs/security.md`.
+
+  > **One-way format.** Existing rows are rewritten in the new shape by
+  > normal traffic (a send, a webhook re-verification), with or without
+  > a rotation, and an older build cannot read them: rolling back after
+  > this release asks affected accounts to re-enter their WhatsApp
+  > token, AI provider key or webhook secret. Back up
+  > `whatsapp_config`, `ai_configs` and `webhook_endpoints` first if a
+  > rollback is part of your plan.
+
 - **Platform webhook verify token.** When `META_WEBHOOK_VERIFY_TOKEN` is
   set, the WhatsApp webhook's `GET` verification compares against it and
   never reads `whatsapp_config`. Unset, the existing per-tenant lookup is

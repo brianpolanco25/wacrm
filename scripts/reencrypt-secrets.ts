@@ -6,7 +6,7 @@
  *
  *   node scripts/reencrypt-secrets.ts --dry-run          # report only
  *   node scripts/reencrypt-secrets.ts                    # rewrite
- *   node scripts/reencrypt-secrets.ts --batch-size 200
+ *   node scripts/reencrypt-secrets.ts --batch-size 200   # 1…1000
  *
  * Reads NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
  * ENCRYPTION_KEY and ENCRYPTION_KEY_PREVIOUS from the environment —
@@ -20,6 +20,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { currentKeyId } from '../src/lib/whatsapp/encryption.ts';
 import {
+  MAX_PAGE_ROWS,
   reencryptAll,
   type ReencryptDb,
   type ReencryptStats,
@@ -36,10 +37,18 @@ function parseArgs(argv: string[]): { dryRun: boolean; batchSize: number } {
       if (!Number.isInteger(n) || n < 1) {
         throw new Error('--batch-size expects a positive integer');
       }
+      // PostgREST caps a response at db-max-rows (1000) without saying
+      // so; a larger page would come back short and look like the end
+      // of the table. Refuse rather than quietly under-scan.
+      if (n > MAX_PAGE_ROWS) {
+        throw new Error(
+          `--batch-size cannot exceed ${MAX_PAGE_ROWS} (PostgREST's db-max-rows truncates larger pages)`
+        );
+      }
       batchSize = n;
     } else if (arg === '--help' || arg === '-h') {
       console.log(
-        'usage: node scripts/reencrypt-secrets.ts [--dry-run] [--batch-size N]'
+        `usage: node scripts/reencrypt-secrets.ts [--dry-run] [--batch-size N]  (N = 1…${MAX_PAGE_ROWS})`
       );
       process.exit(0);
     } else {

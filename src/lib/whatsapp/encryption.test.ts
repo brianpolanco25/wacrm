@@ -14,8 +14,19 @@ const KEY_HEX = process.env.ENCRYPTION_KEY!;
 // A second, distinct key for the rotation scenarios.
 const OTHER_KEY_HEX = '11'.repeat(32);
 
+/**
+ * CBC fixtures use a derived IV, never `randomBytes`. AES-CBC is
+ * unauthenticated: with a random IV, "the wrong key rejects this blob"
+ * is only true ~99.6% of the time, which is exactly how you get a suite
+ * that fails once every few hundred CI runs. Same inputs, same bytes,
+ * same outcome, for ever.
+ */
+function derivedIv(label: string): Buffer {
+  return crypto.createHash('sha256').update(label).digest().subarray(0, 16);
+}
+
 function cbcEncryptLegacy(plaintext: string, keyHex = KEY_HEX): string {
-  const iv = crypto.randomBytes(16);
+  const iv = derivedIv(`${keyHex}|${plaintext}`);
   const cipher = crypto.createCipheriv(
     'aes-256-cbc',
     Buffer.from(keyHex, 'hex'),
@@ -25,6 +36,58 @@ function cbcEncryptLegacy(plaintext: string, keyHex = KEY_HEX): string {
   ct += cipher.final('hex');
   return `${iv.toString('hex')}:${ct}`;
 }
+
+/** Raw AES-256-CBC, PKCS#7 checked but nothing else. Null when the padding is wrong. */
+function rawCbcDecrypt(keyHex: string, blob: string): Buffer | null {
+  const [ivHex, ctHex] = blob.split(':');
+  try {
+    const decipher = crypto.createDecipheriv(
+      'aes-256-cbc',
+      Buffer.from(keyHex, 'hex'),
+      Buffer.from(ivHex, 'hex')
+    );
+    return Buffer.concat([decipher.update(ctHex, 'hex'), decipher.final()]);
+  } catch {
+    return null;
+  }
+}
+
+function isValidUtf8(bytes: Buffer): boolean {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A real CBC ciphertext of `EAAG-real-token` under OTHER_KEY_HEX whose
+ * PKCS#7 padding **also** validates under KEY_HEX. Found by walking
+ * `sha256('cbc-legacy#' + n)` IVs until the wrong key cleared the
+ * padding (n = 220; it happens about once in 240). Pinned here so the
+ * scenario is exercised on every run instead of by luck.
+ */
+const CBC_PADS_UNDER_WRONG_KEY = {
+  plaintext: 'EAAG-real-token',
+  blob: '048a6953f595dd302f51f22d2d9fbfb8:7c6d35999417b0233313b7081444042a',
+};
+
+/**
+ * A CBC blob that decrypts to a well-padded, valid-UTF-8 string under
+ * **both** KEY_HEX and OTHER_KEY_HEX. Constructed rather than sampled:
+ * for a one-block ciphertext C, plaintext = D_key(C) XOR IV, so a block
+ * C whose two raw decryptions differ only in bytes that keep both sides
+ * inside ASCII (and agree on the last byte, the padding length) gives a
+ * choice of IV that satisfies both keys at once. Roughly one block in
+ * 8 million qualifies; this is the first one under
+ * `sha256('cbc-ring-collision#' + n)`.
+ */
+const CBC_DECRYPTS_UNDER_BOTH_KEYS = {
+  blob: 'ce10235d7099c950412a3dda29fea063:65c00f5dbc5d72f9ff3699c1f30aa1e5',
+  underCurrentKey: 'aaaaaaaaa0aa0a0',
+  underPreviousKey: 'Pg$%z`&&K^|kW4N',
+};
 
 /** The pre-rotation GCM shape: no key id prefix. */
 function gcmEncryptUnversioned(plaintext: string, keyHex = KEY_HEX): string {
@@ -183,6 +246,56 @@ describe('encryption', () => {
       expect(decrypt(gcmOld)).toBe('gcm-under-old-key');
       expect(decrypt(cbcOld)).toBe('cbc-under-old-key');
       expect(decrypt(gcmCurrent)).toBe('gcm-under-current-key');
+    });
+
+    // Regression: the ring made a wrong-key CBC "success" possible, and
+    // the write-backs would have stored encrypt(garbage) over the token.
+    it('returns the retired key\u2019s plaintext, not the garbage the current key happens to unpad', () => {
+      const { plaintext, blob } = CBC_PADS_UNDER_WRONG_KEY;
+
+      // Pin the fixture: the current key really does clear PKCS#7 here…
+      const wrongKeyBytes = rawCbcDecrypt(KEY_HEX, blob);
+      expect(wrongKeyBytes).not.toBeNull();
+      // …and only the UTF-8 check tells those bytes from a real secret.
+      expect(isValidUtf8(wrongKeyBytes!)).toBe(false);
+      expect(rawCbcDecrypt(OTHER_KEY_HEX, blob)!.toString('utf8')).toBe(
+        plaintext
+      );
+
+      process.env.ENCRYPTION_KEY_PREVIOUS = OTHER_KEY_HEX;
+      expect(decrypt(blob)).toBe(plaintext);
+    });
+
+    it('refuses to pick a plaintext when two keys in the ring both succeed', () => {
+      const { blob, underCurrentKey, underPreviousKey } =
+        CBC_DECRYPTS_UNDER_BOTH_KEYS;
+
+      // Pin the fixture: both keys yield well-padded, valid UTF-8.
+      expect(rawCbcDecrypt(KEY_HEX, blob)!.toString('utf8')).toBe(
+        underCurrentKey
+      );
+      expect(rawCbcDecrypt(OTHER_KEY_HEX, blob)!.toString('utf8')).toBe(
+        underPreviousKey
+      );
+
+      // Known limit: with a single key there is nothing to compare
+      // against, so an unauthenticated CBC blob is taken at face value.
+      expect(decrypt(blob)).toBe(underCurrentKey);
+
+      // With the retired key in the ring the collision is visible, and
+      // guessing is exactly what corrupts a token: fail closed.
+      process.env.ENCRYPTION_KEY_PREVIOUS = OTHER_KEY_HEX;
+      expect(() => decrypt(blob)).toThrow(/more than one configured key/);
+      expect(() => decrypt(blob)).toThrow(
+        new RegExp(`${keyIdFor(KEY_HEX)}, ${keyIdFor(OTHER_KEY_HEX)}`)
+      );
+    });
+
+    it('treats non-UTF-8 plaintext as \u201cnot this key\u201d, never as a result', () => {
+      const [ivHex, ctHex] = CBC_PADS_UNDER_WRONG_KEY.blob.split(':');
+      // Only the wrong key in the ring: the blob is unreadable, and the
+      // caller gets an error instead of mojibake it would re-encrypt.
+      expect(() => decrypt(`${ivHex}:${ctHex}`)).toThrow(/UTF-8/);
     });
 
     it('names the missing key when a versioned blob points outside the ring', () => {

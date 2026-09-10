@@ -31,10 +31,53 @@ nothing usable about the key.
 
 Two older shapes still decrypt: `<iv>:<ct>:<tag>` (GCM, written before
 key ids existed) and `<iv>:<ct>` (the original CBC). Neither carries a
-key id, so they are tried against the active key first and then each
-previous key in order. Rows in either shape are rewritten under the
-active key the next time they are used (the `isLegacyFormat` write-back
-in the send path and the webhook), and by the script below.
+key id, so every key in the ring is tried. Rows in either shape are
+rewritten under the active key the next time they are used (the
+`isLegacyFormat` write-back in the send path and the webhook), and by
+the script below.
+
+Trying more than one key is safe for GCM, which authenticates itself,
+but not for CBC, which does not: the wrong key clears PKCS#7 padding
+about once in 240 attempts and Node will happily hand back the
+resulting bytes. Since the write-backs re-encrypt whatever `decrypt()`
+returns, that would mean storing noise over the only copy of a
+customer's token. So a CBC plaintext is accepted only when it decodes
+as **strict UTF-8** (no U+FFFD substitution), and when exactly **one**
+key in the ring produces an acceptable plaintext. A ciphertext really
+written by a ring key always decrypts under that key, so a second hit
+proves a collision: `decrypt()` throws, the write-back never runs, and
+the account shows `token_corrupted` — recoverable by re-entering the
+secret — instead of being silently destroyed.
+
+The residual limit is worth stating plainly: a CBC row whose key is
+**not** in the ring at all is already unreadable, and there is nothing
+left to compare a candidate plaintext against. One in a few hundred
+thousand of those (padding _and_ UTF-8 by chance, much rarer for a
+long token) is still returned as garbage and can still be rewritten.
+Keeping a retired key in `ENCRYPTION_KEY_PREVIOUS` until the
+re-encryption script reports a clean run is what keeps that case out
+of reach.
+
+### The new format is one-way
+
+`encrypt()` emits the four-part shape unconditionally, and the
+`decrypt()` of any earlier release rejects it (`unrecognised format
+(expected 1 or 2 colons, got 3)`). That has two consequences worth
+planning for:
+
+- **Rows convert themselves.** Every pre-existing row counts as legacy,
+  so the write-backs in the send path and the webhook rewrite it in the
+  new shape the first time the account sends a message or Meta
+  re-verifies the webhook. This happens under normal traffic, with no
+  rotation and no script run.
+- **Rolling the application back is not free.** Once a row has been
+  converted, an older build cannot read it: that account gets
+  `token_corrupted` and has to re-enter its WhatsApp token, AI provider
+  key or webhook secret. There is no downgrade script, and there is no
+  way to tell from the outside which rows have already converted. If a
+  rollback is a realistic part of the release plan, take a backup of
+  `whatsapp_config`, `ai_configs` and `webhook_endpoints` before
+  deploying, and restore those tables together with the old build.
 
 ### Rotation runbook
 
@@ -53,11 +96,19 @@ in the send path and the webhook), and by the script below.
    The script needs `NEXT_PUBLIC_SUPABASE_URL`,
    `SUPABASE_SERVICE_ROLE_KEY`, `ENCRYPTION_KEY` and
    `ENCRYPTION_KEY_PREVIOUS`. It walks `whatsapp_config`, `ai_configs`
-   and `webhook_endpoints` in batches of 100 (`--batch-size N` to
-   change), rewrites only the columns that are not yet under the active
-   key, and prints a per-table summary. Node 24 runs the TypeScript
-   directly; the `MODULE_TYPELESS_PACKAGE_JSON` warning it prints is
-   harmless (`--disable-warning=MODULE_TYPELESS_PACKAGE_JSON` hides it).
+   and `webhook_endpoints` in batches of 100 (`--batch-size N`, between
+   1 and 1000), rewrites only the columns that are not yet under the
+   active key, and prints a per-table summary. Node 24 runs the
+   TypeScript directly; the `MODULE_TYPELESS_PACKAGE_JSON` warning it
+   prints is harmless (`--disable-warning=MODULE_TYPELESS_PACKAGE_JSON`
+   hides it).
+
+   1000 is not a style preference: PostgREST truncates any response at
+   `db-max-rows` (1000 on Supabase) without flagging that it did, so a
+   larger page comes back short and reads exactly like the end of the
+   table. The script refuses the value rather than clamp it, and pages
+   until it gets an **empty** page, advancing by the number of rows it
+   actually received.
 
 4. A row that cannot be decrypted with any configured key is counted as
    `failed`, logged with its table, column and id, and left untouched;
@@ -69,6 +120,21 @@ in the send path and the webhook), and by the script below.
 The same procedure recovers from a suspected key leak; the only
 difference is urgency. Until step 5 the old key can still read every
 row it ever wrote, so treat steps 2–5 as one change window.
+
+### Why `allowImportingTsExtensions` is on in the root `tsconfig.json`
+
+`scripts/reencrypt-secrets.ts` is executed by `node` directly (Node 24
+strips the types; there is no build step for it), and Node resolves
+relative specifiers literally — so its imports have to say
+`../src/lib/whatsapp/encryption.ts`, extension included, which
+TypeScript only allows with that flag. The flag is set at the root
+rather than in a `scripts/tsconfig.json` because the repo compiles as
+one project with `noEmit: true`: nothing is emitted, so the usual
+hazard (emitting an import of a `.ts` path that no runtime can resolve)
+cannot occur, and phase 3 already relies on the same flag for its own
+Node-run scripts. Application code under `src/` must keep importing
+through `@/…` without an extension — the flag permits the other style,
+the review does not.
 
 ## Webhook verification token
 

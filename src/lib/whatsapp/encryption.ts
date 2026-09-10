@@ -48,11 +48,21 @@ import crypto from 'crypto';
  *        ENCRYPTION_KEY_PREVIOUS.
  *
  * Backward compatibility:
- *   Unprefixed ciphertexts carry no key id, so they are tried against
- *   the current key first and then each previous key in order. Call
- *   sites that hold a DB client upgrade rows opportunistically after a
- *   successful decrypt — see `isLegacyFormat` and the `encrypt()` write-
- *   back in `src/lib/whatsapp/send-message.ts`.
+ *   Unprefixed ciphertexts carry no key id, so every key in the ring is
+ *   tried. GCM authenticates itself; CBC does not, so the plaintext is
+ *   additionally required to be valid UTF-8 and exactly one key may
+ *   succeed — see `tryEachKey`. Call sites that hold a DB client upgrade
+ *   rows opportunistically after a successful decrypt (see
+ *   `isLegacyFormat` and the `encrypt()` write-back in
+ *   `src/lib/whatsapp/send-message.ts`); those write-backs are only
+ *   reachable when `decrypt()` returned, which is why `decrypt()` fails
+ *   closed instead of guessing.
+ *
+ * One-way format:
+ *   `encrypt()` emits the four-part shape unconditionally, and older
+ *   builds of this module reject it. Rolling the application back after
+ *   any row has been rewritten leaves that row unreadable — see the
+ *   rollback note in docs/security.md.
  */
 
 // 12 bytes is the NIST-recommended IV length for GCM — keeps the
@@ -152,12 +162,28 @@ export function encrypt(text: string): string {
   return `${current.id}:${iv.toString('hex')}:${encrypted}:${authTag.toString('hex')}`;
 }
 
+/**
+ * Decode plaintext bytes as UTF-8, rejecting anything that is not valid
+ * UTF-8. This is the only sanity check available on the unauthenticated
+ * CBC path: `update(..., 'utf8')` would happily substitute U+FFFD and
+ * hand back mojibake that a caller cannot tell from a real secret.
+ * Everything this module encrypts went in as UTF-8, so a decode failure
+ * means "these are not the plaintext bytes".
+ */
+function toUtf8(bytes: Buffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('Decrypted bytes are not valid UTF-8');
+  }
+}
+
 function decryptGcm(
   key: Buffer,
   ivHex: string,
   ctHex: string,
   tagHex: string
-): string {
+): Buffer {
   const iv = Buffer.from(ivHex, 'hex');
   if (iv.length !== GCM_IV_LENGTH) {
     throw new Error(
@@ -172,12 +198,10 @@ function decryptGcm(
   }
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(authTag);
-  let decrypted = decipher.update(ctHex, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
+  return Buffer.concat([decipher.update(ctHex, 'hex'), decipher.final()]);
 }
 
-function decryptCbc(key: Buffer, ivHex: string, ctHex: string): string {
+function decryptCbc(key: Buffer, ivHex: string, ctHex: string): Buffer {
   const iv = Buffer.from(ivHex, 'hex');
   if (iv.length !== CBC_IV_LENGTH) {
     throw new Error(
@@ -185,29 +209,47 @@ function decryptCbc(key: Buffer, ivHex: string, ctHex: string): string {
     );
   }
   const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  let decrypted = decipher.update(ctHex, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
+  return Buffer.concat([decipher.update(ctHex, 'hex'), decipher.final()]);
 }
 
 /**
- * Try `attempt` with the current key, then each previous key. Structural
- * errors (wrong IV / tag length) are the same for every key and are
- * rethrown immediately; an authentication or padding failure means
- * "not this key" and moves on. The last failure is rethrown when the
- * whole ring is exhausted.
+ * Try `attempt` with **every** key in the ring and insist on exactly one
+ * winner. Structural errors (wrong IV / tag length) are the same for
+ * every key and are rethrown immediately; an authentication, padding or
+ * UTF-8 failure means "not this key" and moves on. The last failure is
+ * rethrown when the whole ring is exhausted.
+ *
+ * Why not return the first key that works: AES-CBC is unauthenticated,
+ * so the wrong key clears PKCS#7 padding roughly 1 time in 240. The
+ * UTF-8 check above catches almost all of those, but the ring makes the
+ * cost of a false positive real — a ciphertext written under the retired
+ * key would decrypt to garbage under the current one and the
+ * opportunistic write-backs would store `encrypt(garbage)` over the only
+ * copy of a customer's token. When the ciphertext really was written by
+ * a key in the ring, that key always succeeds, so any second success is
+ * proof of a collision: fail closed and let the caller surface
+ * `token_corrupted` rather than silently pick one.
  */
 function tryEachKey(ring: KeyRing, attempt: (key: Buffer) => string): string {
   let lastError: unknown = null;
+  const hits: { id: string; plaintext: string }[] = [];
   for (const entry of [ring.current, ...ring.previous]) {
     try {
-      return attempt(entry.key);
+      hits.push({ id: entry.id, plaintext: attempt(entry.key) });
     } catch (err) {
       if (err instanceof Error && /unexpected (GCM|CBC)/.test(err.message)) {
         throw err;
       }
       lastError = err;
     }
+  }
+  if (hits.length === 1) return hits[0].plaintext;
+  if (hits.length > 1) {
+    throw new Error(
+      `Encrypted token decrypts under more than one configured key (${hits
+        .map((h) => h.id)
+        .join(', ')}); refusing to guess which plaintext is real`
+    );
   }
   throw lastError instanceof Error
     ? lastError
@@ -229,19 +271,23 @@ export function decrypt(encryptedText: string): string {
         `Encrypted token was produced with key ${keyId}, which is not in ENCRYPTION_KEY / ENCRYPTION_KEY_PREVIOUS`
       );
     }
-    return decryptGcm(entry.key, ivHex, ctHex, tagHex);
+    return toUtf8(decryptGcm(entry.key, ivHex, ctHex, tagHex));
   }
 
   if (parts.length === 3) {
     // Unversioned GCM — pre-rotation format. Key unknown: try the ring.
     const [ivHex, ctHex, tagHex] = parts;
-    return tryEachKey(ring, (key) => decryptGcm(key, ivHex, ctHex, tagHex));
+    return tryEachKey(ring, (key) =>
+      toUtf8(decryptGcm(key, ivHex, ctHex, tagHex))
+    );
   }
 
   if (parts.length === 2) {
     // CBC — legacy. Read-only; `encrypt()` never produces this shape.
+    // Unauthenticated, so `toUtf8` and the one-winner rule in
+    // `tryEachKey` are all that stand between a wrong key and garbage.
     const [ivHex, ctHex] = parts;
-    return tryEachKey(ring, (key) => decryptCbc(key, ivHex, ctHex));
+    return tryEachKey(ring, (key) => toUtf8(decryptCbc(key, ivHex, ctHex)));
   }
 
   throw new Error(
