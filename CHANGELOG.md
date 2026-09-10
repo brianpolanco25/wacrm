@@ -34,7 +34,8 @@ and polish.
 - **Platform webhook verify token.** When `META_WEBHOOK_VERIFY_TOKEN` is
   set, the WhatsApp webhook's `GET` verification compares against it and
   never reads `whatsapp_config`. Unset, the existing per-tenant lookup is
-  unchanged.
+  unchanged. The value is trimmed (an empty or whitespace-only one counts
+  as unset) and a mismatch is logged without echoing either token.
 - **Private attachments.** Outbound media (inbox, public API, Flow
   `send_media`, template media headers in broadcasts) is now uploaded to
   Meta and sent by media id instead of a public bucket link, and the

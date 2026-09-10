@@ -131,7 +131,13 @@ export async function GET(request: Request) {
     // subscribe just to find a match. With the platform token defined we
     // compare against it and never touch the table. Without it (self-
     // hosted, one config per install) the loop behaves exactly as before.
-    const platformToken = process.env.META_WEBHOOK_VERIFY_TOKEN
+    // Trimmed because the value arrives from a secret file, a K8s
+    // ConfigMap or a hand-edited `.env` line as often as from a shell
+    // export, and a trailing newline or space would otherwise be
+    // truthy: the short path would activate and never match, so every
+    // subscribe would 403. Whitespace-only counts as unset, same as the
+    // empty string.
+    const platformToken = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim()
     if (platformToken) {
       if (verifyTokensMatch(verifyToken, platformToken)) {
         return new Response(challenge, {
@@ -139,6 +145,13 @@ export async function GET(request: Request) {
           headers: { 'Content-Type': 'text/plain' },
         })
       }
+      // Names neither the supplied nor the expected token on purpose —
+      // both are credentials, and the operator only needs to know that
+      // the platform path rejected a subscribe (usually a stale value
+      // in the Meta app's webhook settings).
+      console.warn(
+        '[webhook] verify token mismatch against META_WEBHOOK_VERIFY_TOKEN'
+      )
       return NextResponse.json(
         { error: 'Verification token mismatch' },
         { status: 403 }

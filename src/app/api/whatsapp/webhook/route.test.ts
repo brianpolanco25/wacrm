@@ -282,6 +282,12 @@ beforeEach(() => {
   h.state.fromCalls = []
   h.state.configVerifyTokens = ['tenant-verify-token']
   vi.unstubAllEnvs()
+  // `unstubAllEnvs` only undoes previous `stubEnv` calls; it does not
+  // clear a variable exported in the developer's shell. The self-hosted
+  // tests below assert the per-tenant loop runs, which needs the
+  // platform token absent, so pin it to the empty string (the route
+  // treats that as unset) instead of trusting the ambient environment.
+  vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN', '')
   mockGetMediaUrl.mockResolvedValue({
     url: 'https://lookaside.fbsbx.com/whatsapp/abc',
     mimeType: 'image/jpeg',
@@ -614,5 +620,41 @@ describe('webhook GET verification: platform token short path', () => {
     const res = (await GET(verifyRequest('tenant-verify-token'))) as Response
     expect(res.status).toBe(200)
     expect(h.state.fromCalls).toContain('whatsapp_config')
+  })
+
+  it('surrounding whitespace in META_WEBHOOK_VERIFY_TOKEN is trimmed, not part of the token', async () => {
+    // A secret file or a hand-edited .env line leaves a trailing
+    // newline. Untrimmed, the short path activates and never matches:
+    // every subscribe 403s.
+    vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN', ' platform-secret\n')
+
+    const res = (await GET(verifyRequest('platform-secret'))) as Response
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('challenge-123')
+    expect(h.state.fromCalls).not.toContain('whatsapp_config')
+  })
+
+  it('a whitespace-only META_WEBHOOK_VERIFY_TOKEN counts as unset', async () => {
+    vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN', '   ')
+
+    const res = (await GET(verifyRequest('tenant-verify-token'))) as Response
+    expect(res.status).toBe(200)
+    expect(h.state.fromCalls).toContain('whatsapp_config')
+  })
+
+  it('the 403 of the platform path warns without echoing either token', async () => {
+    vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN', 'platform-secret')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const res = (await GET(verifyRequest('attacker-guess'))) as {
+      init?: { status?: number }
+    }
+    expect(res.init?.status).toBe(403)
+    expect(warn).toHaveBeenCalledTimes(1)
+    const logged = warn.mock.calls[0].map(String).join(' ')
+    expect(logged).not.toContain('attacker-guess')
+    expect(logged).not.toContain('platform-secret')
+
+    warn.mockRestore()
   })
 })

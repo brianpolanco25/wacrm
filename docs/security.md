@@ -148,7 +148,11 @@ challenge. Two ways to answer it:
 
 Set the variable once the deployment is registered as a single Meta app;
 leave it unset for a self-hosted instance where each tenant brings their
-own app. An empty value counts as unset.
+own app. The value is trimmed before use, so surrounding whitespace (a
+trailing newline from a secret file, a stray space in an `.env` line) is
+not part of the token; an empty — or whitespace-only — value counts as
+unset. A subscribe that does not match the platform token logs a
+`console.warn` naming neither the supplied nor the expected value.
 
 ## Private attachments
 
