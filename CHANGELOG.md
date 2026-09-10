@@ -47,10 +47,26 @@ behaviour changes**; nothing is limited by plan yet.
   an account may leave the API key blank in Settings → AI and the
   platform's key is used; an account's own key still takes precedence.
   Without them nothing changes. `ai_configs.api_key` is now nullable
-  (migration 047).
+  (migration 047). The fallback covers the chat key only — the
+  embeddings key has no platform-level equivalent.
+- **Switching back to the platform key.** An account that saved its own
+  provider key can clear the key field in Settings → AI and save; the
+  key is forgotten and the platform's is used from then on. Previously a
+  stored key could only be removed by deleting the whole AI
+  configuration.
+- **Who paid for each AI call.** `ai_usage_log` gained a `key_source`
+  column (`'account'` or `'platform'`, migration 047) so a deployment can
+  measure, per account, the model spend it is funding itself. Rows
+  written before the change are all bring-your-own-key and are recorded
+  as `'account'`.
 
 ### Fixed
 
+- **Saving the AI settings with no key anywhere.** An account backed by
+  the platform key (no key of its own) could no longer be saved at all —
+  not even to turn the assistant off — once the deployment's
+  `AI_PLATFORM_*_API_KEY` was rotated away. A key is now required only
+  when the save actually has credentials to verify.
 - **Dangling conversation assignments.** `conversations.assigned_agent_id`
   now references `auth.users` with `ON DELETE SET NULL`, so removing an
   operator returns their chats to the unassigned queue instead of leaving

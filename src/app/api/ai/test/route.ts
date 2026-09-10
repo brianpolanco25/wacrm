@@ -8,7 +8,7 @@ import {
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { validateAiCredentials } from '@/lib/ai/validate';
 import { platformApiKey } from '@/lib/ai/platform-key';
-import { AiError, type AiProvider } from '@/lib/ai/types';
+import { AiError, type AiKeySource, type AiProvider } from '@/lib/ai/types';
 
 /**
  * POST /api/ai/test  (admin+)
@@ -48,6 +48,9 @@ export async function POST(request: Request) {
 
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
     let apiKeyPlain = rawKey;
+    // Which key ends up being tested — reported to `validateAiCredentials`
+    // for symmetry with the real call paths (nothing is logged here).
+    let keySource: AiKeySource = 'account';
     if (!apiKeyPlain) {
       const { data: existing } = await supabase
         .from('ai_configs')
@@ -78,6 +81,7 @@ export async function POST(request: Request) {
           );
         }
         apiKeyPlain = platformKey;
+        keySource = 'platform';
       }
     }
 
@@ -86,6 +90,7 @@ export async function POST(request: Request) {
         provider,
         model,
         apiKey: apiKeyPlain,
+        keySource,
         systemPrompt: null,
         isActive: true,
         autoReplyEnabled: false,

@@ -153,7 +153,10 @@ export function AiConfig() {
     if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
   };
 
-  const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
+  // undefined = leave the stored key unchanged; '' typed = null (clear
+  // it and fall back to the platform key, supuesto S1); text = set.
+  // Same three-way convention as the embeddings key below.
+  const keyPayload = () => (keyEdited ? apiKey.trim() || null : undefined);
 
   // undefined = leave unchanged; '' typed = null (clear); text = set.
   const embeddingsKeyPayload = () =>
@@ -201,6 +204,13 @@ export function AiConfig() {
     // A first save needs a key — unless the platform provides one for the
     // chosen provider, in which case the server falls back to it.
     if (!configured && !keyEdited && !platformKeyAvailable[provider]) {
+      toast.error(t('missingApiKey'));
+      return;
+    }
+    // Emptying the field means "drop my key and use the platform's".
+    // Without a platform key for this provider that would leave the
+    // account with no key at all, so stop before the round trip.
+    if (keyEdited && !apiKey.trim() && !platformKeyAvailable[provider]) {
       toast.error(t('missingApiKey'));
       return;
     }
@@ -364,9 +374,14 @@ export function AiConfig() {
                   {t('testKey')}
                 </Button>
               </div>
-              {platformKeyAvailable[provider] && !hasStoredKey && (
+              {platformKeyAvailable[provider] && (
                 <p className="text-muted-foreground text-xs">
-                  {t('platformKeyHint')}
+                  {/* Both directions are reachable: leave it blank to
+                      ride on the platform key, or clear a stored key to
+                      go back to it. */}
+                  {hasStoredKey
+                    ? t('platformKeyStoredHint')
+                    : t('platformKeyHint')}
                 </p>
               )}
             </div>

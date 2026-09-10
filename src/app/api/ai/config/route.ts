@@ -87,7 +87,8 @@ export async function GET() {
  * before persisting (mirrors the WhatsApp config verifying with Meta
  * first), then stores the key AES-256-GCM-encrypted. When `api_key` is
  * omitted the existing stored key is reused (the form sends it only
- * when the user re-enters it).
+ * when the user re-enters it); an explicit `api_key: null` forgets it
+ * and falls back to the platform key (supuesto S1).
  */
 export async function POST(request: Request) {
   try {
@@ -142,7 +143,13 @@ export async function POST(request: Request) {
       handoffAgentId = rawHandoff;
     }
 
+    // Chat key. A non-empty string sets/replaces it; an explicit `null`
+    // clears it — "forget my key and go back to the platform's"
+    // (supuesto S1), the same convention `embeddings_api_key` already
+    // uses; absent leaves the stored key untouched (the form only sends
+    // the field when the admin edits it).
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
+    const clearKey = body.api_key === null;
 
     // Embeddings key (optional, for semantic KB search): a non-empty
     // string sets/replaces it; an explicit null clears it; absent leaves
@@ -160,43 +167,54 @@ export async function POST(request: Request) {
       .eq('account_id', accountId)
       .maybeSingle();
 
-    // Key resolution (supuesto S1): a freshly typed key, else the stored
-    // key, else the platform key for the chosen provider. Only when none
-    // of the three exists is the key actually required — the pre-S1
-    // behaviour on a deployment without platform keys.
-    let apiKeyPlain: string;
-    if (rawKey) {
-      apiKeyPlain = rawKey;
-    } else if (existing?.api_key) {
-      try {
-        apiKeyPlain = decrypt(existing.api_key);
-      } catch {
-        return bad(
-          'Stored API key could not be decrypted — re-enter your key.'
-        );
-      }
-    } else {
-      const platformKey = platformApiKey(provider);
-      if (!platformKey) return bad('api_key is required');
-      apiKeyPlain = platformKey;
-    }
-
     // Only spend a provider round-trip when the credentials that affect
-    // reachability actually changed. A save that just flips a toggle or
-    // edits the system prompt on an existing, already-validated config
-    // skips the call — no wasted token/latency on the account's key.
+    // reachability actually changed: a brand-new row, a freshly typed
+    // key, a key handed back to the platform, or a different
+    // provider/model. A save that just flips a toggle or edits the
+    // system prompt on an existing, already-validated config skips the
+    // call — no wasted token/latency on the account's key.
     const credentialsChanged =
       !existing ||
       rawKey !== '' ||
+      clearKey ||
       provider !== existing.provider ||
       model !== existing.model;
 
+    // A key is needed only to validate, so it is only *required* when we
+    // are about to validate. That keeps a platform-backed row (api_key
+    // NULL) editable after the operator rotates AI_PLATFORM_*_API_KEY
+    // away: turning the assistant off or fixing its prompt must not 400
+    // because the deployment no longer has a key to test with.
     if (credentialsChanged) {
+      // Key resolution (supuesto S1): a freshly typed key, else the
+      // stored key (unless this save is clearing it), else the platform
+      // key for the chosen provider. Only when none of the three exists
+      // is the key actually required — the pre-S1 behaviour on a
+      // deployment without platform keys.
+      let apiKeyPlain: string;
+      if (rawKey) {
+        apiKeyPlain = rawKey;
+      } else if (existing?.api_key && !clearKey) {
+        try {
+          apiKeyPlain = decrypt(existing.api_key);
+        } catch {
+          return bad(
+            'Stored API key could not be decrypted — re-enter your key.'
+          );
+        }
+      } else {
+        const platformKey = platformApiKey(provider);
+        if (!platformKey) return bad('api_key is required');
+        apiKeyPlain = platformKey;
+      }
+
       try {
         await validateAiCredentials({
           provider,
           model,
           apiKey: apiKeyPlain,
+          keySource:
+            rawKey || (existing?.api_key && !clearKey) ? 'account' : 'platform',
           systemPrompt,
           isActive,
           autoReplyEnabled,
@@ -233,7 +251,6 @@ export async function POST(request: Request) {
       }
     }
 
-    const encryptedKey = rawKey ? encrypt(rawKey) : null;
     const shared: Record<string, unknown> = {
       provider,
       model,
@@ -250,11 +267,18 @@ export async function POST(request: Request) {
     } else if (clearEmbeddingsKey) {
       shared.embeddings_api_key = null;
     }
+    // Same three-way rule for the chat key: typed → store it encrypted;
+    // explicit null → back to the platform key; absent → untouched.
+    if (rawKey) {
+      shared.api_key = encrypt(rawKey);
+    } else if (clearKey) {
+      shared.api_key = null;
+    }
 
     if (existing) {
       const { error: upErr } = await supabase
         .from('ai_configs')
-        .update(encryptedKey ? { ...shared, api_key: encryptedKey } : shared)
+        .update(shared)
         .eq('account_id', accountId);
       if (upErr) {
         console.error('[ai/config POST] update error:', upErr);
@@ -267,9 +291,10 @@ export async function POST(request: Request) {
       const { error: insErr } = await supabase.from('ai_configs').insert({
         account_id: accountId,
         created_by: userId,
-        // Null when the account relies on the platform key (column is
-        // nullable since migration 041); otherwise the encrypted BYO key.
-        api_key: encryptedKey,
+        // Null when the account relies on the platform key (the column
+        // is nullable since migration 047); `shared` overrides it with
+        // the encrypted BYO key when the admin typed one.
+        api_key: null,
         ...shared,
       });
       if (insErr) {

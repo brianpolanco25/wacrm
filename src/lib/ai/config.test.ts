@@ -62,6 +62,8 @@ describe('loadAiConfig platform key fallback (supuesto S1)', () => {
     const config = await loadAiConfig(dbReturning(NO_KEY_ROW), 'acct');
     expect(config).not.toBeNull();
     expect(config!.apiKey).toBe('sk-platform');
+    // The origin travels with the config so the usage log can bill it.
+    expect(config!.keySource).toBe('platform');
   });
 
   it('prefers the stored key over the platform key', async () => {
@@ -71,6 +73,7 @@ describe('loadAiConfig platform key fallback (supuesto S1)', () => {
       'acct'
     );
     expect(config!.apiKey).toBe('plain:enc-key');
+    expect(config!.keySource).toBe('account');
   });
 
   it('returns null (not configured) when there is neither a stored nor a platform key', async () => {

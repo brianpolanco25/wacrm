@@ -122,6 +122,38 @@ BEGIN
     RAISE EXCEPTION 'ai_configs.api_key is still NOT NULL (migration 047)';
   END IF;
 
+  -- Who paid for each AI call (047). Without this column platform-funded
+  -- spend is indistinguishable from BYO spend and fase 3 cannot bill it.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'ai_usage_log'
+      AND column_name = 'key_source'
+      AND is_nullable = 'NO'
+      AND column_default = '''account''::text'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_usage_log.key_source is missing, nullable or lacks the ''account'' default (migration 047)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ai_usage_log_key_source_check'
+      AND conrelid = 'public.ai_usage_log'::regclass
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_usage_log_key_source_check is missing (migration 047)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'ai_usage_log'
+      AND indexname = 'idx_ai_usage_log_account_source_created'
+  ) THEN
+    RAISE EXCEPTION
+      'idx_ai_usage_log_account_source_created is missing (migration 047)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
