@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { BarChart3, Bot, PencilLine } from 'lucide-react';
+import { BarChart3, Bot, FlaskConical, PencilLine } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import {
@@ -33,10 +33,10 @@ interface UsageResponse {
     completion_tokens: number;
     total_tokens: number;
   };
-  by_mode: {
-    auto_reply: { calls: number; tokens: number };
-    draft: { calls: number; tokens: number };
-  };
+  // Open-ended on purpose: `ai_usage_log.mode` grew a third value in 047
+  // ('playground') and the route now tallies whatever it reads, so a mode
+  // this build has never heard of must not break the card.
+  by_mode: Record<string, { calls: number; tokens: number } | undefined>;
   by_model: {
     model: string;
     provider: string;
@@ -48,10 +48,20 @@ interface UsageResponse {
 
 const WINDOWS = [7, 30, 90] as const;
 
+// Modes with a tile of their own, in reading order. Whatever the API
+// reports outside this list is folded into "Other" below, so the
+// breakdown always adds up to the headline total.
+const MODE_TILES = [
+  { mode: 'auto_reply', label: 'Auto-reply', icon: Bot },
+  { mode: 'draft', label: 'Drafts', icon: PencilLine },
+  { mode: 'playground', label: 'Playground', icon: FlaskConical },
+] as const;
+
 /**
- * Token-spend dashboard for the account's BYO key. Admin-only (spend is
- * billing-class), mirroring the `ai_usage_log` SELECT policy and the
- * `GET /api/ai/usage` route. Renders nothing for non-admins.
+ * Token-spend dashboard for the account — its own key or the platform's.
+ * Admin-only (spend is billing-class), mirroring the `ai_usage_log`
+ * SELECT policy and the `GET /api/ai/usage` route. Renders nothing for
+ * non-admins.
  */
 export function AiUsageCard() {
   const { accountId, accountRole, profileLoading } = useAuth();
@@ -98,6 +108,12 @@ export function AiUsageCard() {
     data?.daily.map((d) => ({ day: format(parseISO(d.date), 'MMM d'), Tokens: d.tokens })) ??
     [];
   const hasSpend = (data?.totals.total_tokens ?? 0) > 0;
+  // Everything the API counted under a mode without a tile. Showing it is
+  // what keeps "Total tokens" equal to the sum of the breakdown.
+  const otherTokens = data
+    ? data.totals.total_tokens -
+      MODE_TILES.reduce((acc, t) => acc + (data.by_mode[t.mode]?.tokens ?? 0), 0)
+    : 0;
 
   return (
     <Card>
@@ -108,8 +124,8 @@ export function AiUsageCard() {
               <BarChart3 className="h-4 w-4 text-primary" /> Token usage
             </CardTitle>
             <CardDescription>
-              Tokens spent on your provider key by drafts and the auto-reply
-              bot. Counts only — no message content is stored here.
+              Tokens spent by drafts, the auto-reply bot and the playground.
+              Counts only — no message content is stored here.
             </CardDescription>
           </div>
           <Select
@@ -142,19 +158,20 @@ export function AiUsageCard() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               <Stat label="Total tokens" value={formatCompactNumber(data.totals.total_tokens)} />
               <Stat label="LLM calls" value={String(data.totals.calls)} />
-              <Stat
-                label="Auto-reply"
-                value={formatCompactNumber(data.by_mode.auto_reply.tokens)}
-                icon={Bot}
-              />
-              <Stat
-                label="Drafts"
-                value={formatCompactNumber(data.by_mode.draft.tokens)}
-                icon={PencilLine}
-              />
+              {MODE_TILES.map((t) => (
+                <Stat
+                  key={t.mode}
+                  label={t.label}
+                  value={formatCompactNumber(data.by_mode[t.mode]?.tokens ?? 0)}
+                  icon={t.icon}
+                />
+              ))}
+              {otherTokens > 0 && (
+                <Stat label="Other" value={formatCompactNumber(otherTokens)} />
+              )}
             </div>
 
             <div>

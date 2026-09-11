@@ -70,6 +70,12 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Fixed
 
+- **The token usage card survives the playground.** With `'playground'`
+  added to `ai_usage_log.mode`, the spend summary (Settings → AI)
+  failed to load for any account that had used the test chat: the whole
+  window came back empty. The breakdown now has its own "Playground"
+  tile, tolerates modes added later, and always adds up to the headline
+  total.
 - **Focusing the AI key field no longer deletes the stored key.** Clicking
   or tabbing into the (masked) provider key in Settings → AI clears the
   placeholder so you can type. Leaving without typing and saving an
