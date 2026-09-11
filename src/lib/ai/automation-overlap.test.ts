@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MESSAGE_LEVEL_TRIGGERS,
+  OVERLAPPING_TRIGGERS,
   overlappingAutomations,
 } from './automation-overlap';
 
@@ -25,14 +25,26 @@ describe('overlappingAutomations', () => {
     expect(overlappingAutomations([row({ is_active: false })])).toEqual([]);
   });
 
-  it('ignores relationship triggers — they are about who writes, not what they said', () => {
+  it('counts welcome automations too: they answer the first inbound', () => {
+    // The webhook dispatches these with `inbound_message_id` in the
+    // context and fires them BEFORE the content triggers, so a greeting
+    // on a brand-new contact does take the reservation for that message
+    // and the bot does stand down for it.
     const found = overlappingAutomations([
       row({ id: 'a1', trigger_type: 'first_inbound_message' }),
       row({ id: 'a2', trigger_type: 'new_contact_created' }),
-      row({ id: 'a3', trigger_type: 'tag_added' }),
+    ]);
+    expect(found.map((a) => a.id)).toEqual(['a1', 'a2']);
+  });
+
+  it('ignores triggers a customer message never fires on its own', () => {
+    const found = overlappingAutomations([
+      // Only reachable through another automation's add_tag step.
+      row({ id: 'a1', trigger_type: 'tag_added' }),
       // The AI auto-reply never runs for an interactive tap, so a menu
       // automation cannot collide with it.
-      row({ id: 'a4', trigger_type: 'interactive_reply' }),
+      row({ id: 'a2', trigger_type: 'interactive_reply' }),
+      row({ id: 'a3', trigger_type: 'conversation_assigned' }),
     ]);
     expect(found).toEqual([]);
   });
@@ -45,8 +57,10 @@ describe('overlappingAutomations', () => {
     );
   });
 
-  it('covers exactly the triggers the webhook dispatches for message content', () => {
-    expect([...MESSAGE_LEVEL_TRIGGERS]).toEqual([
+  it('covers exactly the triggers the webhook dispatches for an inbound', () => {
+    expect([...OVERLAPPING_TRIGGERS]).toEqual([
+      'first_inbound_message',
+      'new_contact_created',
       'new_message_received',
       'keyword_match',
     ]);

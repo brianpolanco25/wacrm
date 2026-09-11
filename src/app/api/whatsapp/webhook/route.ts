@@ -887,10 +887,17 @@ async function processMessage(
   // Deliberately AFTER the automation loop above, which is awaited: by
   // the time the AI asks "did an automation already answer this
   // message?", every automation that was going to has either reserved
-  // the reply or finished without sending. The reservation itself is
-  // atomic (PK on `inbound_auto_replies.message_id`), so the guarantee
-  // does not rest on this ordering alone — but the ordering is what
-  // makes the common case answer "no" instead of "maybe later".
+  // the reply or finished without sending — so the common case answers
+  // "no" rather than "maybe later", and the AI replies straight away
+  // instead of being pre-empted by a run that is still deciding.
+  //
+  // What the ordering does NOT carry is the no-duplicate guarantee. Both
+  // responders reserve the reply through the primary key on
+  // `inbound_auto_replies.message_id` (migration 051) and both stand
+  // down when they lose it, so whoever gets there first — a run resumed
+  // from a `wait` half an hour later included — is the only one that
+  // sends. Swapping these two calls would change who usually answers,
+  // never how many replies the customer gets.
   if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
     await dispatchInboundToAiReply({
       accountId,

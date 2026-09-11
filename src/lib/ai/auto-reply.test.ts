@@ -33,6 +33,9 @@ const h = vi.hoisted(() => ({
     updateAttempts: 0,
     updatesApplied: 0,
     conversationSelectFilters: [] as [string, unknown][],
+    /** Columns the conversation read asked for, so a gate can't be
+     *  quietly disarmed by dropping its column from the SELECT. */
+    conversationSelectColumns: '' as string,
     conversationUpdateFilters: [] as [string, unknown][],
     rpcCalls: [] as { name: string; args: unknown }[],
   },
@@ -120,7 +123,10 @@ vi.mock('./admin-client', () => ({
         return chain;
       };
       return {
-        select: () => selectChain,
+        select: (columns: string) => {
+          h.state.conversationSelectColumns = columns;
+          return selectChain;
+        },
         update: (payload: Record<string, unknown>) => {
           h.state.updateAttempts += 1;
           return updateChain(payload);
@@ -167,6 +173,7 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
 
 beforeEach(() => {
   h.state.conv = {
+    status: 'open',
     assigned_agent_id: null,
     ai_autoreply_disabled: false,
     ai_reply_count: 0,
@@ -182,6 +189,7 @@ beforeEach(() => {
   h.state.updateAttempts = 0;
   h.state.updatesApplied = 0;
   h.state.conversationSelectFilters = [];
+  h.state.conversationSelectColumns = '';
   h.state.conversationUpdateFilters = [];
   h.state.rpcCalls = [];
   h.loadAiConfig.mockResolvedValue(aiConfig());
@@ -235,6 +243,38 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     h.loadAiConfig.mockResolvedValue(aiConfig({ autoReplyEnabled: false }));
     await dispatchInboundToAiReply(ARGS);
     expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet in a conversation an automation just closed', async () => {
+    // A customer writing again re-opens the thread before the dispatch
+    // runs (issue #409), so 'closed' here means something closed it after
+    // this inbound landed — in practice a `close_conversation` step on a
+    // "stop"/"unsubscribe" keyword, which sends nothing and therefore
+    // takes no reservation. Without this gate the per-message guard let
+    // the bot answer the customer who just asked to be left alone.
+    h.state.conv = {
+      status: 'closed',
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+    };
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.generateReply).not.toHaveBeenCalled();
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    // Bailed before the reservation, so the message stays free — nothing
+    // else was going to answer it anyway.
+    expect(h.state.claimUpserts).toEqual([]);
+  });
+
+  it('still replies in an open or pending thread', async () => {
+    h.state.conv = { ...h.state.conv!, status: 'pending' };
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalled();
+  });
+
+  it('reads the status column it gates on', async () => {
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.state.conversationSelectColumns).toContain('status');
   });
 
   it('skips when a human agent is assigned', async () => {

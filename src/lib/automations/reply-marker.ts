@@ -68,3 +68,67 @@ export async function claimInboundAutoReply(
   }
   return Array.isArray(data) && data.length > 0;
 }
+
+/**
+ * The automation engine's version of the reservation: reserve the reply,
+ * and also answer "…or was it already mine?".
+ *
+ * The engine HONOURS the result — a run that loses the reservation does
+ * not send — but it must not stand down in front of itself. Two
+ * perfectly normal cases lose the plain `claimInboundAutoReply` while
+ * still being the rightful owner:
+ *
+ *   - a run whose steps send several messages (only the first insert
+ *     wins; the rest conflict with the run's own row);
+ *   - the tail of a run that was parked on a `wait` step and resumed
+ *     minutes later by the cron — the reservation it took before the
+ *     wait is still sitting there.
+ *
+ * So a lost reservation is checked against its holder: only this
+ * automation's own row counts as "still ours". Anything else — the AI,
+ * or a different automation — means somebody already answered this
+ * inbound and this run must not send a second reply.
+ *
+ * The follow-up read is safe because `ON CONFLICT DO NOTHING` waits for
+ * the concurrent inserter to commit or roll back before it reports the
+ * conflict: by the time we get here the winning row is visible.
+ *
+ * @returns `true` when this automation may send.
+ *
+ * Fails closed, like the claim it wraps: a read error resolves to
+ * `false`.
+ */
+export async function claimInboundAutoReplyForAutomation(
+  db: SupabaseClient,
+  args: ClaimArgs & { automationId: string }
+): Promise<boolean> {
+  const won = await claimInboundAutoReply(db, {
+    ...args,
+    responder: 'automation',
+  });
+  if (won) return true;
+
+  const { data, error } = await db
+    .from('inbound_auto_replies')
+    .select('responder, automation_id')
+    .eq('message_id', args.messageId)
+    // Tenancy: service-role client, so the account is filtered here and
+    // not by RLS. A row belonging to another account is not ours either
+    // way, and `maybeSingle` resolving null keeps us quiet.
+    .eq('account_id', args.accountId)
+    .maybeSingle();
+
+  if (error) {
+    console.error(
+      '[auto-reply guard] could not read the holder of the reservation for inbound message',
+      args.messageId,
+      error
+    );
+    return false;
+  }
+
+  return (
+    data?.responder === 'automation' &&
+    data?.automation_id === args.automationId
+  );
+}

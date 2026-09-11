@@ -24,6 +24,11 @@ const h = vi.hoisted(() => ({
      *  way its primary key is. */
     autoReplyClaims: new Map<string, Record<string, unknown>>(),
     claimUpserts: [] as Record<string, unknown>[],
+    /** Holder reads of `inbound_auto_replies` (message + account filter),
+     *  so the tenancy of the follow-up lookup is assertable. */
+    claimReads: [] as { messageId: unknown; accountId: unknown }[],
+    /** Rows the engine parked in `automation_pending_executions`. */
+    pendingInserts: [] as Record<string, unknown>[],
   },
 }));
 
@@ -63,8 +68,24 @@ vi.mock('./admin-client', () => {
       }
       return { data: null, error: null };
     }
-    if (table === 'automations')
+    if (table === 'automations') {
+      // `resumePendingExecution` reads ONE automation by id; the dispatch
+      // path reads the account's list.
+      const byId = ops.filters.find(([op, k]) => op === 'eq' && k === 'id');
+      if (byId) {
+        return {
+          data: state.automations.find((a) => a.id === byId[2]) ?? null,
+          error: null,
+        };
+      }
       return { data: state.automations, error: null };
+    }
+    if (table === 'automation_pending_executions') {
+      if (type === 'insert') {
+        state.pendingInserts.push(ops.payload as Record<string, unknown>);
+      }
+      return { data: null, error: null };
+    }
     if (table === 'automation_logs') {
       if (type === 'insert') {
         state.logInserts.push(ops.payload as Record<string, unknown>);
@@ -76,7 +97,17 @@ vi.mock('./admin-client', () => {
       }
       return { data: { steps_executed: [], status: 'success' }, error: null };
     }
-    if (table === 'automation_steps') return { data: state.steps, error: null };
+    if (table === 'automation_steps') {
+      // `executeStepsFrom` reads from `startPosition` onwards; a resumed
+      // run MUST NOT see the wait step it already served.
+      const from = ops.filters.find(
+        ([op, k]) => op === 'gte' && k === 'position'
+      );
+      const steps = from
+        ? state.steps.filter((st) => (st.position as number) >= Number(from[2]))
+        : state.steps;
+      return { data: steps, error: null };
+    }
     if (table === 'inbound_auto_replies') {
       if (type === 'upsert') {
         const payload = ops.payload as Record<string, unknown>;
@@ -87,7 +118,20 @@ vi.mock('./admin-client', () => {
         state.autoReplyClaims.set(key, payload);
         return { data: [{ message_id: key }], error: null };
       }
-      return { data: null, error: null };
+      // Who holds the reservation? Read by message id AND account, the
+      // way the service-role helper does it.
+      const messageId = ops.filters.find(
+        ([op, k]) => op === 'eq' && k === 'message_id'
+      )?.[2];
+      const accountId = ops.filters.find(
+        ([op, k]) => op === 'eq' && k === 'account_id'
+      )?.[2];
+      state.claimReads.push({ messageId, accountId });
+      const row = state.autoReplyClaims.get(messageId as string);
+      return {
+        data: row && row.account_id === accountId ? row : null,
+        error: null,
+      };
     }
     return { data: null, error: null };
   }
@@ -106,7 +150,7 @@ vi.mock('./admin-client', () => {
       delete: () => ((ops.type = 'delete'), b),
       upsert: (p: unknown) => ((ops.type = 'upsert'), (ops.payload = p), b),
       eq: (k: string, v: unknown) => (ops.filters.push(['eq', k, v]), b),
-      gte: () => b,
+      gte: (k: string, v: unknown) => (ops.filters.push(['gte', k, v]), b),
       is: () => b,
       order: () => b,
       limit: () => b,
@@ -141,7 +185,12 @@ vi.mock('./meta-send', () => ({
   engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: 'm1' })),
 }));
 
-import { runAutomationsForTrigger, triggerMatches } from './engine';
+import {
+  resumePendingExecution,
+  runAutomationsForTrigger,
+  triggerMatches,
+} from './engine';
+import { engineSendText } from './meta-send';
 import type { Automation, KeywordMatchTriggerConfig } from '@/types';
 
 const ACCOUNT = 'acct-1';
@@ -161,6 +210,8 @@ beforeEach(() => {
   h.state.conversationUpdates = [];
   h.state.autoReplyClaims = new Map();
   h.state.claimUpserts = [];
+  h.state.claimReads = [];
+  h.state.pendingInserts = [];
 });
 
 describe('assign_conversation — round_robin picks the available agent (fase 1)', () => {
@@ -827,9 +878,227 @@ describe('per-message reply marker (fase 1)', () => {
       context: inbound,
     });
 
-    // Both steps ask; Postgres hands the reservation out once. The engine
-    // ignores the answer — deterministic automations always win.
+    // Both steps ask; Postgres hands the reservation out once. The second
+    // one loses the insert but the holder is this same automation, so the
+    // run keeps talking: standing down in front of yourself would swallow
+    // every message after the first.
     expect(h.state.claimUpserts).toHaveLength(2);
     expect(h.state.autoReplyClaims.size).toBe(1);
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledTimes(2);
+    // The holder read is scoped to the account, like every other
+    // service-role query in the engine.
+    expect(h.state.claimReads).toEqual([
+      { messageId: 'msg-1', accountId: ACCOUNT },
+    ]);
+  });
+
+  it('stands down when another automation already answered this inbound', async () => {
+    // Criterion 3 between two automations: both match, the first one
+    // reserves, the second one must not pile a second reply on top.
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [
+      keywordAutomation(['hours']),
+      { ...keywordAutomation(['hours']), id: 'a2' },
+    ];
+    h.state.steps = [sendStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'keyword_match',
+      contactId: 'c1',
+      context: inbound,
+    });
+
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledTimes(1);
+    expect(h.state.autoReplyClaims.get('msg-1')).toMatchObject({
+      automation_id: 'a1',
+    });
+  });
+
+  it('a reservation held by another account is not ours either', async () => {
+    // Defensive: the holder read is filtered by account, so a row that
+    // somehow belongs to a different tenant reads as "not mine" and the
+    // step stays quiet instead of sending on a stranger's reservation.
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [keywordAutomation(['hours'])];
+    h.state.steps = [sendStep()];
+    h.state.autoReplyClaims.set('msg-1', {
+      message_id: 'msg-1',
+      account_id: 'other-account',
+      responder: 'automation',
+      automation_id: 'a1',
+    });
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'keyword_match',
+      contactId: 'c1',
+      context: inbound,
+    });
+
+    expect(vi.mocked(engineSendText)).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Fase 1, §4 — the `wait` step was the hole in the guarantee: the run is
+ * parked with nothing reserved, the AI answers in the meantime, and the
+ * cron resumes the run minutes later. The reservation is honoured on
+ * resume too, so the customer still gets exactly one automatic reply.
+ */
+describe('per-message reply marker — a run resumed after a wait (fase 1)', () => {
+  const inbound = {
+    message_text: 'what are your opening hours?',
+    conversation_id: 'conv-1',
+    inbound_message_id: 'msg-1',
+  };
+
+  function waitThenSend() {
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [
+      {
+        id: 'a1',
+        account_id: ACCOUNT,
+        user_id: 'u1',
+        trigger_type: 'keyword_match',
+        trigger_config: { keywords: ['hours'], match_type: 'contains' },
+        is_active: true,
+      },
+    ];
+    h.state.steps = [
+      {
+        id: 's1',
+        automation_id: 'a1',
+        step_type: 'wait',
+        position: 0,
+        parent_step_id: null,
+        step_config: { amount: 1, unit: 'minutes' },
+      },
+      {
+        id: 's2',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        position: 1,
+        parent_step_id: null,
+        step_config: { text: 'We open at 9am.' },
+      },
+    ];
+  }
+
+  async function park() {
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'keyword_match',
+      contactId: 'c1',
+      context: inbound,
+    });
+    expect(h.state.pendingInserts).toHaveLength(1);
+    // Nothing is reserved while the run sleeps — the AI is free to take
+    // the message, which is exactly what makes the resume interesting.
+    expect(h.state.claimUpserts).toEqual([]);
+    const pending = h.state.pendingInserts[0];
+    return {
+      id: 'pending-1',
+      automation_id: pending.automation_id as string,
+      user_id: pending.user_id as string,
+      account_id: pending.account_id as string,
+      contact_id: pending.contact_id as string | null,
+      log_id: pending.log_id as string | null,
+      parent_step_id: pending.parent_step_id as string | null,
+      branch: pending.branch as 'yes' | 'no' | null,
+      next_step_position: pending.next_step_position as number,
+      context: pending.context as Record<string, unknown>,
+    };
+  }
+
+  it('does not send when the AI answered while the run was waiting', async () => {
+    waitThenSend();
+    const pending = await park();
+
+    // The AI got there first and reserved the reply to this inbound.
+    h.state.autoReplyClaims.set('msg-1', {
+      message_id: 'msg-1',
+      account_id: ACCOUNT,
+      responder: 'ai',
+      automation_id: null,
+    });
+
+    await resumePendingExecution(pending);
+
+    // It asked, it lost, it kept quiet: no second automatic reply.
+    expect(h.state.claimUpserts).toHaveLength(1);
+    expect(vi.mocked(engineSendText)).not.toHaveBeenCalled();
+    expect(h.state.autoReplyClaims.get('msg-1')).toMatchObject({
+      responder: 'ai',
+    });
+  });
+
+  it('sends on resume when nobody else answered that inbound', async () => {
+    waitThenSend();
+    const pending = await park();
+
+    await resumePendingExecution(pending);
+
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledTimes(1);
+    expect(h.state.autoReplyClaims.get('msg-1')).toMatchObject({
+      responder: 'automation',
+      automation_id: 'a1',
+    });
+  });
+
+  it("sends on resume when the reservation is the run's own, taken before the wait", async () => {
+    // send_message → wait → send_message: the tail of the run must not
+    // stand down in front of the reservation its own first step took.
+    waitThenSend();
+    h.state.steps = [
+      {
+        id: 's0',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        position: 0,
+        parent_step_id: null,
+        step_config: { text: 'One moment…' },
+      },
+      {
+        id: 's1',
+        automation_id: 'a1',
+        step_type: 'wait',
+        position: 1,
+        parent_step_id: null,
+        step_config: { amount: 1, unit: 'minutes' },
+      },
+      {
+        id: 's2',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        position: 2,
+        parent_step_id: null,
+        step_config: { text: 'We open at 9am.' },
+      },
+    ];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'keyword_match',
+      contactId: 'c1',
+      context: inbound,
+    });
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledTimes(1);
+    const pending = h.state.pendingInserts[0];
+
+    await resumePendingExecution({
+      id: 'pending-1',
+      automation_id: pending.automation_id as string,
+      user_id: pending.user_id as string,
+      account_id: pending.account_id as string,
+      contact_id: pending.contact_id as string | null,
+      log_id: pending.log_id as string | null,
+      parent_step_id: pending.parent_step_id as string | null,
+      branch: pending.branch as 'yes' | 'no' | null,
+      next_step_position: pending.next_step_position as number,
+      context: pending.context as Record<string, unknown>,
+    });
+
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledTimes(2);
   });
 });

@@ -12,17 +12,32 @@
  */
 
 /**
- * Triggers that fire on the CONTENT of an inbound message, i.e. the ones
- * that compete with the AI auto-reply for the same event. Relationship
- * triggers (`new_contact_created`, `first_inbound_message`, `tag_added`,
- * …) are about WHO is writing, not what they said, so an automation on
- * one of those doesn't overlap.
+ * The triggers whose automations can answer the very inbound message the
+ * AI agent would have answered — i.e. the ones that can take the
+ * per-message reservation out from under it (migration 051).
  *
- * `interactive_reply` is not here either: the AI auto-reply only runs
- * for plain text (the webhook skips it when a button/list reply
- * arrives), so the two can never collide.
+ * These are exactly the triggers the webhook dispatches with
+ * `inbound_message_id` in the context AND that a customer message sets
+ * off, in the order the webhook fires them. The relationship ones are
+ * here on purpose, despite being about WHO is writing rather than what
+ * they said: a welcome automation on `new_contact_created` /
+ * `first_inbound_message` answers the customer's first message, so for
+ * that message the bot does stand down. Leaving them out made the notice
+ * claim the opposite in exactly the account most likely to hit it — a
+ * brand-new contact's first "hi".
+ *
+ * Deliberately not here:
+ *   - `interactive_reply`: the AI auto-reply only runs for plain text
+ *     (the webhook skips it when a button/list reply arrives), so the
+ *     two can never collide.
+ *   - `tag_added` and the other engine-chained triggers: they can carry
+ *     an inbound along a chain (a keyword automation that adds a tag),
+ *     but they never fire from a customer message on their own, and
+ *     flagging every tag automation would drown the notice in noise.
  */
-export const MESSAGE_LEVEL_TRIGGERS = [
+export const OVERLAPPING_TRIGGERS = [
+  'first_inbound_message',
+  'new_contact_created',
   'new_message_received',
   'keyword_match',
 ] as const;
@@ -35,7 +50,8 @@ export interface OverlapCandidate {
 }
 
 /**
- * The active automations that answer on message content.
+ * The active automations that can answer an inbound message before the
+ * AI agent does.
  *
  * Pure and defensive about the shape: it is fed straight from
  * `GET /api/automations`, whose rows come from the database and may
@@ -48,8 +64,8 @@ export function overlappingAutomations<T extends OverlapCandidate>(
   return automations.filter(
     (a) =>
       a?.is_active === true &&
-      MESSAGE_LEVEL_TRIGGERS.includes(
-        a.trigger_type as (typeof MESSAGE_LEVEL_TRIGGERS)[number]
+      OVERLAPPING_TRIGGERS.includes(
+        a.trigger_type as (typeof OVERLAPPING_TRIGGERS)[number]
       )
   );
 }

@@ -19,6 +19,9 @@ const h = vi.hoisted(() => ({
     afterCallbacks: [] as (() => Promise<void> | void)[],
     automationStarted: 0,
     automationCompleted: 0,
+    /** `automationCompleted` as it stood when the AI dispatch was
+     *  called — the ordering of §4, pinned. Null if it never ran. */
+    automationsCompletedAtAiDispatch: null as number | null,
     /** whatsapp_config.mirror_inbound_media for the matched row (#466). */
     mirrorInboundMedia: true as boolean | undefined,
     /** Objects the inbound-media mirror pushed into chat-media. */
@@ -257,6 +260,7 @@ beforeEach(() => {
   h.state.afterCallbacks = []
   h.state.automationStarted = 0
   h.state.automationCompleted = 0
+  h.state.automationsCompletedAtAiDispatch = null
   h.state.mirrorInboundMedia = true
   h.state.storageUploads = []
   h.state.storageUploadError = null
@@ -270,7 +274,9 @@ beforeEach(() => {
     contentType: 'image/jpeg',
   })
   h.dispatchInboundToFlows.mockResolvedValue({ consumed: false })
-  h.dispatchInboundToAiReply.mockResolvedValue(undefined)
+  h.dispatchInboundToAiReply.mockImplementation(async () => {
+    h.state.automationsCompletedAtAiDispatch = h.state.automationCompleted
+  })
   h.dispatchWebhookEvent.mockResolvedValue(undefined)
   h.runAutomationsForTrigger.mockImplementation(() => {
     h.state.automationStarted++
@@ -536,5 +542,34 @@ describe('inbound webhook: after() awaits automations (#368)', () => {
     // If the dispatches were fire-and-forget, completed would still be 0
     // here — the callback would have resolved before the timers fired.
     expect(h.state.automationCompleted).toBe(3)
+  })
+})
+
+describe('inbound webhook: automations run before the AI (fase 1, §4)', () => {
+  it('dispatches AND awaits every automation before dispatchInboundToAiReply', async () => {
+    await runWebhook()
+
+    // The reservation makes a double reply impossible either way, but the
+    // order decides who usually answers: if the AI asked first, a keyword
+    // automation that was still running would lose its own message. Swap
+    // the two calls in processMessage, or drop the `await` on the
+    // automation loop, and this drops to 0.
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalledTimes(1)
+    expect(h.state.automationsCompletedAtAiDispatch).toBe(3)
+  })
+
+  it('hands the AI the inbound id the automations were given, so both reserve the same row', async () => {
+    await runWebhook()
+
+    const automationContexts = h.runAutomationsForTrigger.mock.calls.map(
+      ([input]) => (input as { context: Record<string, unknown> }).context,
+    )
+    expect(automationContexts).toHaveLength(3)
+    for (const context of automationContexts) {
+      expect(context.inbound_message_id).toBe('msg-1')
+    }
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalledWith(
+      expect.objectContaining({ inboundMessageId: 'msg-1' }),
+    )
   })
 })

@@ -37,6 +37,8 @@ interface DispatchArgs {
  *
  * Eligibility gates (any → silent no-op):
  *   - AI off / auto-reply disabled for the account
+ *   - the conversation is closed (an automation or an agent just
+ *     resolved it)
  *   - a human agent is assigned (they own the thread)
  *   - auto-reply was disabled for this conversation (prior handoff)
  *   - the per-conversation reply cap is reached
@@ -60,11 +62,24 @@ export async function dispatchInboundToAiReply(
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
+      .select(
+        'status, assigned_agent_id, ai_autoreply_disabled, ai_reply_count'
+      )
       .eq('id', conversationId)
       .eq('account_id', accountId)
       .maybeSingle();
     if (convErr || !conv) return;
+    // A closed thread is a finished thread. The customer writing again
+    // re-opens it before we get here (`reopenClosedConversation`, issue
+    // #409), so reading 'closed' at this point means something closed it
+    // *after* this message landed — in practice a `close_conversation`
+    // automation step that ran a few lines up in the webhook's `after()`
+    // block, e.g. the keyword automation for "stop" / "unsubscribe".
+    // That step sends nothing, so it takes no reservation and the
+    // per-message guard would happily let the bot answer a customer who
+    // just asked to be left alone. It is also what f1.3 decided for the
+    // "unattended" queue: closed chats are the archive, not work.
+    if (conv.status === 'closed') return;
     if (conv.assigned_agent_id) return; // a human owns this thread
     if (conv.ai_autoreply_disabled) return; // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim

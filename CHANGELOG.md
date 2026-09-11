@@ -107,9 +107,19 @@ behaviour changes**; nothing is limited by plan yet.
   The assistant now stands back only on the individual messages an
   automation actually answered; every other message is still answered.
   The customer still never gets two automatic replies to the same
-  message: whichever responder reserves it first is the only one that
-  sends. Settings → AI now also warns when automations that can answer
-  on message content exist, with a link to the list.
+  message: both responders reserve it first and both stand back when
+  they lose — including an automation that was waiting on a "wait" step
+  and resumes minutes after the assistant already answered. Settings →
+  AI now also warns when automations that can answer an incoming message
+  exist (keyword, new-message and welcome ones alike), with a link to
+  the list.
+- **The assistant no longer talks over an automation that closed the
+  chat.** A keyword automation whose only step is "close conversation" —
+  the usual shape of a "stop"/"unsubscribe" reply — sends no message, so
+  nothing stood in the assistant's way and it answered the customer who
+  had just asked to be left alone. The assistant now stays out of closed
+  conversations; a customer writing again re-opens the thread, and the
+  assistant picks it up from there as before.
 - **The token usage card survives the playground.** With `'playground'`
   added to `ai_usage_log.mode`, the spend summary (Settings → AI)
   failed to load for any account that had used the test chat: the whole

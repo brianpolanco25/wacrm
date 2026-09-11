@@ -31,7 +31,7 @@ import {
   engineSendInteractive,
 } from './meta-send';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
-import { claimInboundAutoReply } from './reply-marker';
+import { claimInboundAutoReplyForAutomation } from './reply-marker';
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 
 // ------------------------------------------------------------
@@ -54,8 +54,8 @@ export interface AutomationContext {
   /** Internal `messages.id` of the inbound that triggered this run, when
    *  there is one (the webhook sets it; tag events and the manual engine
    *  endpoint don't). It is the key of the per-message reservation that
-   *  keeps the AI from answering an inbound an automation already
-   *  answered — see `reserveReplyToInbound` below. */
+   *  lets exactly one automatic responder — this engine or the AI —
+   *  answer any given inbound; see `reserveReplyToInbound` below. */
   inbound_message_id?: string;
 }
 
@@ -385,8 +385,8 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
 }
 
 /**
- * Record that this automation is about to answer the inbound message
- * that triggered the run, so the AI auto-reply stands down for that one
+ * Reserve the single automatic reply to the inbound message that
+ * triggered this run, so the AI auto-reply stands down for that one
  * message instead of for the whole account (fase 1, §4).
  *
  * Called BEFORE the send, not after: a crash between the two leaves the
@@ -394,26 +394,38 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
  * direction. The other way round — send first, record after — leaves a
  * window in which the AI can answer the same message too.
  *
- * The return value is deliberately ignored. Deterministic,
- * user-configured automations always win over the model, and one run may
- * legitimately send several messages; only the first of them takes the
- * reservation and the rest are no-ops.
+ * The result is HONOURED, always: `false` means somebody else already
+ * answered this inbound and the step must not send. That is what makes
+ * "the customer never gets two automatic replies to the same message"
+ * true in both directions and independent of who runs first — including
+ * the run that parks on a `wait` and is resumed by the cron minutes
+ * later, long after the AI answered. This automation's own reservation
+ * does not count as somebody else's: see
+ * `claimInboundAutoReplyForAutomation`.
+ *
+ * @returns `true` when the step may send. Runs with no inbound behind
+ * them (tag events, relationship triggers resumed by cron, manual
+ * dispatch) have nothing to reserve and nothing to lose: they send.
  */
 async function reserveReplyToInbound(
   db: SupabaseClient,
   args: ExecuteArgs
-): Promise<void> {
+): Promise<boolean> {
   const messageId = args.context.inbound_message_id;
-  // No inbound behind this run (tag event, cron resume of a relationship
-  // trigger, manual dispatch) — there is nothing to reserve.
-  if (!messageId) return;
-  await claimInboundAutoReply(db, {
+  if (!messageId) return true;
+  return claimInboundAutoReplyForAutomation(db, {
     accountId: args.automation.account_id,
     messageId,
     responder: 'automation',
     automationId: args.automation.id,
   });
 }
+
+/** Step detail recorded when the reply to the inbound was already taken
+ *  by the AI (or by another automation) and this step stood down. Not a
+ *  failure: the run carries on with its remaining steps. */
+const REPLY_ALREADY_ANSWERED =
+  'skipped: another responder already answered this inbound message';
 
 async function runStep(
   step: AutomationStep,
@@ -428,7 +440,9 @@ async function runStep(
       const text = interpolate(cfg.text, args);
       if (!text.trim()) throw new Error('send_message has empty text');
       const conversationId = await resolveConversationId(args);
-      await reserveReplyToInbound(db, args);
+      if (!(await reserveReplyToInbound(db, args))) {
+        return REPLY_ALREADY_ANSWERED;
+      }
       const { whatsapp_message_id } = await engineSendText({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -450,7 +464,9 @@ async function runStep(
       const check = validateInteractivePayload(payload);
       if (!check.ok) throw new Error(check.error);
       const conversationId = await resolveConversationId(args);
-      await reserveReplyToInbound(db, args);
+      if (!(await reserveReplyToInbound(db, args))) {
+        return REPLY_ALREADY_ANSWERED;
+      }
       const { whatsapp_message_id } = await engineSendInteractive({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -485,7 +501,9 @@ async function runStep(
             })
             .map((k) => String(cfg.variables![k]))
         : [];
-      await reserveReplyToInbound(db, args);
+      if (!(await reserveReplyToInbound(db, args))) {
+        return REPLY_ALREADY_ANSWERED;
+      }
       const { whatsapp_message_id } = await engineSendTemplate({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
