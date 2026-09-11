@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { eventBelongsToAccount } from "@/lib/realtime/account-scope";
 import type { Notification } from "@/types";
 import { Bell, CheckCheck, Loader2, UserPlus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -49,14 +50,31 @@ export default function NotificationsPage() {
 
   // Realtime — new assignments appear without a refresh, and a
   // "mark all read" fired from another tab/device stays in sync here.
+  //
+  // Scoped to the account this page is showing, the same way `load()` is.
+  // RLS on `notifications` is `auth.uid() = user_id`, which during a
+  // support session is the OPERATOR — unfiltered, their own assignments
+  // dropped into a list that had just been filtered to the customer's.
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     const channel = supabase
       .channel("notifications-page")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "notifications" },
+        {
+          event: "*",
+          schema: "public",
+          table: "notifications",
+          filter: `account_id=eq.${accountId}`,
+        },
         (payload) => {
+          const eventRow = (
+            payload.eventType === "DELETE" ? payload.old : payload.new
+          ) as Partial<Notification>;
+          // `notifications` is REPLICA IDENTITY FULL (027), so even a
+          // DELETE names its account.
+          if (!eventBelongsToAccount(eventRow, accountId)) return;
           if (payload.eventType === "INSERT") {
             const row = payload.new as Notification;
             setNotifications((prev) => {
@@ -83,7 +101,7 @@ export default function NotificationsPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [accountId]);
 
   const markRead = useCallback(
     async (id: string) => {

@@ -3,7 +3,41 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { eventBelongsToAccount } from "@/lib/realtime/account-scope";
 import type { Conversation } from "@/types";
+
+/**
+ * Fold one `conversations` realtime event into the local {id: unread}
+ * mirror and return the new badge total, or `null` when the event is not
+ * this account's and has to be ignored.
+ *
+ * Split out of the hook so the discard can be tested directly: during a
+ * support session the operator's own conversations are readable (057),
+ * and counting them here made the badge the sum of two companies.
+ */
+export function applyUnreadEvent(
+  counts: Map<string, number>,
+  accountId: string | null,
+  payload: { eventType: string; new: unknown; old: unknown },
+): number | null {
+  if (payload.eventType === "DELETE") {
+    // `conversations` has no REPLICA IDENTITY FULL, so a DELETE carries
+    // only the primary key — there is no account on it to check. The map
+    // only ever holds this account's conversations, so an id it does not
+    // know about is another company's and is dropped by not matching.
+    const oldRow = payload.old as Partial<Conversation> | null;
+    if (!oldRow?.id || !counts.has(oldRow.id)) return null;
+    counts.delete(oldRow.id);
+  } else {
+    if (!eventBelongsToAccount(payload.new, accountId)) return null;
+    const row = payload.new as Conversation;
+    counts.set(row.id, row.unread_count ?? 0);
+  }
+  // Recompute — cheap, conversations per user stay small.
+  let sum = 0;
+  for (const n of counts.values()) if (n > 0) sum += 1;
+  return sum;
+}
 
 /**
  * Count of conversations with at least one unread inbound message for
@@ -31,7 +65,8 @@ export function useTotalUnread(): number {
     // Initial load, filtered by account. RLS used to be that filter, but
     // migration 057 lets a platform operator with an open support session
     // read the impersonated account too — unfiltered, this counted BOTH
-    // companies' unread conversations into one badge.
+    // companies' unread conversations into one badge. The subscription
+    // below is filtered for the same reason: it was still counting them.
     (async () => {
       const { data, error } = await supabase
         .from("conversations")
@@ -54,20 +89,15 @@ export function useTotalUnread(): number {
       .channel("total-unread-realtime")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "conversations" },
+        {
+          event: "*",
+          schema: "public",
+          table: "conversations",
+          filter: `account_id=eq.${accountId}`,
+        },
         (payload) => {
-          const map = countsRef.current;
-          if (payload.eventType === "DELETE") {
-            const oldRow = payload.old as Partial<Conversation>;
-            if (oldRow.id) map.delete(oldRow.id);
-          } else {
-            const row = payload.new as Conversation;
-            map.set(row.id, row.unread_count ?? 0);
-          }
-          // Recompute — cheap, conversations per user stay small.
-          let sum = 0;
-          for (const n of map.values()) if (n > 0) sum += 1;
-          setTotal(sum);
+          const next = applyUnreadEvent(countsRef.current, accountId, payload);
+          if (next !== null) setTotal(next);
         },
       )
       .subscribe();
