@@ -20,6 +20,12 @@
 --    BYO y la fase 3 no puede facturarlo. Las filas anteriores a S1 son
 --    todas BYO por construcción (la columna era NOT NULL), así que el
 --    DEFAULT 'account' las clasifica correctamente y no hay backfill.
+-- 3. `ai_usage_log.mode` admite 'playground'. El banco de pruebas
+--    (`/api/ai/playground`) hace llamadas reales al proveedor y no
+--    registraba ninguna: con la clave de plataforma eso es gasto que
+--    nadie ve. Se le da su propio valor en vez de contarlo como
+--    'auto_reply' o 'draft' para no falsear el consumo de esos dos.
+--    Ampliar el dominio no invalida ninguna fila existente.
 --
 -- Este cambio vivía en 041_billing_model.sql; sale de ahí porque
 -- pertenece al apartado 4 del spec (decisión S1), no al modelo de
@@ -48,6 +54,16 @@ BEGIN
     ALTER TABLE public.ai_usage_log
       ADD CONSTRAINT ai_usage_log_key_source_check
       CHECK (key_source IN ('account', 'platform'));
+
+    -- El banco de pruebas también gasta tokens del proveedor. Se amplía
+    -- el dominio de 033 (el CHECK en línea se llama
+    -- ai_usage_log_mode_check) con el mismo patrón drop-then-add, para
+    -- que reaplicar la migración sea inocuo.
+    ALTER TABLE public.ai_usage_log
+      DROP CONSTRAINT IF EXISTS ai_usage_log_mode_check;
+    ALTER TABLE public.ai_usage_log
+      ADD CONSTRAINT ai_usage_log_mode_check
+      CHECK (mode IN ('auto_reply', 'draft', 'playground'));
 
     -- El consumo se agrega siempre por cuenta; separarlo por quién puso
     -- la clave es justo la consulta que necesita la facturación de la

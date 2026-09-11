@@ -13,7 +13,7 @@ import { encrypt, decrypt } from '@/lib/whatsapp/encryption';
 import { validateAiCredentials } from '@/lib/ai/validate';
 import { embedTexts } from '@/lib/ai/embeddings';
 import { hasPlatformApiKey, platformApiKey } from '@/lib/ai/platform-key';
-import { AiError, type AiProvider } from '@/lib/ai/types';
+import { AiError, type AiKeySource, type AiProvider } from '@/lib/ai/types';
 
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -192,8 +192,13 @@ export async function POST(request: Request) {
       // is the key actually required — the pre-S1 behaviour on a
       // deployment without platform keys.
       let apiKeyPlain: string;
+      // Decided in the same branch that picks the key: `key_source` is
+      // what fase 3 bills on, so it must not be a second copy of this
+      // ladder that someone can update out of step.
+      let keySource: AiKeySource;
       if (rawKey) {
         apiKeyPlain = rawKey;
+        keySource = 'account';
       } else if (existing?.api_key && !clearKey) {
         try {
           apiKeyPlain = decrypt(existing.api_key);
@@ -202,10 +207,12 @@ export async function POST(request: Request) {
             'Stored API key could not be decrypted — re-enter your key.'
           );
         }
+        keySource = 'account';
       } else {
         const platformKey = platformApiKey(provider);
         if (!platformKey) return bad('api_key is required');
         apiKeyPlain = platformKey;
+        keySource = 'platform';
       }
 
       try {
@@ -213,8 +220,7 @@ export async function POST(request: Request) {
           provider,
           model,
           apiKey: apiKeyPlain,
-          keySource:
-            rawKey || (existing?.api_key && !clearKey) ? 'account' : 'platform',
+          keySource,
           systemPrompt,
           isActive,
           autoReplyEnabled,

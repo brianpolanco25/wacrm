@@ -153,6 +153,18 @@ BEGIN
     RAISE EXCEPTION
       'idx_ai_usage_log_account_source_created is missing (migration 047)';
   END IF;
+  -- The playground spends provider tokens too (047 widened 033's domain).
+  -- Without this value its rows are rejected and the spend goes unlogged.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ai_usage_log_mode_check'
+      AND conrelid = 'public.ai_usage_log'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%playground%'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_usage_log_mode_check does not accept ''playground'' (migration 047)';
+  END IF;
 
   RAISE NOTICE 'schema verification passed';
 END

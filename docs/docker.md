@@ -56,8 +56,11 @@ accounts (the SaaS model) can set a platform-level key per provider:
 Resolution order for the **chat** key (drafts, auto-reply, playground,
 "Test key", save): the account's own key → the platform key for its
 provider → AI not configured. An account that saved its own key can hand
-it back by clearing the key field in Settings → AI and saving; the
-platform key takes over from then on.
+it back with **Use the platform's key instead** in Settings → AI (the
+link only appears when this deployment has a key for that provider);
+the platform key takes over from the next save on. Simply clearing the
+input does not drop a stored key — that gesture is reserved for the
+explicit link, so focusing the field cannot cost an account its key.
 
 This fallback covers the chat key only. The **embeddings** key
 (`ai_configs.embeddings_api_key`, used to index the knowledge base) has
@@ -73,7 +76,9 @@ configuration.
 
 Every LLM call is logged to `ai_usage_log` with a `key_source` column
 (`'account'` or `'platform'`), so the spend a deployment funds for its
-tenants can be measured per account.
+tenants can be measured per account. All three surfaces that call a
+provider write a row, told apart by `mode`: `auto_reply`, `draft` and
+`playground`.
 
 ## Plain Docker (no Compose)
 

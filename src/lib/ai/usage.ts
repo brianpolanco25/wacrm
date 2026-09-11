@@ -6,7 +6,9 @@ export interface LogAiUsageArgs {
   /** Null for a draft not tied to one thread, or when the row was
    *  deleted between generation and logging. */
   conversationId: string | null
-  mode: 'auto_reply' | 'draft'
+  /** Which surface spent the tokens. Mirrors the `mode` CHECK on
+   *  `ai_usage_log` (033, widened with 'playground' in 047). */
+  mode: 'auto_reply' | 'draft' | 'playground'
   provider: AiProvider
   model: string
   /** Which key paid for this call: the account's own ('account') or the

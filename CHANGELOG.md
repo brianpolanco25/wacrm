@@ -50,18 +50,37 @@ behaviour changes**; nothing is limited by plan yet.
   (migration 047). The fallback covers the chat key only — the
   embeddings key has no platform-level equivalent.
 - **Switching back to the platform key.** An account that saved its own
-  provider key can clear the key field in Settings → AI and save; the
-  key is forgotten and the platform's is used from then on. Previously a
-  stored key could only be removed by deleting the whole AI
-  configuration.
+  provider key can hand it back with **Use the platform's key instead**
+  in Settings → AI (shown only when the deployment has a key for that
+  provider); the stored key is forgotten on save and the platform's is
+  used from then on. Previously a stored key could only be removed by
+  deleting the whole AI configuration. The embeddings key gained the
+  equivalent **Remove this key** action, which turns semantic
+  knowledge-base search back into keyword search.
 - **Who paid for each AI call.** `ai_usage_log` gained a `key_source`
   column (`'account'` or `'platform'`, migration 047) so a deployment can
   measure, per account, the model spend it is funding itself. Rows
   written before the change are all bring-your-own-key and are recorded
   as `'account'`.
+- **The AI playground is counted too.** Test chats in the playground are
+  real provider calls, and now log to `ai_usage_log` under a new
+  `'playground'` mode (migration 047 widens the `mode` domain) with the
+  same `key_source`. Before this they were the one LLM surface that spent
+  tokens invisibly.
 
 ### Fixed
 
+- **Focusing the AI key field no longer deletes the stored key.** Clicking
+  or tabbing into the (masked) provider key in Settings → AI clears the
+  placeholder so you can type. Leaving without typing and saving an
+  unrelated change — a new prompt, a toggle — used to send "forget my
+  key": the account's own key was silently dropped, or the save was
+  refused for a missing key on deployments with no platform key. The key
+  is now only forgotten when it is explicitly asked for. Same fix for the
+  embeddings key field.
+- **"Test key" tests the key that will actually be used.** After asking
+  to go back to the platform's key, the button validates the platform key
+  instead of the stored one it is about to replace.
 - **Saving the AI settings with no key anywhere.** An account backed by
   the platform key (no key of its own) could no longer be saved at all —
   not even to turn the assistant off — once the deployment's
