@@ -83,6 +83,16 @@ vi.mock('@/lib/auth/admin-client', () => ({
             const [, id] = call.filters.find(([c]) => c === 'id') ?? [];
             return { data: h.accounts.get(id as string) ?? null, error: null };
           }
+          if (table === 'impersonation_log') {
+            // The "is this row still open?" lookup of
+            // `isSupportSessionOpen`, matched on every filter it sets.
+            const row = h.log.find((r) =>
+              call.filters.every(([c, v]) =>
+                v === null ? r[c] == null : r[c] === v
+              )
+            );
+            return { data: row ?? null, error: null };
+          }
           return { data: null, error: null };
         },
         insert(payload: Record<string, unknown>) {
@@ -97,6 +107,28 @@ vi.mock('@/lib/auth/admin-client', () => ({
         update(patch: Record<string, unknown>) {
           call.op = 'update';
           call.payload = patch;
+          const apply = () => {
+            const touched: Record<string, unknown>[] = [];
+            for (const row of h.log) {
+              const matches = call.filters.every(([c, v]) => {
+                // `lt:` marks the strict-less-than filters of the expiry
+                // sweep; everything else is equality / is-null.
+                if (c.startsWith('lt:')) {
+                  const column = c.slice(3);
+                  return (
+                    typeof row[column] === 'string' &&
+                    (row[column] as string) < (v as string)
+                  );
+                }
+                return v === null ? row[c] == null : row[c] === v;
+              });
+              if (matches) {
+                Object.assign(row, patch);
+                touched.push(row);
+              }
+            }
+            return touched;
+          };
           const runner = {
             eq(column: string, value: unknown) {
               call.filters.push([column, value]);
@@ -106,13 +138,16 @@ vi.mock('@/lib/auth/admin-client', () => ({
               call.filters.push([column, value]);
               return runner;
             },
+            lt(column: string, value: unknown) {
+              call.filters.push([`lt:${column}`, value]);
+              return runner;
+            },
+            select() {
+              const rows = apply();
+              return Promise.resolve({ data: rows, error: null });
+            },
             then(onFulfilled: (r: { error: null }) => unknown) {
-              for (const row of h.log) {
-                const matches = call.filters.every(([c, v]) =>
-                  v === null ? row[c] == null : row[c] === v
-                );
-                if (matches) Object.assign(row, patch);
-              }
+              apply();
               return Promise.resolve({ error: null }).then(onFulfilled);
             },
           };
@@ -126,7 +161,7 @@ vi.mock('@/lib/auth/admin-client', () => ({
 
 const { GET, POST } = await import('./route');
 const { POST: STOP } = await import('./stop/route');
-const { SUPPORT_COOKIE, verifySupportSession } =
+const { SUPPORT_ACTIVE_COOKIE, SUPPORT_COOKIE, verifySupportSession } =
   await import('@/lib/auth/impersonation');
 
 const OPERATOR = '11111111-1111-4111-8111-111111111111';
@@ -288,6 +323,38 @@ describe('POST /api/platform/impersonate', () => {
     expect(h.cookies.has(SUPPORT_COOKIE)).toBe(false);
   });
 
+  it('tells the browser bundle there is a session, in a cookie it can read', async () => {
+    // Most of this panel queries Supabase from the browser, where the
+    // httpOnly token is invisible. This flag is how those code paths learn
+    // to refuse writes (`@/lib/supabase/client`).
+    await POST(req({ account_id: ACCOUNT_A, reason: REASON }));
+    expect(h.cookies.get(SUPPORT_ACTIVE_COOKIE)).toBe('1');
+
+    await STOP();
+    expect(h.cookies.has(SUPPORT_ACTIVE_COOKIE)).toBe(false);
+  });
+
+  it('closes the bitácora row when the cookie cannot be issued', async () => {
+    // `signingKey()` refuses a malformed ENCRYPTION_KEY — after the row is
+    // already committed. Left uncaught this was a 500 plus a row open
+    // forever: nobody would hold the cookie that names it, so nothing
+    // could ever close it.
+    const key = process.env.ENCRYPTION_KEY;
+    process.env.ENCRYPTION_KEY = 'not-64-hex-characters';
+    try {
+      const res = await POST(req({ account_id: ACCOUNT_A, reason: REASON }));
+      expect(res.status).toBe(500);
+      expect(h.cookies.has(SUPPORT_COOKIE)).toBe(false);
+      expect(h.cookies.has(SUPPORT_ACTIVE_COOKIE)).toBe(false);
+      // The row is there — the attempt IS auditable — and it is closed.
+      expect(logRows()).toHaveLength(1);
+      expect(logRows()[0].ended_reason).toBe('expired');
+      expect(logRows()[0].ended_at).toBeTruthy();
+    } finally {
+      process.env.ENCRYPTION_KEY = key;
+    }
+  });
+
   it('closes the previous session before opening another, so the log never overlaps', async () => {
     await POST(req({ account_id: ACCOUNT_A, reason: REASON }));
     await POST(
@@ -312,6 +379,15 @@ describe('POST /api/platform/impersonate', () => {
       if (q.op === 'insert') return typeof q.payload?.account_id !== 'string';
       if (q.table === 'accounts') return !q.filters.some(([c]) => c === 'id');
       if (q.table === 'platform_admins') return false; // keyed by the caller's own uid
+      // The expiry sweep is cross-account BY DESIGN: it closes rows that
+      // ran out of time whoever opened them, writes nothing but `ended_at`
+      // on the platform's own bitácora, and touches no customer data.
+      if (
+        q.table === 'impersonation_log' &&
+        q.filters.some(([c]) => c === 'lt:expires_at')
+      ) {
+        return false;
+      }
       return !q.filters.some(([c]) => c === 'account_id');
     });
     expect(unscoped).toEqual([]);
@@ -364,6 +440,37 @@ describe('GET /api/platform/impersonate', () => {
     const res = await GET();
     expect(await res.json()).toEqual({ session: null });
     // …and the first operator's row is left alone, not closed by someone else.
+    expect(logRows()[0].ended_at).toBeNull();
+  });
+});
+
+describe('the expiry sweep', () => {
+  it('closes rows nobody came back for, on the paths an operator uses', async () => {
+    // The common ending is "the operator shut the browser", and then no
+    // request ever names that row again. Somebody else opening or closing
+    // a session is the moment to tidy up.
+    h.log.push({
+      id: 'abandoned',
+      actor_user_id: PLAIN_OWNER,
+      account_id: ACCOUNT_B,
+      account_name: 'Customer B',
+      reason: REASON,
+      started_at: '2026-01-01T00:00:00.000Z',
+      expires_at: '2026-01-01T00:30:00.000Z',
+      ended_at: null,
+      ended_reason: null,
+    });
+
+    await POST(req({ account_id: ACCOUNT_A, reason: REASON }));
+
+    const abandoned = logRows().find((r) => r.id === 'abandoned')!;
+    expect(abandoned.ended_reason).toBe('expired');
+    expect(abandoned.ended_at).toBeTruthy();
+  });
+
+  it('leaves a session that is still running alone', async () => {
+    await POST(req({ account_id: ACCOUNT_A, reason: REASON }));
+    await GET();
     expect(logRows()[0].ended_at).toBeNull();
   });
 });

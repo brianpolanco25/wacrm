@@ -17,6 +17,7 @@ import {
   sessionView,
 } from '@/lib/auth/impersonation-log';
 import { requirePlatformAdmin } from '@/lib/auth/platform';
+import { sweepExpiredSupportSessions } from '@/lib/auth/support-session-store';
 
 // ============================================================
 // /api/platform/impersonate — open and inspect a support session.
@@ -42,6 +43,10 @@ const UUID_RE =
 export async function GET() {
   try {
     const ctx = await requirePlatformAdmin();
+    // Close whatever ran out of time, whoever opened it. See
+    // `sweepExpiredSupportSessions` for why the sweep lives on this route
+    // instead of in a cron.
+    await sweepExpiredSupportSessions();
     const { session, expired } = await readCurrentSession();
 
     if (expired) {
@@ -131,6 +136,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
+  // Rows nobody will ever come back to close (the operator who shut the
+  // browser instead of pressing exit) get closed here, on the rare path
+  // that only platform operators reach.
+  await sweepExpiredSupportSessions();
+
   // Re-opening while one is already open closes the previous row first, so
   // the bitácora never shows two overlapping sessions for one operator.
   const { session: previous, expired } = await readCurrentSession();
@@ -169,7 +179,23 @@ export async function POST(request: Request) {
     );
   }
 
-  await setSupportCookie(signSupportSession(session), session.expiresAt);
+  // Signing and handing out the cookie are the only steps left, and they
+  // are the ones that can still throw: `signingKey()` refuses a missing or
+  // malformed `ENCRYPTION_KEY`, and `cookies()` can fail outside a request
+  // scope. Left uncaught, either would leave a 500 AND a bitácora row open
+  // forever — nobody would hold the cookie that names it, so nothing could
+  // ever close it. Close it here instead, and report a session that never
+  // started as exactly that.
+  try {
+    await setSupportCookie(signSupportSession(session), session.expiresAt);
+  } catch (err) {
+    console.error('[platform/impersonate] could not issue the cookie:', err);
+    await closeImpersonationLog(session, 'expired');
+    return NextResponse.json(
+      { error: 'Could not start the session' },
+      { status: 500 }
+    );
+  }
 
   return NextResponse.json({
     session: sessionView(session, (account.name as string | null) ?? null),

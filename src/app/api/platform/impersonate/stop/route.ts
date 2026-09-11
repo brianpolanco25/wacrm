@@ -7,6 +7,7 @@ import {
   readCurrentSession,
 } from '@/lib/auth/impersonation-log';
 import { requirePlatformAdmin } from '@/lib/auth/platform';
+import { sweepExpiredSupportSessions } from '@/lib/auth/support-session-store';
 
 /**
  * POST /api/platform/impersonate/stop — leave the support session.
@@ -15,6 +16,11 @@ import { requirePlatformAdmin } from '@/lib/auth/platform';
  * cookie, in that order: the audit trail is written before the access is
  * given up, so a failure between the two leaves a logged session rather
  * than an unlogged one.
+ *
+ * Closing the row is what actually REVOKES the session, not dropping the
+ * cookie: `resolveSupportSession` requires the row to still be open, and
+ * so does the RLS predicate (migration 057). A token copied out of
+ * devtools and pasted back after pressing exit grants nothing.
  *
  * Platform admins only, like the rest of `/api/platform/*`. That is not
  * a way to strand someone: the cookie's `maxAge` equals the session TTL,
@@ -34,6 +40,9 @@ export async function POST() {
     if (mine && mine.actorUserId === ctx.userId) {
       await closeImpersonationLog(mine, session ? 'manual' : 'expired');
     }
+
+    // Somebody is here anyway: close whatever else has run out of time.
+    await sweepExpiredSupportSessions();
 
     await clearSupportCookie();
     return NextResponse.json({ session: null });

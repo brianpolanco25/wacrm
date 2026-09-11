@@ -148,16 +148,25 @@ behaviour changes**; nothing is limited by plan yet.
   closed with 403 to everybody else including company owners, and can open
   a **support session** on a customer account with a written reason. While
   one is open, a permanent banner names the account being viewed and offers
-  the way out, the whole application turns read-only, and the start and the
-  end of the session are recorded with actor, account, moment and reason.
-  Sessions expire on their own after 30 minutes. Nothing is seeded: the
-  first operator is added with SQL against the database.
+  the way out, the operator sees that customer's data **and can change
+  none of it** — reads are granted by row-level security, writes are not,
+  and every save the operator attempts anywhere in the app is refused, on
+  the customer's account and on their own. The start and the end of the
+  session are recorded with actor, account, moment and reason. Sessions
+  last 30 minutes, expire on their own, and pressing "exit" ends one for
+  good: the token cannot be reused afterwards. Nothing is seeded: the
+  first operator is added with SQL against the database — see
+  `docs/security.md`, "Platform operators and support sessions".
 
 > **Migration required:** `supabase/migrations/055_platform_admins.sql`
 > adds `platform_admins` and `impersonation_log`, both readable only by
 > platform administrators and writable from no client at all. The audit
 > table deliberately carries no foreign keys, so the trail survives
 > deleting the account or the user it is about.
+> `supabase/migrations/057_support_session_reads.sql` then extends every
+> **read** policy in the schema with "…or an open support session on this
+> account". No write policy is touched, and with no support session open
+> nothing about who can see what changes.
 
 ### Fixed
 

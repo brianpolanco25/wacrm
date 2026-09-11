@@ -24,25 +24,45 @@
 //      copied into another browser is worthless;
 //   4. that user is STILL in `platform_admins` — revoking an operator
 //      ends their open sessions on the next request, without having to
-//      hunt down cookies.
+//      hunt down cookies;
+//   5. the `impersonation_log` row it names is STILL OPEN and has not run
+//      out of time — pressing "exit" revokes the token itself, not just
+//      the browser's copy of it.
 //
-// Anything less than all four resolves to `null` and the caller keeps
+// Anything less than all five resolves to `null` and the caller keeps
 // their own account. Fails closed.
 //
-// The effective role inside a support session is `viewer` — read-only —
-// and `middleware.ts` refuses mutating requests outright while the cookie
-// is present. Support is for seeing what the customer sees; acting on
-// their behalf is a different feature with a different conversation about
-// consent.
+// A support session is read-only, and that is enforced in three places
+// because there are three ways out of this application:
+//
+//   - RLS (migration 057): only SELECT policies learned the support
+//     predicate, so the impersonated account cannot be written to AT ALL —
+//     including by requests the browser sends straight to Supabase;
+//   - `middleware.ts`: every mutating request that does reach Next gets a
+//     403, whatever route it was headed for;
+//   - `@/lib/supabase/client`: the browser client refuses to mutate
+//     anything while the session is open, which is what stops an operator
+//     from editing their OWN company by mistake under the customer's
+//     banner.
+//
+// The effective role is `viewer` on top of all that. Support is for seeing
+// what the customer sees; acting on their behalf is a different feature
+// with a different conversation about consent.
 // ============================================================
 
 import crypto from 'crypto';
 import { cookies } from 'next/headers';
+import { unstable_rethrow } from 'next/navigation';
 
 import { isPlatformAdmin } from './platform-admins';
-import { SUPPORT_COOKIE, SUPPORT_SESSION_TTL_MS } from './support-cookie';
+import {
+  SUPPORT_ACTIVE_COOKIE,
+  SUPPORT_COOKIE,
+  SUPPORT_SESSION_TTL_MS,
+} from './support-cookie';
+import { isSupportSessionOpen } from './support-session-store';
 
-export { SUPPORT_COOKIE, SUPPORT_SESSION_TTL_MS };
+export { SUPPORT_ACTIVE_COOKIE, SUPPORT_COOKIE, SUPPORT_SESSION_TTL_MS };
 
 /**
  * Minimum length of the reason recorded in `impersonation_log`. Mirrored
@@ -170,33 +190,56 @@ export async function readSupportCookie(): Promise<string | null> {
   try {
     const store = await cookies();
     return store.get(SUPPORT_COOKIE)?.value ?? null;
-  } catch {
+  } catch (err) {
+    // Next signals "this segment bailed out of prerendering" by THROWING
+    // from `cookies()`. Swallowing that would silently prerender the
+    // dashboard shell without the support banner — the one warning that
+    // must never be missing. `unstable_rethrow` lets the framework's own
+    // control-flow errors through and keeps only the real ones.
+    unstable_rethrow(err);
     return null;
   }
 }
 
-/** Write the cookie. Only callable from a Route Handler / Server Function. */
+/**
+ * Write the cookie — both of them. Only callable from a Route Handler /
+ * Server Function.
+ *
+ * The signed one is `httpOnly` and carries the session. The companion flag
+ * is readable by JavaScript on purpose and carries nothing: it is how the
+ * browser bundle learns to refuse writes (see `SUPPORT_ACTIVE_COOKIE`).
+ * They are written and dropped together, here, so the two can never drift.
+ */
 export async function setSupportCookie(
   token: string,
   expiresAt: number
 ): Promise<void> {
   const store = await cookies();
+  // Seconds, and never negative: a clock skew that makes the session
+  // already-expired must still produce a cookie the browser drops soon,
+  // not a session cookie that outlives the tab.
+  const maxAge = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
   store.set(SUPPORT_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
-    // Seconds, and never negative: a clock skew that makes the session
-    // already-expired must still produce a cookie the browser drops soon,
-    // not a session cookie that outlives the tab.
-    maxAge: Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)),
+    maxAge,
+  });
+  store.set(SUPPORT_ACTIVE_COOKIE, '1', {
+    httpOnly: false,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge,
   });
 }
 
-/** Drop the cookie. Only callable from a Route Handler / Server Function. */
+/** Drop both cookies. Only callable from a Route Handler / Server Function. */
 export async function clearSupportCookie(): Promise<void> {
   const store = await cookies();
   store.delete(SUPPORT_COOKIE);
+  store.delete(SUPPORT_ACTIVE_COOKIE);
 }
 
 // ------------------------------------------------------------
@@ -206,7 +249,7 @@ export async function clearSupportCookie(): Promise<void> {
 /**
  * The support session in force for `authenticatedUserId`, or `null`.
  *
- * All four checks from the header run here. Callers get either a fully
+ * All five checks from the header run here. Callers get either a fully
  * validated session or nothing; there is no "partially trusted" shape.
  */
 export async function resolveSupportSession(
@@ -225,6 +268,15 @@ export async function resolveSupportSession(
   // Revoking an operator must end their open sessions, not merely stop new
   // ones. This is the check that makes that true.
   if (!(await isPlatformAdmin(authenticatedUserId))) return null;
+
+  // The bitácora row is the session; the cookie is only a claim about it.
+  // `httpOnly` hides the cookie from other sites, not from its own holder:
+  // without this check an operator could copy the token out of devtools,
+  // press "exit", put it back, and keep working inside the customer's
+  // account for the rest of the 30 minutes with the audit trail already
+  // saying the session ended. One extra query, only on the rare path where
+  // a support cookie is actually present.
+  if (!(await isSupportSessionOpen(session))) return null;
 
   return session;
 }

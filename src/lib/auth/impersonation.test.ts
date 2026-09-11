@@ -11,6 +11,9 @@ const h = vi.hoisted(() => ({
   admins: new Set<string>(),
   lookups: [] as string[],
   throwOnCookies: false,
+  /** Bitácora rows that are still open (`logId`s). */
+  openRows: new Set<string>(),
+  rowLookups: [] as string[],
 }));
 
 vi.mock('next/headers', () => ({
@@ -29,6 +32,14 @@ vi.mock('./platform-admins', () => ({
   isPlatformAdmin: async (userId: string) => {
     h.lookups.push(userId);
     return h.admins.has(userId);
+  },
+}));
+
+// The bitácora row is the session; the cookie only claims one exists.
+vi.mock('./support-session-store', () => ({
+  isSupportSessionOpen: async (s: { logId: string }) => {
+    h.rowLookups.push(s.logId);
+    return h.openRows.has(s.logId);
   },
 }));
 
@@ -65,6 +76,8 @@ beforeEach(() => {
   h.admins.clear();
   h.lookups = [];
   h.throwOnCookies = false;
+  h.openRows = new Set(['log-1']);
+  h.rowLookups = [];
 });
 
 describe('signSupportSession / verifySupportSession', () => {
@@ -208,6 +221,49 @@ describe('resolveSupportSession', () => {
       signSupportSession(session({ expiresAt: Date.now() - 1 }))
     );
     expect(await resolveSupportSession(ACTOR)).toBeNull();
+  });
+
+  // ----------------------------------------------------------------
+  // Revocation. `httpOnly` keeps a cookie away from other sites, not
+  // from its own holder: the operator can read the token out of devtools
+  // or a proxy. If pressing "exit" only cleared the browser's copy, the
+  // token itself would stay valid for the rest of its 30 minutes — and
+  // the bitácora would already say the session ended. That is
+  // impersonation that is not recorded, which is the one outcome this
+  // feature exists to prevent.
+  // ----------------------------------------------------------------
+
+  it('refuses a cookie put back after stop — the closed row revokes it', async () => {
+    h.admins.add(ACTOR);
+    const token = signSupportSession(session());
+    h.cookies.set(SUPPORT_COOKIE, token);
+    expect(await resolveSupportSession(ACTOR)).not.toBeNull();
+
+    // `POST /stop` closes the row. The operator pastes the cookie back.
+    h.openRows.delete('log-1');
+    h.cookies.set(SUPPORT_COOKIE, token);
+
+    expect(await resolveSupportSession(ACTOR)).toBeNull();
+  });
+
+  it('asks about the row named by the cookie, not one from a request', async () => {
+    h.admins.add(ACTOR);
+    h.openRows.add('log-9');
+    h.cookies.set(
+      SUPPORT_COOKIE,
+      signSupportSession(session({ logId: 'log-9' }))
+    );
+
+    await resolveSupportSession(ACTOR);
+    expect(h.rowLookups).toEqual(['log-9']);
+  });
+
+  it('does not query the bitácora for a cookie that already failed', async () => {
+    // Cheap path first: a forged or foreign cookie costs no round trip.
+    h.admins.add(ACTOR);
+    h.cookies.set(SUPPORT_COOKIE, 'not.a.token');
+    expect(await resolveSupportSession(ACTOR)).toBeNull();
+    expect(h.rowLookups).toEqual([]);
   });
 });
 

@@ -1,7 +1,11 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-import { SUPPORT_COOKIE } from '@/lib/auth/support-cookie'
+import {
+  SUPPORT_ACTIVE_COOKIE,
+  SUPPORT_COOKIE,
+  supportCookieActor,
+} from '@/lib/auth/support-cookie'
 
 // Methods that change something. A support session is allowed none of
 // them (see `supportSessionBlocks` below).
@@ -77,6 +81,16 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
+  // A support cookie that does not name the currently authenticated user is
+  // nobody's session: `resolveSupportSession` refuses it, so no banner and
+  // no exit button ever render for whoever is holding it, and leaving it in
+  // place would 403 every save they make until it expires. That is what
+  // happens on a shared machine when the operator signs out without
+  // stopping the session first. Drop it instead of blocking on it.
+  const supportToken = request.cookies.get(SUPPORT_COOKIE)?.value ?? null
+  const orphanSupportCookie =
+    supportToken !== null && supportCookieActor(supportToken) !== (user?.id ?? null)
+
   // getUser() transparently refreshes an expired access token, which
   // ROTATES the refresh token and writes the new cookies onto
   // `supabaseResponse` via setAll() above. Any response we return in
@@ -91,6 +105,21 @@ export async function middleware(request: NextRequest) {
     supabaseResponse.cookies.getAll().forEach((cookie) => {
       response.cookies.set(cookie)
     })
+    if (orphanSupportCookie) {
+      response.cookies.delete(SUPPORT_COOKIE)
+      response.cookies.delete(SUPPORT_ACTIVE_COOKIE)
+    }
+    // `next.config.ts` puts `public, s-maxage=300, stale-while-revalidate`
+    // on everything outside /api, and that value WINS over the one Next
+    // gives a dynamically rendered page (checked against a production
+    // build: a ƒ route still comes back `public, s-maxage=300`). During a
+    // support session the dashboard shell carries the CUSTOMER'S name and
+    // account id in the HTML, so a shared cache in front of this app could
+    // hand that page to somebody else for five minutes — and serve it
+    // stale for a day. Not on these responses.
+    if (supportToken !== null) {
+      response.headers.set('Cache-Control', 'private, no-store')
+    }
     return response
   }
 
@@ -130,7 +159,9 @@ export async function middleware(request: NextRequest) {
   }
 
   // A support session is read-only, everywhere. See supportSessionBlocks().
-  if (supportSessionBlocks(request)) {
+  // An orphan cookie blocks nobody: it is being dropped on this very
+  // response, and its holder is not the operator it names.
+  if (!orphanSupportCookie && supportSessionBlocks(request)) {
     return withRefreshedCookies(
       NextResponse.json(
         { error: 'A support session is read-only; exit it before making changes' },
@@ -147,7 +178,7 @@ export async function middleware(request: NextRequest) {
     )
   }
 
-  return supabaseResponse
+  return withRefreshedCookies(supabaseResponse)
 }
 
 export const config = {

@@ -69,6 +69,7 @@
   },
   "Impersonation": {
     "viewing": "You are viewing {account} as support. Nothing you do here is saved.",
+    "unknownAccount": "an account that is no longer available",
     "exit": "Exit support session",
     "exiting": "Exiting…"
   },

@@ -220,12 +220,15 @@ export async function getCurrentAccount(): Promise<AccountContext> {
  * `supabase` stays the OPERATOR'S OWN session client, not a service-role
  * one. Handing arbitrary application routes a client that bypasses RLS
  * because a cookie is present would be a far larger hole than the one
- * this feature opens. The consequence is deliberate and documented: a
- * route that reads through `ctx.supabase` sees the operator's own
- * (empty-of-customer-data) view, while routes that read through the
- * service role scoped by `ctx.accountId` — the pattern this repo already
- * enforces everywhere — see the impersonated account. The customer-facing
- * support view is built on the latter.
+ * this feature opens.
+ *
+ * That client now sees the customer's data anyway, and from the only place
+ * that could ever have granted it: RLS. Migration 057 extends every SELECT
+ * policy with `has_open_support_session(account_id)` — and ONLY the SELECT
+ * ones, so the same client still cannot write a single row of the
+ * impersonated account. It had to be done there rather than here because
+ * most of this panel queries Supabase straight from the browser, where no
+ * TypeScript of ours runs at all.
  */
 async function impersonatedContext(
   supabase: SupabaseClient,

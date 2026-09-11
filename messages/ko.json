@@ -69,6 +69,7 @@
   },
   "Impersonation": {
     "viewing": "지원 담당자로서 {account} 계정을 보고 있습니다. 여기서 하는 작업은 저장되지 않습니다.",
+    "unknownAccount": "더 이상 사용할 수 없는 계정",
     "exit": "지원 세션 종료",
     "exiting": "종료하는 중…"
   },

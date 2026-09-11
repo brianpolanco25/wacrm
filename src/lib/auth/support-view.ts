@@ -8,14 +8,48 @@
 // call — a 403 per page load, in the console, forever.
 // ============================================================
 
+import { unstable_rethrow } from 'next/navigation';
+
+import { createClient } from '@/lib/supabase/server';
 import { getCurrentAccount } from './account';
-import { readSupportCookie } from './impersonation';
+import { readSupportCookie, resolveSupportSession } from './impersonation';
 
 export interface SupportBanner {
   accountId: string;
-  accountName: string;
+  /**
+   * `null` when the impersonated account can no longer be read — deleted
+   * mid-session, or a database that will not answer. The banner still has
+   * to render: it carries the only way out.
+   */
+  accountName: string | null;
   /** ISO 8601, for the "until" line. */
   expiresAt: string;
+}
+
+/**
+ * A banner for a session whose account could not be loaded.
+ *
+ * Without this, a target account deleted mid-session left the operator
+ * with a dashboard that 403s everything AND no exit button — the session
+ * still in force, nothing on screen admitting it, and half an hour to
+ * wait. The warning and the way out are the same control; it has to
+ * survive the failure it is warning about.
+ */
+async function strandedBanner(): Promise<SupportBanner | null> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const session = await resolveSupportSession(user.id);
+  if (!session) return null;
+
+  return {
+    accountId: session.accountId,
+    accountName: null,
+    expiresAt: new Date(session.expiresAt).toISOString(),
+  };
 }
 
 /**
@@ -26,8 +60,10 @@ export interface SupportBanner {
  * database, so putting it in the layout does not add a query to every
  * dashboard page load.
  *
- * Never throws. A banner that could 500 the whole dashboard would be a
- * worse bug than the one it reports.
+ * Never throws anything of its own. A banner that could 500 the whole
+ * dashboard would be a worse bug than the one it reports — but Next's own
+ * bail-out signals are re-thrown (`unstable_rethrow`), because swallowing
+ * one would prerender the shell with no banner at all.
  */
 export async function supportBanner(): Promise<SupportBanner | null> {
   if (!(await readSupportCookie())) return null;
@@ -40,9 +76,15 @@ export async function supportBanner(): Promise<SupportBanner | null> {
       accountName: ctx.account.name,
       expiresAt: new Date(ctx.impersonation.expiresAt).toISOString(),
     };
-  } catch {
-    // No session, unresolvable account, deleted target… none of those are
-    // a support session worth announcing.
-    return null;
+  } catch (err) {
+    unstable_rethrow(err);
+    // Not "no session": the account context failed. If a session really is
+    // in force, say so with no name rather than say nothing.
+    try {
+      return await strandedBanner();
+    } catch (inner) {
+      unstable_rethrow(inner);
+      return null;
+    }
   }
 }

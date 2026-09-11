@@ -22,7 +22,11 @@ const SESSION = {
 };
 
 function render(
-  session: typeof SESSION | null,
+  session: {
+    accountId: string;
+    accountName: string | null;
+    expiresAt: string;
+  } | null,
   locale: 'en' | 'ko' = 'en'
 ): string {
   return renderToStaticMarkup(
@@ -56,6 +60,22 @@ describe('ImpersonationBanner', () => {
 
   it('offers the way out in the same place as the warning', () => {
     expect(render(SESSION)).toContain('Exit support session');
+  });
+
+  it('still renders, with the way out, when the account cannot be named', () => {
+    // The target account was deleted mid-session (or the database would
+    // not answer). Rendering nothing would leave the operator with a
+    // dashboard that 403s everything and no button to escape it.
+    const html = render({ ...SESSION, accountName: null });
+    expect(html).toContain(en.Impersonation.unknownAccount);
+    expect(html).toContain('Exit support session');
+    expect(html).not.toContain('Impersonation.');
+  });
+
+  it('names the missing account in Korean too (CP6)', () => {
+    const html = render({ ...SESSION, accountName: null }, 'ko');
+    expect(html).toContain(ko.Impersonation.unknownAccount);
+    expect(html).not.toContain('Impersonation.');
   });
 
   it('is translated, not English-with-a-Korean-shell (CP6)', () => {

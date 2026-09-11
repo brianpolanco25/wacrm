@@ -814,6 +814,19 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
       'the table is readable from the client only by platform admins ' +
       'themselves (migration 055).',
   },
+  {
+    table: 'impersonation_log',
+    op: 'update',
+    by: ['ended_at', 'expires_at'],
+    reason:
+      'The expiry sweep (sweepExpiredSupportSessions). Cross-account by ' +
+      'design: it closes every support-session row whose deadline has ' +
+      'passed, whoever opened it, and the bitácora belongs to the platform ' +
+      'rather than to a tenant. It writes only `ended_at` / `ended_reason` ' +
+      'on rows that were already past `expires_at`, reads nothing and ' +
+      'moves no customer data. The OTHER update on this table — closing ' +
+      'one named session — filters by `account_id` and is not waived.',
+  },
 ];
 
 // No waiver for `automations`: the two that used to live here rested on

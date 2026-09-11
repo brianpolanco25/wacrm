@@ -10,7 +10,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, endSupportSession } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import {
@@ -382,6 +382,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     const supabase = createClient();
+    // End the support session BEFORE the Supabase session. Signing out
+    // does not touch the support cookie — it is httpOnly, so this code
+    // could not delete it even if it tried — and one left behind on a
+    // shared machine used to put the next person who signs in into
+    // read-only for half an hour, with no banner to explain it and no
+    // button to undo it. The stop route closes the bitácora row too, which
+    // is the ending that would otherwise never be recorded: closing the
+    // browser is how support sessions actually end.
+    await endSupportSession();
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);

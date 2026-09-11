@@ -126,17 +126,37 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
 
 describe("middleware — support sessions cannot write", () => {
   const SUPPORT = "wacrm_support_session";
+  const SUPPORT_ACTIVE = "wacrm_support_active";
+
+  // A real token is `<base64url payload>.<hmac>`. The middleware cannot
+  // verify the signature (no node:crypto on Edge) but it does read the
+  // actor out of the payload, so the fixture has to have one.
+  function token(actorUserId: string) {
+    const payload = Buffer.from(
+      JSON.stringify({
+        logId: "log-1",
+        actorUserId,
+        accountId: "acct-t",
+        expiresAt: Date.now() + 60_000,
+      }),
+      "utf8",
+    ).toString("base64url");
+    return `${payload}.not-checked-here`;
+  }
 
   function request(
     url: string,
     {
       method = "POST",
       support = true,
-    }: { method?: string; support?: boolean } = {},
+      actor = "operator-1",
+    }: { method?: string; support?: boolean; actor?: string } = {},
   ) {
     return new NextRequest(url, {
       method,
-      headers: support ? { cookie: `${SUPPORT}=signed.token` } : undefined,
+      headers: support
+        ? { cookie: `${SUPPORT}=${token(actor)}; ${SUPPORT_ACTIVE}=1` }
+        : undefined,
     });
   }
 
@@ -218,5 +238,91 @@ describe("middleware — support sessions cannot write", () => {
     const res = await middleware(request("https://app.test/api/quick-replies"));
     expect(res.status).toBe(403);
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+  });
+
+  // ----------------------------------------------------------------
+  // A cookie that is not yours must not lock you out.
+  //
+  // Shared machine: the operator signs out without leaving the session.
+  // The next person signs in, the cookie is still there, and for THEM
+  // `resolveSupportSession` refuses it — so no banner renders, no exit
+  // button exists, and `/api/platform/impersonate/stop` 403s them because
+  // they are not an operator. Blocking on it would mean half an hour of
+  // "could not save" with nothing on screen explaining why.
+  // ----------------------------------------------------------------
+
+  it("does not strand a different user who inherited the cookie", async () => {
+    mockUser = { id: "someone-else" };
+    const res = await middleware(
+      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
+    );
+    expect(res.status).not.toBe(403);
+  });
+
+  it("drops the orphan cookies on that same response, both of them", async () => {
+    mockUser = { id: "someone-else" };
+    const res = await middleware(
+      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
+    );
+    // `delete` on a response cookie is an immediate expiry.
+    expect(res.cookies.get(SUPPORT)?.value).toBe("");
+    expect(res.cookies.get(SUPPORT_ACTIVE)?.value).toBe("");
+  });
+
+  it("drops them for a signed-out browser too", async () => {
+    mockUser = null;
+    const res = await middleware(
+      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
+    );
+    expect(res.cookies.get(SUPPORT)?.value).toBe("");
+  });
+
+  it("keeps blocking the operator the cookie actually names", async () => {
+    // The recovery above must not become the way out of the read-only
+    // rule for the person whose session it is.
+    mockUser = { id: "operator-1" };
+    const res = await middleware(
+      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
+    );
+    expect(res.status).toBe(403);
+    expect(res.cookies.get(SUPPORT)?.value).not.toBe("");
+  });
+
+  // ----------------------------------------------------------------
+  // The customer's name must not end up in a shared cache.
+  //
+  // `next.config.ts` puts `public, s-maxage=300, stale-while-revalidate`
+  // on everything outside /api, and a production build confirms that
+  // value wins even on a dynamically rendered page. The dashboard shell
+  // now carries the impersonated company's name and id in its HTML.
+  // ----------------------------------------------------------------
+
+  it("forbids shared caching of any page carrying the customer's name", async () => {
+    mockUser = { id: "operator-1" };
+    const res = await middleware(
+      request("https://app.test/dashboard", { method: "GET" }),
+    );
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("leaves the cache header alone when nobody is impersonating", async () => {
+    mockUser = { id: "user-1" };
+    const res = await middleware(
+      request("https://app.test/dashboard", { method: "GET", support: false }),
+    );
+    expect(res.headers.get("cache-control")).toBeNull();
+  });
+
+  it("drops a cookie whose payload is not even readable", async () => {
+    mockUser = { id: "operator-1" };
+    const res = await middleware(
+      new NextRequest("https://app.test/api/quick-replies", {
+        method: "POST",
+        headers: { cookie: `${SUPPORT}=garbage` },
+      }),
+    );
+    // Unreadable ⇒ names nobody ⇒ nobody's session ⇒ blocks nobody.
+    expect(res.status).not.toBe(403);
+    expect(res.cookies.get(SUPPORT)?.value).toBe("");
   });
 });

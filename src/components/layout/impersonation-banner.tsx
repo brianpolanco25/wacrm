@@ -52,7 +52,14 @@ export function ImpersonationBanner({
     >
       <span className="flex items-center gap-2">
         <Eye className="h-4 w-4 shrink-0" />
-        <span>{t('viewing', { account: session.accountName })}</span>
+        <span>
+          {t('viewing', {
+            // The name is absent when the impersonated account could not be
+            // read (deleted mid-session). The banner still renders: it
+            // carries the exit button.
+            account: session.accountName ?? t('unknownAccount'),
+          })}
+        </span>
       </span>
       <Button size="sm" variant="outline" onClick={exit} disabled={leaving}>
         {leaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}

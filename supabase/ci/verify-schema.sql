@@ -381,13 +381,102 @@ BEGIN
 
   -- Motivo obligatorio y no trivial, comprobado en la base y no solo en
   -- la ruta: una bitácora con motivos vacíos no audita nada.
+  --
+  -- El predicado nombra `char_length` y `btrim` a propósito: buscar
+  -- «%reason%» lo satisfacía también el CHECK de `ended_reason`, así que
+  -- la aserción no podía fallar aunque alguien borrase el mínimo.
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid = 'public.impersonation_log'::regclass
-      AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%reason%'
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%char_length%'
+      AND pg_get_constraintdef(oid) ILIKE '%btrim%'
+      AND pg_get_constraintdef(oid) ILIKE '%reason%'
   ) THEN
     RAISE EXCEPTION
       'impersonation_log.reason has no minimum-length CHECK (migration 055)';
+  END IF;
+
+  -- ============================================================
+  -- 057 — lectura de la cuenta impersonada desde la RLS
+  -- ============================================================
+
+  -- El predicado y el «o» existen, son STABLE y SECURITY DEFINER (una
+  -- política que los llama sin DEFINER leería impersonation_log con RLS).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session'
+      AND p.prosecdef AND p.provolatile = 's'
+  ) THEN
+    RAISE EXCEPTION
+      'has_open_support_session() is missing, not SECURITY DEFINER, or not STABLE (migration 057)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'can_read_account'
+      AND p.prosecdef AND p.provolatile = 's'
+  ) THEN
+    RAISE EXCEPTION
+      'can_read_account() is missing, not SECURITY DEFINER, or not STABLE (migration 057)';
+  END IF;
+
+  -- El predicado exige fila ABIERTA y NO CADUCADA: sin esas dos
+  -- condiciones, pulsar «salir» dejaría de cortar el acceso y la ventana
+  -- de 30 minutos no la impondría nadie.
+  IF (SELECT prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session')
+     NOT ILIKE '%ended_at is null%' THEN
+    RAISE EXCEPTION
+      'has_open_support_session() does not require an OPEN row (migration 057)';
+  END IF;
+  IF (SELECT prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session')
+     NOT ILIKE '%expires_at%' THEN
+    RAISE EXCEPTION
+      'has_open_support_session() does not honour expires_at (migration 057)';
+  END IF;
+
+  -- LO IMPORTANTE DE 057: el predicado de soporte vive SOLO en políticas
+  -- de SELECT. Una sesión de soporte que pudiera escribir en la cuenta del
+  -- cliente es exactamente el accidente que esta feature existe para
+  -- impedir, y la RLS es la única capa que ve las peticiones que el
+  -- navegador manda directamente a Supabase.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND cmd <> 'SELECT'
+      AND (COALESCE(qual, '') || COALESCE(with_check, ''))
+          ~ '(has_open_support_session|can_read_account)'
+  ) THEN
+    RAISE EXCEPTION
+      'a write policy (INSERT/UPDATE/DELETE/ALL) carries the support-session predicate — support sessions are READ ONLY (migration 057)';
+  END IF;
+
+  -- Y al revés: ninguna política de SELECT puede haberse quedado atrás
+  -- llamando a is_account_member directamente. Una tabla nueva cuya
+  -- política de lectura no pase por can_read_account sería invisible
+  -- durante una sesión de soporte — la vista mal etiquetada de siempre,
+  -- otra vez. Esta aserción es lo que hace que 057 no haga falta
+  -- re-ejecutarla: quien añada la tabla se entera en CI.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND cmd = 'SELECT'
+      AND qual LIKE '%is_account_member(%'
+  ) THEN
+    RAISE EXCEPTION
+      'a SELECT policy still calls is_account_member() directly; use can_read_account() so support sessions can read (migration 057)';
+  END IF;
+
+  -- Muestra concreta: si el bucle de 057 no corrió, esto lo dice con
+  -- nombre y apellido en vez de con un conteo.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'contacts'
+      AND policyname = 'contacts_select' AND qual LIKE '%can_read_account%'
+  ) THEN
+    RAISE EXCEPTION
+      'contacts_select was not extended with the support-session predicate (migration 057)';
   END IF;
 
   RAISE NOTICE 'schema verification passed';
