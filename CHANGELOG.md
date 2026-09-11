@@ -48,8 +48,10 @@ behaviour changes**; nothing is limited by plan yet.
   up no longer looks identical to one the assistant is handling. A new
   "Unattended" filter in the list header shows exactly that queue. The
   indicator costs no extra per-chat queries and follows the assignment
-  changes other members make, live. With the assistant switched off for
-  the account, "AI replying" never appears.
+  changes other members make, live. Closed chats never raise the "nobody
+  on it" flag — the filter is a work queue, not the archive. Switching
+  the assistant off in Settings → AI clears "AI replying" from the list
+  within about half a minute, no reload needed.
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are

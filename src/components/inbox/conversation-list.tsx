@@ -77,11 +77,11 @@ export function ConversationList({
 
   // Account-wide "the bot is answering inbound" flag. ONE request per
   // account, shared with the thread banner — nothing here is per
-  // conversation. `null` while it's still in flight; until it resolves
-  // the badge stays off the unassigned rows rather than flashing the
-  // alarm state at every chat the bot is quietly handling.
+  // conversation. `null` while it's unknown (still in flight, or the
+  // read failed); both the badge and the Unattended filter go through
+  // `deriveAttentionState`, which decides nothing in that case rather
+  // than flashing the alarm at every chat the bot is quietly handling.
   const aiStatus = useAiAccountStatus();
-  const accountAiOn = aiStatus === true;
 
   // Presence for the assignee dot. Its own Realtime topic: the thread
   // pane on this same page also calls usePresence, and realtime-js
@@ -226,9 +226,11 @@ export function ConversationList({
       result = result.filter((c) => c.unread_count > 0);
     } else if (filter === "unattended") {
       // No operator AND no AI — handed-off threads nobody picked up
-      // included. Resolved in memory over the rows already loaded, so
-      // it stays correct the moment a realtime UPDATE reassigns one.
-      result = result.filter((c) => isUnattended(c, accountAiOn));
+      // included, closed ones excluded (this is a work queue). Resolved
+      // in memory over the rows already loaded, so it stays correct the
+      // moment a realtime UPDATE reassigns one. Same guard as the
+      // badge: with `aiStatus === null` nothing is decided.
+      result = result.filter((c) => isUnattended(c, aiStatus));
     } else if (filter !== "all") {
       result = result.filter((c) => c.status === filter);
     }
@@ -260,7 +262,7 @@ export function ConversationList({
     search,
     selectedTagIds,
     selectedCompany,
-    accountAiOn,
+    aiStatus,
   ]);
 
   const toggleTag = useCallback((id: string) => {
@@ -485,13 +487,11 @@ export function ConversationList({
               // itself, the account flag, and the two account-wide maps
               // (teammates + presence). No query per conversation.
               const assigneeId = conv.assigned_agent_id ?? null;
-              // An assignee is knowable without the account flag; the
-              // AI/unattended split is not, so hold that one back
-              // until the flag lands.
-              const state =
-                assigneeId || aiStatus !== null
-                  ? deriveAttentionState(conv, accountAiOn)
-                  : null;
+              // `null` = nothing to show: the account flag hasn't landed
+              // (an assignee is knowable without it, the AI/unattended
+              // split isn't), or the thread is closed and out of the
+              // queue. Same call the Unattended filter makes.
+              const state = deriveAttentionState(conv, aiStatus);
               const presence: PresenceStatus | undefined = assigneeId
                 ? getPresence(assigneeId)
                 : undefined;
@@ -506,7 +506,7 @@ export function ConversationList({
                     state === "ai"
                       ? t("attentionAi")
                       : state === "assigned"
-                        ? (profilesByUserId.get(assigneeId ?? "")?.full_name ??
+                        ? (profilesByUserId.get(assigneeId ?? "")?.full_name ||
                           t("attentionAssigned"))
                         : t("attentionUnattended")
                   }

@@ -70,6 +70,78 @@ describe('deriveAttentionState', () => {
   });
 });
 
+describe("when the account's AI status is unknown (null)", () => {
+  // `/api/ai/config` still in flight, or it failed (a 401 mid token
+  // refresh, an offline blip). Guessing "off" would paint the amber
+  // alarm on every chat the bot is quietly handling, for the whole life
+  // of the mount. The guard lives in the derivation so the badge and
+  // the filter cannot disagree.
+  it('decides nothing for an unassigned thread', () => {
+    expect(
+      deriveAttentionState(conv({ ai_autoreply_disabled: false }), null)
+    ).toBe(null);
+    expect(
+      deriveAttentionState(conv({ ai_autoreply_disabled: true }), null)
+    ).toBe(null);
+  });
+
+  it('never reports "unattended" on a failed or pending read', () => {
+    // The regression the review caught: unknown must not be readable as
+    // "the account has no bot".
+    const rows = [
+      conv({ id: 'idle', ai_autoreply_disabled: false }),
+      conv({ id: 'handed-off', ai_autoreply_disabled: true }),
+    ];
+    expect(rows.some((c) => isUnattended(c, null))).toBe(false);
+  });
+
+  it('still names the assignee — a human is knowable without the flag', () => {
+    expect(
+      deriveAttentionState(conv({ assigned_agent_id: 'agent-1' }), null)
+    ).toBe('assigned');
+  });
+});
+
+describe('closed threads', () => {
+  // "Unattended" is a work queue, not a history listing: an account
+  // with the assistant off and 800 closed chats would otherwise light
+  // up its entire archive in amber and drown the filter.
+  it('gets no alarm when nobody is on a closed thread', () => {
+    expect(
+      deriveAttentionState(
+        conv({ status: 'closed', ai_autoreply_disabled: true }),
+        true
+      )
+    ).toBe(null);
+    expect(
+      deriveAttentionState(
+        conv({ status: 'closed', ai_autoreply_disabled: false }),
+        false
+      )
+    ).toBe(null);
+  });
+
+  it('still shows who owns a closed thread', () => {
+    expect(
+      deriveAttentionState(
+        conv({ status: 'closed', assigned_agent_id: 'agent-1' }),
+        false
+      )
+    ).toBe('assigned');
+  });
+
+  it('keeps the alarm on the open and pending ones', () => {
+    for (const status of ['open', 'pending'] as const) {
+      expect(
+        deriveAttentionState(
+          conv({ status, ai_autoreply_disabled: true }),
+          true
+        )
+      ).toBe('unattended');
+    }
+  });
+});
+
 describe('the realtime UPDATE over `conversations`', () => {
   // The inbox page merges the payload of every conversation UPDATE
   // into the row it already holds (`{ ...c, ...conv }`, page.tsx), and
@@ -113,6 +185,11 @@ describe('isUnattended (the header filter)', () => {
       assigned_agent_id: 'agent-1',
       ai_autoreply_disabled: true,
     }),
+    conv({
+      id: 'closed-and-handed-off',
+      status: 'closed',
+      ai_autoreply_disabled: true,
+    }),
   ];
 
   it('returns the chats with no operator AND no AI, handed-off included', () => {
@@ -125,5 +202,20 @@ describe('isUnattended (the header filter)', () => {
     expect(rows.filter((c) => isUnattended(c, false)).map((c) => c.id)).toEqual(
       ['ai', 'handed-off']
     );
+  });
+
+  it('never returns a closed chat — the queue is not the archive', () => {
+    for (const accountAiOn of [true, false, null]) {
+      expect(
+        rows.filter((c) => isUnattended(c, accountAiOn)).map((c) => c.id)
+      ).not.toContain('closed-and-handed-off');
+    }
+  });
+
+  it("returns nothing while the account's AI status is unknown", () => {
+    // Same guard as the badge: with `aiStatus === null` the filter
+    // must not list the chats the bot is handling, badge-less, only to
+    // make them vanish 200 ms later.
+    expect(rows.filter((c) => isUnattended(c, null))).toEqual([]);
   });
 });
