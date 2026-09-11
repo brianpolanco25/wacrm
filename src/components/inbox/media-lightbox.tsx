@@ -23,7 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useMediaBlobUrl } from "@/hooks/use-media-blob-url";
+import { useMediaBlobUrl, useMediaSrc } from "@/hooks/use-media-blob-url";
 import { downloadMediaMessage } from "@/lib/media/download";
 import { galleryIndexOf, type MediaGalleryItem } from "@/lib/media/gallery";
 
@@ -113,6 +113,11 @@ export function MediaLightbox({
     }
   }, [downloading, item, t]);
 
+  // Signed for bucket objects (renewed while open), verbatim otherwise.
+  // Drives the "open original" link and the video player; images go
+  // through `useMediaBlobUrl` inside `LightboxImage`.
+  const { src: itemSrc } = useMediaSrc(item?.url);
+
   if (!item) return null;
 
   const authorLabel = item.fromCustomer ? contactLabel : t("you");
@@ -148,7 +153,7 @@ export function MediaLightbox({
               />
             )}
             <a
-              href={item.url}
+              href={itemSrc ?? item.url}
               target="_blank"
               rel="noopener noreferrer"
               aria-label={t("openOriginal")}
@@ -177,7 +182,7 @@ export function MediaLightbox({
           ) : (
             <video
               // Plain URL, never a blob — the player should stream.
-              src={item.url}
+              src={itemSrc ?? undefined}
               controls
               preload="metadata"
               className={cn(MEDIA_MAX_HEIGHT, "max-w-full rounded-lg")}

@@ -35,7 +35,13 @@ import {
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import {
+  OutboundMediaError,
+  resolveOutboundMedia,
+  resolveTemplateHeaderMedia,
+} from '@/lib/whatsapp/outbound-media';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
+import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -336,6 +342,47 @@ export async function sendMessageToConversation(
     sendLanguage = resolved.language;
   }
 
+  // Attachments hosted in our own Storage go to Meta by media id — the
+  // bytes are pulled with the service role and uploaded once per
+  // (number, object), so the bucket no longer has to be public and Meta
+  // never fetches from us at send time. External links pass through.
+  // Resolved ONCE, outside the phone-variant retry, and scoped to
+  // `accountId`: a caller cannot name another account's object.
+  const mediaCtx = {
+    accountId,
+    phoneNumberId: config.phone_number_id as string,
+    accessToken,
+    storage: supabaseAdmin().storage,
+    db: supabaseAdmin(),
+  };
+  let mediaRef: { mediaId: string } | { link: string } | null = null;
+  let headerParams: SendTimeParams | undefined =
+    (templateMessageParams as SendTimeParams | undefined) ?? undefined;
+  try {
+    if (isMediaKind) {
+      mediaRef = await resolveOutboundMedia({
+        ...mediaCtx,
+        mediaUrl: mediaUrl!,
+        fileName: filename,
+      });
+    } else if (messageType === 'template') {
+      headerParams = await resolveTemplateHeaderMedia(
+        templateRow,
+        headerParams,
+        mediaCtx
+      );
+    }
+  } catch (err) {
+    if (err instanceof OutboundMediaError) {
+      throw new SendMessageError(
+        err.code === 'forbidden' ? 'forbidden' : 'media_error',
+        err.message,
+        err.code === 'forbidden' ? 403 : 502
+      );
+    }
+    throw err;
+  }
+
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
@@ -345,7 +392,7 @@ export async function sendMessageToConversation(
         templateName: templateName!,
         language: sendLanguage,
         template: templateRow ?? undefined,
-        messageParams: templateMessageParams ?? undefined,
+        messageParams: headerParams,
         params: templateParams || [],
         contextMessageId,
       });
@@ -357,7 +404,9 @@ export async function sendMessageToConversation(
         accessToken,
         to: phone,
         kind: messageType as MediaKind,
-        link: mediaUrl!,
+        ...(mediaRef && 'mediaId' in mediaRef
+          ? { mediaId: mediaRef.mediaId }
+          : { link: mediaUrl! }),
         caption: contentText || undefined,
         filename: filename || undefined,
         contextMessageId,

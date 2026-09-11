@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import {
+  getCurrentAccount,
+  requireRole,
+  toErrorResponse,
+} from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import {
   loadStepsTree,
@@ -12,28 +15,39 @@ import {
   validateTriggerForActivation,
 } from '@/lib/automations/validate'
 
-async function requireUser() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  return user
-}
+// Every handler below reads and writes through the service-role client,
+// which bypasses RLS: the `.eq('account_id', …)` written by hand IS the
+// tenant boundary here. `user_id` is NOT a substitute for it — a profile
+// changes account whenever `remove_account_member` (migration 018) or
+// `redeem_invitation` (019) moves it, while the rows it authored stay
+// behind, so a filter on the author alone still reaches another
+// account's automation. The account comes from the caller's live
+// profile (`getCurrentAccount` / `requireRole`), so an ex-member gets a
+// 404 the moment they leave.
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params
-  const user = await requireUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // Reading needs no minimum role (the automations_select policy asks
+  // only for membership), but it does need the account.
+  let accountId: string
+  let userId: string
+  try {
+    ;({ accountId, userId } = await getCurrentAccount())
+  } catch (err) {
+    return toErrorResponse(err)
+  }
 
   const admin = supabaseAdmin()
   const { data: automation, error } = await admin
     .from('automations')
     .select('*')
     .eq('id', id)
-    .eq('user_id', user.id)
+    .eq('account_id', accountId)
+    .eq('user_id', userId)
     .maybeSingle()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -51,15 +65,17 @@ export async function PATCH(
 
   // Editing an automation is a write — the RLS automations_update policy
   // requires `agent`, but this route mutates via the service-role client
-  // which bypasses RLS, so enforce the role here.
+  // which bypasses RLS, so enforce the role here. `requireRole` also
+  // hands us the caller's account: with the admin client that filter,
+  // not RLS, is the tenant boundary, so both the ownership read and the
+  // update below carry it.
+  let accountId: string
+  let userId: string
   try {
-    await requireRole('agent')
+    ;({ accountId, userId } = await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }
-
-  const user = await requireUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
@@ -67,13 +83,16 @@ export async function PATCH(
   const admin = supabaseAdmin()
 
   // Ownership check before we touch anything. Load the fields we need
-  // to compute the post-patch "effective" state for validation.
+  // to compute the post-patch "effective" state for validation. The
+  // account filter is the tenancy boundary; the `user_id` comparison
+  // below is the older, narrower per-author rule this route still keeps.
   const { data: existing } = await admin
     .from('automations')
     .select('id, user_id, is_active, trigger_type, trigger_config')
     .eq('id', id)
+    .eq('account_id', accountId)
     .maybeSingle()
-  if (!existing || existing.user_id !== user.id) {
+  if (!existing || existing.user_id !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
@@ -120,6 +139,7 @@ export async function PATCH(
       .from('automations')
       .update(update)
       .eq('id', id)
+      .eq('account_id', accountId)
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
   }
 
@@ -138,21 +158,39 @@ export async function DELETE(
   const { id } = await params
 
   // Deleting an automation is a write — enforce `agent` (the service-role
-  // client below bypasses the agent-gated automations_delete RLS).
+  // client below bypasses the agent-gated automations_delete RLS) and
+  // keep the account it resolves.
+  let accountId: string
+  let userId: string
   try {
-    await requireRole('agent')
+    ;({ accountId, userId } = await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }
 
-  const user = await requireUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const admin = supabaseAdmin()
 
-  const { error } = await supabaseAdmin()
+  // Same ownership gate as the PATCH: the account filter is the tenancy
+  // boundary, the `user_id` comparison the older per-author rule. Doing
+  // it before the DELETE is what lets the handler answer 404 for a row
+  // it may not touch instead of an unconditional `ok` that hides
+  // whether anything was deleted at all.
+  const { data: existing } = await admin
+    .from('automations')
+    .select('id, user_id')
+    .eq('id', id)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (!existing || existing.user_id !== userId) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+
+  const { error } = await admin
     .from('automations')
     .delete()
     .eq('id', id)
-    .eq('user_id', user.id)
+    .eq('account_id', accountId)
+    .eq('user_id', userId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

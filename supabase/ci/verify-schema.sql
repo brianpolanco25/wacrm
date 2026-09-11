@@ -263,6 +263,38 @@ BEGIN
     RAISE EXCEPTION 'inbound_auto_replies must have no RLS policies (migration 051)';
   END IF;
 
+  -- Migration 044 flips both media buckets private and swaps the public
+  -- SELECT policies for account-scoped ones. The UPDATE and the CREATE
+  -- POLICY are both guarded, so a typo'd bucket id or policy name would
+  -- leave the buckets public with a green run — assert the outcome.
+  IF EXISTS (
+    SELECT 1 FROM storage.buckets
+    WHERE id IN ('chat-media', 'flow-media') AND public IS DISTINCT FROM FALSE
+  ) THEN
+    RAISE EXCEPTION 'a media bucket is still public (migration 044)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects'
+      AND policyname = 'Members can read chat media' AND cmd = 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'the account-scoped chat-media read policy is missing (migration 044)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects'
+      AND policyname = 'Members can read flow media' AND cmd = 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'the account-scoped flow-media read policy is missing (migration 044)';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects'
+      AND policyname IN ('Chat media is publicly readable', 'Flow media is publicly readable')
+  ) THEN
+    RAISE EXCEPTION 'a public media read policy survived migration 044';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { validateFlowForActivation } from '@/lib/flows/validate'
@@ -27,19 +26,13 @@ export async function POST(
   // Changing status (activate / draft / archive) is a write — the RLS
   // flows_update policy requires `agent`, but the service-role client
   // below bypasses RLS, so enforce the role here (a viewer passes the
-  // membership-only ownership check).
+  // membership-only ownership check) and keep the caller's account to
+  // scope every admin query with it.
+  let accountId: string
   try {
-    await requireRole('agent')
+    ;({ accountId } = await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
-  }
-
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const body = (await request.json().catch(() => null)) as
@@ -53,25 +46,31 @@ export async function POST(
     )
   }
 
-  // Ownership via RLS — caller's client.
-  const { data: existing } = await supabase
+  const admin = supabaseAdmin()
+
+  // Ownership. RLS does not apply to the admin client, so the account
+  // filter is the boundary: a flow of another account never matches and
+  // 404s here, before any write.
+  const { data: existing } = await admin
     .from('flows')
     .select('id')
     .eq('id', id)
+    .eq('account_id', accountId)
     .maybeSingle()
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const admin = supabaseAdmin()
-
   if (status === 'active') {
-    // Re-load with the full payload the validator needs.
+    // Re-load with the full payload the validator needs. `flow_nodes`
+    // has no account_id column; `id` was just proven to belong to
+    // `accountId`, which is what scopes the node read.
     const [{ data: flow }, { data: nodes }] = await Promise.all([
       admin
         .from('flows')
         .select('name, trigger_type, trigger_config, entry_node_id')
         .eq('id', id)
+        .eq('account_id', accountId)
         .maybeSingle(),
       admin
         .from('flow_nodes')
@@ -110,6 +109,7 @@ export async function POST(
     .from('flows')
     .update({ status, updated_at: new Date().toISOString() })
     .eq('id', id)
+    .eq('account_id', accountId)
     .select()
     .maybeSingle()
   if (error) {

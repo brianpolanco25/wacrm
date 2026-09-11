@@ -38,9 +38,27 @@ is included.
   `docker-compose.yml`. If you change any of them, rebuild:
   `docker compose --env-file .env.local up --build -d`.
 - Everything else (`SUPABASE_SERVICE_ROLE_KEY`, `ENCRYPTION_KEY`,
-  `META_APP_SECRET`, …) is read at **runtime** from `.env.local` via
-  `env_file` and is never baked into the image — safe to change with
-  just a container restart.
+  `ENCRYPTION_KEY_PREVIOUS`, `META_APP_SECRET`,
+  `META_WEBHOOK_VERIFY_TOKEN`, …) is read at
+  **runtime** from `.env.local` via `env_file` and is never baked into
+  the image — safe to change with just a container restart.
+- `ENCRYPTION_KEY_PREVIOUS` is optional and normally unset. It holds
+  retired encryption keys (comma-separated, same 64-hex-character
+  format as `ENCRYPTION_KEY`) so secrets written before a key rotation
+  keep decrypting while they are re-encrypted. Set it, restart, run
+  `node --env-file=.env.local scripts/reencrypt-secrets.ts`, then unset
+  it and restart again — the full runbook is in `docs/security.md`.
+  Leaving a retired key in place indefinitely means a leaked old key
+  still reads every row it ever wrote.
+- `META_WEBHOOK_VERIFY_TOKEN` is optional and only for platform
+  deployments: one Meta app in front of every tenant. Set it to the same
+  random string you type into the Meta app's webhook settings and the
+  `GET` verification compares against it in constant time instead of
+  decrypting every `whatsapp_config` row. Leave it unset on a
+  self-hosted install where each business brings its own Meta app — the
+  per-tenant lookup then works as before. The value is trimmed, so an
+  empty or whitespace-only one counts as unset. Details in
+  `docs/security.md`.
 
 ## Platform AI keys (optional)
 

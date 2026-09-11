@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
@@ -97,6 +98,17 @@ interface WhatsAppWebhookEntry {
   }>
 }
 
+/**
+ * Constant-time string compare for the platform verify token. Length is
+ * checked first because `timingSafeEqual` throws on mismatched lengths;
+ * the length itself is not sensitive.
+ */
+function verifyTokensMatch(supplied: string, expected: string): boolean {
+  const a = Buffer.from(supplied)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
 // GET - Webhook verification
 export async function GET(request: Request) {
   try {
@@ -109,6 +121,40 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: 'Missing verification parameters' },
         { status: 400 }
+      )
+    }
+
+    // Short path — platform mode. When the operator sets a single
+    // verify token for the whole deployment (one Meta app, one webhook
+    // URL, every tenant behind it), the per-tenant loop below is dead
+    // weight: it reads and decrypts EVERY whatsapp_config row on each
+    // subscribe just to find a match. With the platform token defined we
+    // compare against it and never touch the table. Without it (self-
+    // hosted, one config per install) the loop behaves exactly as before.
+    // Trimmed because the value arrives from a secret file, a K8s
+    // ConfigMap or a hand-edited `.env` line as often as from a shell
+    // export, and a trailing newline or space would otherwise be
+    // truthy: the short path would activate and never match, so every
+    // subscribe would 403. Whitespace-only counts as unset, same as the
+    // empty string.
+    const platformToken = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim()
+    if (platformToken) {
+      if (verifyTokensMatch(verifyToken, platformToken)) {
+        return new Response(challenge, {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      }
+      // Names neither the supplied nor the expected token on purpose —
+      // both are credentials, and the operator only needs to know that
+      // the platform path rejected a subscribe (usually a stale value
+      // in the Meta app's webhook settings).
+      console.warn(
+        '[webhook] verify token mismatch against META_WEBHOOK_VERIFY_TOKEN'
+      )
+      return NextResponse.json(
+        { error: 'Verification token mismatch' },
+        { status: 403 }
       )
     }
 

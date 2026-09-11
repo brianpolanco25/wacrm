@@ -20,6 +20,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
+import { resolveTemplateHeaderMedia } from '@/lib/whatsapp/outbound-media';
+import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -64,6 +66,8 @@ interface PlannedRecipient {
 
 export interface BroadcastPlan {
   broadcastId: string;
+  /** Tenant the broadcast belongs to — scopes the header-media lookup. */
+  accountId: string;
   templateName: string;
   templateLanguage: string;
   phoneNumberId: string;
@@ -232,6 +236,7 @@ export async function createBroadcast(
 
   return {
     broadcastId,
+    accountId,
     templateName,
     templateLanguage: resolvedTemplate.language,
     phoneNumberId: config.phone_number_id,
@@ -259,6 +264,30 @@ export async function deliverBroadcast(
   db: SupabaseClient,
   plan: BroadcastPlan
 ): Promise<void> {
+  // A bucket-hosted media header is uploaded to Meta once and sent by id
+  // to every recipient; a failure here fails the whole pass up front
+  // rather than once per recipient, so it is stamped on every row.
+  let headerParams: SendTimeParams | undefined;
+  try {
+    headerParams = await resolveTemplateHeaderMedia(plan.templateRow, undefined, {
+      accountId: plan.accountId,
+      phoneNumberId: plan.phoneNumberId,
+      accessToken: plan.accessToken,
+      storage: db.storage,
+      db,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    for (const recipient of plan.planned) {
+      await db
+        .from('broadcast_recipients')
+        .update({ status: 'failed', error_message: message })
+        .eq('id', recipient.recipientRowId);
+    }
+    await finalizeBroadcastStatus(db, plan.broadcastId);
+    return;
+  }
+
   for (const recipient of plan.planned) {
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
@@ -273,6 +302,7 @@ export async function deliverBroadcast(
           templateName: plan.templateName,
           language: plan.templateLanguage,
           template: plan.templateRow ?? undefined,
+          messageParams: headerParams,
           params: recipient.params,
         });
         sentMessageId = result.messageId;

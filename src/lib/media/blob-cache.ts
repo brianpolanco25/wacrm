@@ -23,6 +23,8 @@
  * object URL keeps its blob's data alive by itself.
  */
 
+import { getSignedMediaUrl } from "./signed-url";
+
 /** Prefix of the auth-gated proxy — these need a credentialed fetch. */
 const PROXY_PREFIX = "/api/whatsapp/media/";
 
@@ -44,6 +46,16 @@ const inFlight = new Map<string, Promise<Blob>>();
 export type MediaFetch = (url: string) => Promise<Response>;
 
 const defaultFetch: MediaFetch = (url) => fetch(url);
+
+/**
+ * Turns a stored URL into the one to fetch. Bucket objects need a
+ * short-lived signed URL (`@/lib/media/signed-url`); everything else
+ * comes back unchanged. Injectable so the cache is testable.
+ */
+export type MediaSigner = (url: string) => Promise<string>;
+
+const defaultSigner: MediaSigner = async (url) =>
+  (await getSignedMediaUrl(url)).url;
 
 /**
  * The request completed and the server refused it — a 401 on inbound media
@@ -89,9 +101,12 @@ function remember(url: string, blob: Blob): void {
 export async function loadMediaBlob(
   url: string,
   fetchImpl: MediaFetch = defaultFetch,
+  signer: MediaSigner = defaultSigner,
 ): Promise<Blob> {
   if (!isProxiedMediaUrl(url)) {
-    const res = await fetchImpl(url);
+    // A bucket object is fetched through its signed URL; the stored URL
+    // stays the identity the caller reasons about.
+    const res = await fetchImpl(await signer(url));
     if (!res.ok) throw new MediaResponseError(res.status);
     return res.blob();
   }

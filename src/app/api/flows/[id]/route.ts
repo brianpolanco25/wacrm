@@ -48,6 +48,47 @@ async function requireOwnership(
   return { ok: true, userId: user.id, supabase }
 }
 
+/**
+ * Ownership check for the two handlers that write through the service
+ * role. `requireRole` resolves the caller's account (and the minimum
+ * role the flows_update / flows_delete policies would have demanded);
+ * the flow is then re-read through the admin client WITH
+ * `.eq('account_id', …)`. That filter — not RLS, which the admin client
+ * bypasses — is the tenant boundary, and returning `accountId` lets
+ * every later admin query carry it too. `flow_nodes` has no
+ * `account_id` column of its own: its rows are reachable only via a
+ * `flow_id` this check has already proven belongs to the caller's
+ * account.
+ *
+ * A flow of another account 404s, exactly like the RLS read did.
+ */
+async function requireWritableFlow(
+  flowId: string,
+): Promise<
+  { ok: true; accountId: string } | { ok: false; response: NextResponse }
+> {
+  let accountId: string
+  try {
+    ;({ accountId } = await requireRole('agent'))
+  } catch (err) {
+    return { ok: false, response: toErrorResponse(err) }
+  }
+
+  const { data: flow } = await supabaseAdmin()
+    .from('flows')
+    .select('id')
+    .eq('id', flowId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (!flow) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: 'Not found' }, { status: 404 }),
+    }
+  }
+  return { ok: true, accountId }
+}
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
@@ -95,15 +136,11 @@ export async function PUT(
 
   // Writes require at least `agent` — the RLS flows_update policy demands
   // it, but this route mutates via the service-role client which bypasses
-  // RLS, so the role must be enforced here (a viewer passes ownership).
-  try {
-    await requireRole('agent')
-  } catch (err) {
-    return toErrorResponse(err)
-  }
-
-  const guard = await requireOwnership(id)
-  if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status })
+  // RLS, so both the role and the account scope are enforced here (a
+  // viewer passes ownership).
+  const guard = await requireWritableFlow(id)
+  if (!guard.ok) return guard.response
+  const { accountId } = guard
 
   const body = (await request.json().catch(() => null)) as PutBody | null
   if (!body) {
@@ -139,6 +176,7 @@ export async function PUT(
     .from('flows')
     .update(flowPatch)
     .eq('id', id)
+    .eq('account_id', accountId)
   if (updErr) {
     return NextResponse.json({ error: updErr.message }, { status: 500 })
   }
@@ -146,6 +184,8 @@ export async function PUT(
   if (body.nodes !== undefined) {
     // Delete-then-insert. Not transactional but the runner handles
     // mid-edit reads safely (a node_not_found ends the run cleanly).
+    // `flow_nodes` carries no account_id — `id` is the scope here, and
+    // `requireWritableFlow` already proved it belongs to `accountId`.
     const { error: delErr } = await admin
       .from('flow_nodes')
       .delete()
@@ -173,7 +213,12 @@ export async function PUT(
   // Re-fetch and return the new state — the editor uses the response
   // to reconcile its local form state.
   const [{ data: flow }, { data: nodes }] = await Promise.all([
-    admin.from('flows').select('*').eq('id', id).maybeSingle(),
+    admin
+      .from('flows')
+      .select('*')
+      .eq('id', id)
+      .eq('account_id', accountId)
+      .maybeSingle(),
     admin
       .from('flow_nodes')
       .select('*')
@@ -191,21 +236,20 @@ export async function DELETE(
 
   // Writes require at least `agent` — see the PUT handler note. The
   // service-role client below bypasses the agent-gated flows_delete RLS.
-  try {
-    await requireRole('agent')
-  } catch (err) {
-    return toErrorResponse(err)
-  }
-
-  const guard = await requireOwnership(id)
-  if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status })
+  const guard = await requireWritableFlow(id)
+  if (!guard.ok) return guard.response
+  const { accountId } = guard
 
   // CASCADE on flow_nodes / flow_runs / flow_run_events handles the
   // children. Active runs end abruptly — there's no graceful "drain"
   // mechanism in v1, but that's intentional: deleting a flow is a
   // deliberate destructive action and the partial unique index will
   // free up the contact for new triggers immediately.
-  const { error } = await supabaseAdmin().from('flows').delete().eq('id', id)
+  const { error } = await supabaseAdmin()
+    .from('flows')
+    .delete()
+    .eq('id', id)
+    .eq('account_id', accountId)
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }

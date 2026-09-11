@@ -104,6 +104,43 @@ behaviour changes**; nothing is limited by plan yet.
   same `key_source`. Before this they were the one LLM surface that spent
   tokens invisibly.
 
+- **Encryption key rotation.** Stored secrets (WhatsApp tokens, AI
+  provider keys, webhook signing secrets) are now written as
+  `k<key-id>:<iv>:<ct>:<tag>`, naming the key they were encrypted with.
+  `ENCRYPTION_KEY` stays the active key; a new optional
+  `ENCRYPTION_KEY_PREVIOUS` (comma-separated) lets retired keys keep
+  decrypting old rows, and values in the two pre-existing formats still
+  decrypt with any key in the ring. `scripts/reencrypt-secrets.ts`
+  (`--dry-run` to report) rewrites everything under the current key.
+  See `docs/security.md`.
+
+  > **One-way format.** Existing rows are rewritten in the new shape by
+  > normal traffic (a send, a webhook re-verification), with or without
+  > a rotation, and an older build cannot read them: rolling back after
+  > this release asks affected accounts to re-enter their WhatsApp
+  > token, AI provider key or webhook secret. Back up
+  > `whatsapp_config`, `ai_configs` and `webhook_endpoints` first if a
+  > rollback is part of your plan.
+
+- **Platform webhook verify token.** When `META_WEBHOOK_VERIFY_TOKEN` is
+  set, the WhatsApp webhook's `GET` verification compares against it and
+  never reads `whatsapp_config`. Unset, the existing per-tenant lookup is
+  unchanged. The value is trimmed (an empty or whitespace-only one counts
+  as unset) and a mismatch is logged without echoing either token.
+- **Private attachments.** Outbound media (inbox, public API, Flow
+  `send_media`, template media headers in broadcasts) is now uploaded to
+  Meta and sent by media id instead of a public bucket link, and the
+  attachment path is checked against the sending account. The UI renders
+  bucket-hosted attachments through 10-minute signed URLs that renew
+  while open. Works with the media buckets public or private.
+
+> **Migration (apply last):** `supabase/migrations/044_private_media_buckets.sql`
+> makes `chat-media` and `flow-media` private and scopes reads to the
+> owning account (legacy `<uid>/…` paths stay readable by every member of
+> the uploader's account). Apply it **only after** this release is live and you have
+> confirmed outbound attachments still arrive — see
+> `docs/security.md`, "Private attachments".
+
 ### Fixed
 
 - **One automation no longer silences the AI assistant everywhere.** A
@@ -154,6 +191,27 @@ behaviour changes**; nothing is limited by plan yet.
   operator returns their chats to the unassigned queue instead of leaving
   a nameless "Assigned" badge. A new `(account_id, assigned_agent_id)`
   index backs the "my chats" / "unassigned" lookups.
+
+- **Flow editing scoped to the account.** Saving, deleting and
+  activating a flow wrote through the service-role client filtering only
+  by row id, so the account was never part of the query. Ownership is
+  now resolved before the write and every query carries the caller's
+  account. Same fix for the two lookups the runners did by id alone (the
+  flow behind a live run, the automation behind a queued step).
+- **Automation editing scoped to the account.** Saving an automation
+  loaded and updated the row through the service-role client by row id
+  alone, leaning on a per-author check in application code. Both queries
+  now carry the caller's account, matching the RLS policy the
+  service-role client bypasses.
+- **Former team members can no longer touch the automations they left
+  behind.** Reading, deleting and duplicating an automation matched on
+  the author's user id only. Because removing a member (or accepting an
+  invitation to another company) moves the profile to a different
+  account while the automations they created stay put, someone who had
+  left could still delete one of their old company's automations — the
+  endpoint even answered `ok` — or clone it back inside that company.
+  All three now filter by the caller's current account, and deleting an
+  automation that isn't yours answers `404` instead of a blanket `ok`.
 
 ## [0.8.1] — 2026-07-10
 
@@ -227,7 +285,7 @@ sidebar — it's no longer tucked inside Settings.
 - **AI Agents (sidebar).** A dedicated `/agents` area with two tabs:
   - **Playground** — a test chat to message your agent and see its
     grounded, multi-turn replies (and where it would hand off to a human)
-    *before* it ever answers a real customer. Runs the exact same path as
+    _before_ it ever answers a real customer. Runs the exact same path as
     the auto-reply bot (knowledge-base retrieval + your provider), and
     works even before you flip the master switch on, so you can try, then
     enable. Backed by `POST /api/ai/playground`.
@@ -303,7 +361,7 @@ returned to the client after saving.
 ## [0.4.0] — 2026-07-01
 
 Completes the public API (#245): **outbound event webhooks** so
-automations can *react* to activity instead of polling.
+automations can _react_ to activity instead of polling.
 
 ### Added
 
@@ -364,11 +422,11 @@ always did.
   - `POST /api/v1/broadcasts` + `GET /api/v1/broadcasts/{id}` — launch a
     template broadcast to a recipient list and poll its progress
     (`broadcasts:send`).
-  All list endpoints share one cursor-pagination contract
-  (`{ data, meta: { next_cursor } }`). No migration required — the
-  scopes already existed and the tables are unchanged. Outbound event
-  webhooks (react to inbound messages) are the remaining roadmap item.
-  See `docs/public-api.md`. ([#245](https://github.com/ArnasDon/wacrm/issues/245))
+    All list endpoints share one cursor-pagination contract
+    (`{ data, meta: { next_cursor } }`). No migration required — the
+    scopes already existed and the tables are unchanged. Outbound event
+    webhooks (react to inbound messages) are the remaining roadmap item.
+    See `docs/public-api.md`. ([#245](https://github.com/ArnasDon/wacrm/issues/245))
 
 ### Changed
 
@@ -407,8 +465,8 @@ always did.
 
 - `supabase/migrations/020_account_sharing_followups.sql` —
   composite partial indexes on `automations(account_id,
-  trigger_type) WHERE is_active` and `flows(account_id) WHERE
-  status='active'` for the engine dispatch hot path; updated
+trigger_type) WHERE is_active` and `flows(account_id) WHERE
+status='active'` for the engine dispatch hot path; updated
   `flow-media` storage RLS to allow account-member writes under
   the new path convention. Idempotent.
 
@@ -599,10 +657,10 @@ when two users on the same instance saved the same WhatsApp
 - **Inbound WhatsApp messages no longer silently disappear** when two
   users have claimed the same `phone_number_id`. Previously the
   webhook used `.single()` to look up the owning config, which errors
-  `PGRST116` for both 0 rows *and* ≥2 rows — the second user's save
+  `PGRST116` for both 0 rows _and_ ≥2 rows — the second user's save
   put the DB into the ≥2-row state and every inbound message was
-  dropped while the log misleadingly reported *"No config found for
-  phone_number_id"*. Three layers of fix: `POST /api/whatsapp/config`
+  dropped while the log misleadingly reported _"No config found for
+  phone_number_id"_. Three layers of fix: `POST /api/whatsapp/config`
   now returns **409** when another user has already claimed the
   number, the webhook lookup distinguishes 0 rows from ≥2 rows and
   logs the conflicting `user_id`s, and a new DB constraint
