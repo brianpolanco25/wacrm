@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // ---------------------------------------------------------------------------
 // Fase 3 §4 — `broadcast_recipients`.
 //
-// A campaign is checked as ONE batch before the first send (refusing
-// halfway leaves the operator with a half-delivered blast and no way to
-// tell which half went) and counted afterwards for what actually left.
+// The unit is the CAMPAIGN, not the request: the wizard splits a
+// campaign into batches of ten, so weighing `recipients.length` would
+// let a large blast through its first batches and refuse the last one,
+// leaving exactly the half-delivered campaign §4 sets out to avoid.
+// With a `broadcast_id` the route weighs the campaign's outstanding
+// ('pending') recipients instead — on the first batch that is the whole
+// campaign — and counts afterwards only what actually left.
 //
 // `requireRole` and the enforcement layer are stubbed at their entry
 // points; `toErrorResponse` and the error classes stay real, so the
@@ -14,7 +18,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   requireRole: vi.fn(),
-  assertQuota: vi.fn(async () => {}),
+  // Typed so `mockImplementation` below can read the amount being
+  // weighed — that argument is the whole point of these tests.
+  assertQuota: vi.fn<
+    (accountId: string, metric: string, n: number) => Promise<void>
+  >(async () => {}),
   recordUsage: vi.fn(async () => {}),
   sendTemplateMessage: vi.fn(async () => ({ messageId: 'wamid.1' })),
 }));
@@ -59,24 +67,46 @@ vi.mock('@/lib/whatsapp/template-body', () => ({
 import { QuotaExceededError } from '@/lib/billing/enforce';
 import { POST } from './route';
 
-function supabaseMock() {
+/**
+ * `pending` is how many recipients of the persisted campaign are still
+ * outstanding; `campaignOwned: false` makes the `broadcasts` lookup
+ * come back empty, which is what another tenant's id looks like.
+ */
+function supabaseMock({
+  pending = 0,
+  campaignOwned = true,
+  countError = null as { message: string } | null,
+} = {}) {
+  const seen = { broadcastFilters: [] as [string, unknown][] };
   return {
-    from: () => {
-      const chain: Record<string, unknown> = {
-        select: () => chain,
-        eq: () => chain,
-        single: async () => ({
-          data: {
-            id: 'cfg-1',
-            account_id: 'acct-1',
-            phone_number_id: 'pn-1',
-            access_token: 'token',
+    seen,
+    client: {
+      from: (table: string) => {
+        const chain: Record<string, unknown> = {
+          select: () => chain,
+          eq: (col: string, val: unknown) => {
+            if (table === 'broadcasts') seen.broadcastFilters.push([col, val]);
+            return chain;
           },
-          error: null,
-        }),
-        maybeSingle: async () => ({ data: null, error: null }),
-      };
-      return chain;
+          single: async () => ({
+            data: {
+              id: 'cfg-1',
+              account_id: 'acct-1',
+              phone_number_id: 'pn-1',
+              access_token: 'token',
+            },
+            error: null,
+          }),
+          maybeSingle: async () => ({
+            data: campaignOwned ? { id: 'bc-1' } : null,
+            error: null,
+          }),
+          // The head/count query of the outstanding-recipient lookup.
+          then: (resolve: (r: unknown) => unknown) =>
+            resolve({ count: pending, error: countError }),
+        };
+        return chain;
+      },
     },
   };
 }
@@ -104,7 +134,7 @@ const CAMPAIGN = {
 beforeEach(() => {
   mocks.requireRole.mockReset();
   mocks.requireRole.mockResolvedValue({
-    supabase: supabaseMock(),
+    supabase: supabaseMock().client,
     accountId: 'acct-1',
     userId: 'user-1',
     role: 'admin',
@@ -118,14 +148,167 @@ beforeEach(() => {
   mocks.sendTemplateMessage.mockResolvedValue({ messageId: 'wamid.1' });
 });
 
+/** The wizard's batch: ten of the campaign's recipients. */
+const BATCH_OF_TEN = Array.from({ length: 10 }, (_, i) => ({
+  phone: `+1555111${String(i).padStart(4, '0')}`,
+}));
+
+/**
+ * `used` of `limit` already spent — i.e. `limit - used` left. Lets a
+ * test state its margin instead of pre-computing which call throws.
+ */
+function allowanceLeft(margin: number) {
+  const limit = 2000;
+  const used = limit - margin;
+  mocks.assertQuota.mockImplementation(async (_accountId, _metric, n) => {
+    if (used + n > limit) {
+      throw new QuotaExceededError('broadcast_recipients', limit, used);
+    }
+  });
+}
+
 describe('POST /api/whatsapp/broadcast — broadcast_recipients (fase 3 §4)', () => {
   it('checks the whole campaign as one batch, before the first send', async () => {
+    // No `broadcast_id`: a direct caller is weighed by the only thing
+    // it says about itself, its own recipient list.
     await post(CAMPAIGN);
     expect(mocks.assertQuota).toHaveBeenCalledWith(
       'acct-1',
       'broadcast_recipients',
       3
     );
+  });
+
+  it('weighs the campaign, not the batch of ten the wizard sends', async () => {
+    mocks.requireRole.mockResolvedValue({
+      supabase: supabaseMock({ pending: 25 }).client,
+      accountId: 'acct-1',
+      userId: 'user-1',
+      role: 'admin',
+      account: { id: 'acct-1', name: 'Acme' },
+    });
+
+    await post({ ...CAMPAIGN, broadcast_id: 'bc-1', recipients: BATCH_OF_TEN });
+
+    expect(mocks.assertQuota).toHaveBeenCalledWith(
+      'acct-1',
+      'broadcast_recipients',
+      25
+    );
+  });
+
+  it('402s a campaign of 25 with 20 left in the allowance, before the first send', async () => {
+    // The decision of §4, fixed: per BATCH this request (10 ≤ 20) would
+    // sail through and the campaign would die on its third batch, half
+    // delivered and un-retryable. Per CAMPAIGN it is refused now, while
+    // nothing has gone out.
+    mocks.requireRole.mockResolvedValue({
+      supabase: supabaseMock({ pending: 25 }).client,
+      accountId: 'acct-1',
+      userId: 'user-1',
+      role: 'admin',
+      account: { id: 'acct-1', name: 'Acme' },
+    });
+    allowanceLeft(20);
+
+    const res = await post({
+      ...CAMPAIGN,
+      broadcast_id: 'bc-1',
+      recipients: BATCH_OF_TEN,
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(402);
+    expect(json.code).toBe('quota_exceeded');
+    expect(json.metric).toBe('broadcast_recipients');
+    expect(json.upgradeUrl).toBe('/billing');
+    expect(mocks.sendTemplateMessage).not.toHaveBeenCalled();
+    expect(mocks.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it('delivers the batch and counts it when the campaign fits', async () => {
+    mocks.requireRole.mockResolvedValue({
+      supabase: supabaseMock({ pending: 25 }).client,
+      accountId: 'acct-1',
+      userId: 'user-1',
+      role: 'admin',
+      account: { id: 'acct-1', name: 'Acme' },
+    });
+    allowanceLeft(30);
+
+    const res = await post({
+      ...CAMPAIGN,
+      broadcast_id: 'bc-1',
+      recipients: BATCH_OF_TEN,
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.sent).toBe(10);
+    expect(mocks.sendTemplateMessage).toHaveBeenCalledTimes(10);
+    // Counted per request, for what left: the 25 of the campaign are
+    // weighed, never charged twice.
+    expect(mocks.recordUsage).toHaveBeenCalledWith(
+      'acct-1',
+      'broadcast_recipients',
+      10
+    );
+  });
+
+  it('never weighs less than the recipients in the request', async () => {
+    // A campaign whose rows were already stamped (a stale count) must
+    // not wave this batch through for free.
+    mocks.requireRole.mockResolvedValue({
+      supabase: supabaseMock({ pending: 0 }).client,
+      accountId: 'acct-1',
+      userId: 'user-1',
+      role: 'admin',
+      account: { id: 'acct-1', name: 'Acme' },
+    });
+
+    await post({ ...CAMPAIGN, broadcast_id: 'bc-1' });
+
+    expect(mocks.assertQuota).toHaveBeenCalledWith(
+      'acct-1',
+      'broadcast_recipients',
+      3
+    );
+  });
+
+  it('404s a campaign id that belongs to another account (leak test)', async () => {
+    const mock = supabaseMock({ campaignOwned: false });
+    mocks.requireRole.mockResolvedValue({
+      supabase: mock.client,
+      accountId: 'acct-1',
+      userId: 'user-1',
+      role: 'admin',
+      account: { id: 'acct-1', name: 'Acme' },
+    });
+
+    const res = await post({ ...CAMPAIGN, broadcast_id: 'bc-of-other-tenant' });
+
+    expect(res.status).toBe(404);
+    // The lookup was scoped to the caller's account, so another
+    // tenant's campaign is invisible — and unchargeable.
+    expect(mock.seen.broadcastFilters).toContainEqual(['account_id', 'acct-1']);
+    expect(mocks.sendTemplateMessage).not.toHaveBeenCalled();
+    expect(mocks.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the campaign cannot be measured', async () => {
+    mocks.requireRole.mockResolvedValue({
+      supabase: supabaseMock({ countError: { message: 'boom' } }).client,
+      accountId: 'acct-1',
+      userId: 'user-1',
+      role: 'admin',
+      account: { id: 'acct-1', name: 'Acme' },
+    });
+
+    const res = await post({ ...CAMPAIGN, broadcast_id: 'bc-1' });
+
+    expect(res.status).toBe(500);
+    expect(mocks.assertQuota).not.toHaveBeenCalled();
+    expect(mocks.sendTemplateMessage).not.toHaveBeenCalled();
   });
 
   it('402s over the limit and sends to nobody', async () => {
@@ -175,7 +358,7 @@ describe('POST /api/whatsapp/broadcast — broadcast_recipients (fase 3 §4)', (
 
   it('counts against the caller account and no other (leak test)', async () => {
     mocks.requireRole.mockResolvedValue({
-      supabase: supabaseMock(),
+      supabase: supabaseMock().client,
       accountId: 'acct-other',
       userId: 'user-2',
       role: 'admin',

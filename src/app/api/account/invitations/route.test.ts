@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
     pendingCount: 0,
     memberError: null as { message: string } | null,
     pendingError: null as { message: string } | null,
+    /** Makes the `account_invitations` chain answer the GET listing. */
+    listing: false,
     inserted: null as Record<string, unknown> | null,
     countedFilters: [] as {
       table: string;
@@ -42,7 +44,8 @@ vi.mock('@/lib/rate-limit', () => ({
   RATE_LIMITS: { adminAction: {} },
 }));
 
-import { POST } from './route';
+import { AccountLockedError } from '@/lib/billing/enforce';
+import { GET, POST } from './route';
 
 function supabaseMock() {
   return {
@@ -64,6 +67,7 @@ function supabaseMock() {
         },
         is: () => chain,
         gt: () => chain,
+        order: () => chain,
         insert: (row: Record<string, unknown>) => {
           mocks.state.inserted = row;
           return chain;
@@ -78,8 +82,12 @@ function supabaseMock() {
           },
           error: null,
         }),
-        // The head:true counts resolve on await.
+        // The head:true counts resolve on await; the GET's listing
+        // query resolves on the same `then` and reads `data`.
         then: (resolve: (v: unknown) => unknown) => {
+          if (table === 'account_invitations' && mocks.state.listing) {
+            return resolve({ data: [{ id: 'inv-1' }], error: null });
+          }
           if (table === 'profiles') {
             return resolve({
               count: mocks.state.memberCount,
@@ -127,6 +135,7 @@ beforeEach(() => {
   mocks.state.memberError = null;
   mocks.state.pendingError = null;
   mocks.state.inserted = null;
+  mocks.state.listing = false;
   mocks.state.countedFilters = [];
   mocks.requireRole.mockReset();
   mocks.requireRole.mockResolvedValue({
@@ -190,5 +199,50 @@ describe('POST /api/account/invitations — operators (fase 3 §4)', () => {
     mocks.state.memberCount = 5000;
     const res = await post();
     expect(res.status).toBe(201);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fase 3 §5 — a locked account is read-only, not blind.
+//
+// `requireRole` refuses any `min` above `viewer` while the subscription
+// is suspended (`src/lib/auth/account.ts`, tested there). This GET asks
+// for `admin` because the invitation list is team data, not because it
+// writes anything — so it passes `allowReadOnly` and must keep
+// answering. The mock below reproduces the real rule: refuse unless the
+// caller opted out of the gate.
+// ---------------------------------------------------------------------------
+
+describe('GET /api/account/invitations — a suspended account keeps reading (fase 3 §5)', () => {
+  beforeEach(() => {
+    mocks.state.listing = true;
+    mocks.requireRole.mockImplementation(
+      async (min: string, options?: { allowReadOnly?: boolean }) => {
+        if (min !== 'viewer' && !options?.allowReadOnly) {
+          throw new AccountLockedError('suspended');
+        }
+        return {
+          supabase: supabaseMock(),
+          accountId: 'acct-1',
+          userId: 'user-1',
+          role: 'admin',
+          account: { id: 'acct-1', name: 'Acme' },
+        };
+      }
+    );
+  });
+
+  it('lists the invitations of a suspended account', async () => {
+    const res = await GET();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ invitations: [{ id: 'inv-1' }] });
+  });
+
+  it('still refuses to ISSUE one while the account is locked', async () => {
+    // The other half of the same rule: reads pass, writes do not.
+    const res = await post();
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe('account_read_only');
+    expect(mocks.state.inserted).toBeNull();
   });
 });

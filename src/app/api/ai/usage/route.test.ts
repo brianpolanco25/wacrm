@@ -121,3 +121,34 @@ describe('GET /api/ai/usage', () => {
     expect(filters).toContainEqual(['account_id', 'acct-1']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fase 3 §5 — a locked account is read-only, not blind.
+//
+// `requireRole` refuses any `min` above `viewer` while the subscription
+// is suspended (the ladder itself is tested in `src/lib/auth/account.test.ts`).
+// This GET asks for `admin` because spend is billing-class data, not
+// because it writes anything — and the spend page is exactly where an
+// operator goes to understand the bill it is being asked to settle. The
+// mock below reproduces the real rule: refuse unless the caller opted
+// out of the gate.
+// ---------------------------------------------------------------------------
+
+describe('GET /api/ai/usage — a suspended account keeps reading (fase 3 §5)', () => {
+  it('answers with the subscription suspended', async () => {
+    mocks.rows = [usageRow('auto_reply', 10)];
+    mocks.requireRole.mockImplementation(
+      async (min: string, options?: { allowReadOnly?: boolean }) => {
+        if (min !== 'viewer' && !options?.allowReadOnly) {
+          throw new Error('account is read-only');
+        }
+        return { supabase: supabaseMock(), accountId: 'acct-1' };
+      }
+    );
+
+    const res = await GET(new Request('http://x/api/ai/usage'));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).totals.total_tokens).toBe(10);
+  });
+});

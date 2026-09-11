@@ -15,12 +15,17 @@
 //     with `assertQuota` (entitlements.ts) and incremented with
 //     `recordUsage`.
 //
-//   STOCK limits (`operators`, `numbers`, `knowledge_documents`,
-//     `contacts`) are a headcount of rows that exist right now. They
-//     are NOT counters: deleting a knowledge document gives the seat
-//     back, and `usage_counters` — which only ever goes up — would say
-//     otherwise. Checked with `assertStockLimit` against a live
-//     `count`, never incremented.
+//   STOCK limits (`operators`, `numbers`, `knowledge_documents`) are a
+//     headcount of rows that exist right now. They are NOT counters:
+//     deleting a knowledge document gives the seat back, and
+//     `usage_counters` — which only ever goes up — would say otherwise.
+//     Checked with `assertStockLimit` against a live `count`, never
+//     incremented.
+//
+//     `plans` also carries a `contacts` cap, and §4 does NOT list a
+//     point that applies it — no `assertStockLimit(…, 'contacts', …)`
+//     exists anywhere. It is deliberately absent rather than forgotten:
+//     do not read this module as covering it.
 //
 // §5, the dunning ladder, lives in `assertWritable`: a `suspended` (or
 // `expired`, or `past_due` past its grace) account behaves as if every

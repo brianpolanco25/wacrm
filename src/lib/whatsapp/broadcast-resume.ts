@@ -234,6 +234,9 @@ export async function planBroadcastResume(
 
   const plan: BroadcastPlan = {
     broadcastId,
+    // The account that owns the campaign — resolved by the query above,
+    // never taken from the request. `deliverBroadcast` bills it.
+    accountId,
     templateName: broadcast.template_name,
     templateLanguage: resolvedTemplate.language,
     phoneNumberId: config.phone_number_id,

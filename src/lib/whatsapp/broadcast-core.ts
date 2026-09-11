@@ -29,6 +29,7 @@ import {
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import { assertQuota, recordUsage } from '@/lib/billing/enforce';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -64,6 +65,13 @@ interface PlannedRecipient {
 
 export interface BroadcastPlan {
   broadcastId: string;
+  /**
+   * Who pays for this fan-out. On the plan rather than a parameter so a
+   * plan can never be delivered without an account to bill: every caller
+   * (`/api/v1/broadcasts`, the resume route) already resolved it before
+   * it could read a single recipient row.
+   */
+  accountId: string;
   templateName: string;
   templateLanguage: string;
   phoneNumberId: string;
@@ -183,6 +191,16 @@ export async function createBroadcast(
     );
   }
 
+  // Fase 3 §4 — `broadcast_recipients`. The whole campaign is weighed
+  // BEFORE anything is persisted or sent: a broadcast is one unit of
+  // work for the operator, and refusing it halfway would leave a
+  // half-delivered blast that no one can tell the halves of. Nothing
+  // has been written yet at this point, so a throw here leaves no
+  // campaign behind. `assertQuota` raises `QuotaExceededError`, which
+  // both error envelopes render as a 402 naming metric, limit and
+  // `/billing`.
+  await assertQuota(accountId, 'broadcast_recipients', deduped.length);
+
   // Persist the broadcast + its recipients. The count columns
   // (sent/delivered/read/replied/failed) are owned by the DB aggregate
   // trigger (migrations 003/005) and derived purely from
@@ -232,6 +250,7 @@ export async function createBroadcast(
 
   return {
     broadcastId,
+    accountId,
     templateName,
     templateLanguage: resolvedTemplate.language,
     phoneNumberId: config.phone_number_id,
@@ -254,11 +273,29 @@ export async function createBroadcast(
  * webhooks keep advancing them. We therefore never write those columns
  * here — only the terminal `status` — otherwise a manual value would
  * race and clobber the trigger-maintained counts.
+ *
+ * Fase 3 §4: the pass is weighed against `broadcast_recipients` before
+ * the first send and counted afterwards for what actually left. The
+ * check lives HERE, not in the routes, because every fan-out in the
+ * product funnels through this function — the public API's create, and
+ * the dashboard's resume/retry. A limit honoured by one caller is not a
+ * limit. `createBroadcast` checks too: it is the cheaper refusal (no
+ * campaign is persisted), while this one is the one that cannot be
+ * walked around.
  */
 export async function deliverBroadcast(
   db: SupabaseClient,
   plan: BroadcastPlan
 ): Promise<void> {
+  // Throws QuotaExceededError -> 402. Before the loop on purpose: when
+  // the allowance cannot cover the pass, nobody is messaged at all.
+  await assertQuota(
+    plan.accountId,
+    'broadcast_recipients',
+    plan.planned.length
+  );
+
+  let sent = 0;
   for (const recipient of plan.planned) {
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
@@ -287,6 +324,7 @@ export async function deliverBroadcast(
     }
 
     if (sentMessageId) {
+      sent++;
       await db
         .from('broadcast_recipients')
         .update({
@@ -306,6 +344,11 @@ export async function deliverBroadcast(
         .eq('id', recipient.recipientRowId);
     }
   }
+
+  // Counted after the fan-out and only for what Meta accepted: an
+  // invalid number or a rejected send is not a recipient the customer
+  // reached, so it is not billable.
+  await recordUsage(plan.accountId, 'broadcast_recipients', sent);
 
   await finalizeBroadcastStatus(db, plan.broadcastId);
 }

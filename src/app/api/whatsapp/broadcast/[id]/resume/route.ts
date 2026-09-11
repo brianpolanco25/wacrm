@@ -11,7 +11,9 @@
 //
 // Responds 202 as soon as the pass is claimed and planned; the fan-out
 // runs in `after()`. Poll the broadcast row for progress, same as the
-// public API's create endpoint.
+// public API's create endpoint. A pass that does not fit in the plan's
+// monthly `broadcast_recipients` allowance is refused with a 402 before
+// anyone is messaged (fase 3 §4) — resuming is sending.
 // ============================================================
 
 import { NextResponse } from 'next/server';
@@ -37,6 +39,7 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit';
+import { assertQuota } from '@/lib/billing/enforce';
 
 // The fan-out below is sequential over up to 1 000 recipients.
 export const maxDuration = 300;
@@ -88,6 +91,14 @@ export async function POST(
       id,
       scope
     );
+
+    // Fase 3 §4 — `broadcast_recipients`. `deliverBroadcast` checks it
+    // too, but that runs inside `after()`, where a refusal would reach
+    // nobody: the operator would get a 202 and watch the campaign sit
+    // still. Checking the planned pass here turns it into the 402 the
+    // spec asks for, and the catch below releases the delivery claim so
+    // the campaign is resumable again once the plan is raised.
+    await assertQuota(accountId, 'broadcast_recipients', plan.planned.length);
 
     await markBroadcastSending(supabase, id);
     claimedId = null; // ownership passes to the after() block

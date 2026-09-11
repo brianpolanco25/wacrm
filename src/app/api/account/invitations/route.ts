@@ -139,7 +139,11 @@ const MAX_LABEL_LEN = 80;
 
 export async function GET() {
   try {
-    const ctx = await requireRole("admin");
+    // `allowReadOnly`: a read. Fase 3 §5 drops every member of a locked
+    // account to `viewer`, and a viewer can look at the team — refusing
+    // this GET would black out the invitations list of any account
+    // whose subscription lapsed, which §5 never asked for.
+    const ctx = await requireRole("admin", { allowReadOnly: true });
 
     const { data, error } = await ctx.supabase
       .from("account_invitations")

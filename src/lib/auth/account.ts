@@ -187,10 +187,18 @@ export interface RequireRoleOptions {
   /**
    * Skip the billing read-only gate below.
    *
-   * Reserved for the handful of routes that MUST stay reachable while
-   * the account is locked — paying the overdue bill is the way out of
-   * the lock, so `/api/billing/*` cannot sit behind it. Anything else
-   * that sets this is a bug: it hands a suspended tenant a write.
+   * Two legitimate uses, and no third:
+   *
+   *   - The routes that MUST stay reachable while the account is
+   *     locked, because paying the overdue bill is the way out of the
+   *     lock: `/api/billing/*`.
+   *   - A GET that asks for a role above `viewer` for reasons of its
+   *     own (spend is billing-class, the invitation list is team data).
+   *     §5 makes a delinquent account read-only, not blind, so a read
+   *     must never 403 on billing grounds.
+   *
+   * On a route that writes, this option is a bug: it hands a suspended
+   * tenant a write.
    */
   allowReadOnly?: boolean;
 }

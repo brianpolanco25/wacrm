@@ -57,15 +57,20 @@ behaviour changes**; nothing is limited by plan yet.
   raise it, instead of a generic refusal. The public API (`/api/v1`) and
   outbound webhooks are plan features: a plan without them answers with the
   same kind of error and the API key itself stays valid, so upgrading restores
-  access with nothing to re-issue. **Inbound WhatsApp messages are never
-  affected** — an account with an unpaid invoice and every allowance spent keeps
-  receiving and storing what its customers send.
+  access with nothing to re-issue. A broadcast is weighed as a **whole
+  campaign** before its first message goes out — whether it was started from
+  the wizard, from the public API, or resumed/retried from the campaign page —
+  so a large send is refused up front instead of stopping half-delivered.
+  **Inbound WhatsApp messages are never affected** — an account with an unpaid
+  invoice and every allowance spent keeps receiving and storing what its
+  customers send.
 - **A subscription that lapses puts the account in read-only** instead of
   cutting it off. While it is suspended, expired, or past due beyond the grace
   period, everyone on the account behaves like a viewer: they can read
   everything, and sending, broadcasting and AI replies stop. Nobody's role is
   changed, so settling the subscription restores the exact permissions each
-  member had, with nothing to repair. A banner across the app says which of the
+  member had, with nothing to repair. Reading keeps working everywhere,
+  including the AI spend summary and the team's pending invitations. A banner across the app says which of the
   two states the account is in and links straight to `/billing` — which stays
   reachable precisely so an overdue account can pay.
 - **Every account now has a 14-day Pro trial with a real end date**
