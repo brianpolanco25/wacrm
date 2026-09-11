@@ -295,6 +295,192 @@ BEGIN
     RAISE EXCEPTION 'a public media read policy survived migration 044';
   END IF;
 
+  -- PayPal catalogue (045): ids per billing cycle.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans'
+      AND column_name = 'provider_plan_id_month'
+  ) THEN
+    RAISE EXCEPTION 'plans.provider_plan_id_month is missing (migration 045)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans'
+      AND column_name = 'provider_plan_id_year'
+  ) THEN
+    RAISE EXCEPTION 'plans.provider_plan_id_year is missing (migration 045)';
+  END IF;
+
+  -- Checkout intent (048): the table the webhook will use to match an
+  -- event with an account and a plan, its uniqueness guard, its
+  -- non-destructive FK, and the RLS that keeps tenants out of it.
+  IF to_regclass('public.checkout_intents') IS NULL THEN
+    RAISE EXCEPTION 'public.checkout_intents is missing (migration 048)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'checkout_intents_provider_subscription_key'
+      AND conrelid = 'public.checkout_intents'::regclass
+      AND contype = 'u'
+  ) THEN
+    RAISE EXCEPTION
+      'checkout_intents UNIQUE (provider, provider_subscription_id) is missing (migration 048)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'checkout_intents_account_id_fkey'
+      AND conrelid = 'public.checkout_intents'::regclass
+      AND contype = 'f'
+      AND confdeltype = 'r'   -- ON DELETE RESTRICT, never CASCADE
+  ) THEN
+    RAISE EXCEPTION
+      'checkout_intents_account_id_fkey is missing or not ON DELETE RESTRICT (migration 048)';
+  END IF;
+  IF to_regclass('public.checkout_intents_account_created_idx') IS NULL THEN
+    RAISE EXCEPTION 'checkout_intents_account_created_idx is missing (migration 048)';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.checkout_intents'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on checkout_intents (migration 048)';
+  END IF;
+  -- Write policies here would let a tenant claim someone else's paid
+  -- subscription; the only writer is the service role.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'checkout_intents'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'checkout_intents has a write policy — only the service role may write it (migration 048)';
+  END IF;
+
+  -- Redeeming an invitation (049): the RESTRICT above blocks the
+  -- DELETE of the invitee's empty personal account unless
+  -- `redeem_invitation()` knows about `checkout_intents`. If a future
+  -- migration replaces the function and forgets that clause, accepting
+  -- an invitation starts failing with a raw 23503 for anyone who ever
+  -- abandoned a checkout.
+  IF (
+    SELECT prosrc FROM pg_proc
+    WHERE oid = 'public.redeem_invitation(text)'::regprocedure
+  ) NOT LIKE '%checkout_intents%' THEN
+    RAISE EXCEPTION
+      'redeem_invitation() does not handle checkout_intents; the RESTRICT FK of 048 will break invitation redemption (migration 049)';
+  END IF;
+
+  -- ------------------------------------------------------------
+  -- 050: marca de agua del webhook de PayPal.
+  -- ------------------------------------------------------------
+  -- Sin `last_event_at` el manejador no puede distinguir un evento que
+  -- llega tarde de uno nuevo, y un ACTIVATED reentregado reactivaría
+  -- una suscripción cancelada.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'last_event_at'
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.last_event_at is missing (migration 050)';
+  END IF;
+  -- La cola de reconciliación: eventos verificados que no se pudieron
+  -- aplicar quedan con processed_at NULL y `error` puesto.
+  IF to_regclass('public.billing_events_unprocessed_idx') IS NULL THEN
+    RAISE EXCEPTION 'billing_events_unprocessed_idx is missing (migration 050)';
+  END IF;
+
+  -- ------------------------------------------------------------
+  -- 046: la prueba de 14 días.
+  -- ------------------------------------------------------------
+  -- Sin el trigger, una cuenta nueva nace sin fila en `subscriptions`:
+  -- sigue funcionando (la capa de permisos la resuelve al plan `pro`)
+  -- pero nadie puede decirle cuándo termina su prueba.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.accounts'::regclass
+      AND tgname = 'on_account_created_seed_trial'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION
+      'on_account_created_seed_trial is missing on accounts (migration 046)';
+  END IF;
+
+  IF to_regprocedure('public.seed_account_trial()') IS NULL THEN
+    RAISE EXCEPTION 'seed_account_trial() is missing (migration 046)';
+  END IF;
+
+  IF to_regprocedure('public.trial_period()') IS NULL THEN
+    RAISE EXCEPTION 'trial_period() is missing (migration 046)';
+  END IF;
+
+  -- La prueba tiene que apuntar a un plan que exista en el catálogo, o
+  -- el trigger falla en silencio (su bloque EXCEPTION solo avisa) y
+  -- cada alta nace sin suscripción.
+  IF NOT EXISTS (SELECT 1 FROM plans WHERE id = 'pro') THEN
+    RAISE EXCEPTION
+      'the trial plan ''pro'' is missing from the catalogue (migrations 041 + 046)';
+  END IF;
+
+  -- ------------------------------------------------------------
+  -- 052: redeem_invitation() frente a la semilla de pruebas.
+  -- ------------------------------------------------------------
+  -- 046 pone una fila en `subscriptions` por CADA cuenta y 041 la ata
+  -- con ON DELETE RESTRICT. Si una migración futura reemplaza
+  -- `redeem_invitation()` y se deja estas dos tablas fuera, aceptar una
+  -- invitación deja de funcionar para todo el mundo con un 23503 en
+  -- crudo — no es un caso raro, es el camino normal.
+  IF (
+    SELECT prosrc FROM pg_proc
+    WHERE oid = 'public.redeem_invitation(text)'::regprocedure
+  ) NOT LIKE '%subscriptions%' THEN
+    RAISE EXCEPTION
+      'redeem_invitation() does not handle subscriptions; the RESTRICT FK of 041 plus the trial seed of 046 break invitation redemption (migration 052)';
+  END IF;
+
+  IF (
+    SELECT prosrc FROM pg_proc
+    WHERE oid = 'public.redeem_invitation(text)'::regprocedure
+  ) NOT LIKE '%usage_counters%' THEN
+    RAISE EXCEPTION
+      'redeem_invitation() does not handle usage_counters; the RESTRICT FK of 041 breaks invitation redemption (migration 052)';
+  END IF;
+
+  -- ------------------------------------------------------------
+  -- 056: ciclo de facturación y el índice de recibos (§6).
+  -- ------------------------------------------------------------
+  -- Sin `subscriptions.cycle`, un cliente que pasa de mensual a anual
+  -- con el `revise` de PayPal sigue renovándose por el ciclo con el que
+  -- CONTRATÓ: paga un año y se le extiende un mes.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'cycle' AND data_type = 'text'
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions.cycle is missing or not text (migration 056)';
+  END IF;
+
+  -- La restricción es lo que impide que un ciclo inventado ('week')
+  -- entre por una escritura futura y haga que la renovación no sepa
+  -- cuánto extender.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.subscriptions'::regclass
+      AND conname = 'subscriptions_cycle_check'
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions_cycle_check is missing (migration 056)';
+  END IF;
+
+  -- Los recibos de §6 se buscan por el `billing_agreement_id` que vive
+  -- dentro del payload. Sin este índice parcial la consulta recorre la
+  -- bitácora entera de todos los inquilinos en cada carga de Ajustes.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname = 'billing_events_sale_subscription_idx'
+  ) THEN
+    RAISE EXCEPTION
+      'billing_events_sale_subscription_idx is missing (migration 056)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

@@ -20,6 +20,10 @@
 // Response (202):
 //   { "data": { "broadcast_id", "status": "sending",
 //               "total_recipients", "accepted", "rejected" } }
+//
+// 402 `quota_exceeded` when the campaign does not fit in the plan's
+// monthly `broadcast_recipients` allowance — refused whole, before the
+// campaign is persisted and before anyone is messaged.
 // ============================================================
 
 import { after } from 'next/server';
@@ -40,6 +44,7 @@ import { resolveAuditUserId, ContactError } from '@/lib/api/v1/contacts';
 import {
   createBroadcast,
   deliverBroadcast,
+  finalizeBroadcastStatus,
   BroadcastError,
 } from '@/lib/whatsapp/broadcast-core';
 
@@ -77,7 +82,26 @@ export async function POST(request: Request) {
     // Fan out after the response is sent. Uses the same service-role
     // client — no request-scoped auth needed for the Meta calls or
     // the account-scoped row updates.
-    after(() => deliverBroadcast(ctx.supabase, plan));
+    //
+    // Wrapped: `deliverBroadcast` re-checks the `broadcast_recipients`
+    // allowance before its first send (fase 3 §4), so it can now throw
+    // where it used to swallow everything per recipient. An unhandled
+    // rejection inside `after()` would be invisible; settling the
+    // status leaves the campaign 'sending' with its recipients still
+    // 'pending', which is exactly what the Resume endpoint is for.
+    after(async () => {
+      try {
+        await deliverBroadcast(ctx.supabase, plan);
+      } catch (err) {
+        console.error(
+          '[v1/broadcasts] delivery threw:',
+          err instanceof Error ? err.message : err
+        );
+        await finalizeBroadcastStatus(ctx.supabase, plan.broadcastId).catch(
+          () => {}
+        );
+      }
+    });
 
     return ok(
       {

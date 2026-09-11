@@ -11,6 +11,12 @@ import { latestUserMessage } from './query';
 import { engineSendText } from '@/lib/flows/meta-send';
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import { claimInboundAutoReply } from '@/lib/automations/reply-marker';
+import {
+  assertWritable,
+  assertPlanFeature,
+  assertQuota,
+  recordUsage,
+} from '@/lib/billing/enforce';
 import type { AiConfig } from './types';
 
 interface DispatchArgs {
@@ -50,7 +56,8 @@ interface DispatchArgs {
  * window check is needed.
  *
  * A reply that goes out bumps the account's `ai_replies` usage counter
- * (see `countAiReply`). Counting only; no quota is enforced yet.
+ * once, via `recordUsage` (f3.4) — the same counter the quota gate above
+ * reads.
  */
 export async function dispatchInboundToAiReply(
   args: DispatchArgs
@@ -62,6 +69,37 @@ export async function dispatchInboundToAiReply(
 
     const config = await loadAiConfig(db, accountId);
     if (!config || !config.autoReplyEnabled) return;
+
+    // Fase 3 §4 + §5. Three separate gates, all of them SILENT: this
+    // runs inside the webhook's `after()` block, so there is nobody to
+    // return an error to. The inbound message is already stored (CP11 —
+    // "lo entrante nunca se bloquea"); what stops here is the outbound
+    // reply, and the thread simply waits for a human.
+    //
+    //   1. read-only account (suspended / expired / past grace),
+    //   2. the plan does not include `ai_autoreply`,
+    //   3. the monthly `ai_replies` allowance is spent.
+    //
+    // The allowance is charged whichever key paid the provider: with
+    // the platform key (f0.4) the reply costs us money directly, and
+    // with the tenant's own key it still consumes our pipeline — the
+    // metric counts replies, not tokens, so `config.keySource` does not
+    // enter into it.
+    //
+    // Deliberately BEFORE the per-message reservation below: a reply we
+    // are not entitled to send must not consume the reservation, or the
+    // inbound would be locked with nobody left to answer it.
+    try {
+      const entitlements = await assertWritable(accountId);
+      await assertPlanFeature(accountId, 'ai_autoreply', entitlements);
+      await assertQuota(accountId, 'ai_replies', 1);
+    } catch (err) {
+      console.warn(
+        `[ai auto-reply] account ${accountId} is not entitled to an AI reply right now:`,
+        err instanceof Error ? err.message : err
+      );
+      return;
+    }
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
@@ -285,7 +323,24 @@ export async function dispatchInboundToAiReply(
       aiGenerated: true,
     });
 
-    await countAiReply(db, accountId);
+    // ONE counting of `ai_replies`, after the send succeeded.
+    //
+    // f1.5 (a private `countAiReply` calling `increment_usage`) and f3.4
+    // (`recordUsage`) each added their own bump here; keeping both would
+    // have charged every reply twice. `recordUsage` is the survivor: it
+    // is the same RPC with the same fail-safe semantics (it swallows
+    // both the `{ error }` supabase-js resolves with and an outright
+    // throw), it is the counter the other seven enforcement points of
+    // f3.4 already use, and it is the counter `assertQuota` reads above —
+    // so what blocks a reply is exactly what counts one.
+    //
+    // After `engineSendText`, never before: it throws when Meta rejects
+    // the send, so a reply the customer never got is never billed. The
+    // handoff/transition notice of f1.2 returns well above this point —
+    // it is an acknowledgement, not a reply, and does not count.
+    // `messages_out` is charged separately, inside `engineSendText`: an
+    // AI reply is also an outbound message.
+    await recordUsage(accountId, 'ai_replies', 1);
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err);
   }
@@ -324,57 +379,5 @@ async function resolveHandoffTarget(
     }
     default:
       return null;
-  }
-}
-
-/**
- * Billing counter for one AI reply that actually went out (migration
- * 041, `usage_counters` + `increment_usage`; fase 0 §4 decided the
- * metric starts counting in fase 1 so the beta produces real numbers to
- * set the quotas with).
- *
- * Called AFTER `engineSendText` resolves, deliberately: `engineSendText`
- * throws when Meta rejects the send, so a failed reply never reaches
- * here and never bills the account. The handoff notice of f1.2 returns
- * before this point — it is an acknowledgement, not a reply, and does
- * not count.
- *
- * Counted per ACCOUNT regardless of `AiConfig.keySource`: whose provider
- * key paid for the tokens is a different question, and it is already
- * answered by `ai_usage_log` (`logAiUsage`). This is plan consumption,
- * that is cost attribution; neither replaces the other.
- *
- * NO limit is enforced here. The quota check belongs to fase 3 (f3.4),
- * which reads this same counter before the model call. Counting without
- * enforcing is the point of this step.
- *
- * Fail-safe by construction: the customer already has the message in
- * hand, so an uncounted reply is an accounting bug, never a delivery
- * bug. Both the `{ error }` supabase-js resolves with and an outright
- * throw are logged and swallowed. Tenancy: the RPC takes the account as
- * an explicit argument — it runs under the service role, which bypasses
- * RLS, so passing the dispatch's `accountId` is what scopes the write.
- */
-async function countAiReply(
-  db: SupabaseClient,
-  accountId: string
-): Promise<void> {
-  try {
-    const { error } = await db.rpc('increment_usage', {
-      p_account_id: accountId,
-      p_metric: 'ai_replies',
-      p_delta: 1,
-    });
-    if (error) {
-      console.error(
-        '[ai auto-reply] increment_usage(ai_replies) failed — the reply was sent but not counted:',
-        error
-      );
-    }
-  } catch (err) {
-    console.error(
-      '[ai auto-reply] increment_usage(ai_replies) threw — the reply was sent but not counted:',
-      err
-    );
   }
 }

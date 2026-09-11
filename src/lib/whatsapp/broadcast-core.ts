@@ -31,6 +31,7 @@ import {
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import { assertQuota, recordUsage } from '@/lib/billing/enforce';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -66,7 +67,14 @@ interface PlannedRecipient {
 
 export interface BroadcastPlan {
   broadcastId: string;
-  /** Tenant the broadcast belongs to — scopes the header-media lookup. */
+  /**
+   * Tenant the broadcast belongs to. It scopes the header-media lookup
+   * (fase 2) and it is who pays for this fan-out (fase 3). On the plan
+   * rather than a parameter so a plan can never be delivered without an
+   * account to bill or to scope by: every caller (`/api/v1/broadcasts`,
+   * the resume route) already resolved it before it could read a single
+   * recipient row.
+   */
   accountId: string;
   templateName: string;
   templateLanguage: string;
@@ -145,21 +153,25 @@ export async function createBroadcast(
   }
   const templateRow = resolvedTemplate.row;
 
-  // Resolve each recipient to a contact. Invalid phones are dropped
-  // (counted as rejected) rather than aborting the whole broadcast.
-  const resolved: { contactId: string; phone: string; params: string[] }[] = [];
+  // Normalize the list WITHOUT touching the database: drop phones Meta
+  // could not dial (counted as rejected rather than aborting the whole
+  // broadcast) and collapse a number the caller listed twice, keeping
+  // the first occurrence so its params aren't overwritten by a later
+  // duplicate.
+  const seenPhone = new Set<string>();
+  const candidates: { phone: string; params: string[] }[] = [];
   let rejected = 0;
   for (const r of recipients) {
-    const sanitized = sanitizePhoneForMeta(typeof r.to === 'string' ? r.to : '');
+    const sanitized = sanitizePhoneForMeta(
+      typeof r.to === 'string' ? r.to : ''
+    );
     if (!isValidE164(sanitized)) {
       rejected++;
       continue;
     }
-    const { id } = await findOrCreateContact(db, accountId, auditUserId, {
-      phone: sanitized,
-    });
-    resolved.push({
-      contactId: id,
+    if (seenPhone.has(sanitized)) continue;
+    seenPhone.add(sanitized);
+    candidates.push({
       phone: sanitized,
       params: Array.isArray(r.params)
         ? r.params.filter((p): p is string => typeof p === 'string')
@@ -167,24 +179,49 @@ export async function createBroadcast(
     });
   }
 
-  // Collapse recipients that resolved to the SAME contact (the caller
-  // listed a phone twice, or two numbers fuzzy-matched to one contact).
-  // Keep the first occurrence so the contact is messaged once and its
-  // params aren't silently overwritten by a later duplicate — and so
-  // the row↔params pairing below (keyed by contact_id) is unambiguous.
-  const seenContact = new Set<string>();
-  const deduped = resolved.filter((r) => {
-    if (seenContact.has(r.contactId)) return false;
-    seenContact.add(r.contactId);
-    return true;
-  });
-
-  if (deduped.length === 0) {
+  if (candidates.length === 0) {
     throw new BroadcastError(
       'bad_request',
       'No recipients had a valid E.164 phone number',
       400
     );
+  }
+
+  // Fase 3 §4 — `broadcast_recipients`. The whole campaign is weighed
+  // BEFORE anything is written: a broadcast is one unit of work for the
+  // operator, and refusing it halfway would leave a half-delivered blast
+  // that no one can tell the halves of. `assertQuota` raises
+  // `QuotaExceededError`, which both error envelopes render as a 402
+  // naming metric, limit and `/billing`.
+  //
+  // This sits ABOVE the contact resolution below, and the difference is
+  // not cosmetic: `findOrCreateContact` WRITES. Weighed after that loop,
+  // a 2 000-address campaign refused for quota still left up to 2 000
+  // new contacts in the account — a refusal with a side effect, and the
+  // comment that used to sit here, claiming nothing had been written
+  // yet, was false.
+  //
+  // The price is that what gets weighed is the distinct valid phones, an
+  // UPPER BOUND: contact resolution can still collapse two different
+  // numbers that fuzzy-match onto one contact, and such a campaign is
+  // refused slightly early. That errs towards refusing, which is the
+  // safe side of a cap, and `deliverBroadcast` re-weighs the exact
+  // recipient rows before the first send anyway.
+  await assertQuota(accountId, 'broadcast_recipients', candidates.length);
+
+  // Resolve each recipient to a contact (creating the ones that don't
+  // exist yet) and collapse any that landed on the SAME contact, so it
+  // is messaged once and the row↔params pairing below (keyed by
+  // contact_id) stays unambiguous.
+  const seenContact = new Set<string>();
+  const deduped: { contactId: string; phone: string; params: string[] }[] = [];
+  for (const c of candidates) {
+    const { id } = await findOrCreateContact(db, accountId, auditUserId, {
+      phone: c.phone,
+    });
+    if (seenContact.has(id)) continue;
+    seenContact.add(id);
+    deduped.push({ contactId: id, ...c });
   }
 
   // Persist the broadcast + its recipients. The count columns
@@ -230,7 +267,11 @@ export async function createBroadcast(
   const planned: PlannedRecipient[] = createdRows.map(
     (row: { recipient_id: string; contact_id: string }) => {
       const r = byContact.get(row.contact_id)!;
-      return { recipientRowId: row.recipient_id, phone: r.phone, params: r.params };
+      return {
+        recipientRowId: row.recipient_id,
+        phone: r.phone,
+        params: r.params,
+      };
     }
   );
 
@@ -259,23 +300,46 @@ export async function createBroadcast(
  * webhooks keep advancing them. We therefore never write those columns
  * here — only the terminal `status` — otherwise a manual value would
  * race and clobber the trigger-maintained counts.
+ *
+ * Fase 3 §4: the pass is weighed against `broadcast_recipients` before
+ * the first send and counted afterwards for what actually left. The
+ * check lives HERE, not in the routes, because every fan-out in the
+ * product funnels through this function — the public API's create, and
+ * the dashboard's resume/retry. A limit honoured by one caller is not a
+ * limit. `createBroadcast` checks too: it is the cheaper refusal (no
+ * campaign is persisted), while this one is the one that cannot be
+ * walked around.
  */
 export async function deliverBroadcast(
   db: SupabaseClient,
   plan: BroadcastPlan
 ): Promise<void> {
+  // Throws QuotaExceededError -> 402. Before the loop on purpose — and
+  // before the header-media upload below — so that when the allowance
+  // cannot cover the pass, nobody is messaged at all and nothing is
+  // uploaded to Meta for a campaign that is not going out.
+  await assertQuota(
+    plan.accountId,
+    'broadcast_recipients',
+    plan.planned.length
+  );
+
   // A bucket-hosted media header is uploaded to Meta once and sent by id
   // to every recipient; a failure here fails the whole pass up front
   // rather than once per recipient, so it is stamped on every row.
   let headerParams: SendTimeParams | undefined;
   try {
-    headerParams = await resolveTemplateHeaderMedia(plan.templateRow, undefined, {
-      accountId: plan.accountId,
-      phoneNumberId: plan.phoneNumberId,
-      accessToken: plan.accessToken,
-      storage: db.storage,
-      db,
-    });
+    headerParams = await resolveTemplateHeaderMedia(
+      plan.templateRow,
+      undefined,
+      {
+        accountId: plan.accountId,
+        phoneNumberId: plan.phoneNumberId,
+        accessToken: plan.accessToken,
+        storage: db.storage,
+        db,
+      }
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     for (const recipient of plan.planned) {
@@ -288,6 +352,7 @@ export async function deliverBroadcast(
     return;
   }
 
+  let sent = 0;
   for (const recipient of plan.planned) {
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
@@ -309,7 +374,8 @@ export async function deliverBroadcast(
         lastError = null;
         break;
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
+        const message =
+          error instanceof Error ? error.message : 'Unknown error';
         lastError = message;
         // Only a "recipient not allowed" error is worth another variant.
         if (!isRecipientNotAllowedError(message)) break;
@@ -317,6 +383,7 @@ export async function deliverBroadcast(
     }
 
     if (sentMessageId) {
+      sent++;
       await db
         .from('broadcast_recipients')
         .update({
@@ -336,6 +403,11 @@ export async function deliverBroadcast(
         .eq('id', recipient.recipientRowId);
     }
   }
+
+  // Counted after the fan-out and only for what Meta accepted: an
+  // invalid number or a rejected send is not a recipient the customer
+  // reached, so it is not billable.
+  await recordUsage(plan.accountId, 'broadcast_recipients', sent);
 
   await finalizeBroadcastStatus(db, plan.broadcastId);
 }

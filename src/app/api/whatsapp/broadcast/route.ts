@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
@@ -17,12 +18,92 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
+import { assertQuota, recordUsage } from '@/lib/billing/enforce'
 
 interface BroadcastResult {
   phone: string
   status: 'sent' | 'failed'
   whatsapp_message_id?: string
   error?: string
+}
+
+type OutstandingLookup =
+  | { ok: true; outstanding: number | null }
+  | { ok: false; response: NextResponse }
+
+/**
+ * How many recipients of the PERSISTED campaign still have to go out.
+ *
+ * The wizard (`use-broadcast-sending.ts`) splits a campaign into
+ * requests of ten, so `recipients.length` measures a batch, never a
+ * campaign: with 995 left in the monthly allowance a 1 000-recipient
+ * blast would sail through its first 99 batches and take a 402 on the
+ * hundredth — which is not retryable — leaving exactly the
+ * half-delivered campaign fase 3 §4 sets out to avoid.
+ *
+ * Counting the campaign's still-'pending' rows fixes that: on the FIRST
+ * batch every recipient is pending, so the whole campaign is weighed
+ * before a single message leaves; on later batches what already went
+ * out is in `usage_counters` instead, so `used + outstanding` keeps
+ * adding up to the same number and the check never trips mid-campaign.
+ * Recipients that failed are neither pending nor counted — a send Meta
+ * refused is not billable, and it does not hold a seat either.
+ *
+ * `null` for a caller that sent no `broadcast_id` (the legacy body
+ * shape, and anything calling this endpoint directly): all such a
+ * request says about itself is its own recipient list.
+ */
+async function outstandingRecipients(
+  supabase: SupabaseClient,
+  accountId: string,
+  broadcastId: unknown,
+): Promise<OutstandingLookup> {
+  if (typeof broadcastId !== 'string' || broadcastId.length === 0) {
+    return { ok: true, outstanding: null }
+  }
+
+  // Ownership first. An id belonging to another tenant must not be
+  // measurable from here — and must never be billed to this account.
+  const { data: broadcast, error: lookupError } = await supabase
+    .from('broadcasts')
+    .select('id')
+    .eq('id', broadcastId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+
+  if (lookupError || !broadcast) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: 'Broadcast not found' },
+        { status: 404 },
+      ),
+    }
+  }
+
+  const { count, error: countError } = await supabase
+    .from('broadcast_recipients')
+    .select('id', { count: 'exact', head: true })
+    .eq('broadcast_id', broadcastId)
+    .eq('status', 'pending')
+
+  if (countError) {
+    // Fail closed, same rule as the stock limits: "we could not count"
+    // can never be read as "you are using none of your allowance".
+    console.error(
+      '[broadcast] outstanding recipient count failed:',
+      countError,
+    )
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: 'Could not measure this campaign against your plan limit' },
+        { status: 500 },
+      ),
+    }
+  }
+
+  return { ok: true, outstanding: count ?? 0 }
 }
 
 /**
@@ -91,6 +172,9 @@ export async function POST(request: Request) {
       template_name,
       template_language,
       template_params,
+      // Set by the wizard so the allowance below is weighed per
+      // campaign instead of per batch of ten. Optional on purpose.
+      broadcast_id,
     } = body
 
     // Normalize to a list of {phone, params} regardless of shape.
@@ -121,6 +205,25 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+
+    // Fase 3 §4: `broadcast_recipients`, weighed PER CAMPAIGN and not
+    // per request — see `outstandingRecipients` for why a batch is the
+    // wrong unit. Never less than what this very request would send, so
+    // a direct caller (no `broadcast_id`) is still held to its own list
+    // and a stale count can't wave a batch through. `toErrorResponse`
+    // turns the throw into a 402 naming the metric, the limit and
+    // `/billing`.
+    const lookup = await outstandingRecipients(
+      supabase,
+      accountId,
+      broadcast_id,
+    )
+    if (!lookup.ok) return lookup.response
+    await assertQuota(
+      accountId,
+      'broadcast_recipients',
+      Math.max(lookup.outstanding ?? 0, recipients.length),
+    )
 
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
@@ -260,6 +363,11 @@ export async function POST(request: Request) {
         failedCount++
       }
     }
+
+    // Counted after the fan-out and only for what actually left:
+    // invalid numbers and Meta rejections are not recipients the
+    // customer reached, so they are not billable.
+    await recordUsage(accountId, 'broadcast_recipients', sentCount)
 
     return NextResponse.json({
       success: true,

@@ -16,6 +16,11 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import {
+  assertQuota,
+  assertWritable,
+  recordUsage,
+} from '@/lib/billing/enforce'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -67,6 +72,19 @@ export async function engineSendText(
   args: SendTextEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // Fase 3 §5 then §4. Both gates live HERE because both engines run
+  // from the webhook's `after()` on the service-role client: they never
+  // pass through `requireRole`, which is where the dunning ladder bites
+  // for every other write. Without this a suspended account kept
+  // answering by flow until its monthly allowance ran out, while the
+  // banner told its operators nothing was going out.
+  //
+  // Throwing is safe for CP11: the inbound this replies to was stored
+  // before the dispatch, and the flow runner owns a try/catch that logs
+  // the step as failed and returns. Only the outbound stops.
+  await assertWritable(args.accountId)
+  await assertQuota(args.accountId, 'messages_out', 1)
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -148,6 +166,8 @@ export async function engineSendText(
     })
     .eq('id', args.conversationId)
 
+  await recordUsage(args.accountId, 'messages_out', 1)
+
   return { whatsapp_message_id: waMessageId }
 }
 
@@ -177,6 +197,10 @@ export async function engineSendMedia(
   args: SendMediaEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // Fase 3 §5 + §4, the same two gates as `engineSendText` above.
+  await assertWritable(args.accountId)
+  await assertQuota(args.accountId, 'messages_out', 1)
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -279,6 +303,8 @@ export async function engineSendMedia(
     })
     .eq('id', args.conversationId)
 
+  await recordUsage(args.accountId, 'messages_out', 1)
+
   return { whatsapp_message_id: waMessageId }
 }
 
@@ -340,6 +366,13 @@ async function sendInteractiveViaMeta(
   input: SendInput,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // Fase 3 §5 + §4: `messages_out`. Buttons and lists are outbound
+  // messages like any other — leaving them ungated would make both the
+  // suspension and the cap a suggestion (send a menu instead of a text
+  // and it would be free).
+  await assertWritable(input.accountId)
+  await assertQuota(input.accountId, 'messages_out', 1)
 
   // Scope the contact + whatsapp_config lookups by account_id —
   // same defense-in-depth rationale as automations/meta-send.ts.
@@ -471,6 +504,8 @@ async function sendInteractiveViaMeta(
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.conversationId)
+
+  await recordUsage(input.accountId, 'messages_out', 1)
 
   return { whatsapp_message_id: waMessageId }
 }

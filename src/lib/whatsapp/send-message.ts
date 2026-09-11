@@ -48,6 +48,7 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils';
+import { assertQuota, recordUsage } from '@/lib/billing/enforce';
 import type { MessageTemplate } from '@/types';
 import {
   resolveTemplateRow,
@@ -224,6 +225,14 @@ export async function sendMessageToConversation(
     templateName,
     interactivePayload,
   });
+
+  // Fase 3 §4: `messages_out`. Checked BEFORE Meta is called — an
+  // over-quota send that already reached the customer cannot be
+  // un-sent — and counted at the very end, once the message is
+  // persisted. Both callers of this core (`/api/whatsapp/send` and the
+  // public `/api/v1/messages`) get it from here: a limit only the
+  // dashboard honours is not a limit.
+  await assertQuota(accountId, 'messages_out', 1);
 
   const isMediaKind = (MEDIA_KINDS as readonly string[]).includes(messageType);
 
@@ -580,6 +589,11 @@ export async function sendMessageToConversation(
       err instanceof Error ? err.message : err
     );
   }
+
+  // Counted only now: the message reached Meta AND is on record.
+  // Best-effort inside `recordUsage` — a counter that did not move must
+  // not turn a delivered message into an error for the operator.
+  await recordUsage(accountId, 'messages_out', 1);
 
   return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
 }

@@ -500,6 +500,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
+                // The campaign this batch belongs to. The server
+                // weighs the plan's `broadcast_recipients` allowance
+                // against the campaign's outstanding recipients, not
+                // against this batch of ten — without it a large
+                // campaign could be refused in the middle (fase 3 §4).
+                broadcast_id: broadcast.id,
                 recipients: apiRecipients,
                 template_name: payload.template.name,
                 template_language: payload.template.language ?? 'en_US',

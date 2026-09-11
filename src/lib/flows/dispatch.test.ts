@@ -95,6 +95,7 @@ vi.mock("./meta-send", () => ({
   })),
 }));
 
+import { AccountLockedError } from "@/lib/billing/enforce";
 import { dispatchInboundToFlows, entryTriggerTexts } from "./engine";
 import type { ParsedInbound } from "./types";
 
@@ -315,5 +316,33 @@ describe("dispatchInboundToFlows — entry triggers (#490)", () => {
     expect(result.consumed).toBe(true);
     expect(result.flow_run_id).toBe("run-1");
     expect(startedRuns()).toHaveLength(1);
+  });
+});
+
+// ============================================================
+// Fase 3 §5 + CP11 — a suspended account stops REPLYING, and that is
+// all it stops.
+//
+// `engineSendText` now refuses for a read-only account (see
+// meta-send.ts). What matters here is what the refusal does to the
+// webhook: the runner has to swallow it. The inbound was stored before
+// this dispatch was called, and an exception escaping into the route's
+// `after()` would abort everything queued behind it.
+// ============================================================
+describe("dispatchInboundToFlows — a read-only account (fase 3 §5)", () => {
+  it("swallows the refusal instead of letting it reach the webhook", async () => {
+    h.state.flows = [KEYWORD_FLOW];
+    engineSendText.mockRejectedValueOnce(new AccountLockedError("suspended"));
+
+    // Resolves: the runner logs the step as failed and returns.
+    const result = await dispatch({
+      kind: "text",
+      text: "order status",
+      meta_message_id: "m1",
+    });
+
+    expect(result).toBeDefined();
+    // It was the send that refused, and nothing got past it.
+    expect(engineSendText).toHaveBeenCalledTimes(1);
   });
 });

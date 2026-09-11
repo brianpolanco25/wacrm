@@ -26,6 +26,36 @@ behaviour changes**; nothing is limited by plan yet.
 > adding the foreign key, so a handful of stale "Assigned" badges may
 > disappear — those chats return to the unassigned queue.
 
+> **Migration required:** apply
+> `supabase/migrations/045_billing_provider_plans.sql` before running the
+> PayPal catalogue bootstrap script.
+
+> **Migration required:** apply
+> `supabase/migrations/048_checkout_intent.sql` before enabling checkout.
+> It adds the `checkout_intents` table; no existing data is touched.
+> Apply `supabase/migrations/049_redeem_invitation_checkout_intents.sql`
+> together with it — 048 alone would break invitation redemption for
+> anyone who ever abandoned a checkout.
+
+> **Migration required:** apply
+> `supabase/migrations/050_subscription_event_watermark.sql` before enabling
+> the PayPal webhook. It adds `subscriptions.last_event_at` (NULL for every
+> existing row) and an index; no existing data is touched.
+
+> **Migration required:** apply
+> `supabase/migrations/056_subscription_cycle_and_receipts.sql` before the
+> subscription area in Settings. It adds `subscriptions.cycle` (backfilled from
+> the checkout that created each subscription) and an index over the payment
+> events; no existing data is changed.
+
+> **Migration required:** apply `supabase/migrations/046_seed_trials.sql` and
+> `supabase/migrations/052_redeem_invitation_billing.sql` **together** before
+> plan limits take effect. 046 gives every existing account — and every account
+> created from then on — a 14-day Pro trial, counted from the moment you apply
+> it, not from when the account was created. 052 is not optional: without it
+> nobody can accept a team invitation any more, because the trial row 046
+> creates blocks the deletion of the invitee's empty personal account.
+
 ### Added
 
 - **Available-agent handoff.** AI handoffs and automation round-robin
@@ -54,6 +84,103 @@ behaviour changes**; nothing is limited by plan yet.
   on it" flag — the filter is a work queue, not the archive. Switching
   the assistant off in Settings → AI clears "AI replying" from the list
   within about half a minute, no reload needed.
+- **Subscription area in Settings** (Settings → Subscription, owners and
+  admins). It shows the current plan, the state it is in — trial, active,
+  payment failed, suspended, cancelled or expired, with the grace period and a
+  scheduled cancellation spelled out — and the date of the next charge. Below
+  it, what the account has used this cycle against the plan's allowance, with
+  bars, taken straight from the usage counters the server enforces with, so the
+  figure on screen is the figure that blocks a send. Then the receipts: amount,
+  date and PayPal transaction id of every payment, including payments made on a
+  subscription that was later cancelled and replaced. A suspended account can
+  still open this page — it is where the way out lives.
+  - **Change plan** moves the _same_ PayPal subscription onto the new plan, so
+    two subscriptions can never charge at once. There is no proration: the new
+    plan applies at the next renewal, and PayPal may ask the customer to
+    approve the new amount first, which the page says before anything happens.
+    An account with nothing being charged (a trial, or a cancelled
+    subscription) is sent to `/billing` to contract instead.
+  - **Cancel** cancels at PayPal and keeps the service running to the end of
+    the cycle that was already paid for. Nothing is deleted; the account
+    becomes read-only afterwards and inbound WhatsApp messages keep arriving.
+  - **Reactivate** resumes a subscription PayPal suspended. A subscription that
+    was cancelled cannot be resumed — PayPal's cancel is final — so the page
+    offers a new checkout instead, and contracting again now works while the
+    old subscription is serving out its last paid cycle.
+  - None of these actions turns a plan on by itself: as everywhere else in
+    billing, the PayPal webhook is what changes the state.
+- **A plan change no longer renews on the wrong cycle.** The billing cycle now
+  lives on the subscription (`supabase/migrations/056_…`), not only on the
+  checkout that created it, so a customer who moves from monthly to yearly has
+  their period extended by a year instead of by a month.
+- **Plan limits are now enforced.** Outbound messages, broadcast recipients, AI
+  replies, operator seats, WhatsApp numbers and knowledge-base documents are
+  checked against the plan before the action runs and counted after it
+  succeeds, so a failed attempt never shows up on the bill. Going over a limit
+  answers with an error that names the limit, what is already used and where to
+  raise it, instead of a generic refusal. The public API (`/api/v1`) and
+  outbound webhooks are plan features: a plan without them answers with the
+  same kind of error and the API key itself stays valid, so upgrading restores
+  access with nothing to re-issue. A broadcast is weighed as a **whole
+  campaign** before its first message goes out — whether it was started from
+  the wizard, from the public API, or resumed/retried from the campaign page —
+  so a large send is refused up front instead of stopping half-delivered, and a
+  campaign refused for going over the allowance no longer leaves its recipients
+  behind as new contacts. Saving a new WhatsApp number over the one the account
+  already has counts as changing that number, not as adding a second one, so
+  the usual switch from Meta's test number to the production one works on every
+  plan. **Inbound WhatsApp messages are never affected** — an account with an
+  unpaid invoice and every allowance spent keeps receiving and storing what its
+  customers send.
+- **A subscription that lapses puts the account in read-only** instead of
+  cutting it off. While it is suspended, expired, or past due beyond the grace
+  period, everyone on the account behaves like a viewer: they can read
+  everything, and sending, broadcasting and AI replies stop. Automations and
+  chat flows stop replying too, so a suspended account no longer answers its
+  customers by itself while the banner says nothing is going out. Nobody's role
+  is changed, so settling the subscription restores the exact permissions each
+  member had, with nothing to repair. Reading keeps working everywhere,
+  including the AI spend summary and the team's pending invitations. A banner across the app says which of the
+  two states the account is in and links straight to `/billing` — which stays
+  reachable precisely so an overdue account can pay.
+- **Every account now has a 14-day Pro trial with a real end date**
+  (`supabase/migrations/046_seed_trials.sql`), including accounts created
+  before this release and those created from now on. A trial can contract a
+  plan at any time. Nothing expires the trial automatically yet.
+- **PayPal webhook** (`POST /api/billing/webhook`). The plan turns on here and
+  nowhere else: an approved payment activates the subscription even if the
+  customer closed the browser instead of coming back. It handles activation,
+  plan and quantity updates, cancellation (service runs to the end of the paid
+  cycle), suspension, failed payments (seven days of grace) and renewals. Every
+  delivery is verified with PayPal before anything is read from it, and a
+  delivery that cannot be verified is rejected — set `PAYPAL_WEBHOOK_ID` or the
+  endpoint accepts nothing. A repeated event is recorded once and applied once,
+  and an event that arrives out of order can never undo a newer one. Events that
+  cannot be matched to an account are kept unapplied in `billing_events` for
+  reconciliation rather than guessed at, and resending such a delivery from
+  PayPal's dashboard — once the cause is fixed — applies it. A customer who
+  cancels and later contracts again is activated on the new subscription; an
+  activation that reports a different plan than the one the customer asked for
+  is refused instead of granting either. Nothing here limits what an account can
+  do yet, and inbound WhatsApp messages are never affected.
+- **Plan checkout** (`/billing`). An owner or admin picks a plan and a
+  billing cycle, approves the payment on PayPal and comes back to
+  `/billing/return`, which only says "we are confirming your payment".
+  Activation is **not** done by that page: it waits for the PayPal
+  webhook, so closing the browser after approving loses nothing and
+  opening the return URL by hand grants nothing. Each attempt is recorded
+  in `checkout_intents` (plan, cycle, PayPal subscription id, account) so
+  the event can be matched to the right tenant. Contracting is refused
+  while the account already has a PayPal subscription being charged —
+  changing plan is a separate flow. Set `NEXT_PUBLIC_SITE_URL` so PayPal
+  returns customers to your deployment.
+- **PayPal catalogue bootstrap.** A server-only script creates one PayPal
+  product and the six monthly/annual plan variants, then stores their provider
+  ids in `plans`. It targets the sandbox unless `PAYPAL_ENV=live`, pages
+  through the PayPal catalogue so it reuses its product even when that product
+  is not on the first page, and expects sandbox and live to live in separate
+  databases (the stored ids belong to one environment). Billing, checkout and
+  webhooks are not enabled by this change.
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are
@@ -69,15 +196,17 @@ behaviour changes**; nothing is limited by plan yet.
   `billing_events` has no foreign key to `accounts` and is kept as the
   audit trail.
 - **Entitlements helper** (`src/lib/billing/entitlements.ts`): resolves an
-  account's plan, limits, features and read-only state. Not called from
-  any route yet — that is fase 3.
+  account's plan, limits, features and read-only state. It is what the
+  enforcement layer of "Plan limits are now enforced" above is built on.
 - **AI replies are now metered.** Every auto-reply the assistant actually
-  delivers adds one to the account's `ai_replies` usage counter for the
-  calendar month. Counting only: no plan limit is applied, nothing is
-  blocked, and a reply that fails to send is not counted. The handoff
-  notice is an acknowledgement rather than a reply and does not count
-  either. Counters are per account whichever provider key paid for the
-  call, and they are visible to owners and admins.
+  delivers adds one — exactly one — to the account's `ai_replies` usage
+  counter for the calendar month, and a reply that fails to send is not
+  counted. The handoff notice is an acknowledgement rather than a reply
+  and does not count either. Counters are per account whichever provider
+  key paid for the call, and they are visible to owners and admins. It is
+  this same counter that the plan allowance is checked against (see "Plan
+  limits are now enforced" above), so the figure on screen is the figure
+  that stops the next reply.
 - **Platform AI keys.** New optional server variables
   `AI_PLATFORM_OPENAI_API_KEY` / `AI_PLATFORM_ANTHROPIC_API_KEY`. When set,
   an account may leave the API key blank in Settings → AI and the
@@ -164,6 +293,42 @@ behaviour changes**; nothing is limited by plan yet.
   had just asked to be left alone. The assistant now stays out of closed
   conversations; a customer writing again re-opens the thread, and the
   assistant picks it up from there as before.
+- **Contracting again after cancelling now turns the service back on.** The
+  settings area lets a customer who cancelled buy a new subscription while the
+  cycle they already paid for runs out; the webhook then refused that new
+  subscription's activation, because the old row was still marked as running.
+  The customer paid and got nothing, and their account fell into read-only when
+  the old cycle ended. The new subscription is now adopted — and it is charged
+  on the cycle that was just bought, so going from yearly back to monthly no
+  longer extends the period by a year for a month of money. A subscription that
+  is genuinely still being charged is still protected from another one's
+  events.
+- **Changing to the plan already in force no longer bounces off PayPal.** On
+  accounts whose billing cycle was never recorded, asking for the plan and
+  cycle already in force skipped the "that is already your plan" check and
+  asked PayPal to revise the subscription anyway, which could send the customer
+  off to approve what they already had.
+- **Settings → Subscription says "admins only" to members who are not.** The
+  section could be opened by URL by anyone; it used to answer with a failed
+  request and an error card instead of the message meant for that case, and it
+  no longer asks the server for billing data it may not read. A locked account
+  that also cancelled now reads why it is locked instead of a cancellation
+  notice with a date already past.
+- **Accepting an invitation after abandoning a checkout.** Redeeming an
+  invitation dissolves the invitee's empty personal account; a checkout
+  they started and never approved used to block that with a raw database
+  error, locking them out of the team for good. Abandoned attempts are
+  now discarded with the account, while an account with a real
+  subscription behind it is refused as before ("sign up with a different
+  email") instead of being silently dissolved.
+- **Checkout guard against a second charge.** If the subscription of the
+  account could not be read, the check that stops a second PayPal
+  subscription was skipped; the checkout now stops with an error instead
+  of opening one.
+- **Return page wording.** It shows the plan's name ("Pro") rather than
+  its internal id, no longer claims a payment is active for an attempt it
+  has no record of, and the plan list stops spinning forever when the
+  catalogue request fails outright (offline, DNS): it says so.
 - **The token usage card survives the playground.** With `'playground'`
   added to `ai_usage_log.mode`, the spend summary (Settings → AI)
   failed to load for any account that had used the test chat: the whole

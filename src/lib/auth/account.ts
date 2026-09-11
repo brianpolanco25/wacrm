@@ -29,6 +29,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { assertWritable, billingErrorPayload } from "@/lib/billing/enforce";
 import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
 
 // ------------------------------------------------------------
@@ -69,6 +70,16 @@ export class ForbiddenError extends Error {
 export function toErrorResponse(err: unknown): NextResponse {
   if (err instanceof UnauthorizedError || err instanceof ForbiddenError) {
     return NextResponse.json({ error: err.message }, { status: err.status });
+  }
+  // Billing (fase 3 §4/§5): quota exhausted, feature not on the plan,
+  // or the account locked into read-only. The body keeps the internal
+  // `{ error }` shape and adds the machine `code`, the metric that was
+  // hit and `upgradeUrl` — the spec asks the error to say *which*
+  // limit and *how* to raise it, not just "denied".
+  const billing = billingErrorPayload(err);
+  if (billing) {
+    const { status, ...body } = billing;
+    return NextResponse.json(body, { status });
   }
   console.error("[toErrorResponse] uncategorized error:", err);
   return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -172,19 +183,58 @@ export async function getCurrentAccount(): Promise<AccountContext> {
   };
 }
 
+export interface RequireRoleOptions {
+  /**
+   * Skip the billing read-only gate below.
+   *
+   * Two legitimate uses, and no third:
+   *
+   *   - The routes that MUST stay reachable while the account is
+   *     locked, because paying the overdue bill is the way out of the
+   *     lock: `/api/billing/*`.
+   *   - A GET that asks for a role above `viewer` for reasons of its
+   *     own (spend is billing-class, the invitation list is team data).
+   *     §5 makes a delinquent account read-only, not blind, so a read
+   *     must never 403 on billing grounds.
+   *
+   * On a route that writes, this option is a bug: it hands a suspended
+   * tenant a write.
+   */
+  allowReadOnly?: boolean;
+}
+
 /**
  * Resolve the caller's account context and enforce a minimum role.
  *
  * Throws `UnauthorizedError` / `ForbiddenError` as documented on
  * `getCurrentAccount`, plus `ForbiddenError("Insufficient role")`
  * when the caller is below `min`.
+ *
+ * Fase 3 §5 — the dunning ladder — is enforced HERE, and only here, on
+ * purpose. A `suspended` account (or `expired`, or `past_due` past its
+ * grace) behaves as if every member were a `viewer`: every call that
+ * asks for `agent` or above is refused with `AccountLockedError`,
+ * while reads (`requireRole("viewer")`, `getCurrentAccount`) keep
+ * working. Nothing is written to `profiles.account_role`, so the
+ * moment the subscription is settled the real roles are back with no
+ * repair step.
+ *
+ * `min === "viewer"` short-circuits the check: a read is a read, and
+ * skipping it keeps the entitlements round trip off every list
+ * endpoint in the app.
  */
-export async function requireRole(min: AccountRole): Promise<AccountContext> {
+export async function requireRole(
+  min: AccountRole,
+  options: RequireRoleOptions = {},
+): Promise<AccountContext> {
   const ctx = await getCurrentAccount();
   if (!hasMinRole(ctx.role, min)) {
     throw new ForbiddenError(
       `This action requires the '${min}' role or higher`,
     );
+  }
+  if (min !== "viewer" && !options.allowReadOnly) {
+    await assertWritable(ctx.accountId);
   }
   return ctx;
 }

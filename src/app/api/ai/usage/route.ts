@@ -40,7 +40,13 @@ interface UsageRow {
  */
 export async function GET(request: Request) {
   try {
-    const { supabase, accountId } = await requireRole('admin')
+    // `allowReadOnly`: this is a read. Fase 3 §5 locks a delinquent
+    // account out of writing, not out of looking at what it spent —
+    // and the spend page is where an operator goes to understand the
+    // bill it is being asked to settle.
+    const { supabase, accountId } = await requireRole('admin', {
+      allowReadOnly: true,
+    })
 
     const url = new URL(request.url)
     const rawDays = Number(url.searchParams.get('days'))

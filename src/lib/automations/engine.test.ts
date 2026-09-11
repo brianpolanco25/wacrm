@@ -185,6 +185,7 @@ vi.mock('./meta-send', () => ({
   engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: 'm1' })),
 }));
 
+import { AccountLockedError } from '@/lib/billing/enforce';
 import {
   resumePendingExecution,
   runAutomationsForTrigger,
@@ -1100,5 +1101,52 @@ describe('per-message reply marker — a run resumed after a wait (fase 1)', () 
     });
 
     expect(vi.mocked(engineSendText)).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ============================================================
+// Fase 3 §5 + CP11 — a suspended account stops ANSWERING, and that is
+// all it stops.
+//
+// `engineSendText` refuses for a read-only account (see meta-send.ts).
+// This is the other half: `runAutomationsForTrigger` runs inside the
+// webhook's `after()`, so the refusal has to die here — logged as a
+// failed step — instead of escaping into the route and taking down
+// everything queued behind it.
+// ============================================================
+describe('runAutomationsForTrigger — a read-only account (fase 3 §5)', () => {
+  function sendStep() {
+    return {
+      id: 's1',
+      automation_id: 'a1',
+      step_type: 'send_message',
+      position: 0,
+      parent_step_id: null,
+      step_config: { text: 'Thanks for writing!' },
+    };
+  }
+
+  it('logs the refused send as a failed step and never throws', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [sendStep()];
+    vi.mocked(engineSendText).mockRejectedValueOnce(
+      new AccountLockedError('suspended')
+    );
+
+    // Resolves. An exception here would abort the webhook's after()
+    // block with the inbound already stored but everything queued
+    // behind this dispatch skipped.
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      // Supplied so the step goes straight to the sender.
+      context: { conversation_id: 'cv-1' },
+    });
+
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledTimes(1);
+    const withStatus = h.state.logUpdates.filter((u) => 'status' in u);
+    expect(withStatus.at(-1)).toMatchObject({ status: 'failed' });
   });
 });

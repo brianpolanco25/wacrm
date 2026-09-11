@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 
+import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
 import {
   RAIL_GROUPS,
@@ -32,6 +33,10 @@ export function SettingsRail({
   hints?: Partial<Record<SettingsSection, ReactNode>>;
 }) {
   const t = useTranslations('Settings');
+  // `canManageMembers` is "admin or above" (owner included). While the
+  // profile is still loading it is false, so an admin-only entry is
+  // never flashed to someone who may not be one.
+  const { canManageMembers } = useAuth();
   const activeRef = useRef<HTMLButtonElement>(null);
 
   // When horizontal (mobile), keep the active chip in view. On desktop
@@ -57,8 +62,11 @@ export function SettingsRail({
     >
       {RAIL_GROUPS.map(({ label, group }) => {
         const items = SETTINGS_SECTIONS.filter(
-          (s) => SECTION_META[s].group === group,
+          (s) =>
+            SECTION_META[s].group === group &&
+            (!SECTION_META[s].adminOnly || canManageMembers),
         );
+        if (items.length === 0) return null;
         return (
           <div
             key={group}

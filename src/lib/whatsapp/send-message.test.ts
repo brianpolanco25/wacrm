@@ -1,11 +1,33 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+// Fase 3 §4: the send core now charges `messages_out`. Only the two
+// DB-touching entry points are stubbed — `importOriginal` keeps
+// `QuotaExceededError` real so the tests below assert against the
+// genuine class the routes catch.
+const billing = vi.hoisted(() => ({
+  assertQuota: vi.fn(async () => {}),
+  recordUsage: vi.fn(async () => {}),
+}));
+vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
+  assertQuota: billing.assertQuota,
+  recordUsage: billing.recordUsage,
+}));
+
+import { QuotaExceededError } from '@/lib/billing/enforce';
 import {
   sendMessageToConversation,
   SendMessageError,
   type SendMessageParams,
 } from './send-message';
+
+beforeEach(() => {
+  billing.assertQuota.mockReset();
+  billing.assertQuota.mockResolvedValue(undefined);
+  billing.recordUsage.mockReset();
+  billing.recordUsage.mockResolvedValue(undefined);
+});
 
 // A db that explodes if touched — these tests cover the param
 // validation that MUST short-circuit before any query runs.
@@ -344,5 +366,88 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
     // name rather than inventing a body.
     expect(captured.message?.content_text).toBeNull();
     expect(captured.conversation?.last_message_text).toBe('[template]');
+  });
+});
+
+// ============================================================
+// Fase 3 §4 — `messages_out`.
+//
+// The core is shared by `/api/whatsapp/send` (dashboard) and
+// `/api/v1/messages` (public API), so charging it here is what makes
+// the cap apply to both. Checked before Meta, counted after the row
+// lands.
+// ============================================================
+describe('sendMessageToConversation — messages_out (fase 3 §4)', () => {
+  const textParams: SendMessageParams = {
+    conversationId: 'cv-1',
+    messageType: 'text',
+    contentText: 'hello',
+  };
+
+  it('checks the quota for this account before anything is sent', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(
+      sendPathDb([], captured),
+      'acct-9',
+      textParams
+    );
+    expect(billing.assertQuota).toHaveBeenCalledWith(
+      'acct-9',
+      'messages_out',
+      1
+    );
+  });
+
+  it('refuses the send when the monthly allowance is spent — Meta is never called', async () => {
+    const captured: CapturedWrites = {};
+    billing.assertQuota.mockRejectedValue(
+      new QuotaExceededError('messages_out', 3000, 3000)
+    );
+    await expect(
+      sendMessageToConversation(sendPathDb([], captured), 'acct-1', textParams)
+    ).rejects.toBeInstanceOf(QuotaExceededError);
+    // Nothing reached Meta and nothing was persisted: an over-quota
+    // message that already arrived cannot be un-sent.
+    expect(captured.message).toBeUndefined();
+    expect(billing.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it('counts one outbound message only after the row is persisted', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(
+      sendPathDb([], captured),
+      'acct-1',
+      textParams
+    );
+    expect(captured.message).toBeDefined();
+    expect(billing.recordUsage).toHaveBeenCalledWith(
+      'acct-1',
+      'messages_out',
+      1
+    );
+    expect(billing.recordUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not count a send that failed to persist', async () => {
+    const captured: CapturedWrites = {};
+    const db = sendPathDb([], captured);
+    const original = db.from.bind(db);
+    // The message INSERT comes back with an error — the send reached
+    // Meta but the row did not land, and the core throws.
+    db.from = ((table: string) => {
+      const builder = original(table) as unknown as Record<string, unknown>;
+      if (table === 'messages') {
+        builder.single = async () => ({
+          data: null,
+          error: { message: 'insert exploded' },
+        });
+      }
+      return builder;
+    }) as unknown as typeof db.from;
+
+    await expect(
+      sendMessageToConversation(db, 'acct-1', textParams)
+    ).rejects.toBeInstanceOf(SendMessageError);
+    expect(billing.recordUsage).not.toHaveBeenCalled();
   });
 });
