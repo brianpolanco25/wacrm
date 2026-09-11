@@ -257,6 +257,62 @@ BEGIN
     RAISE EXCEPTION 'billing_events_unprocessed_idx is missing (migration 050)';
   END IF;
 
+  -- ------------------------------------------------------------
+  -- 046: la prueba de 14 días.
+  -- ------------------------------------------------------------
+  -- Sin el trigger, una cuenta nueva nace sin fila en `subscriptions`:
+  -- sigue funcionando (la capa de permisos la resuelve al plan `pro`)
+  -- pero nadie puede decirle cuándo termina su prueba.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.accounts'::regclass
+      AND tgname = 'on_account_created_seed_trial'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION
+      'on_account_created_seed_trial is missing on accounts (migration 046)';
+  END IF;
+
+  IF to_regprocedure('public.seed_account_trial()') IS NULL THEN
+    RAISE EXCEPTION 'seed_account_trial() is missing (migration 046)';
+  END IF;
+
+  IF to_regprocedure('public.trial_period()') IS NULL THEN
+    RAISE EXCEPTION 'trial_period() is missing (migration 046)';
+  END IF;
+
+  -- La prueba tiene que apuntar a un plan que exista en el catálogo, o
+  -- el trigger falla en silencio (su bloque EXCEPTION solo avisa) y
+  -- cada alta nace sin suscripción.
+  IF NOT EXISTS (SELECT 1 FROM plans WHERE id = 'pro') THEN
+    RAISE EXCEPTION
+      'the trial plan ''pro'' is missing from the catalogue (migrations 041 + 046)';
+  END IF;
+
+  -- ------------------------------------------------------------
+  -- 052: redeem_invitation() frente a la semilla de pruebas.
+  -- ------------------------------------------------------------
+  -- 046 pone una fila en `subscriptions` por CADA cuenta y 041 la ata
+  -- con ON DELETE RESTRICT. Si una migración futura reemplaza
+  -- `redeem_invitation()` y se deja estas dos tablas fuera, aceptar una
+  -- invitación deja de funcionar para todo el mundo con un 23503 en
+  -- crudo — no es un caso raro, es el camino normal.
+  IF (
+    SELECT prosrc FROM pg_proc
+    WHERE oid = 'public.redeem_invitation(text)'::regprocedure
+  ) NOT LIKE '%subscriptions%' THEN
+    RAISE EXCEPTION
+      'redeem_invitation() does not handle subscriptions; the RESTRICT FK of 041 plus the trial seed of 046 break invitation redemption (migration 052)';
+  END IF;
+
+  IF (
+    SELECT prosrc FROM pg_proc
+    WHERE oid = 'public.redeem_invitation(text)'::regprocedure
+  ) NOT LIKE '%usage_counters%' THEN
+    RAISE EXCEPTION
+      'redeem_invitation() does not handle usage_counters; the RESTRICT FK of 041 breaks invitation redemption (migration 052)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

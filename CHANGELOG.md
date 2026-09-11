@@ -39,8 +39,39 @@ behaviour changes**; nothing is limited by plan yet.
 > the PayPal webhook. It adds `subscriptions.last_event_at` (NULL for every
 > existing row) and an index; no existing data is touched.
 
+> **Migration required:** apply `supabase/migrations/046_seed_trials.sql` and
+> `supabase/migrations/052_redeem_invitation_billing.sql` **together** before
+> plan limits take effect. 046 gives every existing account — and every account
+> created from then on — a 14-day Pro trial, counted from the moment you apply
+> it, not from when the account was created. 052 is not optional: without it
+> nobody can accept a team invitation any more, because the trial row 046
+> creates blocks the deletion of the invitee's empty personal account.
+
 ### Added
 
+- **Plan limits are now enforced.** Outbound messages, broadcast recipients, AI
+  replies, operator seats, WhatsApp numbers and knowledge-base documents are
+  checked against the plan before the action runs and counted after it
+  succeeds, so a failed attempt never shows up on the bill. Going over a limit
+  answers with an error that names the limit, what is already used and where to
+  raise it, instead of a generic refusal. The public API (`/api/v1`) and
+  outbound webhooks are plan features: a plan without them answers with the
+  same kind of error and the API key itself stays valid, so upgrading restores
+  access with nothing to re-issue. **Inbound WhatsApp messages are never
+  affected** — an account with an unpaid invoice and every allowance spent keeps
+  receiving and storing what its customers send.
+- **A subscription that lapses puts the account in read-only** instead of
+  cutting it off. While it is suspended, expired, or past due beyond the grace
+  period, everyone on the account behaves like a viewer: they can read
+  everything, and sending, broadcasting and AI replies stop. Nobody's role is
+  changed, so settling the subscription restores the exact permissions each
+  member had, with nothing to repair. A banner across the app says which of the
+  two states the account is in and links straight to `/billing` — which stays
+  reachable precisely so an overdue account can pay.
+- **Every account now has a 14-day Pro trial with a real end date**
+  (`supabase/migrations/046_seed_trials.sql`), including accounts created
+  before this release and those created from now on. A trial can contract a
+  plan at any time. Nothing expires the trial automatically yet.
 - **PayPal webhook** (`POST /api/billing/webhook`). The plan turns on here and
   nowhere else: an approved payment activates the subscription even if the
   customer closed the browser instead of coming back. It handles activation,

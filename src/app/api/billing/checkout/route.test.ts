@@ -629,6 +629,65 @@ describe('GET /api/billing/checkout (the return page status)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Fase 3 §4/§5, the two integration points the trial seed of migration 046
+// creates for this route.
+// ---------------------------------------------------------------------------
+describe('POST /api/billing/checkout — the seeded trial (fase 3 §4)', () => {
+  it('lets a trialing account contract', async () => {
+    // Migration 046 gives EVERY account a `pro`/`trialing` row. If that
+    // row read as "already contracted", nobody could ever pay us.
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'trialing',
+      provider_subscription_id: null,
+      current_period_end: null,
+      cancel_at_period_end: false,
+    });
+
+    const res = await post({ planId: 'pro', cycle: 'month' });
+
+    expect(res.status).toBe(201);
+    expect(createSubscription).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses a second checkout for an account that already pays', async () => {
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'active',
+      provider_subscription_id: 'I-LIVE',
+      current_period_end: null,
+      cancel_at_period_end: false,
+    });
+
+    const res = await post({ planId: 'inicio', cycle: 'month' });
+    expect(res.status).toBe(409);
+    expect(createSubscription).not.toHaveBeenCalled();
+  });
+
+  it('lets a SUSPENDED account reach its checkout — it is the way out of the lock', async () => {
+    // §5 turns every member into a viewer, but `requireRole` is called
+    // here with `allowReadOnly`. Without that, a suspended tenant could
+    // not start paying again, and the banner's "Fix billing" button
+    // would lead to a 403.
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'suspended',
+      // No provider id: the PayPal subscription was cancelled on their
+      // side, so this account has nothing being charged.
+      provider_subscription_id: null,
+      current_period_end: null,
+      cancel_at_period_end: false,
+    });
+
+    const res = await post({ planId: 'pro', cycle: 'month' });
+    expect(res.status).toBe(201);
+  });
+});
+
 describe('the checkout route surface', () => {
   it('exposes only POST and GET', () => {
     // No PUT/PATCH/DELETE: there is no verb here that can move a
