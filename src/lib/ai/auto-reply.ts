@@ -137,7 +137,8 @@ export async function dispatchInboundToAiReply(
       messages,
     });
 
-    // Record token spend on the account's BYO key. Fire-and-forget so it
+    // Record token spend, tagged with whose key paid for it (the
+    // account's or the platform's). Fire-and-forget so it
     // never adds latency to the customer-facing send: `logAiUsage`
     // swallows its own errors, so the floating promise can't reject.
     // Logged regardless of handoff — the provider call happened either
@@ -148,6 +149,7 @@ export async function dispatchInboundToAiReply(
       mode: 'auto_reply',
       provider: config.provider,
       model: config.model,
+      keySource: config.keySource,
       usage,
     });
 

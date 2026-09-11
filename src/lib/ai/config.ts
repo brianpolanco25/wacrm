@@ -83,6 +83,9 @@ export async function loadAiConfig(
     provider: row.provider,
     model: row.model,
     apiKey: resolvedKey.key,
+    // Who pays for this call. Rides along to `ai_usage_log.key_source`
+    // so platform-funded spend is separable from BYO spend.
+    keySource: resolvedKey.source,
     systemPrompt: row.system_prompt,
     isActive: row.is_active,
     autoReplyEnabled: row.auto_reply_enabled,

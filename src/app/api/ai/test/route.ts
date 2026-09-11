@@ -8,15 +8,18 @@ import {
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { validateAiCredentials } from '@/lib/ai/validate';
 import { platformApiKey } from '@/lib/ai/platform-key';
-import { AiError, type AiProvider } from '@/lib/ai/types';
+import { AiError, type AiKeySource, type AiProvider } from '@/lib/ai/types';
 
 /**
  * POST /api/ai/test  (admin+)
  *
  * "Test key" button: validate a candidate provider/model/key against
- * the provider WITHOUT saving. When `api_key` is omitted the stored
- * key is used, so an admin can re-test an existing config (e.g. after
- * changing the model). Returns `{ ok: true }` on success, 400 with the
+ * the provider WITHOUT saving. Three-way `api_key`, mirroring the save
+ * route: a string tests that key; omitted tests the stored one (so an
+ * admin can re-test an existing config after changing the model, say);
+ * an explicit `null` tests the platform key for the provider, which is
+ * what the account will be using once it gives its own key up
+ * (supuesto S1). Returns `{ ok: true }` on success, 400 with the
  * provider's message on failure.
  */
 export async function POST(request: Request) {
@@ -47,16 +50,29 @@ export async function POST(request: Request) {
     }
 
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
+    // Same three-way convention as POST /api/ai/config, and for the same
+    // reason: what gets tested must be the key the next save will
+    // actually use. An explicit `api_key: null` means "I am handing this
+    // account back to the platform key" — testing the stored key there
+    // would green-light a key that is about to be deleted.
+    const clearKey = body.api_key === null;
     let apiKeyPlain = rawKey;
+    // Which key ends up being tested — reported to `validateAiCredentials`
+    // for symmetry with the real call paths (nothing is logged here).
+    let keySource: AiKeySource = 'account';
     if (!apiKeyPlain) {
-      const { data: existing } = await supabase
-        .from('ai_configs')
-        .select('api_key')
-        .eq('account_id', accountId)
-        .maybeSingle();
-      if (existing?.api_key) {
+      let storedKey: string | null = null;
+      if (!clearKey) {
+        const { data: existing } = await supabase
+          .from('ai_configs')
+          .select('api_key')
+          .eq('account_id', accountId)
+          .maybeSingle();
+        storedKey = existing?.api_key ?? null;
+      }
+      if (storedKey) {
         try {
-          apiKeyPlain = decrypt(existing.api_key);
+          apiKeyPlain = decrypt(storedKey);
         } catch {
           return NextResponse.json(
             {
@@ -67,9 +83,9 @@ export async function POST(request: Request) {
           );
         }
       } else {
-        // Supuesto S1: with no typed and no stored key, test the
-        // platform key for this provider — that is what the account
-        // would actually call the provider with.
+        // Supuesto S1: with no typed key and no stored key to fall back
+        // on, test the platform key for this provider — that is what the
+        // account would actually call the provider with.
         const platformKey = platformApiKey(provider);
         if (!platformKey) {
           return NextResponse.json(
@@ -78,6 +94,7 @@ export async function POST(request: Request) {
           );
         }
         apiKeyPlain = platformKey;
+        keySource = 'platform';
       }
     }
 
@@ -86,6 +103,7 @@ export async function POST(request: Request) {
         provider,
         model,
         apiKey: apiKeyPlain,
+        keySource,
         systemPrompt: null,
         isActive: true,
         autoReplyEnabled: false,

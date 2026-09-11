@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   requireRole: vi.fn(),
   validateAiCredentials: vi.fn(),
+  from: vi.fn(),
   state: { existing: null as Record<string, unknown> | null },
 }));
 
@@ -31,7 +32,8 @@ vi.mock('@/lib/ai/validate', () => ({
 import { POST } from './route';
 
 const supabase = {
-  from: () => {
+  from: (...args: unknown[]) => {
+    mocks.from(...args);
     const chain = {
       select: () => chain,
       eq: () => chain,
@@ -106,5 +108,45 @@ describe('POST /api/ai/test', () => {
     expect(mocks.validateAiCredentials.mock.calls[0][0]).toMatchObject({
       apiKey: 'sk-typed',
     });
+  });
+
+  // The form sends `api_key: null` when the admin has asked to go back
+  // to the platform key. Testing the stored key there would report
+  // "your key works" about the very key the next save deletes.
+  it('tests the platform key on an explicit api_key: null, not the stored one', async () => {
+    vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
+    mocks.state.existing = { api_key: 'enc:sk-stored' };
+    const res = await POST(
+      post({ provider: 'openai', model: 'gpt-x', api_key: null })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.validateAiCredentials.mock.calls[0][0]).toMatchObject({
+      apiKey: 'sk-platform',
+      keySource: 'platform',
+    });
+    // It does not even read the stored key it is about to orphan.
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+
+  it('tests the stored key when api_key is absent, even with a platform key around', async () => {
+    vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
+    mocks.state.existing = { api_key: 'enc:sk-stored' };
+    const res = await POST(post({ provider: 'openai', model: 'gpt-x' }));
+    expect(res.status).toBe(200);
+    expect(mocks.validateAiCredentials.mock.calls[0][0]).toMatchObject({
+      apiKey: 'sk-stored',
+      keySource: 'account',
+    });
+    expect(mocks.from).toHaveBeenCalledWith('ai_configs');
+  });
+
+  it('refuses an api_key: null when the provider has no platform key', async () => {
+    mocks.state.existing = { api_key: 'enc:sk-stored' };
+    const res = await POST(
+      post({ provider: 'openai', model: 'gpt-x', api_key: null })
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Enter an API key to test.' });
+    expect(mocks.validateAiCredentials).not.toHaveBeenCalled();
   });
 });

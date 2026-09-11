@@ -1,4 +1,4 @@
-import type { AiProvider } from './types';
+import type { AiKeySource, AiProvider } from './types';
 
 // ============================================================
 // Platform-level provider keys (supuesto S1: la IA la paga el servicio).
@@ -38,7 +38,10 @@ export function hasPlatformApiKey(provider: AiProvider): boolean {
   return platformApiKey(provider) !== null;
 }
 
-export type AiKeySource = 'account' | 'platform';
+// `AiKeySource` lives in ./types with `AiConfig` (the shape that
+// carries it around); re-exported here so callers of `resolveAiApiKey`
+// get it from the same module.
+export type { AiKeySource };
 
 /**
  * Pick the key to call the provider with: the account's own (plaintext)

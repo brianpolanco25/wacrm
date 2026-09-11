@@ -16,10 +16,11 @@ database and server-side groundwork for billing. **No user-visible
 behaviour changes**; nothing is limited by plan yet.
 
 > **Migration required:** apply
-> `supabase/migrations/040_conversation_assignment_integrity.sql` and
+> `supabase/migrations/040_conversation_assignment_integrity.sql`,
 > `supabase/migrations/041_billing_model.sql`,
 > `supabase/migrations/042_pick_available_agent.sql`,
-> `supabase/migrations/043_ai_handoff_mode.sql` and
+> `supabase/migrations/043_ai_handoff_mode.sql`,
+> `supabase/migrations/047_ai_platform_key.sql` and
 > `supabase/migrations/051_automation_reply_marker.sql`. 040 nulls any
 > `conversations.assigned_agent_id` that points at a deleted user before
 > adding the foreign key, so a handful of stale "Assigned" badges may
@@ -56,7 +57,17 @@ behaviour changes**; nothing is limited by plan yet.
 - **Billing model** (`plans`, `subscriptions`, `usage_counters`,
   `billing_events`) with RLS, the atomic `increment_usage` RPC and the
   seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are
-  provisional until the first paying customer.
+  provisional until the first paying customer. A tenant can read its own
+  subscription and never write it: only the service role does, from the
+  payment webhook.
+- **Billing rows outlive account deletion.** `subscriptions` and
+  `usage_counters` reference `accounts` with `ON DELETE RESTRICT`, so
+  `DELETE FROM accounts` now fails while an account still has billing
+  data instead of quietly taking it along. Closing an account is a
+  deliberate sequence: cancel with the provider, clear (or archive) its
+  `subscriptions` and `usage_counters` rows, then delete the account.
+  `billing_events` has no foreign key to `accounts` and is kept as the
+  audit trail.
 - **Entitlements helper** (`src/lib/billing/entitlements.ts`): resolves an
   account's plan, limits, features and read-only state. Not called from
   any route yet — that is fase 3.
@@ -64,7 +75,27 @@ behaviour changes**; nothing is limited by plan yet.
   `AI_PLATFORM_OPENAI_API_KEY` / `AI_PLATFORM_ANTHROPIC_API_KEY`. When set,
   an account may leave the API key blank in Settings → AI and the
   platform's key is used; an account's own key still takes precedence.
-  Without them nothing changes. `ai_configs.api_key` is now nullable.
+  Without them nothing changes. `ai_configs.api_key` is now nullable
+  (migration 047). The fallback covers the chat key only — the
+  embeddings key has no platform-level equivalent.
+- **Switching back to the platform key.** An account that saved its own
+  provider key can hand it back with **Use the platform's key instead**
+  in Settings → AI (shown only when the deployment has a key for that
+  provider); the stored key is forgotten on save and the platform's is
+  used from then on. Previously a stored key could only be removed by
+  deleting the whole AI configuration. The embeddings key gained the
+  equivalent **Remove this key** action, which turns semantic
+  knowledge-base search back into keyword search.
+- **Who paid for each AI call.** `ai_usage_log` gained a `key_source`
+  column (`'account'` or `'platform'`, migration 047) so a deployment can
+  measure, per account, the model spend it is funding itself. Rows
+  written before the change are all bring-your-own-key and are recorded
+  as `'account'`.
+- **The AI playground is counted too.** Test chats in the playground are
+  real provider calls, and now log to `ai_usage_log` under a new
+  `'playground'` mode (migration 047 widens the `mode` domain) with the
+  same `key_source`. Before this they were the one LLM surface that spent
+  tokens invisibly.
 
 ### Fixed
 
@@ -79,6 +110,28 @@ behaviour changes**; nothing is limited by plan yet.
   message: whichever responder reserves it first is the only one that
   sends. Settings → AI now also warns when automations that can answer
   on message content exist, with a link to the list.
+- **The token usage card survives the playground.** With `'playground'`
+  added to `ai_usage_log.mode`, the spend summary (Settings → AI)
+  failed to load for any account that had used the test chat: the whole
+  window came back empty. The breakdown now has its own "Playground"
+  tile, tolerates modes added later, and always adds up to the headline
+  total.
+- **Focusing the AI key field no longer deletes the stored key.** Clicking
+  or tabbing into the (masked) provider key in Settings → AI clears the
+  placeholder so you can type. Leaving without typing and saving an
+  unrelated change — a new prompt, a toggle — used to send "forget my
+  key": the account's own key was silently dropped, or the save was
+  refused for a missing key on deployments with no platform key. The key
+  is now only forgotten when it is explicitly asked for. Same fix for the
+  embeddings key field.
+- **"Test key" tests the key that will actually be used.** After asking
+  to go back to the platform's key, the button validates the platform key
+  instead of the stored one it is about to replace.
+- **Saving the AI settings with no key anywhere.** An account backed by
+  the platform key (no key of its own) could no longer be saved at all —
+  not even to turn the assistant off — once the deployment's
+  `AI_PLATFORM_*_API_KEY` was rotated away. A key is now required only
+  when the save actually has credentials to verify.
 - **Dangling conversation assignments.** `conversations.assigned_agent_id`
   now references `auth.users` with `ON DELETE SET NULL`, so removing an
   operator returns their chats to the unassigned queue instead of leaving

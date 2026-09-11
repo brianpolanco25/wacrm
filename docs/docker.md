@@ -53,12 +53,32 @@ accounts (the SaaS model) can set a platform-level key per provider:
 | `AI_PLATFORM_OPENAI_API_KEY` | an account's provider is `openai` and it has not saved its own key |
 | `AI_PLATFORM_ANTHROPIC_API_KEY` | an account's provider is `anthropic` and it has not saved its own key |
 
-Resolution order is always: the account's own key → the platform key
-for its provider → AI not configured. Both variables are server-only
-runtime secrets (never `NEXT_PUBLIC_*`); the app only ever tells the
-browser _whether_ a platform key exists, never its value. With neither
-variable set the behaviour is exactly the bring-your-own-key one: the
-key field is required when saving an AI configuration.
+Resolution order for the **chat** key (drafts, auto-reply, playground,
+"Test key", save): the account's own key → the platform key for its
+provider → AI not configured. An account that saved its own key can hand
+it back with **Use the platform's key instead** in Settings → AI (the
+link only appears when this deployment has a key for that provider);
+the platform key takes over from the next save on. Simply clearing the
+input does not drop a stored key — that gesture is reserved for the
+explicit link, so focusing the field cannot cost an account its key.
+
+This fallback covers the chat key only. The **embeddings** key
+(`ai_configs.embeddings_api_key`, used to index the knowledge base) has
+no platform-level equivalent: an account that does not save one keeps
+using lexical search even on a deployment with
+`AI_PLATFORM_OPENAI_API_KEY` set.
+
+Both variables are server-only runtime secrets (never `NEXT_PUBLIC_*`);
+the app only ever tells the browser _whether_ a platform key exists,
+never its value. With neither variable set the behaviour is exactly the
+bring-your-own-key one: the key field is required when saving an AI
+configuration.
+
+Every LLM call is logged to `ai_usage_log` with a `key_source` column
+(`'account'` or `'platform'`), so the spend a deployment funds for its
+tenants can be measured per account. All three surfaces that call a
+provider write a row, told apart by `mode`: `auto_reply`, `draft` and
+`playground`.
 
 ## Plain Docker (no Compose)
 

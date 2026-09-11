@@ -20,14 +20,34 @@ export type AiProvider = 'openai' | 'anthropic';
 export type HandoffMode = 'fixed' | 'queue' | 'auto';
 
 /**
+ * Where the key that will be billed came from (supuesto S1 — la IA la
+ * paga el servicio):
+ *
+ *   'account'  — the tenant's own key, stored AES-256-GCM-encrypted in
+ *                `ai_configs.api_key`. The tenant pays the provider.
+ *   'platform' — the deployment-wide key from the environment
+ *                (`AI_PLATFORM_*_API_KEY`). The platform pays.
+ *
+ * Carried all the way to `ai_usage_log.key_source` so spend the platform
+ * funded can be told apart from BYO spend when it is time to bill it.
+ */
+export type AiKeySource = 'account' | 'platform';
+
+/**
  * Account AI setup, decrypted and ready to use. Produced by
- * `loadAiConfig` — `apiKey` is the plaintext BYO provider key
- * (stored AES-256-GCM-encrypted at rest).
+ * `loadAiConfig`. `apiKey` is the plaintext key the provider will be
+ * called with — either the account's own BYO key (stored
+ * AES-256-GCM-encrypted at rest) or, when the account has none, the
+ * platform key from the environment (never stored, never encrypted).
+ * `keySource` says which of the two it is; never assume it is the
+ * account's.
  */
 export interface AiConfig {
   provider: AiProvider;
   model: string;
   apiKey: string;
+  /** Which key `apiKey` is — and therefore who pays for the call. */
+  keySource: AiKeySource;
   systemPrompt: string | null;
   isActive: boolean;
   autoReplyEnabled: boolean;

@@ -45,6 +45,9 @@ vi.mock('@/lib/ai/validate', () => ({
 vi.mock('@/lib/ai/embeddings', () => ({ embedTexts: mocks.embedTexts }));
 
 import { GET, POST } from './route';
+// The read path, to close the round trip: what the route wrote is what
+// draft/auto-reply will use.
+import { loadAiConfig } from '@/lib/ai/config';
 
 function supabaseMock() {
   return {
@@ -77,6 +80,17 @@ function supabaseMock() {
       return chain;
     },
   };
+}
+
+/** A one-row ai_configs client for the read path. */
+function rowDb(row: Record<string, unknown>) {
+  const chain = {
+    from: () => chain,
+    select: () => chain,
+    eq: () => chain,
+    maybeSingle: () => Promise.resolve({ data: row, error: null }),
+  };
+  return chain as never;
 }
 
 const ctx = () => ({
@@ -192,10 +206,121 @@ describe('POST /api/ai/config — key resolution', () => {
     expect(mocks.state.updates[0]).not.toHaveProperty('api_key');
   });
 
+  it('saves a toggle on a platform-backed row after the platform key is gone (no key required)', async () => {
+    // The operator rotated AI_PLATFORM_*_API_KEY away. The row has no key
+    // of its own, but turning the assistant off must still work: nothing
+    // is being validated, so nothing needs a key.
+    mocks.state.existing = {
+      id: 'cfg-1',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: null,
+    };
+    const res = await POST(post({ ...BASE_BODY, is_active: false }));
+    expect(res.status).toBe(200);
+    expect(mocks.validateAiCredentials).not.toHaveBeenCalled();
+    expect(mocks.state.updates).toHaveLength(1);
+    expect(mocks.state.updates[0]).toMatchObject({ is_active: false });
+    expect(mocks.state.updates[0]).not.toHaveProperty('api_key');
+  });
+
+  it('does not touch a corrupt stored key when the save changes nothing that needs validating', async () => {
+    mocks.state.existing = {
+      id: 'cfg-1',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: 'corrupt', // decrypt() in this file only strips 'enc:'
+    };
+    const res = await POST(post({ ...BASE_BODY, is_active: false }));
+    expect(res.status).toBe(200);
+    expect(mocks.validateAiCredentials).not.toHaveBeenCalled();
+  });
+
   it('scopes every ai_configs query to the caller account', async () => {
     vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
     await POST(post(BASE_BODY));
     expect(mocks.state.filters).toContainEqual(['account_id', 'acct-1']);
+  });
+});
+
+describe('POST /api/ai/config — handing the key back to the platform', () => {
+  it('an explicit api_key: null clears the stored key and validates with the platform one', async () => {
+    vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
+    mocks.state.existing = {
+      id: 'cfg-1',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: 'enc:sk-own',
+    };
+    const res = await POST(post({ ...BASE_BODY, api_key: null }));
+    expect(res.status).toBe(200);
+    // Re-validated against what the account will actually call with…
+    expect(mocks.validateAiCredentials).toHaveBeenCalledTimes(1);
+    expect(mocks.validateAiCredentials.mock.calls[0][0]).toMatchObject({
+      apiKey: 'sk-platform',
+      keySource: 'platform',
+    });
+    // …and the stored key is really gone (null, not left in place).
+    expect(mocks.state.updates[0]).toMatchObject({ api_key: null });
+  });
+
+  it('round trip: BYO key, then back to the platform key', async () => {
+    vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
+
+    // 1. First save with the account's own key.
+    const first = await POST(post({ ...BASE_BODY, api_key: 'sk-own' }));
+    expect(first.status).toBe(200);
+    expect(mocks.state.inserts[0]).toMatchObject({ api_key: 'enc:sk-own' });
+
+    // 2. That row now exists; the admin clears the field and saves.
+    mocks.state.existing = {
+      id: 'cfg-1',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: 'enc:sk-own',
+    };
+    const second = await POST(post({ ...BASE_BODY, api_key: null }));
+    expect(second.status).toBe(200);
+    expect(mocks.state.updates).toHaveLength(1);
+    expect(mocks.state.updates[0].api_key).toBeNull();
+
+    // 3. The row the route left behind resolves to the platform key on
+    //    the use path — the trip is really a round one.
+    const stored = { ...mocks.state.existing, ...mocks.state.updates[0] };
+    const config = await loadAiConfig(rowDb(stored), 'acct-1');
+    expect(config).toMatchObject({
+      apiKey: 'sk-platform',
+      keySource: 'platform',
+    });
+  });
+
+  it('refuses to clear the key when there is no platform key to fall back to', async () => {
+    mocks.state.existing = {
+      id: 'cfg-1',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: 'enc:sk-own',
+    };
+    const res = await POST(post({ ...BASE_BODY, api_key: null }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'api_key is required' });
+    expect(mocks.state.updates).toEqual([]);
+  });
+
+  it('an absent api_key still leaves the stored key alone', async () => {
+    mocks.state.existing = {
+      id: 'cfg-1',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: 'enc:sk-own',
+    };
+    const res = await POST(post({ ...BASE_BODY, model: 'gpt-new' }));
+    expect(res.status).toBe(200);
+    expect(mocks.validateAiCredentials.mock.calls[0][0]).toMatchObject({
+      apiKey: 'sk-own',
+      keySource: 'account',
+    });
+    expect(mocks.state.updates[0]).not.toHaveProperty('api_key');
   });
 });
 

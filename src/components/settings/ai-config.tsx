@@ -42,12 +42,19 @@ import {
   handoffMessagePayload,
 } from '@/lib/ai/handoff-message';
 import { overlappingAutomations } from '@/lib/ai/automation-overlap';
+import {
+  secretFieldCleared,
+  secretFieldFocused,
+  secretFieldLoaded,
+  secretFieldPayload,
+  secretFieldTyped,
+  secretFieldWillHaveValue,
+  type SecretFieldState,
+} from '@/lib/ai/secret-field';
 import type { AiProvider, HandoffMode } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
 import { useTranslations } from 'next-intl';
-
-const MASKED_KEY = '••••••••••••••••';
 
 // Radix Select can't use an empty-string item value, so the "no agent
 // chosen yet" placeholder of the fixed-target picker gets a sentinel that
@@ -77,8 +84,12 @@ export function AiConfig() {
   const [configured, setConfigured] = useState(false);
   const [provider, setProvider] = useState<AiProvider>('openai');
   const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
-  const [apiKey, setApiKey] = useState('');
-  const [keyEdited, setKeyEdited] = useState(false);
+  // Both key inputs are write-only fields driven by the state machine in
+  // `@/lib/ai/secret-field`: the component never decides on its own
+  // whether a key is being set, left alone or dropped.
+  const [keyField, setKeyField] = useState<SecretFieldState>(() =>
+    secretFieldLoaded(false)
+  );
   const [showKey, setShowKey] = useState(false);
   const [hasStoredKey, setHasStoredKey] = useState(false);
   // Per provider: does this deployment have a platform-level key
@@ -88,8 +99,9 @@ export function AiConfig() {
   const [platformKeyAvailable, setPlatformKeyAvailable] = useState<
     Record<AiProvider, boolean>
   >({ openai: false, anthropic: false });
-  const [embeddingsKey, setEmbeddingsKey] = useState('');
-  const [embeddingsKeyEdited, setEmbeddingsKeyEdited] = useState(false);
+  const [embeddingsField, setEmbeddingsField] = useState<SecretFieldState>(() =>
+    secretFieldLoaded(false)
+  );
   const [hasStoredEmbeddingsKey, setHasStoredEmbeddingsKey] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [isActive, setIsActive] = useState(false);
@@ -152,11 +164,9 @@ export function AiConfig() {
         setHandoffMessage(data.handoff_message ?? '');
         setHandoffMessageEdited(false);
         setHasStoredKey(Boolean(data.has_key));
-        setApiKey(data.has_key ? MASKED_KEY : '');
-        setKeyEdited(false);
+        setKeyField(secretFieldLoaded(Boolean(data.has_key)));
         setHasStoredEmbeddingsKey(Boolean(data.has_embeddings_key));
-        setEmbeddingsKey(data.has_embeddings_key ? MASKED_KEY : '');
-        setEmbeddingsKeyEdited(false);
+        setEmbeddingsField(secretFieldLoaded(Boolean(data.has_embeddings_key)));
       }
     } catch {
       toast.error(t('loadFailed'));
@@ -192,11 +202,15 @@ export function AiConfig() {
     if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
   };
 
-  const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
+  // undefined = leave the stored key unchanged; null = the operator
+  // asked for the platform key back (supuesto S1); text = set. Never
+  // null just because the field looks empty — see `secret-field.ts`.
+  const keyPayload = () => secretFieldPayload(keyField);
+  const embeddingsKeyPayload = () => secretFieldPayload(embeddingsField);
 
-  // undefined = leave unchanged; '' typed = null (clear); text = set.
-  const embeddingsKeyPayload = () =>
-    embeddingsKeyEdited ? embeddingsKey.trim() || null : undefined;
+  // The 'use the platform key' link only makes sense when there is a
+  // stored key to give up and a platform key to land on.
+  const canUsePlatformKey = hasStoredKey && platformKeyAvailable[provider];
 
   const buildBody = () => ({
     provider,
@@ -246,9 +260,17 @@ export function AiConfig() {
       toast.error(t('missingModel'));
       return;
     }
+    const key = keyPayload();
     // A first save needs a key — unless the platform provides one for the
     // chosen provider, in which case the server falls back to it.
-    if (!configured && !keyEdited && !platformKeyAvailable[provider]) {
+    if (!configured && key === undefined && !platformKeyAvailable[provider]) {
+      toast.error(t('missingApiKey'));
+      return;
+    }
+    // Dropping the stored key is only offered when the platform can take
+    // over, but a provider switch after clicking the link could still
+    // land here — stop before the round trip.
+    if (key === null && !platformKeyAvailable[provider]) {
       toast.error(t('missingApiKey'));
       return;
     }
@@ -285,8 +307,9 @@ export function AiConfig() {
         toast.success(t('removeSuccess'));
         setConfigured(false);
         setHasStoredKey(false);
-        setApiKey('');
-        setKeyEdited(false);
+        setKeyField(secretFieldLoaded(false));
+        setHasStoredEmbeddingsKey(false);
+        setEmbeddingsField(secretFieldLoaded(false));
         setIsActive(false);
         setAutoReplyEnabled(false);
         setSystemPrompt('');
@@ -403,19 +426,20 @@ export function AiConfig() {
                   <Input
                     id="ai-key"
                     type={showKey ? 'text' : 'password'}
-                    value={apiKey}
-                    onChange={(e) => {
-                      setApiKey(e.target.value);
-                      setKeyEdited(true);
-                    }}
-                    onFocus={() => {
-                      if (!keyEdited && hasStoredKey) {
-                        setApiKey('');
-                        setKeyEdited(true);
-                      }
-                    }}
-                    placeholder={KEY_PLACEHOLDER[provider]}
-                    disabled={disabled}
+                    value={keyField.value}
+                    onChange={(e) =>
+                      setKeyField((s) => secretFieldTyped(s, e.target.value))
+                    }
+                    // Only drops the mask so the field can be typed into.
+                    // It is NOT a request to forget the stored key — that
+                    // is the explicit link below.
+                    onFocus={() => setKeyField(secretFieldFocused)}
+                    placeholder={
+                      keyField.clearRequested
+                        ? t('platformKeyPlaceholder')
+                        : KEY_PLACEHOLDER[provider]
+                    }
+                    disabled={disabled || keyField.clearRequested}
                     autoComplete="off"
                   />
                   <button
@@ -444,10 +468,39 @@ export function AiConfig() {
                   {t('testKey')}
                 </Button>
               </div>
-              {platformKeyAvailable[provider] && !hasStoredKey && (
+              {/* Both directions are reachable: leave the field blank on
+                  a first save to ride on the platform key, or ask for it
+                  back later with the link. */}
+              {keyField.clearRequested ? (
                 <p className="text-muted-foreground text-xs">
-                  {t('platformKeyHint')}
+                  {t('platformKeyPending')}{' '}
+                  <button
+                    type="button"
+                    onClick={() => setKeyField(secretFieldLoaded(hasStoredKey))}
+                    disabled={disabled}
+                    className="text-foreground underline underline-offset-2"
+                  >
+                    {t('keepMyKey')}
+                  </button>
                 </p>
+              ) : (
+                platformKeyAvailable[provider] && (
+                  <p className="text-muted-foreground text-xs">
+                    {hasStoredKey
+                      ? t('platformKeyStoredHint')
+                      : t('platformKeyHint')}{' '}
+                    {canUsePlatformKey && (
+                      <button
+                        type="button"
+                        onClick={() => setKeyField(secretFieldCleared())}
+                        disabled={disabled}
+                        className="text-foreground underline underline-offset-2"
+                      >
+                        {t('usePlatformKey')}
+                      </button>
+                    )}
+                  </p>
+                )
               )}
             </div>
 
@@ -461,25 +514,53 @@ export function AiConfig() {
               <Input
                 id="ai-embeddings-key"
                 type="password"
-                value={embeddingsKey}
-                onChange={(e) => {
-                  setEmbeddingsKey(e.target.value);
-                  setEmbeddingsKeyEdited(true);
-                }}
-                onFocus={() => {
-                  if (!embeddingsKeyEdited && hasStoredEmbeddingsKey) {
-                    setEmbeddingsKey('');
-                    setEmbeddingsKeyEdited(true);
-                  }
-                }}
+                value={embeddingsField.value}
+                onChange={(e) =>
+                  setEmbeddingsField((s) => secretFieldTyped(s, e.target.value))
+                }
+                // Same rule as the chat key: focus only unmasks. This
+                // field has no platform fallback, so clearing it turns
+                // semantic search off — it needs an explicit ask too.
+                onFocus={() => setEmbeddingsField(secretFieldFocused)}
                 placeholder="sk-... (OpenAI)"
-                disabled={disabled}
+                disabled={disabled || embeddingsField.clearRequested}
                 autoComplete="off"
               />
               <p className="text-muted-foreground text-xs">
-                {t('embeddingsHint', {
-                  sameKeyText: provider === 'openai' ? t('sameKeyText') : '',
-                })}
+                {embeddingsField.clearRequested ? (
+                  <>
+                    {t('embeddingsKeyPending')}{' '}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEmbeddingsField(
+                          secretFieldLoaded(hasStoredEmbeddingsKey)
+                        )
+                      }
+                      disabled={disabled}
+                      className="text-foreground underline underline-offset-2"
+                    >
+                      {t('keepMyKey')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {t('embeddingsHint', {
+                      sameKeyText:
+                        provider === 'openai' ? t('sameKeyText') : '',
+                    })}{' '}
+                    {hasStoredEmbeddingsKey && (
+                      <button
+                        type="button"
+                        onClick={() => setEmbeddingsField(secretFieldCleared())}
+                        disabled={disabled}
+                        className="text-foreground underline underline-offset-2"
+                      >
+                        {t('removeEmbeddingsKey')}
+                      </button>
+                    )}
+                  </>
+                )}
               </p>
             </div>
           </CardContent>
@@ -634,11 +715,10 @@ export function AiConfig() {
         <AiKnowledgeCard
           accountId={accountId}
           canEdit={canEdit}
-          hasEmbeddingsKey={
-            embeddingsKeyEdited
-              ? embeddingsKey.trim().length > 0
-              : hasStoredEmbeddingsKey
-          }
+          hasEmbeddingsKey={secretFieldWillHaveValue(
+            embeddingsField,
+            hasStoredEmbeddingsKey
+          )}
         />
 
         <div className="flex items-center justify-between">
