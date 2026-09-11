@@ -67,6 +67,11 @@
     "errorBody": "Your account role did not load, so every action is treated as read-only and changes will not save. Check your connection and try again.",
     "retry": "Retry"
   },
+  "Impersonation": {
+    "viewing": "You are viewing {account} as support. Nothing you do here is saved.",
+    "exit": "Exit support session",
+    "exiting": "Exiting…"
+  },
   "Dashboard": {
     "page": {
       "title": "Dashboard",

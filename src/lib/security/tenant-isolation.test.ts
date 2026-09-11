@@ -63,12 +63,26 @@ const h = vi.hoisted(() => ({
   webhookEvents: [] as { accountId: string; event: string }[],
   ingestedDocuments: [] as string[],
   validatedAiKeys: [] as string[],
+  /** Browser cookie jar, for the support-session routes. */
+  cookies: new Map<string, string>(),
 }));
 
 // ---- module mocks --------------------------------------------------
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => h.db.asUser(h.actor),
+}));
+
+// The support-session routes read and write a cookie. A plain in-memory
+// jar is enough: what this suite cares about is which account the queries
+// they run are scoped to, not the Set-Cookie header.
+vi.mock('next/headers', () => ({
+  cookies: async () => ({
+    get: (name: string) =>
+      h.cookies.has(name) ? { name, value: h.cookies.get(name) } : undefined,
+    set: (name: string, value: string) => h.cookies.set(name, value),
+    delete: (name: string) => h.cookies.delete(name),
+  }),
 }));
 
 // Every admin client (the three lib modules and the two routes that
@@ -250,6 +264,9 @@ import * as aiKnowledgeById from '@/app/api/ai/knowledge/[id]/route';
 import * as aiKnowledgeReindex from '@/app/api/ai/knowledge/reindex/route';
 import * as aiPlayground from '@/app/api/ai/playground/route';
 import * as aiTest from '@/app/api/ai/test/route';
+import { getCurrentAccount } from '@/lib/auth/account';
+import * as platformImpersonate from '@/app/api/platform/impersonate/route';
+import * as platformImpersonateStop from '@/app/api/platform/impersonate/stop/route';
 
 // ---- seed ------------------------------------------------------------
 
@@ -524,6 +541,10 @@ function seed(): FakeDatabase {
       message_templates: both('template'),
       tags: [],
       contact_tags: [],
+      // Migration 055. Seeded empty: nobody operates the platform until a
+      // row is put here by hand, and the tests that need one add it.
+      platform_admins: [],
+      impersonation_log: [],
     },
     {
       // Migration 037: one transaction for the broadcast + recipients.
@@ -781,6 +802,18 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
     by: ['id'],
     reason: 'Claims / marks the queued row the sweep just read.',
   },
+  {
+    table: 'platform_admins',
+    op: 'select',
+    by: ['user_id'],
+    reason:
+      'The platform operator is not a tenant: `platform_admins` has no ' +
+      'account_id and an account filter on it would be meaningless. The ' +
+      "lookup is keyed by the CALLER'S OWN authenticated uid, which never " +
+      'comes from the request body (src/lib/auth/platform-admins.ts), and ' +
+      'the table is readable from the client only by platform admins ' +
+      'themselves (migration 055).',
+  },
 ];
 
 // No waiver for `automations`: the two that used to live here rested on
@@ -812,6 +845,7 @@ beforeEach(() => {
   h.webhookEvents = [];
   h.ingestedDocuments = [];
   h.validatedAiKeys = [];
+  h.cookies = new Map();
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://fake.supabase.co');
   vi.stubEnv('AUTOMATION_CRON_SECRET', 'cron-secret');
   vi.stubEnv('META_APP_ID', 'app-1');
@@ -1938,5 +1972,184 @@ describe('/api/whatsapp/templates (service role in the header-handle path)', () 
     expect(body.template.header_handle).toBe('HANDLE-1');
     expectNoBIds(body);
     expectBUnchanged(before);
+  });
+});
+
+// ============================================================
+// /api/platform — the operator's prefix and its support sessions.
+//
+// The actor here is USER_A, owner of account A. That is the shape the
+// spec's criterion cares about: owning a company must buy you nothing at
+// the platform level, and once an operator IS impersonating another
+// company, nothing they do may land on account A by accident.
+//
+// The impersonated account is a third one, seeded here with a real uuid:
+// `/api/platform/impersonate` validates `account_id` as a UUID before it
+// goes near the database (a non-uuid against a `uuid` column is a cast
+// error, not an empty result), and the suite's A/B fixtures predate that.
+// ============================================================
+
+const REASON = 'ticket 4321: the customer cannot see their broadcasts';
+const TARGET = '33333333-3333-4333-8333-333333333333';
+const USER_TARGET = '44444444-4444-4444-8444-444444444444';
+
+function makePlatformAdmin(userId: string): void {
+  h.db.rows('platform_admins').push({
+    user_id: userId,
+    granted_by: userId,
+    granted_at: PAST,
+    note: 'test',
+  });
+}
+
+/** A third company for the operator to look at. */
+function seedTargetAccount(): void {
+  h.db.rows('accounts').push({
+    id: TARGET,
+    name: 'Company T',
+    owner_user_id: USER_TARGET,
+  });
+  h.db.rows('profiles').push({
+    id: 'profile-t',
+    user_id: USER_TARGET,
+    account_id: TARGET,
+    account_role: 'owner',
+    full_name: 'Owner T',
+  });
+}
+
+describe('/api/platform (support sessions, service role)', () => {
+  it('403s the owner of account A, who is not in platform_admins', async () => {
+    // Nothing about account B — not its name, not its id — comes back,
+    // and no bitácora row appears.
+    const before = h.db.snapshot(B);
+
+    const res = await platformImpersonate.POST(
+      req('POST', '/api/platform/impersonate', {
+        account_id: B,
+        reason: REASON,
+      })
+    );
+
+    expect(res.status).toBe(403);
+    expectNoBIds(await res.json());
+    expect(h.db.rows('impersonation_log')).toEqual([]);
+    expectBUnchanged(before);
+  });
+
+  it('403s on GET and on stop as well — the whole prefix is closed', async () => {
+    expect((await platformImpersonate.GET()).status).toBe(403);
+    expect((await platformImpersonateStop.POST()).status).toBe(403);
+  });
+
+  it("records the session under the impersonated account, never the actor's own", async () => {
+    makePlatformAdmin(USER_A);
+    seedTargetAccount();
+
+    const res = await platformImpersonate.POST(
+      req('POST', '/api/platform/impersonate', {
+        account_id: TARGET,
+        reason: REASON,
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const rows = h.db.rows('impersonation_log');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actor_user_id: USER_A,
+      account_id: TARGET,
+      reason: REASON,
+    });
+    // If the route had written the row under the actor's own account, the
+    // audit would point at the wrong company for the rest of time.
+    expect(rows[0].account_id).not.toBe(A);
+  });
+
+  it('moves nothing of either seeded company while opening and closing a session', async () => {
+    makePlatformAdmin(USER_A);
+    seedTargetAccount();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    await platformImpersonate.POST(
+      req('POST', '/api/platform/impersonate', {
+        account_id: TARGET,
+        reason: REASON,
+      })
+    );
+    await platformImpersonateStop.POST();
+
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expect(h.db.snapshot(B)).toEqual(beforeB);
+    expect(h.db.rows('impersonation_log')[0].ended_reason).toBe('manual');
+  });
+
+  it('404s an account that does not exist, without opening a session', async () => {
+    makePlatformAdmin(USER_A);
+    const res = await platformImpersonate.POST(
+      req('POST', '/api/platform/impersonate', {
+        account_id: 'dddddddd-0000-4000-8000-00000000dead',
+        reason: REASON,
+      })
+    );
+    expect(res.status).toBe(404);
+    expect(h.db.rows('impersonation_log')).toEqual([]);
+  });
+
+  it('resolves the account context to the impersonated company, read-only', async () => {
+    makePlatformAdmin(USER_A);
+    seedTargetAccount();
+    const beforeA = h.db.snapshot(A);
+
+    await platformImpersonate.POST(
+      req('POST', '/api/platform/impersonate', {
+        account_id: TARGET,
+        reason: REASON,
+      })
+    );
+
+    // Every route in the app resolves its account through this. During a
+    // support session it names the company being looked at — and hands
+    // out `viewer`, whatever the operator is in their own company (owner).
+    const ctx = await getCurrentAccount();
+    expect(ctx.accountId).toBe(TARGET);
+    expect(ctx.account.name).toBe('Company T');
+    expect(ctx.role).toBe('viewer');
+    expect(ctx.impersonation?.accountId).toBe(TARGET);
+
+    // So a route that asks for a write-level role refuses…
+    const write = await quickReplies.POST(
+      req('POST', '/api/quick-replies', {
+        title: 'from a support session',
+        content_text: 'should never be stored',
+      })
+    );
+    expect(write.status).toBe(403);
+
+    // …and in particular it did not write into the operator's OWN company,
+    // which is the failure mode that makes impersonation dangerous.
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expect(
+      h.db.rows('quick_replies').filter((r) => r.account_id === TARGET)
+    ).toEqual([]);
+  });
+
+  it('reports the open session, and reports none once it is stopped', async () => {
+    makePlatformAdmin(USER_A);
+    seedTargetAccount();
+    await platformImpersonate.POST(
+      req('POST', '/api/platform/impersonate', {
+        account_id: TARGET,
+        reason: REASON,
+      })
+    );
+
+    const open = await (await platformImpersonate.GET()).json();
+    expect(open.session).toMatchObject({ account_id: TARGET });
+
+    await platformImpersonateStop.POST();
+    const closed = await (await platformImpersonate.GET()).json();
+    expect(closed.session).toBeNull();
   });
 });

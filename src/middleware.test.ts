@@ -111,3 +111,112 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 });
+
+// ============================================================
+// A support session is read-only, everywhere.
+//
+// The effective `viewer` role from `getCurrentAccount()` already stops
+// every route that asks `requireRole('agent')` or above. This block is the
+// layer under it: a route that never consults the role and writes through
+// the operator's OWN session client would land the change in the
+// operator's company while they believe they are looking at a customer's.
+// Refusing the request outright is the only version that does not depend
+// on every present and future route remembering.
+// ============================================================
+
+describe("middleware — support sessions cannot write", () => {
+  const SUPPORT = "wacrm_support_session";
+
+  function request(
+    url: string,
+    {
+      method = "POST",
+      support = true,
+    }: { method?: string; support?: boolean } = {},
+  ) {
+    return new NextRequest(url, {
+      method,
+      headers: support ? { cookie: `${SUPPORT}=signed.token` } : undefined,
+    });
+  }
+
+  beforeEach(() => {
+    mockUser = { id: "operator-1" };
+  });
+
+  it("refuses a mutating API request while the support cookie is present", async () => {
+    const res = await middleware(request("https://app.test/api/quick-replies"));
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("read-only"),
+    });
+  });
+
+  it.each(["POST", "PUT", "PATCH", "DELETE"])(
+    "refuses %s, not just POST",
+    async (method) => {
+      const res = await middleware(
+        request("https://app.test/api/contacts/abc", { method }),
+      );
+      expect(res.status).toBe(403);
+    },
+  );
+
+  it("refuses a mutating page request too, not only /api", async () => {
+    // Server actions POST to the page route; they must not slip through.
+    const res = await middleware(request("https://app.test/contacts"));
+    expect(res.status).toBe(403);
+  });
+
+  it("leaves reads alone — looking is the entire point of a support session", async () => {
+    const res = await middleware(
+      request("https://app.test/api/quick-replies", { method: "GET" }),
+    );
+    expect(res.status).not.toBe(403);
+  });
+
+  it("leaves ordinary users alone when no support cookie is present", async () => {
+    const res = await middleware(
+      request("https://app.test/api/quick-replies", { support: false }),
+    );
+    expect(res.status).not.toBe(403);
+  });
+
+  it("NEVER blocks the WhatsApp webhook", async () => {
+    // Nothing about billing, suspension or support may stop an inbound
+    // message from being stored. Meta sends no browser cookie, so this is
+    // unreachable in practice — asserted anyway so a refactor cannot make
+    // it reachable by accident.
+    const res = await middleware(
+      request("https://app.test/api/whatsapp/webhook"),
+    );
+    expect(res.status).not.toBe(403);
+  });
+
+  it("does not block the public API or the cron sweeps", async () => {
+    for (const path of [
+      "/api/v1/messages",
+      "/api/automations/cron",
+      "/api/flows/cron",
+    ]) {
+      const res = await middleware(request(`https://app.test${path}`));
+      expect(res.status, path).not.toBe(403);
+    }
+  });
+
+  it("does not block the operator's own way out", async () => {
+    // Blocking /api/platform would trap an operator inside the session
+    // they are trying to leave.
+    const res = await middleware(
+      request("https://app.test/api/platform/impersonate/stop"),
+    );
+    expect(res.status).not.toBe(403);
+  });
+
+  it("still carries the rotated auth cookies on the 403", async () => {
+    refreshedCookies = [ROTATED];
+    const res = await middleware(request("https://app.test/api/quick-replies"));
+    expect(res.status).toBe(403);
+    expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+  });
+});

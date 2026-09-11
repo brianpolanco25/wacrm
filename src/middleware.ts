@@ -1,6 +1,58 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+import { SUPPORT_COOKIE } from '@/lib/auth/support-cookie'
+
+// Methods that change something. A support session is allowed none of
+// them (see `supportSessionBlocks` below).
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+// Paths a support session must never interfere with, even though the
+// cookie is on the request.
+//
+//   /api/platform/           the operator's own prefix — the exit button
+//                            lives here, so blocking it would trap them.
+//   /api/whatsapp/webhook    Non-negotiable: NOTHING about billing,
+//                            suspension or support may stop an inbound
+//                            message from being stored. Meta's request
+//                            carries no browser cookie, so this branch is
+//                            unreachable in practice; it is spelled out
+//                            anyway so a future refactor cannot make it
+//                            reachable by accident.
+//   /api/v1/                 public API, authenticated by API key. Same
+//                            reasoning: no cookies, stated explicitly.
+//   /api/automations/cron,
+//   /api/flows/cron          scheduled sweeps behind a shared secret.
+const SUPPORT_SESSION_EXEMPT = [
+  '/api/platform/',
+  '/api/whatsapp/webhook',
+  '/api/v1/',
+  '/api/automations/cron',
+  '/api/flows/cron',
+]
+
+/**
+ * True when this request must be refused because a support session is
+ * open. Defence in depth on top of the effective `viewer` role that
+ * `getCurrentAccount()` hands out during impersonation: that role stops
+ * every route which asks `requireRole('agent')` or above, but a route
+ * that talks to Supabase through the operator's own session client
+ * without consulting the role at all would write to the OPERATOR'S
+ * account while they believe they are looking at a customer's. Refusing
+ * the whole request is the only version of this that does not depend on
+ * every present and future route remembering.
+ *
+ * Presence of the cookie is enough — its signature is not checked here.
+ * Verifying it would need `node:crypto` in the Edge bundle, and the worst
+ * a forged cookie achieves is making its own holder read-only.
+ */
+function supportSessionBlocks(request: NextRequest): boolean {
+  if (!request.cookies.has(SUPPORT_COOKIE)) return false
+  if (!MUTATING_METHODS.has(request.method)) return false
+  const path = request.nextUrl.pathname
+  return !SUPPORT_SESSION_EXEMPT.some((prefix) => path.startsWith(prefix))
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
@@ -75,6 +127,16 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return withRefreshedCookies(NextResponse.redirect(url))
+  }
+
+  // A support session is read-only, everywhere. See supportSessionBlocks().
+  if (supportSessionBlocks(request)) {
+    return withRefreshedCookies(
+      NextResponse.json(
+        { error: 'A support session is read-only; exit it before making changes' },
+        { status: 403 }
+      )
+    )
   }
 
   // API routes that need auth (not webhooks)

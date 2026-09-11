@@ -141,6 +141,24 @@ behaviour changes**; nothing is limited by plan yet.
 > confirmed outbound attachments still arrive — see
 > `docs/security.md`, "Private attachments".
 
+- **Platform operator and audited support sessions.** A new
+  `platform_admins` table names the people who operate the service, apart
+  from — and never mixed with — the `owner`/`admin`/`agent`/`viewer` roles
+  inside a company. They get their own routes under `/api/platform/*`,
+  closed with 403 to everybody else including company owners, and can open
+  a **support session** on a customer account with a written reason. While
+  one is open, a permanent banner names the account being viewed and offers
+  the way out, the whole application turns read-only, and the start and the
+  end of the session are recorded with actor, account, moment and reason.
+  Sessions expire on their own after 30 minutes. Nothing is seeded: the
+  first operator is added with SQL against the database.
+
+> **Migration required:** `supabase/migrations/055_platform_admins.sql`
+> adds `platform_admins` and `impersonation_log`, both readable only by
+> platform administrators and writable from no client at all. The audit
+> table deliberately carries no foreign keys, so the trail survives
+> deleting the account or the user it is about.
+
 ### Fixed
 
 - **One automation no longer silences the AI assistant everywhere.** A

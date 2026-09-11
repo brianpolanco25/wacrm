@@ -29,6 +29,8 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "./admin-client";
+import { resolveSupportSession, type SupportSession } from "./impersonation";
 import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
 
 // ------------------------------------------------------------
@@ -89,7 +91,28 @@ export interface AccountContext {
   role: AccountRole;
   /** Lightweight account meta — id + name. */
   account: { id: string; name: string };
+  /**
+   * Set only while a validated support session is in force: `accountId`,
+   * `account` and `role` above then describe the IMPERSONATED account,
+   * not the caller's own. Null on every ordinary request.
+   *
+   * Routes that need to know whose data they are touching should read
+   * `accountId` as always — that is the point of resolving it here. This
+   * field is for the ones that need to say so out loud (the banner) or
+   * refuse outright.
+   */
+  impersonation: SupportSession | null;
 }
+
+/**
+ * Effective role inside a support session. Read-only, deliberately: the
+ * operator is there to see what the customer sees. Acting as the customer
+ * is a separate feature that needs its own conversation about consent,
+ * and a `viewer` context plus the middleware write-block means that
+ * decision cannot be made by accident. Every `requireRole('agent' |
+ * 'admin' | 'owner')` in the app therefore 403s during impersonation.
+ */
+const IMPERSONATED_ROLE: AccountRole = "viewer";
 
 /**
  * Resolve the caller's user + account + role in one round trip.
@@ -112,6 +135,18 @@ export async function getCurrentAccount(): Promise<AccountContext> {
   } = await supabase.auth.getUser();
   if (userErr || !user) {
     throw new UnauthorizedError();
+  }
+
+  // Before anything else: is this request inside a support session? It is
+  // resolved first on purpose, so the support view does not depend on the
+  // operator's OWN profile being healthy — the operator may have no
+  // company of their own worth speaking of, and a broken personal profile
+  // must not be what stops them from looking at a customer's problem.
+  // `resolveSupportSession` returns null unless the cookie verifies, has
+  // not expired, names THIS user, and that user is still a platform admin.
+  const support = await resolveSupportSession(user.id);
+  if (support) {
+    return impersonatedContext(supabase, user.id, support);
   }
 
   const { data, error } = await supabase
@@ -169,6 +204,57 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     accountId: data.account_id,
     role: data.account_role,
     account: { id: account.id, name: account.name },
+    impersonation: null,
+  };
+}
+
+/**
+ * The account context of a validated support session.
+ *
+ * The impersonated account is read with the SERVICE ROLE, filtered by its
+ * primary key — which on `accounts` IS the account scope. It has to be:
+ * the operator's own RLS cannot see a company they do not belong to, and
+ * the whole point is that they are looking at one they do not belong to.
+ * The id comes from the signed cookie, never from the request.
+ *
+ * `supabase` stays the OPERATOR'S OWN session client, not a service-role
+ * one. Handing arbitrary application routes a client that bypasses RLS
+ * because a cookie is present would be a far larger hole than the one
+ * this feature opens. The consequence is deliberate and documented: a
+ * route that reads through `ctx.supabase` sees the operator's own
+ * (empty-of-customer-data) view, while routes that read through the
+ * service role scoped by `ctx.accountId` — the pattern this repo already
+ * enforces everywhere — see the impersonated account. The customer-facing
+ * support view is built on the latter.
+ */
+async function impersonatedContext(
+  supabase: SupabaseClient,
+  actorUserId: string,
+  support: SupportSession,
+): Promise<AccountContext> {
+  const { data: account, error } = await supabaseAdmin()
+    .from("accounts")
+    .select("id, name")
+    .eq("id", support.accountId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[getCurrentAccount] impersonated account fetch:", error);
+    throw new ForbiddenError("Could not load the impersonated account");
+  }
+  if (!account) {
+    // The account was deleted while the session was open. The bitácora
+    // survives it (migration 055 keeps no FK); the session does not.
+    throw new ForbiddenError("The impersonated account no longer exists");
+  }
+
+  return {
+    supabase,
+    userId: actorUserId,
+    accountId: support.accountId,
+    role: IMPERSONATED_ROLE,
+    account: { id: account.id as string, name: account.name as string },
+    impersonation: support,
   };
 }
 
@@ -182,6 +268,14 @@ export async function getCurrentAccount(): Promise<AccountContext> {
 export async function requireRole(min: AccountRole): Promise<AccountContext> {
   const ctx = await getCurrentAccount();
   if (!hasMinRole(ctx.role, min)) {
+    if (ctx.impersonation) {
+      // Say WHY rather than "insufficient role": the operator's real role
+      // has nothing to do with it, and "you are a viewer" would be a
+      // baffling thing to read when you are the owner of the platform.
+      throw new ForbiddenError(
+        "A support session is read-only; exit it before making changes",
+      );
+    }
     throw new ForbiddenError(
       `This action requires the '${min}' role or higher`,
     );

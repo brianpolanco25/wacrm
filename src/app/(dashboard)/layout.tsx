@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DashboardShell } from "./dashboard-shell";
+import { supportBanner } from "@/lib/auth/support-view";
 
 // Server layout whose only job is to declare "do not index" metadata
 // for the authed app. robots.ts already disallows these paths at the
@@ -19,10 +20,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function DashboardLayout({
+// Async because it resolves the support session server-side (see
+// `supportBanner`): the impersonation notice has to render for the
+// operator on every page, and reading it here costs nothing on the normal
+// path — no support cookie, no queries.
+export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <DashboardShell>{children}</DashboardShell>;
+  const support = await supportBanner();
+  return <DashboardShell support={support}>{children}</DashboardShell>;
 }

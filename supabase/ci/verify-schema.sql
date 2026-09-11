@@ -295,6 +295,101 @@ BEGIN
     RAISE EXCEPTION 'a public media read policy survived migration 044';
   END IF;
 
+  -- Migration 055: operador de la plataforma e impersonación auditada.
+  IF to_regclass('public.platform_admins') IS NULL THEN
+    RAISE EXCEPTION 'public.platform_admins is missing (migration 055)';
+  END IF;
+  IF to_regclass('public.impersonation_log') IS NULL THEN
+    RAISE EXCEPTION 'public.impersonation_log is missing (migration 055)';
+  END IF;
+
+  -- El operador vive FUERA del enum de roles de cuenta. Si alguien lo
+  -- añadiera ahí, `owner` y «administro todas las empresas» volverían a
+  -- ser el mismo permiso, que es justo lo que el spec prohíbe.
+  IF EXISTS (
+    SELECT 1 FROM pg_enum e
+    JOIN pg_type t ON t.oid = e.enumtypid
+    WHERE t.typname = 'account_role_enum'
+      AND e.enumlabel NOT IN ('owner', 'admin', 'agent', 'viewer')
+  ) THEN
+    RAISE EXCEPTION
+      'account_role_enum grew a value beyond owner/admin/agent/viewer — the platform operator must not live in it (migration 055)';
+  END IF;
+
+  -- La función de pertenencia: existe, es STABLE y es SECURITY DEFINER.
+  -- Sin DEFINER la política de platform_admins sería recursiva y la tabla
+  -- quedaría ilegible; sin la función, las políticas de abajo no existen.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'is_platform_admin'
+      AND p.prosecdef AND p.provolatile = 's'
+  ) THEN
+    RAISE EXCEPTION
+      'is_platform_admin() is missing, not SECURITY DEFINER, or not STABLE (migration 055)';
+  END IF;
+
+  -- RLS activada en ambas tablas.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname IN ('platform_admins', 'impersonation_log')
+      AND c.relrowsecurity
+    HAVING count(*) = 2
+  ) THEN
+    RAISE EXCEPTION
+      'RLS is not enabled on both platform_admins and impersonation_log (migration 055)';
+  END IF;
+
+  -- Lectura solo para administradores de plataforma…
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'platform_admins'
+      AND policyname = 'platform_admins_select' AND cmd = 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'the platform_admins read policy is missing (migration 055)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'impersonation_log'
+      AND policyname = 'impersonation_log_select' AND cmd = 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'the impersonation_log read policy is missing (migration 055)';
+  END IF;
+
+  -- …y escritura para nadie desde el cliente. Una política de escritura
+  -- en platform_admins es una escalada a todas las cuentas del servicio;
+  -- una en impersonation_log permite falsificar la bitácora.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN ('platform_admins', 'impersonation_log')
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'platform_admins/impersonation_log must have no write policies (migration 055)';
+  END IF;
+
+  -- La bitácora no cuelga de accounts ni de auth.users: tiene que
+  -- sobrevivir al borrado de la cuenta auditada (ver cabecera de 055).
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.impersonation_log'::regclass AND contype = 'f'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log grew a foreign key — the audit trail must survive deleting the account (migration 055)';
+  END IF;
+
+  -- Motivo obligatorio y no trivial, comprobado en la base y no solo en
+  -- la ruta: una bitácora con motivos vacíos no audita nada.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.impersonation_log'::regclass
+      AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%reason%'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log.reason has no minimum-length CHECK (migration 055)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
