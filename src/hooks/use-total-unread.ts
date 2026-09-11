@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import type { Conversation } from "@/types";
 
 /**
@@ -14,21 +15,28 @@ import type { Conversation } from "@/types";
  */
 export function useTotalUnread(): number {
   const [total, setTotal] = useState(0);
+  // The account this browser is showing — the customer's during a
+  // support session (see `useAuth`).
+  const { accountId } = useAuth();
 
   // Keep a live local mirror of {id: unread_count} so INSERT/UPDATE/DELETE
   // events can adjust the total in O(1) without refetching.
   const countsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     let cancelled = false;
 
-    // Initial load. RLS scopes this to the signed-in user automatically —
-    // no explicit user_id filter needed here.
+    // Initial load, filtered by account. RLS used to be that filter, but
+    // migration 057 lets a platform operator with an open support session
+    // read the impersonated account too — unfiltered, this counted BOTH
+    // companies' unread conversations into one badge.
     (async () => {
       const { data, error } = await supabase
         .from("conversations")
-        .select("id, unread_count");
+        .select("id, unread_count")
+        .eq("account_id", accountId);
       if (cancelled || error || !data) return;
 
       const map = new Map<string, number>();
@@ -68,7 +76,7 @@ export function useTotalUnread(): number {
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [accountId]);
 
   return total;
 }

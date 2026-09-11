@@ -45,6 +45,7 @@ vi.mock('./support-session-store', () => ({
 
 const {
   MIN_REASON_LENGTH,
+  SUPPORT_ACTIVE_COOKIE,
   SUPPORT_COOKIE,
   SUPPORT_SESSION_TTL_MS,
   clearSupportCookie,
@@ -164,12 +165,20 @@ describe('signSupportSession / verifySupportSession', () => {
 
 describe('cookie plumbing', () => {
   it('writes the token under the support cookie and clears it again', async () => {
-    await setSupportCookie('token-value', Date.now() + SUPPORT_SESSION_TTL_MS);
+    await setSupportCookie(
+      'token-value',
+      Date.now() + SUPPORT_SESSION_TTL_MS,
+      TARGET
+    );
     expect(h.cookies.get(SUPPORT_COOKIE)).toBe('token-value');
     expect(await readSupportCookie()).toBe('token-value');
+    // The companion flag carries the account the browser is showing —
+    // what every list in the panel filters by (`useAuth`).
+    expect(h.cookies.get(SUPPORT_ACTIVE_COOKIE)).toBe(TARGET);
 
     await clearSupportCookie();
     expect(h.cookies.has(SUPPORT_COOKIE)).toBe(false);
+    expect(h.cookies.has(SUPPORT_ACTIVE_COOKIE)).toBe(false);
     expect(await readSupportCookie()).toBeNull();
   });
 

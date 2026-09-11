@@ -206,13 +206,19 @@ export async function readSupportCookie(): Promise<string | null> {
  * Server Function.
  *
  * The signed one is `httpOnly` and carries the session. The companion flag
- * is readable by JavaScript on purpose and carries nothing: it is how the
- * browser bundle learns to refuse writes (see `SUPPORT_ACTIVE_COOKIE`).
+ * is readable by JavaScript on purpose and carries the impersonated
+ * `account_id`: it is how the browser bundle learns to refuse writes and
+ * which account every list must filter by (see `SUPPORT_ACTIVE_COOKIE`).
  * They are written and dropped together, here, so the two can never drift.
+ *
+ * The flag grants nothing the signed cookie does not already grant — it is
+ * a uuid the holder could rewrite, and rewriting it only narrows their own
+ * queries.
  */
 export async function setSupportCookie(
   token: string,
-  expiresAt: number
+  expiresAt: number,
+  accountId: string
 ): Promise<void> {
   const store = await cookies();
   // Seconds, and never negative: a clock skew that makes the session
@@ -226,7 +232,7 @@ export async function setSupportCookie(
     path: '/',
     maxAge,
   });
-  store.set(SUPPORT_ACTIVE_COOKIE, '1', {
+  store.set(SUPPORT_ACTIVE_COOKIE, accountId, {
     httpOnly: false,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',

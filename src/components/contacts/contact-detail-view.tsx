@@ -117,11 +117,21 @@ export function ContactDetailView({
     setLoading(false);
   }, [contactId, supabase]);
 
+  // The tag and custom-field catalogues are account-wide, so they carry
+  // `account_id` explicitly: since migration 057 a platform operator with
+  // an open support session also passes those SELECT policies for the
+  // account being supported, and an unfiltered catalogue would offer two
+  // companies' tags on one contact. Everything keyed by `contactId`
+  // inherits the account from the contact itself.
   const fetchTags = useCallback(async () => {
-    if (!contactId) return;
+    if (!contactId || !accountId) return;
 
     const [tagsRes, contactTagsRes] = await Promise.all([
-      supabase.from('tags').select('*').order('name'),
+      supabase
+        .from('tags')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('name'),
       supabase.from('contact_tags').select('tag_id').eq('contact_id', contactId),
     ]);
 
@@ -129,7 +139,7 @@ export function ContactDetailView({
     if (contactTagsRes.data) {
       setContactTagIds(contactTagsRes.data.map((ct) => ct.tag_id));
     }
-  }, [contactId, supabase]);
+  }, [contactId, accountId, supabase]);
 
   const fetchNotes = useCallback(async () => {
     if (!contactId) return;
@@ -146,11 +156,15 @@ export function ContactDetailView({
   }, [contactId, supabase]);
 
   const fetchCustomFields = useCallback(async () => {
-    if (!contactId) return;
+    if (!contactId || !accountId) return;
     setLoadingCustom(true);
 
     const [fieldsRes, valuesRes] = await Promise.all([
-      supabase.from('custom_fields').select('*').order('field_name'),
+      supabase
+        .from('custom_fields')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('field_name'),
       supabase
         .from('contact_custom_values')
         .select('*')
@@ -166,7 +180,7 @@ export function ContactDetailView({
       setCustomValues(map);
     }
     setLoadingCustom(false);
-  }, [contactId, supabase]);
+  }, [contactId, accountId, supabase]);
 
   const fetchDeals = useCallback(async () => {
     if (!contactId) return;

@@ -31,12 +31,21 @@
 --   navegador no puede saltársela. `verify-schema.sql` lo afirma: si
 --   alguien mete el predicado nuevo en una política de escritura, CI falla.
 --
---   Tampoco se tocan las dos políticas de `storage.objects` (044): los
---   adjuntos se sirven con URLs firmadas que genera el servidor con el rol
---   de servicio, ya acotadas por cuenta, así que la lectura directa del
---   bucket no es la vía por la que el panel pinta media. Dejarlas fuera
---   mantiene esta migración dentro de `public` y evita tocar políticas de
---   un esquema que administra el propio Supabase.
+--   Tampoco se tocan las dos políticas de `storage.objects` (044), y hay
+--   que decir con precisión lo que eso cuesta: la URL firmada de cada
+--   adjunto la pide EL NAVEGADOR con el JWT del propio usuario
+--   (`src/lib/media/signed-url.ts`), no el servidor con el rol de
+--   servicio, precisamente para que la política del bucket sea quien
+--   decida. Como esa política no se amplía aquí, durante una sesión de
+--   soporte `createSignedUrl` sobre un objeto de la cuenta impersonada
+--   falla y el operador NO VE NINGÚN ADJUNTO del cliente — ni el media
+--   legado de rutas `<uid>/…` ni el actual bajo la cuenta. Se deja fuera
+--   a propósito: ampliar `storage` es una decisión aparte (esquema que
+--   administra el propio Supabase, y el alcance de un bucket no se
+--   revisa con los mismos ojos que una tabla), y una vista sin adjuntos
+--   es honesta, mientras que un adjunto servido por error no se
+--   devuelve. Queda anotado como deuda en
+--   `progress/impl_impersonation-audit.md`.
 --
 -- Sobre el alcance de lectura: `can_read_account` ignora `min_role` para la
 --   rama de soporte. Es deliberado. Tres políticas de SELECT piden `admin`

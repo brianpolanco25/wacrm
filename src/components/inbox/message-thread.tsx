@@ -168,7 +168,7 @@ export function MessageThread({
   const tTimer = useTranslations("Inbox.sessionTimer");
   const tQuote = useTranslations("Inbox.replyQuote");
 
-  const { user } = useAuth();
+  const { user, accountId } = useAuth();
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -208,15 +208,20 @@ export function MessageThread({
     messageId: string;
   } | null>(null);
 
-  // Profiles are bounded by RLS to rows the current user is allowed to
-  // see — today that's just the current user, but the dropdown keeps the
-  // shape ready for shared-team workspaces without a refactor.
+  // Teammates who can be assigned a conversation. Filtered by the
+  // account being shown rather than left to RLS: since migration 057 a
+  // platform operator with an open support session also passes the
+  // profiles policy for the impersonated account, so an unfiltered read
+  // would offer the operator's own colleagues as assignees for the
+  // customer's conversations.
   useEffect(() => {
+    if (!accountId) return;
     let cancelled = false;
     const supabase = createClient();
     supabase
       .from("profiles")
       .select("*")
+      .eq("account_id", accountId)
       .order("full_name")
       .then(({ data, error }) => {
         if (cancelled) return;
@@ -229,7 +234,7 @@ export function MessageThread({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {

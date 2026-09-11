@@ -148,10 +148,14 @@ behaviour changes**; nothing is limited by plan yet.
   closed with 403 to everybody else including company owners, and can open
   a **support session** on a customer account with a written reason. While
   one is open, a permanent banner names the account being viewed and offers
-  the way out, the operator sees that customer's data **and can change
-  none of it** — reads are granted by row-level security, writes are not,
-  and every save the operator attempts anywhere in the app is refused, on
-  the customer's account and on their own. The start and the end of the
+  the way out, and every list in the panel — contacts, inbox, pipelines,
+  broadcasts, settings — shows **that customer's** rows and only theirs,
+  never the operator's own and never the two mixed. The operator can
+  change none of it: reads are granted by row-level security, writes are
+  not, and every save attempted anywhere in the app is refused, on the
+  customer's account and on their own, including uploads. Attachments are
+  the one thing a support session cannot see — the storage policies were
+  deliberately left alone. The start and the end of the
   session are recorded with actor, account, moment and reason. Sessions
   last 30 minutes, expire on their own, and pressing "exit" ends one for
   good: the token cannot be reused afterwards. Nothing is seeded: the

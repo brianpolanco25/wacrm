@@ -1,7 +1,10 @@
 import { createBrowserClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { SUPPORT_ACTIVE_COOKIE } from '@/lib/auth/support-cookie'
+import {
+  supportFlagAccountId,
+  supportFlagValue,
+} from '@/lib/auth/support-cookie'
 
 // Singleton instance — one client shared across the whole browser session.
 // Creating multiple clients causes auth-lock contention ("Lock was released
@@ -43,6 +46,32 @@ const BLOCKED_OPS = new Set([
   'delete',
 ])
 
+/**
+ * Storage operations that only READ, and therefore stay open during a
+ * support session.
+ *
+ * `createSignedUrl(s)` has to be here: it is how this panel resolves every
+ * attachment (`src/lib/media/signed-url.ts`), and blocking it would take
+ * away the one thing an operator opened the session to look at.
+ * `getPublicUrl` builds a string locally and touches nothing.
+ *
+ * Everything else on a bucket — `upload`, `remove`, `move`, `copy`,
+ * `createSignedUploadUrl`, … — is a write. They were slipping through:
+ * `profile-form.tsx` uploads the avatar BEFORE updating `profiles`, so a
+ * support session used to write the object for real and only then get the
+ * row update refused, leaving an orphan in the bucket and a half-saved
+ * form under a banner promising nothing was being saved.
+ */
+const STORAGE_READS = new Set([
+  'createSignedUrl',
+  'createSignedUrls',
+  'getPublicUrl',
+  'download',
+  'list',
+  'exists',
+  'info',
+])
+
 export const SUPPORT_READ_ONLY_ERROR = {
   message: 'A support session is read-only; exit it before making changes',
   code: 'support_session_read_only',
@@ -53,9 +82,21 @@ export const SUPPORT_READ_ONLY_ERROR = {
 /** True when the server has flagged this browser as inside a support session. */
 export function supportSessionActive(): boolean {
   if (typeof document === 'undefined') return false
-  return document.cookie
-    .split(';')
-    .some((c) => c.trim().startsWith(`${SUPPORT_ACTIVE_COOKIE}=`))
+  return supportFlagValue(document.cookie) !== null
+}
+
+/**
+ * The account this browser is supporting, or `null` when there is no
+ * session (or the flag is there but does not name a uuid).
+ *
+ * Callers that need to tell those two cases apart ask
+ * `supportSessionActive()` as well — see `useEffectiveAccountId` in
+ * `@/hooks/use-auth`, which fails closed rather than falling back to the
+ * operator's own account.
+ */
+export function supportSessionAccountId(): string | null {
+  if (typeof document === 'undefined') return null
+  return supportFlagAccountId(document.cookie)
 }
 
 /**
@@ -116,8 +157,9 @@ function refusedQuery(): unknown {
  * Wrap a browser client so that, while a support session is open, nothing
  * it does can write.
  *
- * `from()` returns a builder whose mutating methods refuse; `rpc()` refuses
- * outright. RPCs are blocked wholesale rather than by name because they are
+ * `from()` returns a builder whose mutating methods refuse; `storage`
+ * allows only the read operations (`createSignedUrl`, `download`, …); and
+ * `rpc()` refuses outright. RPCs are blocked wholesale rather than by name because they are
  * `SECURITY DEFINER` almost without exception in this schema — a "read-only"
  * one would answer for the operator's own account anyway, which is the
  * mislabelled view all over again.
@@ -149,6 +191,40 @@ export function guardReadOnly<T extends SupabaseClient>(client: T): T {
           }
           return refusedQuery()
         }
+      }
+      if (prop === 'storage') {
+        const storage = target.storage
+        return new Proxy(storage as object, {
+          get(s, member, r) {
+            if (member === 'from') {
+              return (bucket: string) => {
+                const api = (s as { from(b: string): object }).from(bucket)
+                if (!supportSessionActive()) return api
+                return new Proxy(api, {
+                  get(o, method, rr) {
+                    if (
+                      typeof method === 'string' &&
+                      !STORAGE_READS.has(method)
+                    ) {
+                      return () => refusedQuery()
+                    }
+                    const value = Reflect.get(o, method, rr)
+                    return typeof value === 'function' ? value.bind(o) : value
+                  },
+                })
+              }
+            }
+            const value = Reflect.get(s, member, r)
+            // Bucket administration (`createBucket`, `emptyBucket`, …) is
+            // a write like any other, and nothing in this app calls it.
+            if (typeof value === 'function') {
+              return supportSessionActive()
+                ? () => refusedQuery()
+                : value.bind(s)
+            }
+            return value
+          },
+        })
       }
       // Read off the real client, not through the proxy: `functions` is a
       // getter and `auth` / `realtime` reach for private state, both of

@@ -345,17 +345,45 @@ in `impersonation_log`.
 A session lasts 30 minutes and is **read-only**, enforced in four places
 because there are four ways out of this application:
 
-| Layer                   | What it stops                                                                                                                                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| RLS (057)               | Only SELECT policies learned the support predicate, so the impersonated account cannot be written to at all — including by requests the browser sends straight to Supabase. |
-| `middleware.ts`         | Any mutating request that reaches Next gets a 403, whatever route it was for.                                                                                               |
-| `@/lib/supabase/client` | The browser client refuses `insert/update/delete/upsert/rpc`, which is what stops an operator from editing **their own** company by mistake under the customer's banner.    |
-| Effective role `viewer` | Every `requireRole()` above `viewer` refuses.                                                                                                                               |
+| Layer                   | What it stops                                                                                                                                                                                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RLS (057)               | Only SELECT policies learned the support predicate, so the impersonated account cannot be written to at all — including by requests the browser sends straight to Supabase.                                                       |
+| `middleware.ts`         | Any mutating request that reaches Next gets a 403, whatever route it was for.                                                                                                                                                     |
+| `@/lib/supabase/client` | The browser client refuses `insert/update/delete/upsert/rpc` and every writing `storage` operation (uploads included), which is what stops an operator from editing **their own** company by mistake under the customer's banner. |
+| Effective role `viewer` | Every `requireRole()` above `viewer` refuses.                                                                                                                                                                                     |
 
 The operator never stops being themselves: `profiles.account_id` is never
 moved. The account swap is derived per request from a signed, `httpOnly`
 cookie plus the open row in `impersonation_log`, and it expires on its
 own.
+
+#### What the operator sees
+
+Widening the SELECT policies (057) made the customer's rows readable, but
+it also stopped RLS from being a filter for _one_ account: it now answers
+"my account **or** the one I am supporting". So the browser is told which
+account it is showing — the companion flag cookie `wacrm_support_active`
+carries the impersonated `account_id`, `useAuth().accountId` returns it
+while the session lasts, and every list in the panel filters by it
+explicitly. Without that, contacts, conversations, pipelines and
+broadcasts came back as both companies' rows merged under the customer's
+name.
+
+The flag grants nothing. It is readable and writable by the browser, and
+all it does is add `account_id = <uuid>` to the operator's own queries —
+a filter can only remove rows, and RLS still decides which ones come
+back.
+
+Two things a support session deliberately does **not** show:
+
+- **Attachments.** The signed URL for every attachment is requested by
+  the browser with the user's own JWT (`src/lib/media/signed-url.ts`), so
+  the bucket policy decides — and the `storage.objects` policies were not
+  widened. During a session no attachment of the customer's loads.
+- **Lists that are scoped by the signed-in person rather than the
+  account** — the template and tag managers' own `user_id` filters, and
+  the notification bell. They come back empty, which is the truth: those
+  rows are the operator's, not the customer's.
 
 ### Auditing
 

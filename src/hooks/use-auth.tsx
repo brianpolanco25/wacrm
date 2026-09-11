@@ -8,9 +8,19 @@ import {
   useCallback,
   useMemo,
   useRef,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { createClient, endSupportSession } from "@/lib/supabase/client";
+import {
+  createClient,
+  endSupportSession,
+  supportSessionAccountId,
+  supportSessionActive,
+} from "@/lib/supabase/client";
+import {
+  supportAccountFromFlag,
+  supportFlagValue,
+} from "@/lib/auth/support-cookie";
 import type { User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import {
@@ -106,7 +116,14 @@ interface AuthContextValue {
   accountStatus: AccountStatus;
   /** Underlying message when `accountStatus` is 'error' / 'unlinked'. */
   accountStatusDetail: string | null;
-  /** Account id the current user belongs to. Null while loading. */
+  /**
+   * Account the panel is looking at. The current user's own, except
+   * during a support session, when it is the impersonated one — every
+   * browser query filters by this, because since migration 057 RLS no
+   * longer narrows to a single account for an operator. Null while
+   * loading, and null (fail closed) if a support session is flagged but
+   * does not name a readable account.
+   */
   accountId: string | null;
   /** Role within that account. Null while loading. */
   accountRole: AccountRole | null;
@@ -152,6 +169,81 @@ interface ProfileRow {
   beta_features: string[] | null;
   account_id: string | null;
   account_role: string | null;
+}
+
+// ------------------------------------------------------------
+// The account this browser is actually looking at
+//
+// Everything in this panel that talks to Supabase from the browser used
+// to be able to assume one thing: "whatever RLS lets me see belongs to my
+// account". Migration 057 ended that. A platform operator with an open
+// support session now passes `is_account_member(acc) OR
+// has_open_support_session(acc)`, so an unfiltered `select()` comes back
+// with BOTH companies' rows — interleaved, indistinguishable, under a
+// banner naming only one of them — and a query filtered by the operator's
+// own `accountId` comes back with the wrong company's rows entirely.
+//
+// So the browser has to know which account it is showing. The server tells
+// it in the support flag cookie, whose value is the impersonated
+// `account_id`; `accountId` below is that one while the session lasts and
+// the operator's own the rest of the time, and every list filters by it.
+// ------------------------------------------------------------
+
+/** The raw support flag, or null outside a browser / outside a session. */
+function readSupportFlag(): string | null {
+  if (typeof document === "undefined") return null;
+  return supportFlagValue(document.cookie);
+}
+
+/**
+ * Cookies fire no events, so there is nothing to subscribe to that would
+ * be honest. Re-read when the tab comes back to the foreground: that is
+ * when a session started or stopped somewhere else (the exit button, a
+ * second tab, the 30-minute expiry) becomes visible here.
+ */
+function subscribeSupportFlag(onChange: () => void): () => void {
+  if (typeof document === "undefined") return () => {};
+  document.addEventListener("visibilitychange", onChange);
+  window.addEventListener("focus", onChange);
+  return () => {
+    document.removeEventListener("visibilitychange", onChange);
+    window.removeEventListener("focus", onChange);
+  };
+}
+
+/**
+ * `ownAccountId` normally; the impersonated account while a support
+ * session is open; `null` when the flag is present but does not name an
+ * account.
+ *
+ * That last case fails CLOSED on purpose. Falling back to the operator's
+ * own account would put their company's rows under the customer's banner,
+ * which is exactly the failure this exists to prevent; `null` makes the
+ * lists fetch nothing and the shell show the account-access alert.
+ */
+export function effectiveAccountId(
+  ownAccountId: string | null,
+  supportFlag: string | null,
+): string | null {
+  if (supportFlag === null) return ownAccountId;
+  return supportAccountFromFlag(supportFlag);
+}
+
+/**
+ * `effectiveAccountId` as a hook. `useSyncExternalStore` rather than
+ * state+effect because the cookie is exactly that: state outside React,
+ * read during render, with a server snapshot (`null` — there is no
+ * `document` there) that the client corrects on hydration.
+ */
+export function useEffectiveAccountId(
+  ownAccountId: string | null,
+): string | null {
+  const flag = useSyncExternalStore(
+    subscribeSupportFlag,
+    readSupportFlag,
+    readSupportFlag,
+  );
+  return effectiveAccountId(ownAccountId, flag);
 }
 
 /**
@@ -233,14 +325,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // lookup by id needs no relationship inference, so the profile
         // (with account_id / account_role) still resolves even if the
         // account name lookup itself can't.
+        // Which account's name and currency to show. During a support
+        // session that is the CUSTOMER'S, not the operator's: the header
+        // and every "default currency" in the panel would otherwise name
+        // the operator's company while the banner names the customer's.
+        // Read straight from the cookie (this runs in the browser, inside
+        // an effect) so it cannot disagree with `derived.accountId`.
+        const supportAccount = supportSessionAccountId();
+        const effectiveId = supportSessionActive()
+          ? supportAccount
+          : data.account_id;
+
         let accountRow: AccountSummary | null = null;
-        if (data.account_id) {
+        if (effectiveId) {
           const { data: account, error: accountErr } = await supabase
             .from("accounts")
             // default_currency added in migration 021; narrowed to the
             // USD fallback below for older schemas where it reads null.
             .select("id, name, default_currency")
-            .eq("id", data.account_id)
+            .eq("id", effectiveId)
             .maybeSingle();
           if (accountErr) {
             console.error("[AuthProvider] fetchAccount error:", {
@@ -407,11 +510,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // every consumer render. Cheap regardless, but the memo also gives
   // each derived value a stable identity for React.memo / useEffect
   // dependencies downstream.
+  // The account this browser is showing. Equal to the profile's own
+  // account except inside a support session, where it is the customer's.
+  // The effective ROLE stays the operator's own on purpose: support is
+  // there to look at what the customer's admin sees (invitations, usage,
+  // billing screens), and downgrading the UI to `viewer` would hide the
+  // very screens tickets are about. Nothing can be written either way —
+  // RLS refuses the customer's account and `guardReadOnly` refuses the
+  // operator's own.
+  const effectiveAccount = useEffectiveAccountId(profile?.account_id ?? null);
+
   const derived = useMemo(() => {
     const role = profile?.account_role ?? null;
     return {
       accountRole: role,
-      accountId: profile?.account_id ?? null,
+      accountId: effectiveAccount,
       isOwner: role === "owner",
       isAdmin: role === "admin",
       isAgent: role === "agent",
@@ -420,7 +533,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
     };
-  }, [profile?.account_role, profile?.account_id]);
+  }, [profile?.account_role, effectiveAccount]);
 
   // Signed out is not a broken account — the shell redirects to /login
   // before anything reads this.

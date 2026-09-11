@@ -128,7 +128,7 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 export function TemplateManager() {
   const t = useTranslations('Settings.templates');
   const supabase = createClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, accountId, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -189,16 +189,21 @@ export function TemplateManager() {
       setLoading(false);
       return;
     }
-    fetchTemplates(user.id);
+    if (!accountId) return;
+    fetchTemplates(user.id, accountId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user?.id]);
+  }, [authLoading, user?.id, accountId]);
 
-  async function fetchTemplates(userId: string) {
+  // `account_id` on top of the pre-existing `user_id` filter — see the
+  // same note in `tag-manager.tsx`: since migration 057 RLS can answer
+  // for two accounts at once, and a template list must belong to one.
+  async function fetchTemplates(userId: string, acctId: string) {
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('message_templates')
         .select('*')
+        .eq('account_id', acctId)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -286,7 +291,7 @@ export function TemplateManager() {
       }
       // Refresh first, then close — re-opening the dialog
       // immediately should not show a stale list.
-      if (user) await fetchTemplates(user.id);
+      if (user && accountId) await fetchTemplates(user.id, accountId);
       toast.success(
         data.dry_run
           ? isEdit
@@ -340,7 +345,7 @@ export function TemplateManager() {
           { duration: 10000 },
         );
       }
-      await fetchTemplates(user.id);
+      if (accountId) await fetchTemplates(user.id, accountId);
     } catch (err) {
       console.error('Template sync error:', err);
       toast.error(err instanceof Error ? err.message : t('toastSyncError'));

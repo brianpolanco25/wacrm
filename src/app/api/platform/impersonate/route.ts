@@ -187,7 +187,11 @@ export async function POST(request: Request) {
   // ever close it. Close it here instead, and report a session that never
   // started as exactly that.
   try {
-    await setSupportCookie(signSupportSession(session), session.expiresAt);
+    await setSupportCookie(
+      signSupportSession(session),
+      session.expiresAt,
+      accountId
+    );
   } catch (err) {
     console.error('[platform/impersonate] could not issue the cookie:', err);
     await closeImpersonationLog(session, 'expired');

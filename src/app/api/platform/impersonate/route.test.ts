@@ -323,15 +323,29 @@ describe('POST /api/platform/impersonate', () => {
     expect(h.cookies.has(SUPPORT_COOKIE)).toBe(false);
   });
 
-  it('tells the browser bundle there is a session, in a cookie it can read', async () => {
+  it('tells the browser bundle WHICH account it is showing, in a cookie it can read', async () => {
     // Most of this panel queries Supabase from the browser, where the
     // httpOnly token is invisible. This flag is how those code paths learn
-    // to refuse writes (`@/lib/supabase/client`).
+    // to refuse writes (`@/lib/supabase/client`) — and, since migration
+    // 057 stopped RLS from narrowing an operator's reads to one account,
+    // which account every list has to filter by (`useAuth`). Carrying the
+    // impersonated id is what makes the difference between the customer's
+    // contacts and BOTH companies' contacts merged under their name.
     await POST(req({ account_id: ACCOUNT_A, reason: REASON }));
-    expect(h.cookies.get(SUPPORT_ACTIVE_COOKIE)).toBe('1');
+    expect(h.cookies.get(SUPPORT_ACTIVE_COOKIE)).toBe(ACCOUNT_A);
 
     await STOP();
     expect(h.cookies.has(SUPPORT_ACTIVE_COOKIE)).toBe(false);
+  });
+
+  it('never names an account it did not open a session on', async () => {
+    // The flag is readable AND writable by the browser, so it grants
+    // nothing: an extra `account_id = <x>` filter can only remove rows,
+    // and RLS still decides which ones come back. What matters is that
+    // the SERVER only ever writes the account the bitácora row names.
+    await POST(req({ account_id: ACCOUNT_A, reason: REASON }));
+    const [row] = logRows();
+    expect(h.cookies.get(SUPPORT_ACTIVE_COOKIE)).toBe(row.account_id);
   });
 
   it('closes the bitácora row when the cookie cannot be issued', async () => {

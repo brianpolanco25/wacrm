@@ -51,12 +51,50 @@ vi.mock('@supabase/ssr', () => ({
     auth: {
       getUser: async () => ({ data: { user: { id: 'operator-1' } } }),
     },
+    storage: {
+      from(bucket: string) {
+        const api: Record<string, unknown> = {};
+        for (const method of [
+          'upload',
+          'remove',
+          'move',
+          'copy',
+          'createSignedUploadUrl',
+          'createSignedUrl',
+          'download',
+          'list',
+        ]) {
+          api[method] = async (...args: unknown[]) => {
+            h.reached.push(
+              `storage:${bucket}.${method}(${JSON.stringify(args)})`
+            );
+            return { data: { path: 'p' }, error: null };
+          };
+        }
+        api.getPublicUrl = (path: string) => {
+          h.reached.push(`storage:${bucket}.getPublicUrl(${path})`);
+          return { data: { publicUrl: `https://cdn/${path}` } };
+        };
+        return api;
+      },
+      createBucket: async () => {
+        h.reached.push('storage:createBucket');
+        return { data: null, error: null };
+      },
+    },
   }),
 }));
 
 const { SUPPORT_ACTIVE_COOKIE } = await import('@/lib/auth/support-cookie');
-const { createClient, endSupportSession, supportSessionActive } =
-  await import('./client');
+const {
+  createClient,
+  endSupportSession,
+  supportSessionAccountId,
+  supportSessionActive,
+} = await import('./client');
+
+/** The account a support session names — the flag cookie's value. */
+const CUSTOMER = 'bbbbbbbb-0000-4000-8000-00000000000b';
 
 function setCookies(value: string) {
   (globalThis as { document?: { cookie: string } }).document = {
@@ -86,18 +124,38 @@ describe('supportSessionActive', () => {
   it('is true only for the flag the server sets', () => {
     setCookies('theme=dark; other_cookie=1');
     expect(supportSessionActive()).toBe(false);
-    setCookies(`theme=dark; ${SUPPORT_ACTIVE_COOKIE}=1`);
+    setCookies(`theme=dark; ${SUPPORT_ACTIVE_COOKIE}=${CUSTOMER}`);
     expect(supportSessionActive()).toBe(true);
   });
 
   it('is not fooled by a cookie whose name merely ends the same way', () => {
-    setCookies(`not_${SUPPORT_ACTIVE_COOKIE}=1`);
+    setCookies(`not_${SUPPORT_ACTIVE_COOKIE}=${CUSTOMER}`);
     expect(supportSessionActive()).toBe(false);
   });
 });
 
+describe('supportSessionAccountId', () => {
+  it('is the account the flag names — the one every list filters by', () => {
+    setCookies(`theme=dark; ${SUPPORT_ACTIVE_COOKIE}=${CUSTOMER}`);
+    expect(supportSessionAccountId()).toBe(CUSTOMER);
+  });
+
+  it('is null with no session, and outside a browser', () => {
+    setCookies('theme=dark');
+    expect(supportSessionAccountId()).toBeNull();
+    delete (globalThis as { document?: unknown }).document;
+    expect(supportSessionAccountId()).toBeNull();
+  });
+
+  it('refuses a flag that does not name an account, while still reporting the session', () => {
+    setCookies(`${SUPPORT_ACTIVE_COOKIE}=1`);
+    expect(supportSessionActive()).toBe(true);
+    expect(supportSessionAccountId()).toBeNull();
+  });
+});
+
 describe('the browser client during a support session', () => {
-  beforeEach(() => setCookies(`${SUPPORT_ACTIVE_COOKIE}=1`));
+  beforeEach(() => setCookies(`${SUPPORT_ACTIVE_COOKIE}=${CUSTOMER}`));
 
   it('refuses a delete — the exact call contacts/page.tsx makes', async () => {
     const supabase = createClient();
@@ -155,6 +213,71 @@ describe('the browser client during a support session', () => {
     const { data } = await supabase.auth.getUser();
     expect(data.user?.id).toBe('operator-1');
   });
+
+  // ----------------------------------------------------------
+  // Storage. `profile-form.tsx` uploads the avatar BEFORE updating
+  // `profiles`, so while storage slipped through the guard a support
+  // session wrote the object for real and only then had the row update
+  // refused: an orphan in the bucket and a half-saved form, under a
+  // banner promising nothing was being saved.
+  // ----------------------------------------------------------
+
+  it.each(['upload', 'remove', 'move', 'copy', 'createSignedUploadUrl'])(
+    'refuses storage.%s — the banner says nothing is saved',
+    async (op) => {
+      const supabase = createClient();
+      const bucket = supabase.storage.from('avatars') as unknown as Record<
+        string,
+        (...a: unknown[]) => PromiseLike<{ error: unknown }>
+      >;
+
+      const { error } = await bucket[op]('some/path', new Blob());
+      expect(error).toMatchObject({ code: 'support_session_read_only' });
+      expect(h.reached).toEqual([]);
+    }
+  );
+
+  it('refuses the avatar upload profile-form.tsx makes, before it can orphan an object', async () => {
+    const supabase = createClient();
+    const { error } = await supabase.storage
+      .from('avatars')
+      .upload('operator-1/avatar.png', new Blob(), { upsert: true });
+
+    expect(error).toMatchObject({ code: 'support_session_read_only' });
+    expect(h.reached).toEqual([]);
+  });
+
+  it('still signs urls — attachments are what the operator came to see', async () => {
+    const supabase = createClient();
+    const { error } = await supabase.storage
+      .from('media')
+      .createSignedUrl('acct/msg.jpg', 60);
+
+    expect(error).toBeNull();
+    expect(h.reached).toContain(
+      'storage:media.createSignedUrl(["acct/msg.jpg",60])'
+    );
+  });
+
+  it('leaves the other read operations alone', async () => {
+    const supabase = createClient();
+    await supabase.storage.from('media').download('acct/msg.jpg');
+    await supabase.storage.from('media').list('acct');
+    const { data } = supabase.storage.from('avatars').getPublicUrl('a/b.png');
+
+    expect(data.publicUrl).toBe('https://cdn/a/b.png');
+    expect(h.reached).toHaveLength(3);
+  });
+
+  it('refuses bucket administration too', async () => {
+    const supabase = createClient();
+    const { error } = await (supabase.storage.createBucket(
+      'anything'
+    ) as unknown as PromiseLike<{ error: unknown }>);
+
+    expect(error).toMatchObject({ code: 'support_session_read_only' });
+    expect(h.reached).toEqual([]);
+  });
 });
 
 describe('the browser client with no support session', () => {
@@ -164,6 +287,18 @@ describe('the browser client with no support session', () => {
 
     expect(error).toBeNull();
     expect(h.reached).toContain('contacts.delete([])');
+  });
+
+  it('uploads exactly as before', async () => {
+    const supabase = createClient();
+    const { error } = await supabase.storage
+      .from('avatars')
+      .upload('u/avatar.png', new Blob());
+
+    expect(error).toBeNull();
+    expect(h.reached.some((c) => c.startsWith('storage:avatars.upload'))).toBe(
+      true
+    );
   });
 });
 
@@ -176,7 +311,7 @@ describe('endSupportSession', () => {
   });
 
   it('asks the server to stop the session before signing out', async () => {
-    setCookies(`${SUPPORT_ACTIVE_COOKIE}=1`);
+    setCookies(`${SUPPORT_ACTIVE_COOKIE}=${CUSTOMER}`);
     const fetchSpy = vi.fn(async () => new Response('{}'));
     vi.stubGlobal('fetch', fetchSpy);
 
@@ -188,7 +323,7 @@ describe('endSupportSession', () => {
   });
 
   it('never blocks the sign-out when the network is gone', async () => {
-    setCookies(`${SUPPORT_ACTIVE_COOKIE}=1`);
+    setCookies(`${SUPPORT_ACTIVE_COOKIE}=${CUSTOMER}`);
     vi.stubGlobal('fetch', async () => {
       throw new Error('offline');
     });

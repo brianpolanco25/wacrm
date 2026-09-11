@@ -16,26 +16,87 @@ export const SUPPORT_COOKIE = 'wacrm_support_session';
 
 /**
  * Companion flag cookie, deliberately NOT `httpOnly`: it is how the server
- * tells the browser bundle "you are inside a support session".
+ * tells the browser bundle "you are inside a support session, and THIS is
+ * the account you are looking at".
  *
- * It carries no authority whatsoever — it is a single `1` and grants
- * nothing. What it does is let `@/lib/supabase/client` refuse to mutate
- * anything (see `guardReadOnly`), which matters because most of this panel
- * talks to Supabase STRAIGHT FROM THE BROWSER with the operator's own JWT:
- * those requests never reach Next, so neither the middleware nor the
- * effective `viewer` role ever sees them, and RLS runs them against the
- * OPERATOR'S own account. Without this flag an operator could delete their
- * own company's contacts while the banner says nothing is being saved.
+ * Its value is the impersonated `account_id`. That matters twice:
+ *
+ *   - it lets `@/lib/supabase/client` refuse to mutate anything (see
+ *     `guardReadOnly`), which stops an operator from editing their OWN
+ *     company by mistake under the customer's banner;
+ *   - it lets every list in this panel filter by the account it is
+ *     supposed to be showing. Most of the panel talks to Supabase
+ *     STRAIGHT FROM THE BROWSER with the operator's own JWT: those
+ *     requests never reach Next, so neither the middleware nor the
+ *     effective `viewer` role ever sees them. Before migration 057 RLS
+ *     answered them with the operator's own rows; after 057 it answers
+ *     with BOTH companies' rows, because a SELECT policy that says "my
+ *     accounts OR the one I am supporting" is no longer a filter for one
+ *     account. The browser has to supply that filter itself, and this is
+ *     where it learns which account to ask for.
  *
  * Threat model, stated plainly: anyone who can write cookies in their own
- * browser can also delete this one. Doing so buys them nothing they did
- * not already have — they would still be writing to their own account,
- * which they can do by leaving the support session. It is a guard rail
- * against a mistake, not a security boundary; the boundary for the
- * CUSTOMER'S data is RLS (migration 057 extends only SELECT policies, so
- * a support session cannot write to the impersonated account at all).
+ * browser can also delete or rewrite this one. Neither buys them anything.
+ * Deleting it restores writes to their OWN account, which they can already
+ * do by leaving the session. Rewriting it with another account's uuid only
+ * adds `account_id = <that uuid>` to their own queries — an extra WHERE
+ * can only ever REMOVE rows, and RLS still decides which ones come back
+ * (the answer for an account they hold no session on is none). It is a
+ * guard rail and a view selector, not a security boundary; the boundary
+ * for the CUSTOMER'S data is RLS (migration 057 extends only SELECT
+ * policies, so a support session cannot write to the impersonated account
+ * at all).
  */
 export const SUPPORT_ACTIVE_COOKIE = 'wacrm_support_active';
+
+/**
+ * The value of the flag cookie inside `cookieString` (a `document.cookie`
+ * string), or `null` when it is not there.
+ *
+ * Pure on purpose — the browser passes `document.cookie`, and the tests
+ * pass a string. Matches the whole cookie NAME, so `not_wacrm_support_active`
+ * is not mistaken for it.
+ */
+export function supportFlagValue(cookieString: string): string | null {
+  for (const part of cookieString.split(';')) {
+    const raw = part.trim();
+    if (!raw.startsWith(`${SUPPORT_ACTIVE_COOKIE}=`)) continue;
+    return raw.slice(SUPPORT_ACTIVE_COOKIE.length + 1);
+  }
+  return null;
+}
+
+/** Shape of the uuid the flag cookie is supposed to carry. */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The impersonated account named by the flag cookie, or `null` when the
+ * value is not a uuid.
+ *
+ * Reading a junk value as "no session" would be the wrong failure: the
+ * flag being present at all means the panel must NOT fall back to the
+ * operator's own account, which is the mislabelled view this whole round
+ * is about. Callers combine the two questions — "is there a session?"
+ * (`supportFlagValue`) and "which account?" (this) — and fail closed when
+ * the first says yes and the second says nothing.
+ */
+export function supportAccountFromFlag(value: string): string | null {
+  const decoded = (() => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  })();
+  return UUID_RE.test(decoded) ? decoded : null;
+}
+
+/** `supportAccountFromFlag` applied to a whole `document.cookie` string. */
+export function supportFlagAccountId(cookieString: string): string | null {
+  const value = supportFlagValue(cookieString);
+  return value === null ? null : supportAccountFromFlag(value);
+}
 
 /**
  * How long a support session lasts. Short on purpose: impersonation is for

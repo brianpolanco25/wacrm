@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import { Radio, Plus, Loader2 } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
 import { useTranslations } from 'next-intl';
@@ -62,6 +63,10 @@ export default function BroadcastsPage() {
   const t = useTranslations('Broadcasts.page');
   const tStatus = useTranslations('Broadcasts.status');
   const canCreate = useCan('send-messages');
+  // The account being shown — the customer's during a support session.
+  // Since migration 057, RLS alone no longer narrows a platform
+  // operator's reads to one company (see `useAuth`).
+  const { accountId } = useAuth();
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,11 +75,13 @@ export default function BroadcastsPage() {
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function fetchBroadcasts() {
+    if (!accountId) return;
     try {
       const supabase = createClient();
       const { data, error: fetchError } = await supabase
         .from('broadcasts')
         .select('*')
+        .eq('account_id', accountId)
         .order('created_at', { ascending: false });
 
       if (fetchError) throw fetchError;
@@ -88,7 +95,8 @@ export default function BroadcastsPage() {
 
   useEffect(() => {
     fetchBroadcasts();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId]);
 
   const anySending = useMemo(
     () => broadcasts.some((b) => b.status === 'sending'),
