@@ -343,22 +343,39 @@ export function decideSubscriptionChange(input: DecisionInput): Decision {
     existing.provider_subscription_id !== subscriptionId
   );
 
-  // The exception is re-contracting after a cancellation. §2 lets an
-  // account whose subscription is `cancelled` or `expired` buy again
-  // (CONTRACTED_STATUSES in checkout.ts) and nothing ever clears the
-  // old provider id, so the row still points at the subscription that
-  // died. Refusing the activation of the NEW one would mean the
+  // The exception is re-contracting after a cancellation. §2 and §6 let
+  // an account that already cancelled buy again (CONTRACTED_STATUSES
+  // and `cancel_at_period_end` in checkout.ts) and nothing ever clears
+  // the old provider id, so the row still points at the subscription
+  // that died. Refusing the activation of the NEW one would mean the
   // customer pays and never gets service — the exact damage §3 exists
   // to prevent. Adoption is therefore allowed, but narrowly: only for
-  // the two events that mean "contracted and paid", only over a row
-  // whose subscription is terminal, and only when the checkout intent
-  // for THIS subscription is one of ours — that intent is what
-  // identified the account in the first place. A live row on another
-  // subscription is still refused.
+  // the two events that mean "contracted and paid", only when the
+  // checkout intent for THIS subscription is one of ours — that intent
+  // is what identified the account in the first place, so it cannot
+  // belong to anybody else — and only over a row that is no longer
+  // being charged.
+  //
+  // "No longer being charged" is two things, not one. `cancelled` and
+  // `expired` are the obvious one. The other is a row still `active`
+  // with `cancel_at_period_end` set: PayPal cancelled that
+  // subscription immediately and irreversibly, we keep serving the
+  // cycle already paid for, and NOTHING in the product ever moves that
+  // row to `cancelled` while the period runs (the CANCELLED handler
+  // writes only the flag when there is paid time left, and there is no
+  // expiry job). That row is exactly the one a customer who cancels and
+  // changes their mind leaves behind, and it is the state §6 opens the
+  // checkout for. A live row with no cancellation scheduled is still
+  // refused: that one IS being charged, and letting another
+  // subscription's events rewrite it would be the double-billing this
+  // guard exists for.
+  const noLongerCharged = Boolean(
+    existing && (TERMINAL.has(existing.status) || existing.cancel_at_period_end)
+  );
   const adopting =
     onAnotherSubscription &&
     ADOPTING_EVENT_TYPES.has(event.eventType) &&
-    TERMINAL.has(existing!.status) &&
+    noLongerCharged &&
     Boolean(input.intent);
 
   if (onAnotherSubscription && !adopting) {
@@ -674,7 +691,16 @@ function buildPatch(input: BuildInput): Decision {
       // The cycle we are actually being charged on wins over the one
       // that was contracted: a plan change through §6 moves the first
       // and leaves the second behind (migration 056).
-      const cycle = asBillingCycle(existing?.cycle) ?? intent?.cycle;
+      //
+      // Except when adopting: then the row's cycle belongs to the
+      // subscription the customer cancelled, and the sale being paid is
+      // another one entirely. Somebody who was on yearly, cancelled and
+      // contracted MONTHLY again would get `addCycle(eventTime,
+      // 'year')` for a month of money, and the later ACTIVATED could
+      // not take it back (`laterIso` never rewinds the period). The
+      // intent is the only record of what is being charged now.
+      const cycle =
+        (adopting ? null : asBillingCycle(existing?.cycle)) ?? intent?.cycle;
       const planId = intent?.plan_id ?? existing?.plan_id;
       if (!planId || !cycle) {
         return {
@@ -703,6 +729,12 @@ function buildPatch(input: BuildInput): Decision {
             current_period_end: periodEnd,
             grace_until: null,
             cancel_at_period_end: false,
+            // The cycle that produced `periodEnd`, written where the
+            // next renewal reads it (migration 056). Without this the
+            // adopted row would keep the dead subscription's cycle and
+            // the renewal after the next one would extend by the wrong
+            // amount of time.
+            cycle,
           },
         };
       }

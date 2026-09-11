@@ -961,6 +961,176 @@ describe('events out of order', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The three sequences of the PayPal sandbox script that nobody can run
+// here (steps 6, 7 and 8 of `progress/impl_subscription-settings-ui.md`:
+// no sandbox credentials in this environment, `.env.local` is out of
+// bounds). Reproduced with mocks so the money paths they cover are
+// still checked by the runner. They do NOT replace the manual run —
+// what a mock cannot tell us is what PayPal itself answers — but they
+// do pin down everything on our side of the wire.
+// ---------------------------------------------------------------------------
+describe('the sandbox script, reproduced with mocks', () => {
+  it('step 6 — a month→year change is charged as a year, on one subscription', async () => {
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1', { status: 'activated' }));
+    db.subscriptions.push(
+      subscriptionRow(ACCOUNT_A, {
+        provider_subscription_id: 'I-1',
+        cycle: 'month',
+      })
+    );
+
+    // The customer approved the revision; PayPal reports the new plan.
+    await post({
+      id: 'WH-step6-updated',
+      event_type: 'BILLING.SUBSCRIPTION.UPDATED',
+      create_time: '2026-03-20T00:00:00Z',
+      resource: {
+        id: 'I-1',
+        status: 'ACTIVE',
+        plan_id: 'P-PRO-YEAR',
+        billing_info: { next_billing_time: '2027-03-20T00:00:00Z' },
+      },
+    });
+
+    // Then the money for the year arrives.
+    await post({
+      id: 'WH-step6-sale',
+      event_type: 'PAYMENT.SALE.COMPLETED',
+      create_time: '2026-03-20T00:05:00Z',
+      resource: {
+        id: 'SALE-STEP6',
+        billing_agreement_id: 'I-1',
+        amount: { total: '790.00', currency: 'USD' },
+      },
+    });
+
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      plan_id: 'pro',
+      cycle: 'year',
+      // A year from the sale, not the month the intent still remembers.
+      current_period_end: '2027-03-20T00:05:00.000Z',
+    });
+    // `revise` moves the SAME subscription: a second row, or a second
+    // provider id, would mean two things billing at once.
+    expect(db.subscriptions).toHaveLength(1);
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      provider_subscription_id: 'I-1',
+    });
+  });
+
+  it('step 7 — the CANCELLED event changes nothing the panel already wrote', async () => {
+    // The settings route flipped `cancel_at_period_end` the moment
+    // PayPal accepted; the event is the confirmation arriving after.
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1', { status: 'activated' }));
+    db.subscriptions.push(
+      subscriptionRow(ACCOUNT_A, {
+        provider_subscription_id: 'I-1',
+        cancel_at_period_end: true,
+        cycle: 'month',
+      })
+    );
+
+    const res = await post({
+      id: 'WH-step7-cancelled',
+      event_type: 'BILLING.SUBSCRIPTION.CANCELLED',
+      create_time: '2026-03-20T00:00:00Z',
+      resource: { id: 'I-1', status: 'CANCELLED' },
+    });
+
+    expect(res.status).toBe(200);
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      // Still serving the cycle already paid for: §3's rule, and what
+      // the panel promises on screen.
+      status: 'active',
+      cancel_at_period_end: true,
+      current_period_end: '2026-04-15T12:00:00.000Z',
+    });
+    expect(db.checkout_intents[0].status).toBe('cancelled');
+  });
+
+  it('step 8 — contracting again after cancelling is served, not refused', async () => {
+    // THE case the review reproduced: the row is `active` with
+    // `cancel_at_period_end` (nothing ever moves it to `cancelled`
+    // while the period runs), and the customer bought a new
+    // subscription through the checkout of §2.
+    db.checkout_intents.push(
+      intent(ACCOUNT_A, 'I-OLD', { status: 'cancelled', cycle: 'year' })
+    );
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-NEW'));
+    db.subscriptions.push(
+      subscriptionRow(ACCOUNT_A, {
+        provider_subscription_id: 'I-OLD',
+        status: 'active',
+        cancel_at_period_end: true,
+        cycle: 'year',
+      })
+    );
+
+    const res = await post(
+      activated('I-NEW', { create_time: '2026-03-18T00:00:00Z' })
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'processed' });
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      status: 'active',
+      provider_subscription_id: 'I-NEW',
+      cancel_at_period_end: false,
+      grace_until: null,
+      // Monthly again, whatever the dead subscription was on.
+      cycle: 'month',
+    });
+    // The return page of §2 spins until the intent is marked.
+    const newIntent = db.checkout_intents.find(
+      (row) => row.provider_subscription_id === 'I-NEW'
+    );
+    expect(newIntent).toMatchObject({ status: 'activated' });
+    // Every write stayed on this account, and no second row appeared.
+    expect(scopesOf('subscriptions')).toEqual([ACCOUNT_A]);
+    expect(db.subscriptions).toHaveLength(1);
+  });
+
+  it('step 8 — and the payment of the new subscription extends its own cycle', async () => {
+    // Same state, but PayPal delivers the sale first — the order the
+    // `!existing || adopting` branch exists for.
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-NEW'));
+    db.subscriptions.push(
+      subscriptionRow(ACCOUNT_A, {
+        provider_subscription_id: 'I-OLD',
+        status: 'active',
+        cancel_at_period_end: true,
+        cycle: 'year',
+        current_period_end: '2026-04-15T12:00:00.000Z',
+      })
+    );
+
+    await post({
+      id: 'WH-step8-sale',
+      event_type: 'PAYMENT.SALE.COMPLETED',
+      create_time: '2026-03-18T00:00:00Z',
+      resource: {
+        id: 'SALE-STEP8',
+        billing_agreement_id: 'I-NEW',
+        amount: { total: '79.00', currency: 'USD' },
+      },
+    });
+
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      status: 'active',
+      provider_subscription_id: 'I-NEW',
+      cancel_at_period_end: false,
+      cycle: 'month',
+    });
+    // A month of money buys a month. The old row said `year`; charging
+    // the new subscription on it would hand out eleven free months and
+    // `laterIso` would never take them back.
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      current_period_end: '2026-04-18T00:00:00.000Z',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('surface', () => {
   it('exposes only POST', async () => {
     const mod = await import('./route');

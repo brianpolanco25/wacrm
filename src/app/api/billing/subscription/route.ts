@@ -184,6 +184,55 @@ async function ownedSubscriptionIds(
 }
 
 /**
+ * The PayPal plan this subscription is being charged on right now, or
+ * null when it cannot be established.
+ *
+ * `subscriptions` does not store the provider plan id, so it is
+ * derived from the two records that do know it:
+ *
+ *   - the catalogue, when `cycle` says which of the plan's two PayPal
+ *     ids is in force. Only the row's OWN plan is resolved: two
+ *     different plans never share a PayPal plan id, so a change of
+ *     plan is a real change whatever the cycle says.
+ *   - the checkout intent that created the subscription (migration 048
+ *     keeps `provider_plan_id` on it), when `cycle` is NULL. Every
+ *     event that moves the cycle writes it, so a NULL cycle means
+ *     nothing has moved since the checkout and the intent is still the
+ *     truth.
+ *
+ * Null means "we do not know": the caller then lets the `revise`
+ * through rather than refusing a change that may well be real.
+ */
+async function providerPlanIdInForce(
+  ctx: AccountContext,
+  subscription: SubscriptionRow | null,
+  plan: CheckoutPlanRow,
+  providerSubscriptionId: string
+): Promise<string | null> {
+  if (!subscription || subscription.plan_id !== plan.id) return null;
+
+  const known = asCycle(subscription.cycle);
+  if (known) return providerPlanIdFor(plan, known);
+
+  const { data, error } = await ctx.supabase
+    .from('checkout_intents')
+    .select('provider_plan_id')
+    .eq('account_id', ctx.accountId)
+    .eq('provider', PROVIDER)
+    .eq('provider_subscription_id', providerSubscriptionId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[api/billing/subscription] intent read error:', error);
+    throw new SubscriptionReadError('the checkout history');
+  }
+  const row = (data as { provider_plan_id?: unknown } | null) ?? null;
+  return typeof row?.provider_plan_id === 'string' && row.provider_plan_id
+    ? row.provider_plan_id
+    : null;
+}
+
+/**
  * The account's payments, from the gateway log.
  *
  * Service role, because `billing_events` has RLS enabled and no policy
@@ -449,17 +498,6 @@ export async function POST(request: Request) {
     }
     const cycle = body.cycle;
 
-    if (
-      subscription &&
-      subscription.plan_id === planId &&
-      asCycle(subscription.cycle) === cycle
-    ) {
-      return NextResponse.json(
-        { error: 'That is already the current plan' },
-        { status: 409 }
-      );
-    }
-
     const { data: planData, error: planError } = await ctx.supabase
       .from('plans')
       .select(PLAN_COLUMNS)
@@ -482,6 +520,26 @@ export async function POST(request: Request) {
     if (!providerPlanId) {
       return NextResponse.json(
         { error: 'This plan is not available for that billing cycle yet' },
+        { status: 409 }
+      );
+    }
+
+    // "Same plan" is decided on the PayPal plan id, never on our
+    // `cycle` column alone: that column is NULL on every row migration
+    // 056 could not backfill, and `null === 'month'` is false, so a
+    // comparison through it would wave through a `revise` onto the plan
+    // the customer is already on — and PayPal may answer that with an
+    // approval link, sending them off to approve what they already
+    // have.
+    const inForce = await providerPlanIdInForce(
+      ctx,
+      subscription,
+      plan,
+      providerSubscriptionId
+    );
+    if (inForce && inForce === providerPlanId) {
+      return NextResponse.json(
+        { error: 'That is already the current plan' },
         { status: 409 }
       );
     }

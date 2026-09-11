@@ -719,6 +719,70 @@ describe('POST /api/billing/subscription — change plan', () => {
     expect(paypal.reviseSubscription).not.toHaveBeenCalled();
   });
 
+  it('refuses the plan in force even when the cycle column is NULL', async () => {
+    // Migration 056 could not backfill every row: `cycle` stays NULL
+    // wherever no checkout intent with a cycle matched. Comparing
+    // through that column (`null === 'month'` is false) let a `revise`
+    // onto the plan already in force through, and PayPal may answer
+    // that with an approval link — sending the customer off to approve
+    // what they already have. The PayPal plan id decides instead, and
+    // the intent of migration 048 is where it lives.
+    Object.assign(subscriptionOf(ACCOUNT_A), { cycle: null });
+
+    const res = await post({
+      action: 'change_plan',
+      planId: 'pro',
+      cycle: 'month',
+    });
+
+    expect(res.status).toBe(409);
+    expect(paypal.reviseSubscription).not.toHaveBeenCalled();
+    // The intent it reads for that is scoped to the caller's account.
+    const reads = queries.filter((q) => q.table === 'checkout_intents');
+    expect(reads.length).toBeGreaterThan(0);
+    for (const q of reads) {
+      expect(q.filters).toContainEqual(['account_id', ACCOUNT_A]);
+    }
+  });
+
+  it('still lets a NULL cycle move to the other cycle of the same plan', async () => {
+    // The guard must not turn into "a row with no cycle can never
+    // change plan": that is a real change and PayPal has a plan for it.
+    Object.assign(subscriptionOf(ACCOUNT_A), { cycle: null });
+
+    const res = await post({
+      action: 'change_plan',
+      planId: 'pro',
+      cycle: 'year',
+    });
+
+    expect(res.status).toBe(200);
+    expect(paypal.reviseSubscription).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'P-PRO-YEAR' })
+    );
+  });
+
+  it('lets the change through when nothing records the plan in force', async () => {
+    // No cycle and no intent: we do not know what PayPal is charging,
+    // and refusing a change on a guess would strand the customer on a
+    // plan they cannot leave from here.
+    Object.assign(subscriptionOf(ACCOUNT_A), { cycle: null });
+    db.checkout_intents = db.checkout_intents.filter(
+      (row) => row.account_id !== ACCOUNT_A
+    );
+
+    const res = await post({
+      action: 'change_plan',
+      planId: 'pro',
+      cycle: 'month',
+    });
+
+    expect(res.status).toBe(200);
+    expect(paypal.reviseSubscription).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'P-PRO-MONTH' })
+    );
+  });
+
   it('sends an account with nothing being charged to the checkout', async () => {
     Object.assign(subscriptionOf(ACCOUNT_A), {
       status: 'trialing',

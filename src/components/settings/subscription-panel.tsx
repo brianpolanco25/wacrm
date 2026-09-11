@@ -56,6 +56,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { RequireRole } from '@/components/auth/require-role';
+import { useAuth } from '@/hooks/use-auth';
+import { hasMinRole } from '@/lib/auth/roles';
 import { cn } from '@/lib/utils';
 
 import { SettingsPanelHead } from './settings-panel-head';
@@ -135,6 +137,16 @@ export function SubscriptionPanel() {
   const t = useTranslations('Billing');
   const ts = useTranslations('Billing.subscription');
   const router = useRouter();
+  const { profileLoading, accountRole } = useAuth();
+
+  // The same gate `RequireRole min="admin"` applies below, read here so
+  // the panel does not ASK for data it is not allowed to see:
+  // `resolveSection` honours `?tab=subscription` for anybody, and an
+  // agent who opens that URL should read "admin only", not a toast
+  // about a request that failed. Fails closed while the role is
+  // unknown, exactly like `RequireRole`.
+  const canManage =
+    !profileLoading && !!accountRole && hasMinRole(accountRole, 'admin');
 
   const [data, setData] = useState<SubscriptionData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,6 +159,7 @@ export function SubscriptionPanel() {
   const [targetCycle, setTargetCycle] = useState<Cycle>('month');
 
   const load = useCallback(async () => {
+    if (!canManage) return;
     try {
       const res = await fetch('/api/billing/subscription', {
         cache: 'no-store',
@@ -166,13 +179,14 @@ export function SubscriptionPanel() {
     } finally {
       setLoading(false);
     }
-  }, [ts]);
+  }, [ts, canManage]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useEffect(() => {
+    if (!canManage) return;
     let cancelled = false;
     (async () => {
       try {
@@ -188,7 +202,7 @@ export function SubscriptionPanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canManage]);
 
   const act = useCallback(
     async (
@@ -257,24 +271,41 @@ export function SubscriptionPanel() {
       }
     );
 
+  // The role gate wraps EVERY return, the two early ones included.
+  // Leaving them outside meant a member below admin — `resolveSection`
+  // accepts `?tab=subscription` from anyone — got the spinner and then
+  // the "could not load" card instead of the message written for
+  // exactly that case.
+  const adminOnly = (
+    <Card>
+      <CardContent className="text-muted-foreground py-8 text-center text-sm">
+        {t('adminOnly')}
+      </CardContent>
+    </Card>
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="text-muted-foreground size-5 animate-spin" />
-      </div>
+      <RequireRole min="admin" fallback={adminOnly}>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="text-muted-foreground size-5 animate-spin" />
+        </div>
+      </RequireRole>
     );
   }
 
   if (!data) {
     return (
-      <div>
-        <SettingsPanelHead title={ts('title')} description={ts('desc')} />
-        <Card>
-          <CardContent className="text-muted-foreground py-8 text-center text-sm">
-            {ts('loadFailed')}
-          </CardContent>
-        </Card>
-      </div>
+      <RequireRole min="admin" fallback={adminOnly}>
+        <div>
+          <SettingsPanelHead title={ts('title')} description={ts('desc')} />
+          <Card>
+            <CardContent className="text-muted-foreground py-8 text-center text-sm">
+              {ts('loadFailed')}
+            </CardContent>
+          </Card>
+        </div>
+      </RequireRole>
     );
   }
 
@@ -284,13 +315,17 @@ export function SubscriptionPanel() {
   const trialEnd = fmtDate(data.trialEndsAt);
 
   // One sentence that says where this account stands. Ordered by how
-  // much it matters to the person reading it.
-  const note = data.cancelAtPeriodEnd
-    ? periodEnd
-      ? ts('cancelScheduled', { date: periodEnd })
-      : ts('cancelScheduledNoDate')
-    : data.readOnly
-      ? t('lockedBody')
+  // much it matters to the person reading it, and being locked out
+  // matters more than anything else: a `suspended` or `expired` account
+  // that also cancelled would otherwise read "the service keeps running
+  // until <a date already past>" and never see the one line that
+  // explains why nothing works.
+  const note = data.readOnly
+    ? t('lockedBody')
+    : data.cancelAtPeriodEnd
+      ? periodEnd
+        ? ts('cancelScheduled', { date: periodEnd })
+        : ts('cancelScheduledNoDate')
       : data.status === 'past_due'
         ? graceDate
           ? t('pastDueBodyWithDate', { date: graceDate })
@@ -319,16 +354,7 @@ export function SubscriptionPanel() {
   const sameAsNow = targetPlan === data.planId && targetCycle === data.cycle;
 
   return (
-    <RequireRole
-      min="admin"
-      fallback={
-        <Card>
-          <CardContent className="text-muted-foreground py-8 text-center text-sm">
-            {t('adminOnly')}
-          </CardContent>
-        </Card>
-      }
-    >
+    <RequireRole min="admin" fallback={adminOnly}>
       <div className="space-y-6">
         <SettingsPanelHead title={ts('title')} description={ts('desc')} />
 

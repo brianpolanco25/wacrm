@@ -868,3 +868,139 @@ describe('billing cycle', () => {
     expect(decision.patch.current_period_end).toBe('2026-05-15T12:00:00.000Z');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Re-contracting after a cancellation, end to end (fase 3 §6).
+//
+// §6 lets a customer who cancelled contract again while the row is
+// still `active` with `cancel_at_period_end` — that is the ONLY state
+// the product ever leaves behind, because the CANCELLED handler writes
+// just the flag while there is paid time left and nothing ever moves
+// the row on afterwards. If the webhook refuses the new subscription's
+// events there, the customer pays and never gets service.
+// ---------------------------------------------------------------------------
+describe('re-contracting after a cancellation', () => {
+  /** The row cancelling leaves behind: alive, paid for, on its way out. */
+  const cancelled = () =>
+    subscription({
+      provider_subscription_id: 'I-OLD',
+      status: 'active',
+      cancel_at_period_end: true,
+      cycle: 'year',
+      current_period_end: '2026-04-15T12:00:00.000Z',
+      last_event_at: '2026-03-15T12:00:00.000Z',
+    });
+
+  const activatedNew = (createTime = '2026-03-16T12:00:00Z') =>
+    event(
+      'BILLING.SUBSCRIPTION.ACTIVATED',
+      {
+        id: 'I-NEW',
+        status: 'ACTIVE',
+        billing_info: { next_billing_time: '2026-04-16T12:00:00Z' },
+      },
+      createTime
+    );
+
+  const saleOfNew = (createTime = '2026-03-16T12:00:00Z') =>
+    event(
+      'PAYMENT.SALE.COMPLETED',
+      { id: 'SALE-NEW', billing_agreement_id: 'I-NEW' },
+      createTime
+    );
+
+  it('takes the row over when the new subscription activates', () => {
+    const decision = applied(decide(activatedNew(), cancelled()));
+
+    expect(decision.stale).toBe(false);
+    expect(decision.patch).toMatchObject({
+      status: 'active',
+      provider_subscription_id: 'I-NEW',
+      current_period_end: '2026-04-16T12:00:00.000Z',
+      cancel_at_period_end: false,
+      grace_until: null,
+      cycle: 'month',
+    });
+    expect(decision.intentStatus).toBe('activated');
+  });
+
+  it('takes the row over when the first payment arrives first', () => {
+    // PayPal delivers the sale before the activation often enough that
+    // the branch exists; it must adopt too, or the money is taken and
+    // the account stays on the dead subscription.
+    const decision = applied(decide(saleOfNew(), cancelled()));
+
+    expect(decision.patch).toMatchObject({
+      status: 'active',
+      provider_subscription_id: 'I-NEW',
+      cancel_at_period_end: false,
+      grace_until: null,
+    });
+    expect(decision.intentStatus).toBe('activated');
+  });
+
+  it('charges the new cycle, not the one the dead subscription had', () => {
+    // The row says `year` because that is what the customer used to
+    // pay; the intent says `month` because that is what they just
+    // bought. Extending a year for a month of money is a month of
+    // service given away and, worse, `laterIso` means the later
+    // ACTIVATED can never pull the period back.
+    const decision = applied(decide(saleOfNew(), cancelled()));
+
+    expect(decision.patch.current_period_end).toBe('2026-04-16T12:00:00.000Z');
+    expect(decision.patch.cycle).toBe('month');
+  });
+
+  it('still refuses a row that is alive with no cancellation scheduled', () => {
+    // The f3.3 rule, unchanged: that row IS being charged, and another
+    // subscription's events may not have it.
+    expect(
+      decide(
+        activatedNew(),
+        subscription({
+          provider_subscription_id: 'I-OLD',
+          status: 'active',
+          cancel_at_period_end: false,
+        })
+      )
+    ).toMatchObject({ kind: 'error' });
+    expect(
+      decide(
+        saleOfNew(),
+        subscription({
+          provider_subscription_id: 'I-OLD',
+          status: 'past_due',
+          cancel_at_period_end: false,
+        })
+      )
+    ).toMatchObject({ kind: 'error' });
+  });
+
+  it('refuses even a scheduled-to-cancel row with no intent behind it', () => {
+    // The intent is what proves the new subscription is ours: it is
+    // what resolved the account in the first place.
+    expect(decide(activatedNew(), cancelled(), null)).toMatchObject({
+      kind: 'error',
+    });
+  });
+
+  it('is never treated as a late delivery', () => {
+    // The watermark belongs to the subscription that died. An
+    // activation stamped before it must still be applied in full.
+    const decision = applied(
+      decide(activatedNew('2026-03-14T12:00:00Z'), cancelled())
+    );
+    expect(decision.stale).toBe(false);
+    expect(decision.patch.status).toBe('active');
+    expect(decision.patch.provider_subscription_id).toBe('I-NEW');
+  });
+
+  it('does not adopt on an event that is not a purchase', () => {
+    expect(
+      decide(
+        event('BILLING.SUBSCRIPTION.SUSPENDED', { id: 'I-NEW' }),
+        cancelled()
+      )
+    ).toMatchObject({ kind: 'error' });
+  });
+});

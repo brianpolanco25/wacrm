@@ -197,6 +197,27 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Fixed
 
+- **Contracting again after cancelling now turns the service back on.** The
+  settings area lets a customer who cancelled buy a new subscription while the
+  cycle they already paid for runs out; the webhook then refused that new
+  subscription's activation, because the old row was still marked as running.
+  The customer paid and got nothing, and their account fell into read-only when
+  the old cycle ended. The new subscription is now adopted — and it is charged
+  on the cycle that was just bought, so going from yearly back to monthly no
+  longer extends the period by a year for a month of money. A subscription that
+  is genuinely still being charged is still protected from another one's
+  events.
+- **Changing to the plan already in force no longer bounces off PayPal.** On
+  accounts whose billing cycle was never recorded, asking for the plan and
+  cycle already in force skipped the "that is already your plan" check and
+  asked PayPal to revise the subscription anyway, which could send the customer
+  off to approve what they already had.
+- **Settings → Subscription says "admins only" to members who are not.** The
+  section could be opened by URL by anyone; it used to answer with a failed
+  request and an error card instead of the message meant for that case, and it
+  no longer asks the server for billing data it may not read. A locked account
+  that also cancelled now reads why it is locked instead of a cancellation
+  notice with a date already past.
 - **Accepting an invitation after abandoning a checkout.** Redeeming an
   invitation dissolves the invitee's empty personal account; a checkout
   they started and never approved used to block that with a raw database
