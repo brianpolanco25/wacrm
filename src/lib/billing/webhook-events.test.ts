@@ -254,12 +254,104 @@ describe('BILLING.SUBSCRIPTION.ACTIVATED', () => {
     expect(decision.kind).toBe('error');
   });
 
-  it('does not rewrite an account that is on a different PayPal subscription', () => {
+  it('does not rewrite a LIVE account that is on a different PayPal subscription', () => {
     const decision = decide(
       activated({ id: 'I-OTHER' }),
       subscription({ provider_subscription_id: 'I-SUB' })
     );
     expect(decision).toMatchObject({ kind: 'error' });
+  });
+
+  // §2 lets a cancelled account contract again and nothing clears the
+  // old provider id. Refusing the new subscription's activation would
+  // mean the customer pays and never gets service.
+  it('takes over the row left by the subscription the customer cancelled', () => {
+    const decision = applied(
+      decide(
+        activated(),
+        subscription({
+          provider_subscription_id: 'I-OLD',
+          status: 'cancelled',
+          cancel_at_period_end: true,
+          grace_until: '2026-02-20T00:00:00.000Z',
+          current_period_end: '2026-02-01T00:00:00.000Z',
+          last_event_at: '2026-02-20T00:00:00.000Z',
+        })
+      )
+    );
+
+    expect(decision.stale).toBe(false);
+    expect(decision.patch).toMatchObject({
+      status: 'active',
+      provider_subscription_id: 'I-SUB',
+      current_period_end: '2026-04-15T12:00:00.000Z',
+      cancel_at_period_end: false,
+      grace_until: null,
+    });
+    expect(decision.intentStatus).toBe('activated');
+  });
+
+  it('refuses to take a row over with no checkout intent of ours behind it', () => {
+    const decision = decide(
+      activated(),
+      subscription({
+        provider_subscription_id: 'I-OLD',
+        status: 'cancelled',
+      }),
+      null
+    );
+    expect(decision).toMatchObject({ kind: 'error' });
+  });
+
+  it('will not take over a row whose subscription is still alive', () => {
+    // Same shape as re-contracting, but the previous subscription is
+    // `past_due`, not terminal: that is a live row and another
+    // subscription's activation may not have it.
+    const decision = decide(
+      activated(),
+      subscription({ provider_subscription_id: 'I-OLD', status: 'past_due' })
+    );
+    expect(decision).toMatchObject({ kind: 'error' });
+  });
+
+  it('does not lift a cancelled subscription back with its own activation', () => {
+    // The end of the line does not depend on the watermark, which is
+    // NULL for every row that predates migration 050.
+    const decision = decide(
+      activated(),
+      subscription({
+        status: 'cancelled',
+        cancel_at_period_end: true,
+        last_event_at: null,
+      })
+    );
+    expect(decision).toMatchObject({ kind: 'skip' });
+    if (decision.kind === 'skip') {
+      expect(decision.reason).toContain('already cancelled');
+    }
+  });
+
+  it('refuses an activation of a plan the intent never asked for', () => {
+    const decision = decide(activated({ plan_id: 'P-NEGOCIO-YEAR' }), null, {
+      plan_id: 'pro',
+      cycle: 'month',
+      provider_plan_id: 'P-PRO-MONTH',
+    });
+    expect(decision).toMatchObject({ kind: 'error' });
+    if (decision.kind === 'error') {
+      expect(decision.reason).toContain('P-NEGOCIO-YEAR');
+    }
+  });
+
+  it('activates when the activated plan is the one the intent asked for', () => {
+    const decision = applied(
+      decide(activated({ plan_id: 'P-PRO-MONTH' }), null, {
+        plan_id: 'pro',
+        cycle: 'month',
+        provider_plan_id: 'P-PRO-MONTH',
+      })
+    );
+    expect(decision.patch.status).toBe('active');
   });
 
   it('adopts the trialing row of an account that had no provider subscription yet', () => {
@@ -357,6 +449,13 @@ describe('BILLING.SUBSCRIPTION.UPDATED', () => {
     });
   });
 
+  it('records a quantity PayPal sends as a JSON number, not a string', () => {
+    const decision = applied(
+      decide(updated({ quantity: 2 }), subscription(), INTENT, 'pro')
+    );
+    expect(decision.patch.addons).toEqual({ paypal_quantity: 2 });
+  });
+
   it('refuses to guess when the PayPal plan is not in our catalogue', () => {
     const decision = decide(
       updated({ plan_id: 'P-UNKNOWN' }),
@@ -413,6 +512,20 @@ describe('BILLING.SUBSCRIPTION.CANCELLED', () => {
       cancel_at_period_end: true,
       status: 'cancelled',
     });
+  });
+
+  it('cannot cancel a subscription a newer event already reactivated', () => {
+    const decision = decide(
+      event(
+        'BILLING.SUBSCRIPTION.CANCELLED',
+        { id: 'I-SUB', status: 'CANCELLED' },
+        '2026-03-01T00:00:00Z'
+      ),
+      subscription({ last_event_at: '2026-03-10T00:00:00.000Z' })
+    );
+    // Nothing to move forward, so nothing at all: not the flag, not the
+    // status, not the attempt.
+    expect(decision.kind).toBe('skip');
   });
 
   it('ignores a cancellation for a subscription this account never activated', () => {
@@ -539,6 +652,28 @@ describe('PAYMENT.SALE.COMPLETED', () => {
       current_period_end: '2026-04-15T12:00:00.000Z',
     });
     expect(decision.intentStatus).toBe('activated');
+  });
+
+  it('takes over the cancelled row when the new sale lands before its activation', () => {
+    const decision = applied(
+      decide(
+        sale('2026-03-15T12:00:00Z'),
+        subscription({
+          provider_subscription_id: 'I-OLD',
+          status: 'cancelled',
+          cancel_at_period_end: true,
+          current_period_end: '2026-02-01T00:00:00.000Z',
+          last_event_at: '2026-02-20T00:00:00.000Z',
+        })
+      )
+    );
+    expect(decision.patch).toMatchObject({
+      status: 'active',
+      provider_subscription_id: 'I-SUB',
+      current_period_end: '2026-04-15T12:00:00.000Z',
+      cancel_at_period_end: false,
+      grace_until: null,
+    });
   });
 
   it('refuses when there is no intent to say which plan and cycle were paid', () => {

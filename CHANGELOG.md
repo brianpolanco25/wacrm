@@ -50,7 +50,11 @@ behaviour changes**; nothing is limited by plan yet.
   endpoint accepts nothing. A repeated event is recorded once and applied once,
   and an event that arrives out of order can never undo a newer one. Events that
   cannot be matched to an account are kept unapplied in `billing_events` for
-  reconciliation rather than guessed at. Nothing here limits what an account can
+  reconciliation rather than guessed at, and resending such a delivery from
+  PayPal's dashboard — once the cause is fixed — applies it. A customer who
+  cancels and later contracts again is activated on the new subscription; an
+  activation that reports a different plan than the one the customer asked for
+  is refused instead of granting either. Nothing here limits what an account can
   do yet, and inbound WhatsApp messages are never affected.
 - **Plan checkout** (`/billing`). An owner or admin picks a plan and a
   billing cycle, approves the payment on PayPal and comes back to

@@ -62,7 +62,7 @@ const SUBSCRIPTION_COLUMNS =
   'account_id, plan_id, status, provider_subscription_id, current_period_end, ' +
   'grace_until, cancel_at_period_end, addons, last_event_at';
 
-const INTENT_COLUMNS = 'account_id, plan_id, cycle, status';
+const INTENT_COLUMNS = 'account_id, plan_id, cycle, status, provider_plan_id';
 
 interface SubscriptionRow extends SubscriptionState {
   account_id: string;
@@ -71,6 +71,7 @@ interface SubscriptionRow extends SubscriptionState {
 interface IntentRow extends IntentState {
   account_id: string;
   status: string;
+  provider_plan_id: string | null;
 }
 
 /** What happened to an event, recorded on its `billing_events` row. */
@@ -91,8 +92,26 @@ class TransientWebhookError extends Error {
 }
 
 export async function POST(request: Request) {
-  // The exact bytes PayPal signed. Nothing may parse before this.
+  // The exact bytes PayPal signed, read before anything else touches
+  // the request.
   const rawBody = await request.text();
+
+  // Shape first, signature second. The verification call splices these
+  // bytes into a JSON document as the value of `webhook_event`
+  // (`verifyWebhookSignature` in src/lib/billing/paypal.ts), so proving
+  // first that they are one plain JSON object is what stops a crafted
+  // body from smuggling a second root-level `webhook_id` past a lenient
+  // parser on the other side. The bytes are still forwarded verbatim —
+  // JSON.parse + JSON.stringify does not round-trip what PayPal signed.
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
 
   if (!(await verifyPayPalWebhook(rawBody, request.headers))) {
     // 401, not 200: a signature that stops matching is a configuration
@@ -103,13 +122,6 @@ export async function POST(request: Request) {
       '[billing/webhook] rejected a delivery with no valid signature'
     );
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
-  }
-
-  let payload: unknown;
-  try {
-    payload = JSON.parse(rawBody);
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
   const event = parseWebhookEvent(payload);
@@ -133,18 +145,50 @@ export async function POST(request: Request) {
   });
 
   if (lockError) {
-    if (lockError.code === '23505') {
-      // Already taken. Whether the first delivery finished or is still
-      // in flight, doing it again here is the one thing we must not do.
+    if (lockError.code !== '23505') {
+      console.error('[billing/webhook] could not record the event:', lockError);
+      // We cannot guarantee idempotence, so we must not process. 500
+      // asks PayPal to redeliver.
+      return NextResponse.json(
+        { error: 'Could not record the event' },
+        { status: 500 }
+      );
+    }
+
+    // Already recorded. If the first attempt FINISHED, applying it
+    // again is the one thing we must not do: that is the replay the
+    // UNIQUE of migration 041 exists to stop.
+    //
+    // If it did not finish — an event left `unmatched`, or one that
+    // died on an unexpected failure — the row is not a processed event
+    // but an entry in the reconciliation queue, and the redelivery (or
+    // the "Resend" of docs/docker.md) is precisely the retry that gets
+    // it out of there. Reprocessing is safe because every handler
+    // decides against the row as it is now and writes absolute values.
+    const { data: recorded, error: readError } = await admin
+      .from('billing_events')
+      .select('processed_at')
+      .eq('provider', PROVIDER)
+      .eq('provider_event_id', event.id)
+      .maybeSingle();
+
+    if (readError) {
+      console.error(
+        '[billing/webhook] could not read the recorded event:',
+        readError
+      );
+      return NextResponse.json(
+        { error: 'Could not record the event' },
+        { status: 500 }
+      );
+    }
+
+    const processedAt =
+      (recorded as { processed_at?: string | null } | null)?.processed_at ??
+      null;
+    if (!recorded || processedAt) {
       return NextResponse.json({ status: 'duplicate' }, { status: 200 });
     }
-    console.error('[billing/webhook] could not record the event:', lockError);
-    // We cannot guarantee idempotence, so we must not process. 500 asks
-    // PayPal to redeliver.
-    return NextResponse.json(
-      { error: 'Could not record the event' },
-      { status: 500 }
-    );
   }
 
   try {
@@ -186,6 +230,14 @@ export async function POST(request: Request) {
       );
     }
     console.error('[billing/webhook] unexpected failure:', err);
+    // Leave a trace that can be queried. Without it the row keeps
+    // `processed_at IS NULL` *and* `error IS NULL`, which the
+    // reconciliation query of docs/docker.md cannot see: a paid
+    // activation lost with nothing to look at. `processed_at` stays
+    // NULL on purpose — that pair is the queue, and it is also what
+    // makes PayPal's redelivery reprocess the event instead of being
+    // answered "duplicate".
+    await recordFailure(admin, event.id, err);
     return NextResponse.json(
       { error: 'Could not process the event' },
       { status: 500 }
@@ -357,7 +409,15 @@ async function resolveAccount(
   return {
     accountId,
     subscription: (subData as SubscriptionRow | null) ?? null,
-    intent: intent ? { plan_id: intent.plan_id, cycle: cycleOf(intent) } : null,
+    intent: intent
+      ? {
+          plan_id: intent.plan_id,
+          cycle: cycleOf(intent),
+          // Contrasted against the plan the ACTIVATED event carries;
+          // migration 048 stores it for exactly that.
+          provider_plan_id: intent.provider_plan_id ?? null,
+        }
+      : null,
   };
 }
 
@@ -447,6 +507,45 @@ async function markIntent(
 
   if (error) {
     throw new TransientWebhookError('checkout intent update failed', error);
+  }
+}
+
+/**
+ * Why an event blew up, written onto its `billing_events` row.
+ *
+ * Best effort and never throws: we are already handling a failure, and
+ * the reply to PayPal must stay a 500 whatever happens here.
+ */
+async function recordFailure(
+  admin: SupabaseClient,
+  eventId: string,
+  err: unknown
+): Promise<void> {
+  const reason =
+    err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  try {
+    const { error } = await admin
+      .from('billing_events')
+      .update({
+        processed_at: null,
+        error: `unexpected failure — ${reason}`.slice(0, 500),
+      })
+      .eq('provider', PROVIDER)
+      .eq('provider_event_id', eventId);
+
+    if (error) {
+      console.error(
+        '[billing/webhook] could not record the failure of',
+        eventId,
+        error
+      );
+    }
+  } catch (writeErr) {
+    console.error(
+      '[billing/webhook] could not record the failure of',
+      eventId,
+      writeErr
+    );
   }
 }
 

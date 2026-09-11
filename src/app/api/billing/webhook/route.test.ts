@@ -42,6 +42,8 @@ let db: Db;
 let queries: QueryLog[];
 /** Tables whose next write comes back as a transient failure. */
 let writeFailure: { table: keyof Db; op: 'insert' | 'update' } | null;
+/** A table whose writes throw something nobody predicted. */
+let throwOnWrite: { table: keyof Db; err: unknown } | null;
 
 function freshDb(): Db {
   return {
@@ -149,6 +151,10 @@ function builder(table: string) {
     ) {
       writeFailure = null;
       return { data: null, error: { code: '08006', message: 'connection' } };
+    }
+
+    if (throwOnWrite && throwOnWrite.table === table && op !== 'select') {
+      throw throwOnWrite.err;
     }
 
     if (op === 'insert') {
@@ -283,6 +289,7 @@ beforeEach(() => {
   db = freshDb();
   queries = [];
   writeFailure = null;
+  throwOnWrite = null;
   verifyPayPalWebhook.mockReset();
   verifyPayPalWebhook.mockResolvedValue(true);
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -310,8 +317,11 @@ describe('signature', () => {
     expect(db.billing_events).toHaveLength(0);
   });
 
-  it('verifies the raw bytes, before any parsing', async () => {
+  it('verifies the delivered bytes, never a re-serialisation of them', async () => {
     // Spacing and key order that JSON.stringify would not reproduce.
+    // The body is parsed first (a plain JSON object is a precondition
+    // of the verification call), but what travels to PayPal are these
+    // bytes.
     const rawBody =
       '{ "id":"WH-RAW",\n  "event_type":"BILLING.SUBSCRIPTION.SUSPENDED",\n' +
       '  "resource": { "id":"I-1" } }';
@@ -335,6 +345,18 @@ describe('signature', () => {
     ).toBe(400);
     expect(db.billing_events).toHaveLength(0);
   });
+
+  it('refuses a body that is not a JSON object before asking PayPal', async () => {
+    // The verification request embeds the body as the value of
+    // `webhook_event`; anything that is not one plain object has no
+    // business being spliced into it.
+    for (const body of ['[1,2]', '"a string"', 'null', '42']) {
+      const res = await postRaw(body);
+      expect(res.status).toBe(400);
+    }
+    expect(verifyPayPalWebhook).not.toHaveBeenCalled();
+    expect(db.billing_events).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -355,6 +377,57 @@ describe('idempotence', () => {
     // One activation, one write. The replays touched nothing.
     expect(writesTo('subscriptions')).toHaveLength(1);
     expect(db.subscriptions).toHaveLength(1);
+  });
+
+  it('reprocesses a redelivery of an event that was never applied', async () => {
+    // The runbook of docs/docker.md: an event nobody could match stays
+    // in the queue with `processed_at IS NULL`; fixing the cause and
+    // hitting "Resend" in PayPal must apply it. PayPal resends with the
+    // SAME event id, so the UNIQUE is hit and the duplicate branch is
+    // the only thing that can get it out of the queue.
+    const first = await post(activated('I-1'));
+    expect(await first.json()).toMatchObject({ status: 'unmatched' });
+    expect(db.billing_events[0].processed_at).toBeNull();
+
+    // The cause: the checkout intent was missing. Put it back.
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1'));
+
+    const resent = await post(activated('I-1'));
+
+    expect(await resent.json()).toMatchObject({ status: 'processed' });
+    expect(db.billing_events).toHaveLength(1);
+    expect(db.billing_events[0].processed_at).toEqual(expect.any(String));
+    expect(db.billing_events[0].error).toBeNull();
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      status: 'active',
+      provider_subscription_id: 'I-1',
+    });
+  });
+
+  it('leaves a queryable reason when processing blows up unexpectedly', async () => {
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1'));
+    // Not a database error object: something nobody predicted, thrown
+    // from inside the decision. The row must not end up with
+    // `processed_at` and `error` both NULL — that is invisible to the
+    // reconciliation query and loses a paid activation without trace.
+    const boom = new TypeError('cannot read properties of undefined');
+    throwOnWrite = { table: 'subscriptions', err: boom };
+
+    const res = await post(activated('I-1'));
+
+    expect(res.status).toBe(500);
+    expect(db.billing_events).toHaveLength(1);
+    expect(db.billing_events[0].processed_at).toBeNull();
+    expect(String(db.billing_events[0].error)).toContain(
+      'cannot read properties of undefined'
+    );
+
+    // And because the row is unprocessed, PayPal's redelivery is a real
+    // retry rather than a "duplicate".
+    throwOnWrite = null;
+    const retry = await post(activated('I-1'));
+    expect(await retry.json()).toMatchObject({ status: 'processed' });
+    expect(accountOf(ACCOUNT_A)).toMatchObject({ status: 'active' });
   });
 
   it('records the event before processing it', async () => {
@@ -417,6 +490,95 @@ describe('activation', () => {
     });
     // And the attempt of §2 stops being pending.
     expect(db.checkout_intents[0].status).toBe('activated');
+  });
+
+  it('activates the new subscription of a customer who contracted again after cancelling', async () => {
+    // The whole sequence, as PayPal delivers it. §2 lets a cancelled
+    // account buy again and nothing clears the old provider id, so the
+    // row still points at the subscription that died: if its
+    // activation were refused, the customer would pay and never get
+    // service.
+
+    // 1. First contract, on I-1.
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1'));
+    await post(
+      activated(
+        'I-1',
+        { create_time: '2026-01-15T12:00:00Z' },
+        { billing_info: { next_billing_time: '2026-02-15T12:00:00Z' } }
+      )
+    );
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      status: 'active',
+      provider_subscription_id: 'I-1',
+    });
+
+    // 2. Cancelled, with the paid cycle already over: the row closes.
+    await post({
+      id: 'WH-cancel-1',
+      event_type: 'BILLING.SUBSCRIPTION.CANCELLED',
+      create_time: '2026-02-20T00:00:00Z',
+      resource: { id: 'I-1', status: 'CANCELLED' },
+    });
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      status: 'cancelled',
+      cancel_at_period_end: true,
+      provider_subscription_id: 'I-1',
+    });
+
+    // 3. They contract again: §2 records a second intent, on I-2.
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-2'));
+
+    // 4. PayPal activates the new subscription.
+    const res = await post(
+      activated(
+        'I-2',
+        { create_time: '2026-03-19T00:00:00Z' },
+        { billing_info: { next_billing_time: '2026-04-19T00:00:00Z' } }
+      )
+    );
+
+    expect(await res.json()).toMatchObject({ status: 'processed' });
+    expect(db.subscriptions).toHaveLength(1);
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'active',
+      provider_subscription_id: 'I-2',
+      current_period_end: '2026-04-19T00:00:00.000Z',
+      cancel_at_period_end: false,
+      grace_until: null,
+      last_event_at: '2026-03-19T00:00:00.000Z',
+    });
+    // The new attempt is the one that closes; the old one keeps its
+    // own history.
+    expect(db.checkout_intents[1].status).toBe('activated');
+    expect(db.checkout_intents[0].status).toBe('cancelled');
+    // And nothing was written outside this account.
+    expect(new Set(scopesOf('subscriptions'))).toEqual(new Set([ACCOUNT_A]));
+  });
+
+  it('refuses an activation of a plan the customer never asked for', async () => {
+    // Migration 048 keeps the PayPal plan id the intent was created
+    // with. If the activated one differs, the two records disagree
+    // about what was bought.
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1'));
+
+    const res = await post(activated('I-1', {}, { plan_id: 'P-NEGOCIO-YEAR' }));
+
+    expect(await res.json()).toMatchObject({ status: 'unmatched' });
+    expect(db.subscriptions).toHaveLength(0);
+    expect(writesTo('subscriptions')).toHaveLength(0);
+    expect(String(db.billing_events[0].error)).toContain('P-NEGOCIO-YEAR');
+  });
+
+  it('activates when PayPal reports the very plan the intent asked for', async () => {
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1'));
+
+    const res = await post(activated('I-1', {}, { plan_id: 'P-PRO-MONTH' }));
+
+    expect(await res.json()).toMatchObject({ status: 'processed' });
+    expect(accountOf(ACCOUNT_A)).toMatchObject({ status: 'active' });
   });
 
   it('updates the trialing row instead of inserting a second one', async () => {
@@ -683,6 +845,66 @@ describe('events out of order', () => {
     expect(row.current_period_end).toBe('2026-04-15T12:00:00.000Z');
     expect(row.last_event_at).toBe('2026-03-10T00:00:00.000Z');
     // And it does not drag the checkout attempt back to 'activated'.
+    expect(db.checkout_intents[0].status).toBe('cancelled');
+  });
+
+  it('does not cancel with a late cancellation of an already reactivated plan', async () => {
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1', { status: 'activated' }));
+    db.subscriptions.push(
+      subscriptionRow(ACCOUNT_A, {
+        provider_subscription_id: 'I-1',
+        last_event_at: '2026-03-15T12:00:00.000Z',
+      })
+    );
+
+    // Stamped two weeks before the activation we already applied.
+    const res = await post({
+      id: 'WH-cancel-late',
+      event_type: 'BILLING.SUBSCRIPTION.CANCELLED',
+      create_time: '2026-03-01T00:00:00Z',
+      resource: { id: 'I-1', status: 'CANCELLED' },
+    });
+
+    expect(await res.json()).toMatchObject({ status: 'skipped' });
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      status: 'active',
+      cancel_at_period_end: false,
+      current_period_end: '2026-04-15T12:00:00.000Z',
+      last_event_at: '2026-03-15T12:00:00.000Z',
+    });
+    // Not the subscription, not the watermark, not the attempt.
+    expect(writesTo('subscriptions')).toHaveLength(0);
+    expect(writesTo('checkout_intents')).toHaveLength(0);
+    expect(db.checkout_intents[0].status).toBe('activated');
+  });
+
+  it('does not lift a cancelled subscription with a redelivery of its own activation', async () => {
+    // The watermark is NULL on every row that predates migration 050,
+    // so the end of the line cannot depend on it alone.
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1', { status: 'cancelled' }));
+    db.subscriptions.push(
+      subscriptionRow(ACCOUNT_A, {
+        provider_subscription_id: 'I-1',
+        status: 'cancelled',
+        cancel_at_period_end: true,
+        current_period_end: '2026-04-15T12:00:00.000Z',
+        last_event_at: null,
+      })
+    );
+
+    await post(
+      activated(
+        'I-1',
+        { create_time: '2026-03-18T00:00:00Z' },
+        { billing_info: { next_billing_time: '2026-04-15T12:00:00Z' } }
+      )
+    );
+
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      status: 'cancelled',
+      cancel_at_period_end: true,
+      current_period_end: '2026-04-15T12:00:00.000Z',
+    });
     expect(db.checkout_intents[0].status).toBe('cancelled');
   });
 

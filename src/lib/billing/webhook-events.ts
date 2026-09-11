@@ -67,6 +67,21 @@ function str(value: unknown): string | null {
 }
 
 /**
+ * A number from a value PayPal may send either way.
+ *
+ * `quantity` is documented as a string and arrives as one today, but a
+ * JSON number must not be dropped in silence: the whole point of
+ * recording it is to make a discrepancy visible.
+ */
+function numberOrNull(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const text = str(value);
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
  * Read the envelope. Returns null when the body is not a PayPal event
  * we could ever act on — no id means no idempotency key, and without
  * one a retry would be processed twice.
@@ -202,6 +217,14 @@ export interface SubscriptionState {
 export interface IntentState {
   plan_id: string;
   cycle: BillingCycle;
+  /**
+   * The plan id AT PAYPAL the subscription was created with (migration
+   * 048). The activation is contrasted against it: if PayPal says it
+   * activated a different plan than the one the customer asked for, the
+   * two records disagree about what was bought and neither may be
+   * granted on a guess.
+   */
+  provider_plan_id?: string | null;
 }
 
 export interface SubscriptionPatch {
@@ -264,6 +287,16 @@ const REVIVABLE = new Set(['trialing', 'active', 'past_due', 'suspended']);
 /** Statuses that are the end of the line: a late event cannot undo them. */
 const TERMINAL = new Set(['cancelled', 'expired']);
 
+/**
+ * The two events that mean "this was contracted and paid for". Only
+ * these may take a terminal row over onto a new PayPal subscription —
+ * see the re-contracting note in `decideSubscriptionChange`.
+ */
+const ADOPTING_EVENT_TYPES = new Set<string>([
+  'BILLING.SUBSCRIPTION.ACTIVATED',
+  'PAYMENT.SALE.COMPLETED',
+]);
+
 export function decideSubscriptionChange(input: DecisionInput): Decision {
   const { event, existing, now } = input;
   const nowIso = now.toISOString();
@@ -283,26 +316,70 @@ export function decideSubscriptionChange(input: DecisionInput): Decision {
   // tenant with a second subscription (a failed plan change, a manual
   // one created in the PayPal dashboard) must not have their live row
   // rewritten by the other one's events.
-  if (
+  const onAnotherSubscription = Boolean(
     existing?.provider_subscription_id &&
     existing.provider_subscription_id !== subscriptionId
-  ) {
+  );
+
+  // The exception is re-contracting after a cancellation. §2 lets an
+  // account whose subscription is `cancelled` or `expired` buy again
+  // (CONTRACTED_STATUSES in checkout.ts) and nothing ever clears the
+  // old provider id, so the row still points at the subscription that
+  // died. Refusing the activation of the NEW one would mean the
+  // customer pays and never gets service — the exact damage §3 exists
+  // to prevent. Adoption is therefore allowed, but narrowly: only for
+  // the two events that mean "contracted and paid", only over a row
+  // whose subscription is terminal, and only when the checkout intent
+  // for THIS subscription is one of ours — that intent is what
+  // identified the account in the first place. A live row on another
+  // subscription is still refused.
+  const adopting =
+    onAnotherSubscription &&
+    ADOPTING_EVENT_TYPES.has(event.eventType) &&
+    TERMINAL.has(existing!.status) &&
+    Boolean(input.intent);
+
+  if (onAnotherSubscription && !adopting) {
     return {
       kind: 'error',
-      reason: `event is for subscription ${subscriptionId} but the account is on ${existing.provider_subscription_id}`,
+      reason: `event is for subscription ${subscriptionId} but the account is on ${existing!.provider_subscription_id}`,
     };
   }
 
-  const built = buildPatch({ ...input, subscriptionId, eventTime, nowIso });
+  const built = buildPatch({
+    ...input,
+    subscriptionId,
+    eventTime,
+    nowIso,
+    adopting,
+  });
   if (built.kind !== 'apply') return built;
+
+  // End of the line for the subscription the row is on: once it is
+  // `cancelled` or `expired`, nothing from that same subscription lifts
+  // it back — not even an event newer than the watermark. Symmetric
+  // with the TERMINAL guards of SUSPENDED and PAYMENT.FAILED, and,
+  // unlike them, independent of `last_event_at`, which is NULL on every
+  // row that predates migration 050. Treated as a late delivery rather
+  // than a flat refusal so the period end may still move forward:
+  // whoever paid keeps what they paid for.
+  const terminated =
+    !adopting &&
+    existing !== null &&
+    existing.provider_subscription_id === subscriptionId &&
+    TERMINAL.has(existing.status);
 
   // Out of order: an event stamped before the last one we applied may
   // only push the period end forward. Status, plan, grace and the
   // cancellation flag all belong to whatever we already applied.
-  const stale = Boolean(
+  const late = Boolean(
     existing?.last_event_at &&
     Date.parse(eventTime) < Date.parse(existing.last_event_at)
   );
+
+  // Adoption is never late: the watermark belongs to the subscription
+  // that died, not to the one being contracted now.
+  const stale = !adopting && (terminated || late);
 
   let patch = built.patch;
   if (stale) {
@@ -328,9 +405,11 @@ export function decideSubscriptionChange(input: DecisionInput): Decision {
   if (Object.keys(patch).length === 0) {
     return {
       kind: 'skip',
-      reason: stale
-        ? 'event is older than the last one applied and moves nothing forward'
-        : 'event changes nothing',
+      reason: terminated
+        ? `subscription is already ${existing!.status}`
+        : stale
+          ? 'event is older than the last one applied and moves nothing forward'
+          : 'event changes nothing',
     };
   }
 
@@ -348,10 +427,23 @@ interface BuildInput extends DecisionInput {
   subscriptionId: string;
   eventTime: string;
   nowIso: string;
+  /**
+   * True when this event takes a terminal row over onto its own, newer
+   * PayPal subscription (re-contracting after a cancellation).
+   */
+  adopting: boolean;
 }
 
 function buildPatch(input: BuildInput): Decision {
-  const { event, existing, intent, subscriptionId, eventTime, nowIso } = input;
+  const {
+    event,
+    existing,
+    intent,
+    subscriptionId,
+    eventTime,
+    nowIso,
+    adopting,
+  } = input;
 
   switch (event.eventType as HandledEventType) {
     // ------------------------------------------------------------
@@ -365,6 +457,25 @@ function buildPatch(input: BuildInput): Decision {
           reason: `no checkout intent for subscription ${subscriptionId}; cannot tell which plan was bought`,
         };
       }
+
+      // What PayPal says was activated against what the customer asked
+      // for. Migration 048 keeps `provider_plan_id` on the intent for
+      // exactly this: if the two disagree, the approved subscription is
+      // not the one we created, and granting either plan would be a
+      // guess. It goes to the reconciliation queue with its payload
+      // instead.
+      const activatedPlan = providerPlanIdOf(event);
+      if (
+        activatedPlan &&
+        intent?.provider_plan_id &&
+        activatedPlan !== intent.provider_plan_id
+      ) {
+        return {
+          kind: 'error',
+          reason: `PayPal activated plan ${activatedPlan} for subscription ${subscriptionId} but the checkout intent asked for ${intent.provider_plan_id}`,
+        };
+      }
+
       const cycleEnd =
         nextBillingTimeOf(event) ??
         (intent ? addCycle(eventTime, intent.cycle) : null);
@@ -421,8 +532,8 @@ function buildPatch(input: BuildInput): Decision {
       // is always 1 and has nowhere of its own to live. Recording it in
       // `addons` keeps it visible if PayPal ever reports something else
       // instead of silently dropping a discrepancy.
-      const quantity = Number(str(event.resource.quantity));
-      if (Number.isFinite(quantity) && quantity > 0) {
+      const quantity = numberOrNull(event.resource.quantity);
+      if (quantity !== null && quantity > 0) {
         const current = existing.addons ?? {};
         if (current.paypal_quantity !== quantity) {
           patch.addons = { ...current, paypal_quantity: quantity };
@@ -535,10 +646,11 @@ function buildPatch(input: BuildInput): Decision {
 
       const periodEnd = addCycle(eventTime, cycle);
 
-      if (!existing) {
-        // The sale beat the activation. Creating the row keeps the
-        // customer served; ACTIVATED arrives later, is stale, and only
-        // reconciles the period end. The alternative — ignoring a
+      if (!existing || adopting) {
+        // The sale beat the activation. Creating the row — or taking
+        // over the terminal one left by the subscription this customer
+        // cancelled — keeps them served; ACTIVATED arrives later and
+        // only reconciles the period end. The alternative — ignoring a
         // payment we have taken — is the "impossible state" the spec
         // warns about.
         return {

@@ -430,9 +430,12 @@ export interface PayPalTransmissionHeaders {
 /**
  * Ask PayPal whether this delivery is genuine.
  *
- * `rawBody` must be the exact bytes received (`await request.text()`
- * before any parsing). It is spliced into the verification request as
- * a raw JSON fragment, never re-serialised — see `paypalFetch`.
+ * `rawBody` must be the exact bytes received (`await request.text()`),
+ * and the caller must have proved they parse to a plain JSON object
+ * before getting here — the route does, in that order. They are
+ * spliced into the verification request as a raw JSON fragment, never
+ * re-serialised, because JSON.parse + JSON.stringify does not
+ * round-trip what PayPal signed — see `paypalFetch`.
  *
  * Returns `true` only for an explicit `SUCCESS`. Every other answer —
  * `FAILURE`, an unexpected shape, a malformed body — is a rejection.
@@ -446,9 +449,11 @@ export async function verifyWebhookSignature(
   webhookId: string
 ): Promise<boolean> {
   // Hand-built so `webhook_event` keeps the delivered bytes. `rawBody`
-  // has already been proven to be valid JSON by the caller; every
-  // other value goes through JSON.stringify, so nothing here can break
-  // out of its string.
+  // is one plain JSON object — the caller parses and checks that before
+  // calling, which is what stops a body from closing this object early
+  // and appending a `webhook_id` of its own choosing. Every other value
+  // goes through JSON.stringify, so no header can break out of its
+  // string either.
   const requestBody =
     '{' +
     [

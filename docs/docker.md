@@ -171,7 +171,10 @@ SELECT received_at, event_type, error, payload
 ```
 
 Nothing is lost — the full payload is on the row — but nothing is applied
-either. Fix the cause and replay the event from PayPal's webhook dashboard.
+either. Fix the cause and hit **Resend** on that delivery in PayPal's webhook
+dashboard: a redelivery of an event that was never applied (`processed_at IS
+NULL`) is processed again, so no row has to be deleted by hand. An event that
+_did_ complete is never applied twice, however often PayPal resends it.
 
 ## Plain Docker (no Compose)
 
