@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Fase 3 §4 — `messages_out` on the automations sender.
+// Fase 3 §4 + §5 — `messages_out` and the read-only gate on the
+// automations sender.
 //
-// Same gate as the flows sender and the dashboard route. This engine is
+// Same gates as the flows sender and the dashboard route. This engine is
 // the one most likely to run away: an automation wired to
-// `new_message_received` sends on every inbound.
+// `new_message_received` sends on every inbound. And it is the one that
+// most needs §5 spelled out, because it runs from the webhook's
+// `after()` on the service-role client — `requireRole`, where the
+// dunning ladder lives, is never in the path.
 // ---------------------------------------------------------------------------
 
 const h = vi.hoisted(() => ({
+  assertWritable: vi.fn(async () => {}),
   assertQuota: vi.fn(async () => {}),
   recordUsage: vi.fn(async () => {}),
   sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.text' })),
@@ -17,6 +22,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
+  assertWritable: h.assertWritable,
   assertQuota: h.assertQuota,
   recordUsage: h.recordUsage,
 }));
@@ -76,7 +82,7 @@ vi.mock('./admin-client', () => ({
   }),
 }));
 
-import { QuotaExceededError } from '@/lib/billing/enforce';
+import { AccountLockedError, QuotaExceededError } from '@/lib/billing/enforce';
 import { engineSendText } from './meta-send';
 
 const ARGS = {
@@ -89,6 +95,8 @@ const ARGS = {
 
 beforeEach(() => {
   h.state.inserts = [];
+  h.assertWritable.mockReset();
+  h.assertWritable.mockResolvedValue(undefined);
   h.assertQuota.mockReset();
   h.assertQuota.mockResolvedValue(undefined);
   h.recordUsage.mockReset();
@@ -120,5 +128,30 @@ describe('automations engineSendText — messages_out (fase 3 §4)', () => {
     await engineSendText({ ...ARGS, accountId: 'acct-other' });
     expect(h.assertQuota).toHaveBeenCalledWith('acct-other', 'messages_out', 1);
     expect(h.recordUsage).toHaveBeenCalledWith('acct-other', 'messages_out', 1);
+  });
+});
+
+describe('automations engineSendText — suspended account (fase 3 §5)', () => {
+  it('sends nothing for a suspended account, and does not even weigh it', async () => {
+    h.assertWritable.mockRejectedValue(new AccountLockedError('suspended'));
+
+    await expect(engineSendText(ARGS)).rejects.toBeInstanceOf(
+      AccountLockedError
+    );
+
+    // Nothing left for Meta, nothing persisted, nothing billed — and
+    // the allowance was not even consulted: a read-only account is
+    // refused before the question of how much is left comes up.
+    expect(h.sendTextMessage).not.toHaveBeenCalled();
+    expect(h.state.inserts).toHaveLength(0);
+    expect(h.recordUsage).not.toHaveBeenCalled();
+    expect(h.assertQuota).not.toHaveBeenCalled();
+    expect(h.assertWritable).toHaveBeenCalledWith('acct-1');
+  });
+
+  it('asks about the account of the automation, not a fixed one (leak test)', async () => {
+    await engineSendText({ ...ARGS, accountId: 'acct-other' });
+    expect(h.assertWritable).toHaveBeenCalledWith('acct-other');
+    expect(h.assertWritable).not.toHaveBeenCalledWith('acct-1');
   });
 });

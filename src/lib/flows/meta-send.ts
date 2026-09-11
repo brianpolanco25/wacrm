@@ -15,7 +15,11 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
-import { assertQuota, recordUsage } from '@/lib/billing/enforce'
+import {
+  assertQuota,
+  assertWritable,
+  recordUsage,
+} from '@/lib/billing/enforce'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -68,7 +72,17 @@ export async function engineSendText(
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
 
-  // Fase 3 §4: `messages_out`, same cap as a manual send.
+  // Fase 3 §5 then §4. Both gates live HERE because both engines run
+  // from the webhook's `after()` on the service-role client: they never
+  // pass through `requireRole`, which is where the dunning ladder bites
+  // for every other write. Without this a suspended account kept
+  // answering by flow until its monthly allowance ran out, while the
+  // banner told its operators nothing was going out.
+  //
+  // Throwing is safe for CP11: the inbound this replies to was stored
+  // before the dispatch, and the flow runner owns a try/catch that logs
+  // the step as failed and returns. Only the outbound stops.
+  await assertWritable(args.accountId)
   await assertQuota(args.accountId, 'messages_out', 1)
 
   const { data: contact, error: contactErr } = await db
@@ -183,7 +197,8 @@ export async function engineSendMedia(
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
 
-  // Fase 3 §4: `messages_out`, same cap as a manual send.
+  // Fase 3 §5 + §4, the same two gates as `engineSendText` above.
+  await assertWritable(args.accountId)
   await assertQuota(args.accountId, 'messages_out', 1)
 
   const { data: contact, error: contactErr } = await db
@@ -337,9 +352,11 @@ async function sendInteractiveViaMeta(
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
 
-  // Fase 3 §4: `messages_out`. Buttons and lists are outbound messages
-  // like any other — leaving them uncounted would make the cap a
-  // suggestion.
+  // Fase 3 §5 + §4: `messages_out`. Buttons and lists are outbound
+  // messages like any other — leaving them ungated would make both the
+  // suspension and the cap a suggestion (send a menu instead of a text
+  // and it would be free).
+  await assertWritable(input.accountId)
   await assertQuota(input.accountId, 'messages_out', 1)
 
   // Scope the contact + whatsapp_config lookups by account_id —

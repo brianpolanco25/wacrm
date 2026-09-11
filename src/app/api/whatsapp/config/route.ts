@@ -205,23 +205,52 @@ export async function POST(request: Request) {
       }
     }
 
+    // Look up the account's existing config row up front. Two things
+    // need it: the `numbers` check right below (it has to know which
+    // row this save is going to overwrite) and the /register decision
+    // further down (whether this number is already registered).
+    const { data: existing, error: existingErr } = await supabase
+      .from('whatsapp_config')
+      .select('id, registered_at, phone_number_id')
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (existingErr) {
+      // Fail closed: not knowing whether a row exists is not knowing
+      // whether this save is an edit or a second number.
+      console.error('Error loading existing whatsapp_config:', existingErr)
+      return NextResponse.json(
+        { error: 'Failed to validate configuration' },
+        { status: 500 }
+      )
+    }
+
     // Fase 3 §4 + §5. This route resolves its account by hand instead
     // of through `requireRole`, so the read-only gate that `requireRole`
     // applies everywhere else has to be spelled out here, and the
     // `numbers` limit goes with it.
     //
     // `numbers` is a STOCK limit: how many WhatsApp numbers this
-    // account has bound right now. Today `whatsapp_config` has a
-    // UNIQUE(account_id) so the count is 0 or 1 and no plan can trip
-    // the cap; the check is written against the count rather than
-    // against that constraint so it keeps meaning something when f4.2
-    // drops the UNIQUE. Saving over the account's existing row is an
-    // edit, not a new number, and consumes nothing.
-    const { count: numberCount, error: numberCountErr } = await supabase
+    // account has bound right now. This save adds ONE, so what has to
+    // be counted is every OTHER row of the account — excluded by ROW
+    // IDENTITY, not by `phone_number_id`. Excluding by number was wrong
+    // in the one case that matters: with UNIQUE(account_id) the
+    // account's single row holds the OLD number, so changing it (Meta
+    // test number -> production number, the normal onboarding path)
+    // counted that row and answered 402 on every plan with
+    // `numbers: 1`. Saving over the account's own row is an edit and
+    // consumes nothing.
+    //
+    // While UNIQUE(account_id) stands the count is therefore always 0
+    // and no plan can trip the cap. The check is written against the
+    // count rather than against the constraint so it starts meaning
+    // something the day f4.2 drops the UNIQUE and a second row exists.
+    const numberCountQuery = supabase
       .from('whatsapp_config')
       .select('id', { count: 'exact', head: true })
       .eq('account_id', accountId)
-      .neq('phone_number_id', phone_number_id)
+    const { count: numberCount, error: numberCountErr } = await (existing?.id
+      ? numberCountQuery.neq('id', existing.id)
+      : numberCountQuery)
     if (numberCountErr) {
       // Fail closed: an uncounted number is not a free number.
       console.error('Error counting configured numbers:', numberCountErr)
@@ -304,15 +333,11 @@ export async function POST(request: Request) {
       )
     }
 
-    // Look up any pre-existing row for this account so we know whether
-    // this number is already registered with Meta — if so we can skip
-    // /register when the user didn't provide a PIN this time around.
-    const { data: existing } = await supabase
-      .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id')
-      .eq('account_id', accountId)
-      .maybeSingle()
-
+    // `existing` was loaded before the billing gate (it is what decides
+    // whether this save is an edit). Reused here for the other question
+    // it answers: is this number already registered with Meta? If so we
+    // can skip /register when the user didn't provide a PIN this time
+    // around.
     const sameNumber =
       existing?.phone_number_id === phone_number_id &&
       existing?.registered_at != null

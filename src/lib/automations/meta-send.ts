@@ -15,7 +15,11 @@ import {
   resolveTemplateRow,
   templateContentText,
 } from '@/lib/whatsapp/template-body'
-import { assertQuota, recordUsage } from '@/lib/billing/enforce'
+import {
+  assertQuota,
+  assertWritable,
+  recordUsage,
+} from '@/lib/billing/enforce'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -113,11 +117,24 @@ type SendInput =
 async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
 
-  // Fase 3 §4: `messages_out`. An automation firing in a loop is the
-  // fastest way to run through a monthly allowance, so the engine is
-  // held to the same cap as a human clicking Send. Throws
-  // `QuotaExceededError`; the engine logs the step as failed and stops
-  // — nothing has reached Meta yet.
+  // Fase 3 §5 then §4.
+  //
+  // §5 first: a suspended account is read-only, and that has to be
+  // enforced here because the engine runs from the webhook's `after()`
+  // on the service-role client — it never passes through `requireRole`,
+  // where the dunning ladder bites everywhere else. Without it a
+  // `keyword_match` automation kept answering every inbound of a
+  // suspended account until the monthly allowance ran out.
+  //
+  // §4 second: an automation firing in a loop is the fastest way to run
+  // through a monthly allowance, so the engine is held to the same cap
+  // as a human clicking Send.
+  //
+  // Both throw (`AccountLockedError` / `QuotaExceededError`); the engine
+  // logs the step as failed and stops — nothing has reached Meta yet,
+  // and the inbound that triggered it was stored before the dispatch,
+  // so CP11 holds.
+  await assertWritable(input.accountId)
   await assertQuota(input.accountId, 'messages_out', 1)
 
   // Scope the contact + config lookups by account_id, not user_id.

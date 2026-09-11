@@ -607,4 +607,28 @@ describe('inbound webhook: billing never blocks what comes in (CP11)', () => {
     expect(billingGates.assertQuota).not.toHaveBeenCalled();
     expect(billingGates.getEntitlements).not.toHaveBeenCalled();
   });
+
+  // The ENGINES do ask (fase 3 §5: a suspended account's flows and
+  // automations stop replying — src/lib/{flows,automations}/meta-send.ts).
+  // What must hold is the order: by the time either of them can refuse,
+  // the customer's message is already on record.
+  it('stores the inbound before either outbound engine is asked anything', async () => {
+    const storedWhenAsked: number[] = [];
+    h.dispatchInboundToFlows.mockImplementation(async () => {
+      storedWhenAsked.push(h.state.upsertCalls.length);
+      // What a refused flow returns: the runner logged a failed step
+      // and swallowed it.
+      return { consumed: false, outcome: 'no_match' };
+    });
+    h.runAutomationsForTrigger.mockImplementation(async () => {
+      storedWhenAsked.push(h.state.upsertCalls.length);
+    });
+
+    await runWebhook();
+
+    expect(storedWhenAsked.length).toBeGreaterThan(0);
+    // Not "a message exists by the end" — one already existed at each
+    // engine's entry.
+    expect(storedWhenAsked.every((n) => n === 1)).toBe(true);
+  });
 });

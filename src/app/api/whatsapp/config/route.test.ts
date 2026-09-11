@@ -4,19 +4,35 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Fase 3 §4 + §5 — `numbers`, and the read-only gate on a route that
 // resolves its account by hand instead of through `requireRole`.
 //
-// `whatsapp_config` still carries UNIQUE(account_id), so today the count
-// is 0 or 1 and no plan can trip the cap. The check is written against
-// the count rather than against that constraint so it keeps meaning
-// something when f4.2 drops the UNIQUE and multi-number arrives.
+// The subtlety the first cut got wrong: a save adds ONE number, so the
+// rows to count are every OTHER row of the account — excluded by row
+// identity, not by `phone_number_id`. `whatsapp_config` still carries
+// UNIQUE(account_id), so the account's single row holds the OLD number
+// and excluding by number counted it: changing the number (the Meta test
+// number the onboarding starts with, then the production one) answered
+// 402 on every plan with `numbers: 1`, which is two of the three.
+//
+// Consequence of that same UNIQUE: with the count excluding the edited
+// row it is always 0 today, so the multi-row cap is UNREACHABLE until
+// f4.2 drops the constraint. It is not faked here — the 402 is exercised
+// through the one shape that IS reachable, a plan whose `numbers` cap
+// leaves no room for a first number.
 // ---------------------------------------------------------------------------
+
+type ConfigRow = {
+  id: string;
+  phone_number_id: string;
+  registered_at: string | null;
+};
 
 const mocks = vi.hoisted(() => ({
   assertWritable: vi.fn(),
   state: {
-    numberCount: 0,
+    /** The account's `whatsapp_config` rows. One at most, for now. */
+    rows: [] as ConfigRow[],
     countError: null as { message: string } | null,
+    existingError: null as { message: string } | null,
     claimedByOther: null as Record<string, unknown> | null,
-    existing: null as Record<string, unknown> | null,
     counted: [] as { table: string; filters: [string, unknown][] }[],
     inserted: null as Record<string, unknown> | null,
     updated: null as Record<string, unknown> | null,
@@ -97,16 +113,30 @@ const supabase = {
           return { data: { account_id: 'acct-1' }, error: null };
         }
         if (table === 'whatsapp_config') {
-          return { data: mocks.state.existing, error: null };
+          if (mocks.state.existingError) {
+            return { data: null, error: mocks.state.existingError };
+          }
+          return { data: mocks.state.rows[0] ?? null, error: null };
         }
         return { data: null, error: null };
       },
-      then: (resolve: (v: unknown) => unknown) =>
-        resolve({
-          count: mocks.state.numberCount,
+      then: (resolve: (v: unknown) => unknown) => {
+        if (!entry.counting) {
+          // A write (update/insert): resolves with no error.
+          return resolve({ data: null, error: null });
+        }
+        // The real count honours the filters, so excluding the edited
+        // row by id has to actually shrink the answer — otherwise the
+        // test would pass with the broken `.neq('phone_number_id', …)`
+        // just as happily.
+        const excludedId = entry.filters.find(([c]) => c === 'neq:id')?.[1];
+        const rows = mocks.state.rows.filter((r) => r.id !== excludedId);
+        return resolve({
+          count: rows.length,
           error: mocks.state.countError,
           data: null,
-        }),
+        });
+      },
     };
     return chain;
   },
@@ -146,10 +176,10 @@ function post(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  mocks.state.numberCount = 0;
+  mocks.state.rows = [];
   mocks.state.countError = null;
+  mocks.state.existingError = null;
   mocks.state.claimedByOther = null;
-  mocks.state.existing = null;
   mocks.state.counted = [];
   mocks.state.inserted = null;
   mocks.state.updated = null;
@@ -171,9 +201,32 @@ describe('POST /api/whatsapp/config — numbers + read-only (fase 3 §4/§5)', (
     expect(mocks.state.updated).toBeNull();
   });
 
-  it('402s when the plan has no room for another number', async () => {
-    // A 1-number plan that already has a different number bound.
-    mocks.state.numberCount = 1;
+  it('lets a 1-number plan swap its number: editing the row is not a second number', async () => {
+    // The onboarding path: the account saved Meta's test number first
+    // and now saves the production one. Same row, `numbers: 1`.
+    mocks.state.rows = [
+      { id: 'cfg-1', phone_number_id: 'pn-old', registered_at: null },
+    ];
+
+    const res = await post({ phone_number_id: 'pn-prod' });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.saved).toBe(true);
+    // It updated the existing row rather than adding one…
+    expect(mocks.state.updated).toMatchObject({ phone_number_id: 'pn-prod' });
+    expect(mocks.state.inserted).toBeNull();
+    // …and the count that fed the cap excluded that row BY ID.
+    expect(mocks.state.counted).toHaveLength(1);
+    expect(mocks.state.counted[0].filters).toContainEqual(['neq:id', 'cfg-1']);
+  });
+
+  it('402s when the plan leaves no room for the number being saved', async () => {
+    // Reachable shape today: a plan whose `numbers` cap is 0. The
+    // multi-row cap (2 rows against `numbers: 1`) cannot happen while
+    // `whatsapp_config` keeps UNIQUE(account_id); f4.2 drops it and this
+    // is the check that will catch it then.
+    mocks.assertWritable.mockResolvedValue(entitlements(0));
 
     const res = await post();
     const json = await res.json();
@@ -181,20 +234,24 @@ describe('POST /api/whatsapp/config — numbers + read-only (fase 3 §4/§5)', (
     expect(res.status).toBe(402);
     expect(json.code).toBe('plan_limit_reached');
     expect(json.metric).toBe('numbers');
-    expect(json.limit).toBe(1);
+    expect(json.limit).toBe(0);
     expect(json.upgradeUrl).toBe('/billing');
     expect(mocks.state.inserted).toBeNull();
+    expect(mocks.state.updated).toBeNull();
   });
 
-  it('excludes the number being saved from the count, so re-saving is an edit', async () => {
+  it('counts only this account, and asks the gate for this account (leak test)', async () => {
     await post();
+
     expect(mocks.state.counted).toHaveLength(1);
     const counted = mocks.state.counted[0];
     expect(counted.table).toBe('whatsapp_config');
-    // Scoped to this account (leak test) and excluding the number the
-    // request is about.
     expect(counted.filters).toContainEqual(['account_id', 'acct-1']);
-    expect(counted.filters).toContainEqual(['neq:phone_number_id', 'pn-new']);
+    // A first save has no row to exclude, and the number itself is
+    // never what the exclusion keys on.
+    expect(counted.filters.map(([c]) => c)).not.toContain(
+      'neq:phone_number_id'
+    );
     expect(mocks.assertWritable).toHaveBeenCalledWith('acct-1');
   });
 
@@ -203,5 +260,15 @@ describe('POST /api/whatsapp/config — numbers + read-only (fase 3 §4/§5)', (
     const res = await post();
     expect(res.status).toBe(500);
     expect(mocks.state.inserted).toBeNull();
+  });
+
+  it('fails closed when the existing row cannot be read', async () => {
+    // Not knowing whether a row exists is not knowing whether this save
+    // is an edit — refuse rather than guess in the customer's favour.
+    mocks.state.existingError = { message: 'permission denied' };
+    const res = await post();
+    expect(res.status).toBe(500);
+    expect(mocks.state.inserted).toBeNull();
+    expect(mocks.state.updated).toBeNull();
   });
 });

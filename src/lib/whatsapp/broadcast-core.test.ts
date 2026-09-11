@@ -13,13 +13,19 @@ vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: () => 'plain-access-token',
 }));
 vi.mock('@/lib/api/v1/contacts', () => ({
-  findOrCreateContact: vi.fn(async () => ({ id: 'c1' })),
+  findOrCreateContact: (...args: unknown[]) =>
+    (billing.findOrCreateContact as unknown as (...a: unknown[]) => unknown)(
+      ...args
+    ),
 }));
 
 // Fase 3 §4. The billing layer is stubbed at its entry points; the real
 // `QuotaExceededError` travels, so what the routes map to a 402 is what
 // these tests raise.
 const billing = vi.hoisted(() => ({
+  // Contact resolution WRITES (it creates the ones that don't exist),
+  // which is why the quota has to be weighed before it runs.
+  findOrCreateContact: vi.fn(async () => ({ id: 'c1' })),
   assertQuota: vi.fn(async () => {}),
   recordUsage: vi.fn(async () => {}),
   sendTemplateMessage: vi.fn(async () => ({ messageId: 'wamid.1' })),
@@ -41,6 +47,8 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
 import { QuotaExceededError } from '@/lib/billing/enforce';
 
 beforeEach(() => {
+  billing.findOrCreateContact.mockReset();
+  billing.findOrCreateContact.mockResolvedValue({ id: 'c1' });
   billing.assertQuota.mockReset();
   billing.assertQuota.mockResolvedValue(undefined);
   billing.recordUsage.mockReset();
@@ -262,7 +270,7 @@ describe('finalizeBroadcastStatus', () => {
 // ============================================================
 
 describe('createBroadcast — broadcast_recipients (fase 3 §4)', () => {
-  it('weighs the whole campaign before persisting anything', async () => {
+  it('weighs the whole campaign before writing anything at all', async () => {
     const { db, calls } = makeDb({
       data: [{ broadcast_id: 'b-1', recipient_id: 'r-1', contact_id: 'c1' }],
       error: null,
@@ -273,17 +281,37 @@ describe('createBroadcast — broadcast_recipients (fase 3 §4)', () => {
       recipients: [{ to: '+14155550123' }, { to: '+14155550124' }],
     });
 
-    // One contact stub, so both recipients collapse onto it: what is
-    // weighed is what will be sent, after dedup.
+    // Two distinct numbers: that is the weight, even though the contact
+    // stub collapses them onto one contact afterwards. The check runs
+    // before contacts are resolved — it WRITES — and at that point the
+    // distinct valid phones are all there is to go on.
+    expect(billing.assertQuota).toHaveBeenCalledWith(
+      'acc',
+      'broadcast_recipients',
+      2
+    );
+    expect(calls.rpc).toHaveLength(1);
+  });
+
+  it('weighs a number the caller listed twice once', async () => {
+    const { db } = makeDb({
+      data: [{ broadcast_id: 'b-1', recipient_id: 'r-1', contact_id: 'c1' }],
+      error: null,
+    });
+
+    await createBroadcast(db, 'acc', 'user', {
+      templateName: 'promo',
+      recipients: [{ to: '+14155550123' }, { to: '+1 415 555 0123' }],
+    });
+
     expect(billing.assertQuota).toHaveBeenCalledWith(
       'acc',
       'broadcast_recipients',
       1
     );
-    expect(calls.rpc).toHaveLength(1);
   });
 
-  it('refuses over the limit and persists no campaign at all', async () => {
+  it('refuses over the limit and persists no campaign — nor any contact', async () => {
     billing.assertQuota.mockRejectedValue(
       new QuotaExceededError('broadcast_recipients', 1000, 1000)
     );
@@ -292,7 +320,7 @@ describe('createBroadcast — broadcast_recipients (fase 3 §4)', () => {
     await expect(
       createBroadcast(db, 'acc', 'user', {
         templateName: 'promo',
-        recipients: [{ to: '+14155550123' }],
+        recipients: [{ to: '+14155550123' }, { to: '+14155550124' }],
       })
     ).rejects.toBeInstanceOf(QuotaExceededError);
 
@@ -300,6 +328,10 @@ describe('createBroadcast — broadcast_recipients (fase 3 §4)', () => {
     // nobody was messaged.
     expect(calls.rpc).toHaveLength(0);
     expect(calls.usedDirectInsert).toBe(0);
+    // And no contacts either. `findOrCreateContact` creates the ones
+    // that don't exist, so running it before the cap turned a refused
+    // campaign into an import of up to a thousand strangers.
+    expect(billing.findOrCreateContact).not.toHaveBeenCalled();
   });
 
   it('weighs the caller account and no other (leak test)', async () => {

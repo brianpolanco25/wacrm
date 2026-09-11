@@ -60,15 +60,21 @@ behaviour changes**; nothing is limited by plan yet.
   access with nothing to re-issue. A broadcast is weighed as a **whole
   campaign** before its first message goes out — whether it was started from
   the wizard, from the public API, or resumed/retried from the campaign page —
-  so a large send is refused up front instead of stopping half-delivered.
-  **Inbound WhatsApp messages are never affected** — an account with an unpaid
-  invoice and every allowance spent keeps receiving and storing what its
+  so a large send is refused up front instead of stopping half-delivered, and a
+  campaign refused for going over the allowance no longer leaves its recipients
+  behind as new contacts. Saving a new WhatsApp number over the one the account
+  already has counts as changing that number, not as adding a second one, so
+  the usual switch from Meta's test number to the production one works on every
+  plan. **Inbound WhatsApp messages are never affected** — an account with an
+  unpaid invoice and every allowance spent keeps receiving and storing what its
   customers send.
 - **A subscription that lapses puts the account in read-only** instead of
   cutting it off. While it is suspended, expired, or past due beyond the grace
   period, everyone on the account behaves like a viewer: they can read
-  everything, and sending, broadcasting and AI replies stop. Nobody's role is
-  changed, so settling the subscription restores the exact permissions each
+  everything, and sending, broadcasting and AI replies stop. Automations and
+  chat flows stop replying too, so a suspended account no longer answers its
+  customers by itself while the banner says nothing is going out. Nobody's role
+  is changed, so settling the subscription restores the exact permissions each
   member had, with nothing to repair. Reading keeps working everywhere,
   including the AI spend summary and the team's pending invitations. A banner across the app says which of the
   two states the account is in and links straight to `/billing` — which stays

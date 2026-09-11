@@ -12,9 +12,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The interactive and media senders carry the same gate: leaving them
 // out would turn the cap into a suggestion (send a button message
 // instead of a text and it is free).
+//
+// §5 rides along: these senders run from the webhook's `after()` on the
+// service-role client, so `requireRole` — where the dunning ladder lives
+// for every other write — is never in the path. Without `assertWritable`
+// here a suspended account kept replying by flow until its allowance ran
+// out, while the banner said nothing was going out.
 // ---------------------------------------------------------------------------
 
 const h = vi.hoisted(() => ({
+  assertWritable: vi.fn(async () => {}),
   assertQuota: vi.fn(async () => {}),
   recordUsage: vi.fn(async () => {}),
   sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.text' })),
@@ -28,6 +35,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
+  assertWritable: h.assertWritable,
   assertQuota: h.assertQuota,
   recordUsage: h.recordUsage,
 }));
@@ -81,7 +89,7 @@ vi.mock('./admin-client', () => ({
   }),
 }));
 
-import { QuotaExceededError } from '@/lib/billing/enforce';
+import { AccountLockedError, QuotaExceededError } from '@/lib/billing/enforce';
 import {
   engineSendText,
   engineSendMedia,
@@ -98,6 +106,8 @@ const ARGS = {
 beforeEach(() => {
   h.state.messageInsertError = null;
   h.state.inserts = [];
+  h.assertWritable.mockReset();
+  h.assertWritable.mockResolvedValue(undefined);
   h.assertQuota.mockReset();
   h.assertQuota.mockResolvedValue(undefined);
   h.recordUsage.mockReset();
@@ -182,5 +192,47 @@ describe('the other engine senders carry the same gate', () => {
       })
     ).rejects.toBeInstanceOf(QuotaExceededError);
     expect(h.sendInteractiveButtons).not.toHaveBeenCalled();
+  });
+});
+
+describe('the engine senders stop for a suspended account (fase 3 §5)', () => {
+  it('engineSendText sends nothing, persists nothing and bills nothing', async () => {
+    h.assertWritable.mockRejectedValue(new AccountLockedError('suspended'));
+
+    await expect(
+      engineSendText({ ...ARGS, text: 'hi' })
+    ).rejects.toBeInstanceOf(AccountLockedError);
+
+    expect(h.sendTextMessage).not.toHaveBeenCalled();
+    expect(h.state.inserts).toHaveLength(0);
+    expect(h.recordUsage).not.toHaveBeenCalled();
+    // A read-only account is refused before the question of how much
+    // allowance is left ever comes up.
+    expect(h.assertQuota).not.toHaveBeenCalled();
+  });
+
+  it('engineSendMedia and engineSendInteractiveButtons stop too', async () => {
+    h.assertWritable.mockRejectedValue(new AccountLockedError('suspended'));
+
+    await expect(
+      engineSendMedia({ ...ARGS, kind: 'image', link: 'https://x/y.jpg' })
+    ).rejects.toBeInstanceOf(AccountLockedError);
+    await expect(
+      engineSendInteractiveButtons({
+        ...ARGS,
+        bodyText: 'Pick one',
+        buttons: [{ id: 'a', title: 'A' }],
+      })
+    ).rejects.toBeInstanceOf(AccountLockedError);
+
+    expect(h.sendMediaMessage).not.toHaveBeenCalled();
+    expect(h.sendInteractiveButtons).not.toHaveBeenCalled();
+    expect(h.state.inserts).toHaveLength(0);
+  });
+
+  it('asks about the account it was told to send for (leak test)', async () => {
+    await engineSendText({ ...ARGS, accountId: 'acct-other', text: 'hi' });
+    expect(h.assertWritable).toHaveBeenCalledWith('acct-other');
+    expect(h.assertWritable).not.toHaveBeenCalledWith('acct-1');
   });
 });

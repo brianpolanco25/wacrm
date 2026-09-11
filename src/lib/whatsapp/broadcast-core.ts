@@ -149,9 +149,13 @@ export async function createBroadcast(
   }
   const templateRow = resolvedTemplate.row;
 
-  // Resolve each recipient to a contact. Invalid phones are dropped
-  // (counted as rejected) rather than aborting the whole broadcast.
-  const resolved: { contactId: string; phone: string; params: string[] }[] = [];
+  // Normalize the list WITHOUT touching the database: drop phones Meta
+  // could not dial (counted as rejected rather than aborting the whole
+  // broadcast) and collapse a number the caller listed twice, keeping
+  // the first occurrence so its params aren't overwritten by a later
+  // duplicate.
+  const seenPhone = new Set<string>();
+  const candidates: { phone: string; params: string[] }[] = [];
   let rejected = 0;
   for (const r of recipients) {
     const sanitized = sanitizePhoneForMeta(typeof r.to === 'string' ? r.to : '');
@@ -159,11 +163,9 @@ export async function createBroadcast(
       rejected++;
       continue;
     }
-    const { id } = await findOrCreateContact(db, accountId, auditUserId, {
-      phone: sanitized,
-    });
-    resolved.push({
-      contactId: id,
+    if (seenPhone.has(sanitized)) continue;
+    seenPhone.add(sanitized);
+    candidates.push({
       phone: sanitized,
       params: Array.isArray(r.params)
         ? r.params.filter((p): p is string => typeof p === 'string')
@@ -171,19 +173,7 @@ export async function createBroadcast(
     });
   }
 
-  // Collapse recipients that resolved to the SAME contact (the caller
-  // listed a phone twice, or two numbers fuzzy-matched to one contact).
-  // Keep the first occurrence so the contact is messaged once and its
-  // params aren't silently overwritten by a later duplicate — and so
-  // the row↔params pairing below (keyed by contact_id) is unambiguous.
-  const seenContact = new Set<string>();
-  const deduped = resolved.filter((r) => {
-    if (seenContact.has(r.contactId)) return false;
-    seenContact.add(r.contactId);
-    return true;
-  });
-
-  if (deduped.length === 0) {
+  if (candidates.length === 0) {
     throw new BroadcastError(
       'bad_request',
       'No recipients had a valid E.164 phone number',
@@ -192,14 +182,41 @@ export async function createBroadcast(
   }
 
   // Fase 3 §4 — `broadcast_recipients`. The whole campaign is weighed
-  // BEFORE anything is persisted or sent: a broadcast is one unit of
-  // work for the operator, and refusing it halfway would leave a
-  // half-delivered blast that no one can tell the halves of. Nothing
-  // has been written yet at this point, so a throw here leaves no
-  // campaign behind. `assertQuota` raises `QuotaExceededError`, which
-  // both error envelopes render as a 402 naming metric, limit and
-  // `/billing`.
-  await assertQuota(accountId, 'broadcast_recipients', deduped.length);
+  // BEFORE anything is written: a broadcast is one unit of work for the
+  // operator, and refusing it halfway would leave a half-delivered blast
+  // that no one can tell the halves of. `assertQuota` raises
+  // `QuotaExceededError`, which both error envelopes render as a 402
+  // naming metric, limit and `/billing`.
+  //
+  // This sits ABOVE the contact resolution below, and the difference is
+  // not cosmetic: `findOrCreateContact` WRITES. Weighed after that loop,
+  // a 2 000-address campaign refused for quota still left up to 2 000
+  // new contacts in the account — a refusal with a side effect, and the
+  // comment that used to sit here, claiming nothing had been written
+  // yet, was false.
+  //
+  // The price is that what gets weighed is the distinct valid phones, an
+  // UPPER BOUND: contact resolution can still collapse two different
+  // numbers that fuzzy-match onto one contact, and such a campaign is
+  // refused slightly early. That errs towards refusing, which is the
+  // safe side of a cap, and `deliverBroadcast` re-weighs the exact
+  // recipient rows before the first send anyway.
+  await assertQuota(accountId, 'broadcast_recipients', candidates.length);
+
+  // Resolve each recipient to a contact (creating the ones that don't
+  // exist yet) and collapse any that landed on the SAME contact, so it
+  // is messaged once and the row↔params pairing below (keyed by
+  // contact_id) stays unambiguous.
+  const seenContact = new Set<string>();
+  const deduped: { contactId: string; phone: string; params: string[] }[] = [];
+  for (const c of candidates) {
+    const { id } = await findOrCreateContact(db, accountId, auditUserId, {
+      phone: c.phone,
+    });
+    if (seenContact.has(id)) continue;
+    seenContact.add(id);
+    deduped.push({ contactId: id, ...c });
+  }
 
   // Persist the broadcast + its recipients. The count columns
   // (sent/delivered/read/replied/failed) are owned by the DB aggregate
