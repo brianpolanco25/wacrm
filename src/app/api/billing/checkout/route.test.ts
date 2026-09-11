@@ -427,6 +427,25 @@ describe('POST /api/billing/checkout', () => {
     expect(res.status).toBe(201);
   });
 
+  it('lets an account that already cancelled contract again (fase 3 §6)', async () => {
+    // The way back after cancelling: PayPal's cancel is irreversible, so
+    // "reactivate" is a new subscription. The row is still `active`
+    // (service to the end of the paid cycle), but nothing will ever be
+    // charged on it again, so this cannot be a double charge.
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'active',
+      provider_subscription_id: 'I-OLD',
+      current_period_end: '2099-01-01T00:00:00Z',
+      cancel_at_period_end: true,
+    });
+
+    const res = await post({ planId: 'pro', cycle: 'month' });
+    expect(res.status).toBe(201);
+    expect(createSubscription).toHaveBeenCalled();
+  });
+
   it('reuses the intent when PayPal replays a subscription we already stored', async () => {
     await post({ planId: 'pro', cycle: 'month' });
     // Same PayPal-Request-Id window → PayPal replays subscription I-SUB-1.

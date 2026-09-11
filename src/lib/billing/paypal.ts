@@ -406,6 +406,124 @@ export function approvalLink(
 }
 
 // ------------------------------------------------------------
+// Managing a live subscription (Fase 3 §6).
+//
+// Everything below acts on a subscription that already exists at
+// PayPal. None of it decides anything about our own database: the
+// truth still arrives as a webhook event, and the settings routes that
+// call these functions never write `status = 'active'` themselves.
+// ------------------------------------------------------------
+
+/**
+ * Cancel a subscription at PayPal. Idempotent from our side in the
+ * sense that matters: PayPal answers 422 for a subscription that is
+ * already cancelled, and the caller treats that as "already done".
+ *
+ * The cancellation is IMMEDIATE at PayPal — no more charges are ever
+ * taken — and it is NOT reversible: there is no "uncancel". What keeps
+ * serving the customer until the end of the cycle they paid for is our
+ * own `cancel_at_period_end` plus `current_period_end`, which is
+ * exactly what the spec's table asks for ("servicio hasta fin de
+ * ciclo").
+ *
+ * Answers 204 with an empty body on success.
+ */
+export async function cancelSubscription(
+  subscriptionId: string,
+  reason: string
+): Promise<void> {
+  await paypalFetch(
+    `/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`,
+    { method: 'POST', body: { reason } }
+  );
+}
+
+/**
+ * Resume a SUSPENDED subscription at PayPal.
+ *
+ * Only meaningful for `suspended`: PayPal can activate a subscription
+ * it suspended (typically after exhausting payment retries), but a
+ * cancelled or expired one is the end of the line and has to be
+ * contracted again. The caller decides which of the two applies —
+ * `reactivateMode` in `subscription-view.ts`.
+ *
+ * Activating here does NOT make the account active for us. PayPal
+ * emits `BILLING.SUBSCRIPTION.ACTIVATED` and the webhook of §3 is what
+ * lifts the local status.
+ */
+export async function activateSubscription(
+  subscriptionId: string,
+  reason: string
+): Promise<void> {
+  await paypalFetch(
+    `/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}/activate`,
+    { method: 'POST', body: { reason } }
+  );
+}
+
+export interface ReviseSubscriptionArgs {
+  subscriptionId: string;
+  /** The PayPal plan to move onto (`plans.provider_plan_id_*`). */
+  planId: string;
+  /** Where PayPal returns an approver when the change needs approval. */
+  returnUrl: string;
+  /** Where PayPal returns an approver who backs out. */
+  cancelUrl: string;
+}
+
+export interface PayPalRevision {
+  /**
+   * Non-null when PayPal wants the buyer to approve the change (it
+   * does for anything that raises the amount charged). Until that
+   * link is followed, NOTHING has changed at PayPal.
+   */
+  approvalUrl: string | null;
+}
+
+/**
+ * Move an existing subscription onto another plan.
+ *
+ * This — and not a second checkout — is how §6 changes plan: PayPal
+ * has no proration, and opening a second subscription would mean two
+ * of them charging the same customer at once. `revise` keeps one
+ * subscription and one charge.
+ *
+ * Two outcomes, and the caller must handle both (the spec's table says
+ * so: "no se asume cambio instantáneo"):
+ *
+ *   - `approvalUrl` set — the buyer has to approve at PayPal. Until
+ *     they do, the subscription is untouched.
+ *   - `approvalUrl` null — PayPal applied the change and will emit
+ *     `BILLING.SUBSCRIPTION.UPDATED`.
+ *
+ * Either way the new plan only starts being charged on the next
+ * renewal: no proration, as the spec states.
+ */
+export async function reviseSubscription(
+  args: ReviseSubscriptionArgs
+): Promise<PayPalRevision> {
+  const { data } = await paypalFetch<{
+    links?: Array<{ rel?: unknown; href?: unknown }>;
+  }>(
+    `/v1/billing/subscriptions/${encodeURIComponent(args.subscriptionId)}/revise`,
+    {
+      method: 'POST',
+      body: {
+        plan_id: args.planId,
+        application_context: {
+          shipping_preference: 'NO_SHIPPING',
+          user_action: 'SUBSCRIBE_NOW',
+          return_url: args.returnUrl,
+          cancel_url: args.cancelUrl,
+        },
+      },
+    }
+  );
+
+  return { approvalUrl: approvalLink(data?.links) };
+}
+
+// ------------------------------------------------------------
 // Webhook signature verification (Fase 3 §3).
 //
 // PayPal does NOT sign with HMAC. The signature is an RSA one over a

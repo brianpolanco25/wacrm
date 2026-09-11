@@ -313,6 +313,45 @@ BEGIN
       'redeem_invitation() does not handle usage_counters; the RESTRICT FK of 041 breaks invitation redemption (migration 052)';
   END IF;
 
+  -- ------------------------------------------------------------
+  -- 056: ciclo de facturación y el índice de recibos (§6).
+  -- ------------------------------------------------------------
+  -- Sin `subscriptions.cycle`, un cliente que pasa de mensual a anual
+  -- con el `revise` de PayPal sigue renovándose por el ciclo con el que
+  -- CONTRATÓ: paga un año y se le extiende un mes.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'cycle' AND data_type = 'text'
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions.cycle is missing or not text (migration 056)';
+  END IF;
+
+  -- La restricción es lo que impide que un ciclo inventado ('week')
+  -- entre por una escritura futura y haga que la renovación no sepa
+  -- cuánto extender.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.subscriptions'::regclass
+      AND conname = 'subscriptions_cycle_check'
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions_cycle_check is missing (migration 056)';
+  END IF;
+
+  -- Los recibos de §6 se buscan por el `billing_agreement_id` que vive
+  -- dentro del payload. Sin este índice parcial la consulta recorre la
+  -- bitácora entera de todos los inquilinos en cada carga de Ajustes.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname = 'billing_events_sale_subscription_idx'
+  ) THEN
+    RAISE EXCEPTION
+      'billing_events_sale_subscription_idx is missing (migration 056)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

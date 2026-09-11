@@ -214,6 +214,9 @@ describe('BILLING.SUBSCRIPTION.ACTIVATED', () => {
       current_period_end: '2026-04-15T12:00:00.000Z',
       grace_until: null,
       cancel_at_period_end: false,
+      // Migración 056: the cycle we are being charged on, recorded
+      // where a later renewal can still find it after a plan change.
+      cycle: 'month',
       last_event_at: '2026-03-15T12:00:00.000Z',
     });
     expect(decision.intentStatus).toBe('activated');
@@ -744,5 +747,124 @@ describe('guards shared by every handler', () => {
       )
     );
     expect(late.patch.last_event_at).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The billing cycle of a live subscription (migración 056, §6).
+//
+// Changing plan through the settings area revises the SAME PayPal
+// subscription, so the checkout intent keeps saying whatever was bought
+// originally. If the cycle is not learned from the UPDATED event, a
+// customer who moves from monthly to yearly pays for a year and gets
+// their period extended by a month.
+// ---------------------------------------------------------------------------
+describe('billing cycle', () => {
+  function decideWithCycle(
+    e: PayPalWebhookEvent,
+    existing: SubscriptionState | null,
+    intent: IntentState | null,
+    planId: string | null,
+    cycle: 'month' | 'year' | null
+  ): Decision {
+    return decideSubscriptionChange({
+      event: e,
+      existing,
+      intent,
+      planFromProviderPlanId: planId,
+      cycleFromProviderPlanId: cycle,
+      now: NOW,
+    });
+  }
+
+  it('records the contracted cycle when the subscription activates', () => {
+    const decision = applied(
+      decide(event('BILLING.SUBSCRIPTION.ACTIVATED', { id: 'I-SUB' }), null, {
+        plan_id: 'pro',
+        cycle: 'year',
+      })
+    );
+    expect(decision.patch.cycle).toBe('year');
+  });
+
+  it('learns the new cycle from an update that changes plan', () => {
+    const decision = applied(
+      decideWithCycle(
+        event('BILLING.SUBSCRIPTION.UPDATED', {
+          id: 'I-SUB',
+          plan_id: 'P-PRO-YEAR',
+        }),
+        subscription({ cycle: 'month' }),
+        INTENT,
+        'pro',
+        'year'
+      )
+    );
+    expect(decision.patch.cycle).toBe('year');
+  });
+
+  it('does not rewrite a cycle that has not moved', () => {
+    // Nothing changed at all, so the update writes nothing — not even
+    // a no-op cycle that would bump `updated_at` on every redelivery.
+    const decision = decideWithCycle(
+      event('BILLING.SUBSCRIPTION.UPDATED', {
+        id: 'I-SUB',
+        plan_id: 'P-PRO-MONTH',
+      }),
+      subscription({ cycle: 'month' }),
+      INTENT,
+      'pro',
+      'month'
+    );
+    expect(decision.kind).toBe('skip');
+  });
+
+  it('renews on the cycle being charged, not the one contracted', () => {
+    // The money case. The intent still says `month` because that is
+    // what the customer originally bought; PayPal just charged a year.
+    const decision = applied(
+      decide(
+        event(
+          'PAYMENT.SALE.COMPLETED',
+          { id: 'SALE-1', billing_agreement_id: 'I-SUB' },
+          '2026-04-15T12:00:00Z'
+        ),
+        subscription({ cycle: 'year' }),
+        { plan_id: 'pro', cycle: 'month' }
+      )
+    );
+    expect(decision.patch.current_period_end).toBe('2027-04-15T12:00:00.000Z');
+  });
+
+  it('falls back to the intent when no cycle was ever recorded', () => {
+    // Every row written before migration 056 has `cycle` NULL. The
+    // behaviour there must be exactly what it was before.
+    const decision = applied(
+      decide(
+        event(
+          'PAYMENT.SALE.COMPLETED',
+          { id: 'SALE-1', billing_agreement_id: 'I-SUB' },
+          '2026-04-15T12:00:00Z'
+        ),
+        subscription({ cycle: null }),
+        { plan_id: 'pro', cycle: 'month' }
+      )
+    );
+    expect(decision.patch.current_period_end).toBe('2026-05-15T12:00:00.000Z');
+  });
+
+  it('ignores a stored cycle that is not one we sell', () => {
+    const decision = applied(
+      decide(
+        event(
+          'PAYMENT.SALE.COMPLETED',
+          { id: 'SALE-1', billing_agreement_id: 'I-SUB' },
+          '2026-04-15T12:00:00Z'
+        ),
+        subscription({ cycle: 'week' }),
+        { plan_id: 'pro', cycle: 'month' }
+      )
+    );
+    expect(decision.patch.current_period_end).toBe('2026-05-15T12:00:00.000Z');
   });
 });

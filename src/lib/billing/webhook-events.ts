@@ -193,6 +193,11 @@ export function addCycle(iso: string, cycle: BillingCycle): string {
   return next.toISOString();
 }
 
+/** Narrow a stored cycle to the two we sell. Null when unset/unknown. */
+export function asBillingCycle(value: unknown): BillingCycle | null {
+  return value === 'month' || value === 'year' ? value : null;
+}
+
 export function addDays(iso: string, days: number): string {
   return new Date(Date.parse(iso) + days * 24 * 60 * 60 * 1000).toISOString();
 }
@@ -211,6 +216,15 @@ export interface SubscriptionState {
   cancel_at_period_end: boolean;
   addons: Record<string, unknown> | null;
   last_event_at: string | null;
+  /**
+   * The cycle this subscription is being CHARGED on today (migration
+   * 056), which is not always the one it was contracted with: §6 moves
+   * a live subscription between plans with PayPal's `revise`, and the
+   * checkout intent keeps saying whatever was bought originally.
+   * Null on rows written before 056 — the renewal then falls back to
+   * the intent, exactly as it did before.
+   */
+  cycle?: string | null;
 }
 
 /** The `checkout_intents` columns this module reads. */
@@ -236,6 +250,7 @@ export interface SubscriptionPatch {
   cancel_at_period_end?: boolean;
   addons?: Record<string, unknown>;
   last_event_at?: string;
+  cycle?: BillingCycle;
 }
 
 export type Decision =
@@ -264,6 +279,13 @@ export interface DecisionInput {
    * tells us the customer moved plan.
    */
   planFromProviderPlanId?: string | null;
+  /**
+   * Which of the two catalogue columns matched that provider plan id,
+   * i.e. the cycle the customer is moving onto. Also only `UPDATED`:
+   * it is the one event that can change the cycle, and without it a
+   * month→year change would keep renewing by a month (migration 056).
+   */
+  cycleFromProviderPlanId?: BillingCycle | null;
   /** Clock, injected so the grace window is testable. */
   now: Date;
 }
@@ -494,6 +516,10 @@ function buildPatch(input: BuildInput): Decision {
           // window, nor active and already scheduled to stop.
           grace_until: null,
           cancel_at_period_end: false,
+          // What we are being charged on, recorded where the renewal
+          // can find it later even if the intent is no longer the
+          // truth (migration 056).
+          ...(intent ? { cycle: intent.cycle } : {}),
         },
       };
     }
@@ -523,6 +549,16 @@ function buildPatch(input: BuildInput): Decision {
       }
       if (resolvedPlan && resolvedPlan !== existing.plan_id) {
         patch.plan_id = resolvedPlan;
+      }
+
+      // A plan change can also be a CYCLE change (monthly → yearly is
+      // simply another PayPal plan of the same product). The renewal
+      // event carries no plan id at all, so if the new cycle is not
+      // recorded here it is never learned: PayPal would charge a year
+      // and we would extend the period by a month.
+      const resolvedCycle = input.cycleFromProviderPlanId ?? null;
+      if (resolvedCycle && resolvedCycle !== existing.cycle) {
+        patch.cycle = resolvedCycle;
       }
 
       const nextBilling = nextBillingTimeOf(event);
@@ -635,7 +671,10 @@ function buildPatch(input: BuildInput): Decision {
     // cycle nor misses a renewal.
     // ------------------------------------------------------------
     case 'PAYMENT.SALE.COMPLETED': {
-      const cycle = intent?.cycle;
+      // The cycle we are actually being charged on wins over the one
+      // that was contracted: a plan change through §6 moves the first
+      // and leaves the second behind (migration 056).
+      const cycle = asBillingCycle(existing?.cycle) ?? intent?.cycle;
       const planId = intent?.plan_id ?? existing?.plan_id;
       if (!planId || !cycle) {
         return {

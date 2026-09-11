@@ -25,6 +25,13 @@ export interface CheckoutPlanRow {
 export interface CheckoutSubscriptionRow {
   status: string;
   provider_subscription_id: string | null;
+  /**
+   * Set once PayPal has accepted a cancellation (by the settings area
+   * of §6, or by the `CANCELLED` event). It means "this subscription
+   * will never charge again", whatever the status says while the paid
+   * cycle runs out.
+   */
+  cancel_at_period_end?: boolean | null;
 }
 
 export function isBillingCycle(value: unknown): value is BillingCycle {
@@ -75,6 +82,12 @@ export function alreadyContracted(
 ): boolean {
   if (!subscription) return false;
   if (!subscription.provider_subscription_id) return false;
+  // Already cancelled at PayPal: it cannot charge again, so contracting
+  // a new plan cannot produce the double charge this guard exists to
+  // prevent. Without this line a customer who cancels and changes their
+  // mind is locked out of paying us until the paid cycle expires (the
+  // status stays `active` until then, by design — see §3's table).
+  if (subscription.cancel_at_period_end) return false;
   return CONTRACTED_STATUSES.has(subscription.status);
 }
 

@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   __resetPayPalForTests,
+  activateSubscription,
   approvalLink,
+  cancelSubscription,
+  reviseSubscription,
   verifyWebhookSignature,
   createPlan,
   createProduct,
@@ -435,5 +438,135 @@ describe('verifyWebhookSignature', () => {
     const parsed = JSON.parse(String(lastCall().init.body));
     expect(parsed.webhook_id).toBe('WH-ID');
     expect(parsed.transmission_id).toBe('","webhook_id":"attacker');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Managing a live subscription (Fase 3 §6).
+// ---------------------------------------------------------------------------
+
+describe('cancelSubscription', () => {
+  it('posts the cancel action with a reason and accepts an empty 204', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      cancelSubscription('I-SUB-1', 'Cancelled by the customer')
+    ).resolves.toBeUndefined();
+
+    const { url, init } = lastCall();
+    expect(url).toBe(
+      'https://api-m.sandbox.paypal.com/v1/billing/subscriptions/I-SUB-1/cancel'
+    );
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      reason: 'Cancelled by the customer',
+    });
+  });
+
+  it('escapes the subscription id into the path', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    // The id reaches us from our own database, but building a URL by
+    // concatenation is how a path traversal gets in later.
+    await cancelSubscription('I-SUB/../../oops', 'r');
+    expect(lastCall().url).toContain('I-SUB%2F..%2F..%2Foops');
+  });
+
+  it('surfaces a PayPal refusal instead of pretending it cancelled', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(
+        jsonResponse({ name: 'UNPROCESSABLE_ENTITY' }, 422)
+      );
+    await expect(cancelSubscription('I-SUB-1', 'r')).rejects.toBeInstanceOf(
+      PayPalError
+    );
+  });
+});
+
+describe('activateSubscription', () => {
+  it('posts the activate action', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await activateSubscription('I-SUB-1', 'Back in business');
+    const { url, init } = lastCall();
+    expect(url).toBe(
+      'https://api-m.sandbox.paypal.com/v1/billing/subscriptions/I-SUB-1/activate'
+    );
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      reason: 'Back in business',
+    });
+  });
+});
+
+describe('reviseSubscription', () => {
+  it('moves the SAME subscription onto another plan', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(
+        jsonResponse({ plan_id: 'P-NEG-MONTH', links: [] })
+      );
+
+    const revision = await reviseSubscription({
+      subscriptionId: 'I-SUB-1',
+      planId: 'P-NEG-MONTH',
+      returnUrl: 'https://app.example.com/billing/return',
+      cancelUrl: 'https://app.example.com/billing?checkout=cancelled',
+    });
+
+    const { url, init } = lastCall();
+    // Not POST /v1/billing/subscriptions: a second subscription would
+    // charge the customer twice, which is the whole point of revising.
+    expect(url).toBe(
+      'https://api-m.sandbox.paypal.com/v1/billing/subscriptions/I-SUB-1/revise'
+    );
+    const body = JSON.parse(String(init.body));
+    expect(body.plan_id).toBe('P-NEG-MONTH');
+    expect(body.application_context.return_url).toBe(
+      'https://app.example.com/billing/return'
+    );
+    expect(revision.approvalUrl).toBeNull();
+  });
+
+  it('reports the approval link when PayPal needs the buyer to approve', async () => {
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(
+      jsonResponse({
+        plan_id: 'P-NEG-MONTH',
+        links: [
+          { rel: 'self', href: 'https://api-m.sandbox.paypal.com/x' },
+          { rel: 'approve', href: 'https://www.sandbox.paypal.com/approve/9' },
+        ],
+      })
+    );
+    const revision = await reviseSubscription({
+      subscriptionId: 'I-SUB-1',
+      planId: 'P-NEG-MONTH',
+      returnUrl: 'https://app.example.com/billing/return',
+      cancelUrl: 'https://app.example.com/billing',
+    });
+    expect(revision.approvalUrl).toBe(
+      'https://www.sandbox.paypal.com/approve/9'
+    );
+  });
+
+  it('surfaces a refusal rather than reporting a change that did not happen', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(
+        jsonResponse({ name: 'UNPROCESSABLE_ENTITY' }, 422)
+      );
+    await expect(
+      reviseSubscription({
+        subscriptionId: 'I-SUB-1',
+        planId: 'P-NEG-MONTH',
+        returnUrl: 'https://app.example.com/billing/return',
+        cancelUrl: 'https://app.example.com/billing',
+      })
+    ).rejects.toBeInstanceOf(PayPalError);
   });
 });

@@ -60,7 +60,7 @@ const PROVIDER = 'paypal';
 
 const SUBSCRIPTION_COLUMNS =
   'account_id, plan_id, status, provider_subscription_id, current_period_end, ' +
-  'grace_until, cancel_at_period_end, addons, last_event_at';
+  'grace_until, cancel_at_period_end, addons, last_event_at, cycle';
 
 const INTENT_COLUMNS = 'account_id, plan_id, cycle, status, provider_plan_id';
 
@@ -273,11 +273,14 @@ async function handleEvent(
 
   const { accountId, subscription, intent } = resolved;
 
+  const planForEvent = await resolvePlanForEvent(admin, event);
+
   const decision = decideSubscriptionChange({
     event,
     existing: subscription,
     intent,
-    planFromProviderPlanId: await resolvePlanForEvent(admin, event),
+    planFromProviderPlanId: planForEvent.planId,
+    cycleFromProviderPlanId: planForEvent.cycle,
     now: new Date(),
   });
 
@@ -426,7 +429,14 @@ function cycleOf(intent: IntentRow): BillingCycle {
 }
 
 /**
- * Our plan id for the PayPal plan id an UPDATED event carries.
+ * Our plan id — AND its cycle — for the PayPal plan id an UPDATED event
+ * carries.
+ *
+ * The column that matched is the cycle: the catalogue keeps the
+ * monthly and the yearly PayPal plan of every tier in
+ * `provider_plan_id_month` / `provider_plan_id_year`. That is the only
+ * place the cycle of a plan change can be read from, because the
+ * renewal event (`PAYMENT.SALE.COMPLETED`) carries no plan at all.
  *
  * `plans` is the global catalogue (no `account_id`), so this read has
  * no tenant scope to apply — and nothing about it is tenant data.
@@ -434,12 +444,17 @@ function cycleOf(intent: IntentRow): BillingCycle {
 async function resolvePlanForEvent(
   admin: SupabaseClient,
   event: PayPalWebhookEvent
-): Promise<string | null> {
-  if (event.eventType !== 'BILLING.SUBSCRIPTION.UPDATED') return null;
+): Promise<{ planId: string | null; cycle: BillingCycle | null }> {
+  const none = { planId: null, cycle: null };
+  if (event.eventType !== 'BILLING.SUBSCRIPTION.UPDATED') return none;
   const providerPlanId = providerPlanIdOf(event);
-  if (!providerPlanId) return null;
+  if (!providerPlanId) return none;
 
-  for (const column of ['provider_plan_id_month', 'provider_plan_id_year']) {
+  const columns: Array<[string, BillingCycle]> = [
+    ['provider_plan_id_month', 'month'],
+    ['provider_plan_id_year', 'year'],
+  ];
+  for (const [column, cycle] of columns) {
     const { data, error } = await admin
       .from('plans')
       .select('id')
@@ -450,9 +465,9 @@ async function resolvePlanForEvent(
       throw new TransientWebhookError('plan catalogue lookup failed', error);
     }
     const id = (data as { id?: unknown } | null)?.id;
-    if (typeof id === 'string' && id) return id;
+    if (typeof id === 'string' && id) return { planId: id, cycle };
   }
-  return null;
+  return none;
 }
 
 /** Apply the patch, creating the row when the account has none yet. */

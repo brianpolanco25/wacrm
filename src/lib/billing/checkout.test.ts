@@ -77,6 +77,20 @@ describe('alreadyContracted', () => {
     }
   });
 
+  it('lets an account whose cancellation is already accepted contract again', () => {
+    // PayPal's cancel is immediate and irreversible, so the row stays
+    // `active` until the paid cycle runs out while nothing will ever be
+    // charged on it again. Without this, a customer who cancels and
+    // changes their mind is locked out of paying us for weeks (§6).
+    expect(
+      alreadyContracted({
+        status: 'active',
+        provider_subscription_id: 'I-1',
+        cancel_at_period_end: true,
+      })
+    ).toBe(false);
+  });
+
   it('lets trialing, cancelled and expired accounts contract', () => {
     for (const status of ['trialing', 'cancelled', 'expired']) {
       expect(

@@ -196,6 +196,28 @@ dashboard: a redelivery of an event that was never applied (`processed_at IS
 NULL`) is processed again, so no row has to be deleted by hand. An event that
 _did_ complete is never applied twice, however often PayPal resends it.
 
+## Subscription area (Settings → Subscription)
+
+**No new environment variables.** It reuses `PAYPAL_CLIENT_ID`,
+`PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV`, `PAYPAL_WEBHOOK_ID` and
+`NEXT_PUBLIC_SITE_URL` from the sections above. Two operational notes:
+
+- **`BILLING.SUBSCRIPTION.UPDATED` is not optional.** It is the event that
+  applies a plan change made from Settings: the app revises the *same* PayPal
+  subscription (no second subscription, no double charge) and the change lands
+  only when that event arrives. If the webhook is not subscribed to it, a
+  customer who changes plan keeps being billed and served on the old one.
+- **`NEXT_PUBLIC_SITE_URL` is used again here.** A plan change that raises the
+  amount needs the buyer's approval at PayPal, which returns them to
+  `<url>/billing/return`, exactly like a first checkout. Remember it is baked in
+  at build time.
+
+Migration `056_subscription_cycle_and_receipts.sql` must be applied before this
+page is used: without `subscriptions.cycle`, a subscription moved from monthly
+to yearly would be charged for a year and extended by a month. Existing rows are
+backfilled from the checkout that created them, so nothing changes for anyone
+who has not changed plan.
+
 ## Plain Docker (no Compose)
 
 ```bash

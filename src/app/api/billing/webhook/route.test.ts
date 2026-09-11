@@ -796,6 +796,39 @@ describe('the other five events', () => {
     });
   });
 
+  it('learns the new billing cycle from the plan the update names (056)', async () => {
+    // A month→year change through the settings area of §6 revises the
+    // SAME subscription, so the checkout intent still says `month`.
+    // Only the catalogue column that matched can tell us otherwise, and
+    // the renewal event carries no plan at all.
+    await post({
+      id: 'WH-updated-cycle',
+      event_type: 'BILLING.SUBSCRIPTION.UPDATED',
+      create_time: '2026-03-20T00:00:00Z',
+      resource: { id: 'I-1', status: 'ACTIVE', plan_id: 'P-PRO-YEAR' },
+    });
+
+    expect(accountOf(ACCOUNT_A)).toMatchObject({ cycle: 'year' });
+
+    // …and the next renewal extends by a year, not by the month the
+    // intent remembers. Without this the customer pays for a year and
+    // is cut off four weeks later.
+    await post({
+      id: 'WH-renewal-after-cycle-change',
+      event_type: 'PAYMENT.SALE.COMPLETED',
+      create_time: '2026-03-21T00:00:00Z',
+      resource: {
+        id: 'SALE-9',
+        billing_agreement_id: 'I-1',
+        amount: { total: '790.00', currency: 'USD' },
+      },
+    });
+
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      current_period_end: '2027-03-21T00:00:00.000Z',
+    });
+  });
+
   it('refuses an update naming a PayPal plan our catalogue does not have', async () => {
     const res = await post({
       id: 'WH-updated-unknown',

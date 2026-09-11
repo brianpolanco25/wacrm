@@ -39,6 +39,12 @@ behaviour changes**; nothing is limited by plan yet.
 > the PayPal webhook. It adds `subscriptions.last_event_at` (NULL for every
 > existing row) and an index; no existing data is touched.
 
+> **Migration required:** apply
+> `supabase/migrations/056_subscription_cycle_and_receipts.sql` before the
+> subscription area in Settings. It adds `subscriptions.cycle` (backfilled from
+> the checkout that created each subscription) and an index over the payment
+> events; no existing data is changed.
+
 > **Migration required:** apply `supabase/migrations/046_seed_trials.sql` and
 > `supabase/migrations/052_redeem_invitation_billing.sql` **together** before
 > plan limits take effect. 046 gives every existing account — and every account
@@ -49,6 +55,35 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Added
 
+- **Subscription area in Settings** (Settings → Subscription, owners and
+  admins). It shows the current plan, the state it is in — trial, active,
+  payment failed, suspended, cancelled or expired, with the grace period and a
+  scheduled cancellation spelled out — and the date of the next charge. Below
+  it, what the account has used this cycle against the plan's allowance, with
+  bars, taken straight from the usage counters the server enforces with, so the
+  figure on screen is the figure that blocks a send. Then the receipts: amount,
+  date and PayPal transaction id of every payment, including payments made on a
+  subscription that was later cancelled and replaced. A suspended account can
+  still open this page — it is where the way out lives.
+  - **Change plan** moves the *same* PayPal subscription onto the new plan, so
+    two subscriptions can never charge at once. There is no proration: the new
+    plan applies at the next renewal, and PayPal may ask the customer to
+    approve the new amount first, which the page says before anything happens.
+    An account with nothing being charged (a trial, or a cancelled
+    subscription) is sent to `/billing` to contract instead.
+  - **Cancel** cancels at PayPal and keeps the service running to the end of
+    the cycle that was already paid for. Nothing is deleted; the account
+    becomes read-only afterwards and inbound WhatsApp messages keep arriving.
+  - **Reactivate** resumes a subscription PayPal suspended. A subscription that
+    was cancelled cannot be resumed — PayPal's cancel is final — so the page
+    offers a new checkout instead, and contracting again now works while the
+    old subscription is serving out its last paid cycle.
+  - None of these actions turns a plan on by itself: as everywhere else in
+    billing, the PayPal webhook is what changes the state.
+- **A plan change no longer renews on the wrong cycle.** The billing cycle now
+  lives on the subscription (`supabase/migrations/056_…`), not only on the
+  checkout that created it, so a customer who moves from monthly to yearly has
+  their period extended by a year instead of by a month.
 - **Plan limits are now enforced.** Outbound messages, broadcast recipients, AI
   replies, operator seats, WhatsApp numbers and knowledge-base documents are
   checked against the plan before the action runs and counted after it
