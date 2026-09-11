@@ -481,6 +481,87 @@ BEGIN
       'billing_events_sale_subscription_idx is missing (migration 056)';
   END IF;
 
+  -- ------------------------------------------------------------
+  -- 053: varios números por empresa (fase 4 §1, f4.2).
+  -- ------------------------------------------------------------
+  -- El UNIQUE(account_id) de la 017 tiene que haber DESAPARECIDO: si
+  -- sigue ahí, conectar un segundo número revienta con 23505 y toda la
+  -- feature es decorativa.
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.whatsapp_config'::regclass
+      AND conname = 'whatsapp_config_account_id_key'
+  ) THEN
+    RAISE EXCEPTION
+      'whatsapp_config_account_id_key still exists — migration 053 did not drop the one-number-per-account UNIQUE';
+  END IF;
+
+  -- Y el UNIQUE GLOBAL de la 013 tiene que SEGUIR ahí. Es lo que hace
+  -- que un `phone_number_id` entrante resuelva a un único dueño; su
+  -- pérdida devolvería el issue #136 (mensajes entrantes descartados
+  -- en silencio) y sería carísima de detectar.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.whatsapp_config'::regclass
+      AND conname = 'whatsapp_config_phone_number_id_key'
+  ) THEN
+    RAISE EXCEPTION
+      'whatsapp_config_phone_number_id_key is missing — migration 053 must NOT touch the global UNIQUE of 013';
+  END IF;
+
+  -- Destino de ON CONFLICT del upsert idempotente (f4.1).
+  IF to_regclass('public.whatsapp_config_account_phone_key') IS NULL THEN
+    RAISE EXCEPTION
+      'whatsapp_config_account_phone_key is missing (migration 053)';
+  END IF;
+
+  -- Un solo predeterminado por cuenta, garantizado por la base.
+  IF to_regclass('public.whatsapp_config_one_default_per_account') IS NULL THEN
+    RAISE EXCEPTION
+      'whatsapp_config_one_default_per_account is missing (migration 053)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'whatsapp_config'
+      AND column_name = 'is_default'
+  ) THEN
+    RAISE EXCEPTION 'whatsapp_config.is_default is missing (migration 053)';
+  END IF;
+
+  -- Las dos columnas de enrutado y, sobre todo, el modo de borrado de
+  -- sus claves foráneas: `n` = SET NULL. Un CASCADE aquí borraría las
+  -- conversaciones o las campañas del cliente al desconectar un número
+  -- (CP2), y es el tipo de error que solo se descubre en producción.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.conversations'::regclass
+      AND contype = 'f'
+      AND confrelid = 'public.whatsapp_config'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION
+      'conversations.whatsapp_config_id is missing or its FK is not ON DELETE SET NULL (migration 053)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.broadcasts'::regclass
+      AND contype = 'f'
+      AND confrelid = 'public.whatsapp_config'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION
+      'broadcasts.whatsapp_config_id is missing or its FK is not ON DELETE SET NULL (migration 053)';
+  END IF;
+
+  -- El índice único (account_id, contact_id) de la 036 se MANTIENE:
+  -- f4.2 decidió no partir conversaciones por número.
+  IF to_regclass('public.idx_conversations_account_contact') IS NULL THEN
+    RAISE EXCEPTION
+      'idx_conversations_account_contact is missing — 036 must survive 053';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
