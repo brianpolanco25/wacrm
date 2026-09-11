@@ -85,6 +85,86 @@ BEGIN
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.subscriptions'::regclass) THEN
     RAISE EXCEPTION 'RLS is not enabled on subscriptions (migration 041)';
   END IF;
+  -- Billing rows must never be swept away by deleting an account: both
+  -- FKs are dropped-then-added with ON DELETE RESTRICT, so a regression
+  -- back to CASCADE (or a typo'd ADD) has to fail loudly here.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'subscriptions_account_id_fkey'
+      AND conrelid = 'public.subscriptions'::regclass
+      AND contype = 'f'
+      AND confdeltype = 'r'   -- ON DELETE RESTRICT, never CASCADE
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions_account_id_fkey is missing or not ON DELETE RESTRICT (migration 041)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'usage_counters_account_id_fkey'
+      AND conrelid = 'public.usage_counters'::regclass
+      AND contype = 'f'
+      AND confdeltype = 'r'   -- ON DELETE RESTRICT, never CASCADE
+  ) THEN
+    RAISE EXCEPTION
+      'usage_counters_account_id_fkey is missing or not ON DELETE RESTRICT (migration 041)';
+  END IF;
+
+  -- Platform AI keys (047): an account may leave its own key empty and
+  -- fall back to the deployment's. DROP NOT NULL is a no-op when it has
+  -- already run, which is exactly the silent case worth asserting.
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'ai_configs'
+      AND column_name = 'api_key'
+      AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION 'ai_configs.api_key is still NOT NULL (migration 047)';
+  END IF;
+
+  -- Who paid for each AI call (047). Without this column platform-funded
+  -- spend is indistinguishable from BYO spend and fase 3 cannot bill it.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'ai_usage_log'
+      AND column_name = 'key_source'
+      AND is_nullable = 'NO'
+      AND column_default = '''account''::text'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_usage_log.key_source is missing, nullable or lacks the ''account'' default (migration 047)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ai_usage_log_key_source_check'
+      AND conrelid = 'public.ai_usage_log'::regclass
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_usage_log_key_source_check is missing (migration 047)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'ai_usage_log'
+      AND indexname = 'idx_ai_usage_log_account_source_created'
+  ) THEN
+    RAISE EXCEPTION
+      'idx_ai_usage_log_account_source_created is missing (migration 047)';
+  END IF;
+  -- The playground spends provider tokens too (047 widened 033's domain).
+  -- Without this value its rows are rejected and the spend goes unlogged.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ai_usage_log_mode_check'
+      AND conrelid = 'public.ai_usage_log'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%playground%'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_usage_log_mode_check does not accept ''playground'' (migration 047)';
+  END IF;
 
   -- PayPal catalogue (045): ids per billing cycle.
   IF NOT EXISTS (

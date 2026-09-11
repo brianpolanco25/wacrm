@@ -106,7 +106,8 @@ export async function POST(request: Request) {
 
     const { text, usage } = await generateReply({ config, systemPrompt, messages })
 
-    // Record spend on the account's BYO key. Best-effort + via the
+    // Record spend, tagged with whose key paid for it (BYO or the
+    // platform's). Best-effort + via the
     // service role (the log has no `authenticated` INSERT policy). This
     // must not fail or delay the draft the agent is waiting on, so:
     //  - the whole thing is wrapped (constructing the admin client throws
@@ -120,6 +121,7 @@ export async function POST(request: Request) {
         mode: 'draft',
         provider: config.provider,
         model: config.model,
+        keySource: config.keySource,
         usage,
       })
     } catch (logErr) {
