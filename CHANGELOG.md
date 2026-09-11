@@ -63,6 +63,15 @@ and polish.
   alone, leaning on a per-author check in application code. Both queries
   now carry the caller's account, matching the RLS policy the
   service-role client bypasses.
+- **Former team members can no longer touch the automations they left
+  behind.** Reading, deleting and duplicating an automation matched on
+  the author's user id only. Because removing a member (or accepting an
+  invitation to another company) moves the profile to a different
+  account while the automations they created stay put, someone who had
+  left could still delete one of their old company's automations — the
+  endpoint even answered `ok` — or clone it back inside that company.
+  All three now filter by the caller's current account, and deleting an
+  automation that isn't yours answers `404` instead of a blanket `ok`.
 
 ## [0.8.1] — 2026-07-10
 

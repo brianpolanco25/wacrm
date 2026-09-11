@@ -781,26 +781,11 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
     by: ['id'],
     reason: 'Claims / marks the queued row the sweep just read.',
   },
-  {
-    table: 'automations',
-    op: 'select',
-    by: ['id', 'user_id'],
-    reason:
-      'The read-only routes (/api/automations/[id] GET and its duplicate) ' +
-      'still scope by user_id, not account_id — narrower than the account, ' +
-      "so they cannot leak across tenants (they hide teammates' rows " +
-      'instead; noted as debt in the implementation report). `user_id` is ' +
-      'required in the match so the waiver stops at those two queries: any ' +
-      'other read of an automation by bare id — the automations engine ' +
-      'resuming a queued step, for one — has to carry account_id.',
-  },
-  {
-    table: 'automations',
-    op: 'delete',
-    by: ['id', 'user_id'],
-    reason: 'Same legacy per-user scope as the read above.',
-  },
 ];
+
+// No waiver for `automations`: the two that used to live here rested on
+// "user_id is narrower than the account", which is false — see the
+// ex-member test below.
 
 /** Extra waivers for the current test only; reset in `beforeEach`. */
 let extraWaivers: ScopeWaiver[] = [];
@@ -1490,8 +1475,7 @@ describe('/api/automations (service-role writes)', () => {
       req('DELETE', '/api/automations/auto-b'),
       params({ id: 'auto-b' })
     );
-    expect(deleted.status).toBe(200);
-    // DELETE answers ok regardless; what matters is that B's row survived.
+    expect(deleted.status).toBe(404);
     expect(
       h.db.rows('automations').find((a) => a.id === 'auto-b')
     ).toBeDefined();
@@ -1527,6 +1511,109 @@ describe('/api/automations (service-role writes)', () => {
       h.db.rows('automations').find((a) => a.id === 'auto-b')
     ).toMatchObject({ name: 'auto b', is_active: true });
     expectBUnchanged(before);
+  });
+
+  // Positive paths for the other two service-role writes of this route.
+  // Without them the DELETE and the duplicate INSERT never execute, and
+  // the filters they carry are asserted by nobody: the 404 tests above
+  // stop at the ownership gate.
+
+  it("DELETE removes A's own automation and leaves B's alone", async () => {
+    const before = h.db.snapshot(B);
+    const res = await automationById.DELETE(
+      req('DELETE', '/api/automations/auto-a'),
+      params({ id: 'auto-a' })
+    );
+    expect(res.status).toBe(200);
+    expect(h.db.rows('automations').map((a) => a.id)).toEqual(['auto-b']);
+    expectBUnchanged(before);
+  });
+
+  it("duplicate clones A's automation into A", async () => {
+    const before = h.db.snapshot(B);
+    const res = await automationDuplicate.POST(
+      req('POST', '/api/automations/auto-a/duplicate'),
+      params({ id: 'auto-a' })
+    );
+    const body = await res.json();
+    expect(res.status).toBe(201);
+    expect(body.automation).toMatchObject({
+      account_id: A,
+      user_id: USER_A,
+      name: 'auto a (Copy)',
+      is_active: false,
+    });
+    expect(
+      h.db.rows('automations').filter((a) => a.account_id === B)
+    ).toHaveLength(1);
+    expectBUnchanged(before);
+  });
+
+  // The case that makes `user_id` useless as a tenant boundary, and the
+  // reason these routes carry `account_id` instead of a waiver.
+  //
+  // `remove_account_member` (migration 018) drops the expelled member
+  // into a fresh personal account, and `redeem_invitation` (019) moves a
+  // profile into the inviting one. Either way `profiles.account_id`
+  // changes while the rows the user authored stay behind with
+  // `account_id = A, user_id = U`. The session cookie is still valid and
+  // `getCurrentAccount` reads the profile live, so the caller passes the
+  // role check as owner of their NEW account — and a query filtered only
+  // by `id + user_id` would still match A's automation.
+  it("an ex-member of A cannot read, delete or clone A's automation from their new account", async () => {
+    const C = 'acct-c';
+    h.db.rows('accounts').push({
+      id: C,
+      name: 'Company C',
+      owner_user_id: USER_A,
+    });
+    const movedProfile = h.db
+      .rows('profiles')
+      .find((p) => p.user_id === USER_A)!;
+    movedProfile.account_id = C;
+    movedProfile.account_role = 'owner';
+    // Same user id, same session — only the profile moved. `auto-a`
+    // still reads `account_id: A, user_id: USER_A`.
+    h.actor = { userId: USER_A, accountId: C };
+    // Snapshot after the move: the profile row left A with the user.
+    const beforeA = h.db.snapshot(A);
+
+    const got = await automationById.GET(
+      req('GET', '/api/automations/auto-a'),
+      params({ id: 'auto-a' })
+    );
+    expect(got.status).toBe(404);
+
+    const deleted = await automationById.DELETE(
+      req('DELETE', '/api/automations/auto-a'),
+      params({ id: 'auto-a' })
+    );
+    expect(deleted.status).toBe(404);
+
+    const patched = await automationById.PATCH(
+      req('PATCH', '/api/automations/auto-a', {
+        name: 'pwned',
+        is_active: false,
+      }),
+      params({ id: 'auto-a' })
+    );
+    expect(patched.status).toBe(404);
+
+    const dup = await automationDuplicate.POST(
+      req('POST', '/api/automations/auto-a/duplicate'),
+      params({ id: 'auto-a' })
+    );
+    expect(dup.status).toBe(404);
+
+    // A's automation is still there, untouched, and nothing new was
+    // written into A.
+    expect(
+      h.db.rows('automations').find((a) => a.id === 'auto-a')
+    ).toMatchObject({ name: 'auto a', is_active: true, account_id: A });
+    expect(
+      h.db.rows('automations').filter((a) => a.account_id === A)
+    ).toHaveLength(1);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
   });
 });
 
