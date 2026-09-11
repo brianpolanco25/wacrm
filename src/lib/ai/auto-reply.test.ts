@@ -38,6 +38,14 @@ const h = vi.hoisted(() => ({
     conversationSelectColumns: '' as string,
     conversationUpdateFilters: [] as [string, unknown][],
     rpcCalls: [] as { name: string; args: unknown }[],
+    /** Error `increment_usage` resolves with (supabase-js style). */
+    usageError: null as { message: string } | null,
+    /** Make `increment_usage` throw instead of resolving, to prove the
+     *  counter can never take down a reply that already went out. */
+    usageThrows: false,
+    /** `usage_counters.value` after the increment, per account+metric —
+     *  the RPC returns the new total. */
+    usage: new Map<string, number>(),
   },
 }));
 
@@ -138,11 +146,30 @@ vi.mock('./admin-client', () => ({
       if (name === 'pick_available_agent') {
         return Promise.resolve({ data: h.state.pick, error: null });
       }
+      if (name === 'increment_usage') {
+        // Migration 041: upsert keyed by (account_id, metric, period)
+        // that returns the new total. Modelled per account so a leak
+        // between tenants shows up as a count on the wrong key.
+        if (h.state.usageThrows) throw new Error('network down');
+        if (h.state.usageError) {
+          return Promise.resolve({ data: null, error: h.state.usageError });
+        }
+        const a = args as {
+          p_account_id: string;
+          p_metric: string;
+          p_delta: number;
+        };
+        const key = `${a.p_account_id}:${a.p_metric}`;
+        const next = (h.state.usage.get(key) ?? 0) + a.p_delta;
+        h.state.usage.set(key, next);
+        return Promise.resolve({ data: next, error: null });
+      }
       return Promise.resolve({ data: h.state.claim, error: null });
     },
   }),
 }));
 
+import { __resetRateLimitForTests } from '@/lib/rate-limit';
 import { dispatchInboundToAiReply } from './auto-reply';
 
 const ARGS = {
@@ -172,6 +199,11 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
 }
 
 beforeEach(() => {
+  // The per-account auto-reply throttle (30/min) lives in a module-level
+  // map: without this reset the Nth test in the file starts hitting it
+  // and the dispatch silently stops sending, which reads as an unrelated
+  // failure. Reset it so each test starts from a clean window.
+  __resetRateLimitForTests();
   h.state.conv = {
     status: 'open',
     assigned_agent_id: null,
@@ -192,6 +224,9 @@ beforeEach(() => {
   h.state.conversationSelectColumns = '';
   h.state.conversationUpdateFilters = [];
   h.state.rpcCalls = [];
+  h.state.usageError = null;
+  h.state.usageThrows = false;
+  h.state.usage = new Map();
   h.loadAiConfig.mockResolvedValue(aiConfig());
   h.buildConversationContext.mockResolvedValue([
     { role: 'user', content: 'hi' },
@@ -208,6 +243,14 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
       {
         name: 'claim_ai_reply_slot',
         args: { conversation_id: 'conv-1', max_replies: 3 },
+      },
+      {
+        name: 'increment_usage',
+        args: {
+          p_account_id: 'acct-1',
+          p_metric: 'ai_replies',
+          p_delta: 1,
+        },
       },
     ]);
     expect(h.engineSendText).toHaveBeenCalledWith(
@@ -637,5 +680,156 @@ describe('dispatchInboundToAiReply — per-message automation guard (fase 1)', (
     }
     expect(h.generateReply).not.toHaveBeenCalled();
     expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Fase 1, f1.5 — the `ai_replies` usage counter (migration 041).
+ *
+ * Fase 0 §4 decided the metric starts counting in fase 1 even though no
+ * limit is applied until fase 3, so the closed beta produces real
+ * numbers to set the quotas with. Three things to prove: it counts a
+ * delivered reply (and only after it is delivered), the f1.2 transition
+ * message does not count, and nothing here refuses to send.
+ */
+describe('dispatchInboundToAiReply — ai_replies counter (f1.5)', () => {
+  function usageCalls() {
+    return h.state.rpcCalls.filter((c) => c.name === 'increment_usage');
+  }
+
+  it('counts one ai_reply for the account after a delivered reply', async () => {
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+    expect(usageCalls()).toEqual([
+      {
+        name: 'increment_usage',
+        args: { p_account_id: 'acct-1', p_metric: 'ai_replies', p_delta: 1 },
+      },
+    ]);
+    expect(h.state.usage.get('acct-1:ai_replies')).toBe(1);
+  });
+
+  it('counts AFTER the send, never before it', async () => {
+    // Criterion 1 is about order, not just about the call existing:
+    // counting first would bill a reply Meta then refused.
+    let rpcNamesWhenSending: string[] = [];
+    h.engineSendText.mockImplementation(async () => {
+      rpcNamesWhenSending = h.state.rpcCalls.map((c) => c.name);
+      return { whatsapp_message_id: 'm1' };
+    });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(rpcNamesWhenSending).not.toContain('increment_usage');
+    expect(h.state.rpcCalls.map((c) => c.name)).toEqual([
+      'claim_ai_reply_slot',
+      'increment_usage',
+    ]);
+  });
+
+  it('does not count a reply the send rejected', async () => {
+    h.engineSendText.mockRejectedValue(new Error('Meta 500'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(dispatchInboundToAiReply(ARGS)).resolves.toBeUndefined();
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(usageCalls()).toEqual([]);
+    expect(h.state.usage.size).toBe(0);
+  });
+
+  it('does not count when the dispatch never sends (slot race lost)', async () => {
+    h.state.claim = false;
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(usageCalls()).toEqual([]);
+  });
+
+  it('does not count when an automation already answered this inbound', async () => {
+    h.state.autoReplyClaims.set('msg-1', { responder: 'automation' });
+    await dispatchInboundToAiReply(ARGS);
+    expect(usageCalls()).toEqual([]);
+  });
+
+  it('does not count the handoff transition message (f1.2)', async () => {
+    // Criterion 2. The notice is an acknowledgement, not a reply: it
+    // goes out, and the counter stays where it was.
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ handoffMessage: 'A human will take over.' })
+    );
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+    expect(usageCalls()).toEqual([]);
+    expect(h.state.usage.size).toBe(0);
+  });
+
+  it('counts against the account of the dispatch, never another tenant', async () => {
+    // Service role bypasses RLS, so the account only exists as the
+    // argument we pass. Two tenants replying must land on two keys.
+    await dispatchInboundToAiReply(ARGS);
+    await dispatchInboundToAiReply({
+      ...ARGS,
+      accountId: 'acct-2',
+      conversationId: 'conv-2',
+      inboundMessageId: 'msg-2',
+    });
+
+    expect(usageCalls().map((c) => c.args)).toEqual([
+      { p_account_id: 'acct-1', p_metric: 'ai_replies', p_delta: 1 },
+      { p_account_id: 'acct-2', p_metric: 'ai_replies', p_delta: 1 },
+    ]);
+    expect(h.state.usage.get('acct-1:ai_replies')).toBe(1);
+    expect(h.state.usage.get('acct-2:ai_replies')).toBe(1);
+  });
+
+  it('counts per account regardless of whose API key paid (keySource)', async () => {
+    // f0.4: the platform key funding the call is cost attribution
+    // (`ai_usage_log`); plan consumption is counted the same either way.
+    h.loadAiConfig.mockResolvedValue(aiConfig({ keySource: 'platform' }));
+    await dispatchInboundToAiReply(ARGS);
+    expect(usageCalls()).toHaveLength(1);
+    expect(h.state.usage.get('acct-1:ai_replies')).toBe(1);
+  });
+
+  it('logs and swallows a counter error — the reply was already delivered', async () => {
+    h.state.usageError = { message: 'permission denied for function' };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let logged: unknown[][] = [];
+    try {
+      await expect(dispatchInboundToAiReply(ARGS)).resolves.toBeUndefined();
+      logged = errorSpy.mock.calls; // mockRestore() wipes them
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+    expect(logged.flat().join(' ')).toContain('increment_usage(ai_replies)');
+  });
+
+  it('survives the counter throwing outright', async () => {
+    h.state.usageThrows = true;
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(dispatchInboundToAiReply(ARGS)).resolves.toBeUndefined();
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies no limit: it reads no plan, subscription or counter first', async () => {
+    // Criterion 3. Enforcement is f3.4, on the fase 3 branch. Counting
+    // must not become a gate by accident: a full counter still replies.
+    h.state.usage.set('acct-1:ai_replies', 999_999);
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+    expect(h.state.tablesRead).not.toContain('subscriptions');
+    expect(h.state.tablesRead).not.toContain('plans');
+    expect(h.state.tablesRead).not.toContain('usage_counters');
   });
 });

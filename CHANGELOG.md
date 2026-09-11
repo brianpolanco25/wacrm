@@ -71,6 +71,13 @@ behaviour changes**; nothing is limited by plan yet.
 - **Entitlements helper** (`src/lib/billing/entitlements.ts`): resolves an
   account's plan, limits, features and read-only state. Not called from
   any route yet — that is fase 3.
+- **AI replies are now metered.** Every auto-reply the assistant actually
+  delivers adds one to the account's `ai_replies` usage counter for the
+  calendar month. Counting only: no plan limit is applied, nothing is
+  blocked, and a reply that fails to send is not counted. The handoff
+  notice is an acknowledgement rather than a reply and does not count
+  either. Counters are per account whichever provider key paid for the
+  call, and they are visible to owners and admins.
 - **Platform AI keys.** New optional server variables
   `AI_PLATFORM_OPENAI_API_KEY` / `AI_PLATFORM_ANTHROPIC_API_KEY`. When set,
   an account may leave the API key blank in Settings → AI and the

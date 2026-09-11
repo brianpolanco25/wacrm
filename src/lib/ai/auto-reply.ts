@@ -48,6 +48,9 @@ interface DispatchArgs {
  * The 24h WhatsApp session window is inherently open here — we're
  * reacting to a customer message that just landed — so no separate
  * window check is needed.
+ *
+ * A reply that goes out bumps the account's `ai_replies` usage counter
+ * (see `countAiReply`). Counting only; no quota is enforced yet.
  */
 export async function dispatchInboundToAiReply(
   args: DispatchArgs
@@ -281,6 +284,8 @@ export async function dispatchInboundToAiReply(
       text,
       aiGenerated: true,
     });
+
+    await countAiReply(db, accountId);
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err);
   }
@@ -319,5 +324,57 @@ async function resolveHandoffTarget(
     }
     default:
       return null;
+  }
+}
+
+/**
+ * Billing counter for one AI reply that actually went out (migration
+ * 041, `usage_counters` + `increment_usage`; fase 0 §4 decided the
+ * metric starts counting in fase 1 so the beta produces real numbers to
+ * set the quotas with).
+ *
+ * Called AFTER `engineSendText` resolves, deliberately: `engineSendText`
+ * throws when Meta rejects the send, so a failed reply never reaches
+ * here and never bills the account. The handoff notice of f1.2 returns
+ * before this point — it is an acknowledgement, not a reply, and does
+ * not count.
+ *
+ * Counted per ACCOUNT regardless of `AiConfig.keySource`: whose provider
+ * key paid for the tokens is a different question, and it is already
+ * answered by `ai_usage_log` (`logAiUsage`). This is plan consumption,
+ * that is cost attribution; neither replaces the other.
+ *
+ * NO limit is enforced here. The quota check belongs to fase 3 (f3.4),
+ * which reads this same counter before the model call. Counting without
+ * enforcing is the point of this step.
+ *
+ * Fail-safe by construction: the customer already has the message in
+ * hand, so an uncounted reply is an accounting bug, never a delivery
+ * bug. Both the `{ error }` supabase-js resolves with and an outright
+ * throw are logged and swallowed. Tenancy: the RPC takes the account as
+ * an explicit argument — it runs under the service role, which bypasses
+ * RLS, so passing the dispatch's `accountId` is what scopes the write.
+ */
+async function countAiReply(
+  db: SupabaseClient,
+  accountId: string
+): Promise<void> {
+  try {
+    const { error } = await db.rpc('increment_usage', {
+      p_account_id: accountId,
+      p_metric: 'ai_replies',
+      p_delta: 1,
+    });
+    if (error) {
+      console.error(
+        '[ai auto-reply] increment_usage(ai_replies) failed — the reply was sent but not counted:',
+        error
+      );
+    }
+  } catch (err) {
+    console.error(
+      '[ai auto-reply] increment_usage(ai_replies) threw — the reply was sent but not counted:',
+      err
+    );
   }
 }
