@@ -15,6 +15,7 @@ import {
   resolveTemplateRow,
   templateContentText,
 } from '@/lib/whatsapp/template-body'
+import { assertQuota, recordUsage } from '@/lib/billing/enforce'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -111,6 +112,13 @@ type SendInput =
 
 async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // Fase 3 §4: `messages_out`. An automation firing in a loop is the
+  // fastest way to run through a monthly allowance, so the engine is
+  // held to the same cap as a human clicking Send. Throws
+  // `QuotaExceededError`; the engine logs the step as failed and stops
+  // — nothing has reached Meta yet.
+  await assertQuota(input.accountId, 'messages_out', 1)
 
   // Scope the contact + config lookups by account_id, not user_id.
   // The engine uses the service-role client (bypassing RLS); without
@@ -247,6 +255,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.conversationId)
+
+  await recordUsage(input.accountId, 'messages_out', 1)
 
   return { whatsapp_message_id: waMessageId }
 }

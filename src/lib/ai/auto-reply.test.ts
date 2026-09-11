@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import {
+  AccountLockedError,
+  FeatureNotAvailableError,
+  QuotaExceededError,
+} from '@/lib/billing/enforce'
 import type { AiConfig } from './types'
 
 // Shared, hoisted mock state so the module mocks can close over it.
@@ -15,6 +20,36 @@ const h = vi.hoisted(() => ({
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
   },
+}))
+
+// Fase 3 §4/§5: the entitlement gates. Only the DB-touching entry
+// points are stubbed — `importOriginal` keeps the error classes real —
+// so a test can drive each gate independently and still assert against
+// the genuine `AccountLockedError` / `FeatureNotAvailableError` /
+// `QuotaExceededError`.
+const billing = vi.hoisted(() => {
+  const entitlements = {
+    planId: 'pro',
+    status: 'active' as const,
+    limits: {} as Record<string, number | null>,
+    features: ['ai_autoreply'],
+    readOnly: false,
+    trialEndsAt: null,
+  }
+  return {
+    entitlements,
+    assertWritable: vi.fn(async () => entitlements),
+    assertPlanFeature: vi.fn(async () => entitlements),
+    assertQuota: vi.fn(async () => {}),
+    recordUsage: vi.fn(async () => {}),
+  }
+})
+vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
+  assertWritable: billing.assertWritable,
+  assertPlanFeature: billing.assertPlanFeature,
+  assertQuota: billing.assertQuota,
+  recordUsage: billing.recordUsage,
 }))
 
 vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
@@ -97,6 +132,18 @@ beforeEach(() => {
   h.retrieveKnowledge.mockResolvedValue([])
   h.generateReply.mockResolvedValue({ text: 'Hello!', handoff: false })
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
+  for (const fn of [
+    billing.assertWritable,
+    billing.assertPlanFeature,
+    billing.assertQuota,
+    billing.recordUsage,
+  ]) {
+    fn.mockClear()
+  }
+  billing.assertWritable.mockResolvedValue(billing.entitlements)
+  billing.assertPlanFeature.mockResolvedValue(billing.entitlements)
+  billing.assertQuota.mockResolvedValue(undefined)
+  billing.recordUsage.mockResolvedValue(undefined)
 })
 
 describe('dispatchInboundToAiReply — eligibility gates', () => {
@@ -211,3 +258,96 @@ describe('dispatchInboundToAiReply — handoff', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// Fase 3 §4 — `ai_replies` + the `ai_autoreply` feature, and §5's
+// read-only ladder. All three gates are SILENT: this runs inside the
+// webhook's `after()`, where there is nobody to answer with an error.
+// The inbound message is already stored; only the outbound reply stops.
+// ---------------------------------------------------------------------------
+describe('dispatchInboundToAiReply — plan entitlements (fase 3 §4/§5)', () => {
+  it('does not reply while the account is read-only', async () => {
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError('suspended')
+    );
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.generateReply).not.toHaveBeenCalled();
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(billing.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it('does not reply when the plan has no ai_autoreply', async () => {
+    billing.assertPlanFeature.mockRejectedValue(
+      new FeatureNotAvailableError('ai_autoreply')
+    );
+    await dispatchInboundToAiReply(ARGS);
+    expect(billing.assertPlanFeature).toHaveBeenCalledWith(
+      'acct-1',
+      'ai_autoreply',
+      billing.entitlements
+    );
+    expect(h.generateReply).not.toHaveBeenCalled();
+    expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+
+  it('does not reply once the monthly ai_replies allowance is spent', async () => {
+    billing.assertQuota.mockRejectedValue(
+      new QuotaExceededError('ai_replies', 3000, 3000)
+    );
+    await dispatchInboundToAiReply(ARGS);
+    expect(billing.assertQuota).toHaveBeenCalledWith('acct-1', 'ai_replies', 1);
+    // The provider is never called either: an allowance check that let
+    // the tokens be spent anyway would protect nothing.
+    expect(h.generateReply).not.toHaveBeenCalled();
+    expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+
+  it('gates the account of the inbound, not some other one', async () => {
+    await dispatchInboundToAiReply({ ...ARGS, accountId: 'acct-other' });
+    expect(billing.assertWritable).toHaveBeenCalledWith('acct-other');
+    expect(billing.assertQuota).toHaveBeenCalledWith(
+      'acct-other',
+      'ai_replies',
+      1
+    );
+    expect(billing.recordUsage).toHaveBeenCalledWith(
+      'acct-other',
+      'ai_replies',
+      1
+    );
+  });
+
+  it('counts one ai_reply after the send, and only after', async () => {
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalled();
+    expect(billing.recordUsage).toHaveBeenCalledWith('acct-1', 'ai_replies', 1);
+    expect(billing.recordUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a reply paid for with the PLATFORM key exactly the same', async () => {
+    // f0.4 — `keySource` decides whose key paid the provider. The
+    // metric counts replies, not tokens, so both sources are billable.
+    h.loadAiConfig.mockResolvedValue(aiConfig({ keySource: 'platform' }));
+    await dispatchInboundToAiReply(ARGS);
+    expect(billing.recordUsage).toHaveBeenCalledWith('acct-1', 'ai_replies', 1);
+  });
+
+  it('does not count the handoff transition — it is not a reply', async () => {
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(billing.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it('does not count when the per-conversation slot claim loses the race', async () => {
+    h.state.claim = false;
+    await dispatchInboundToAiReply(ARGS);
+    expect(billing.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it('does not count when the send itself throws', async () => {
+    h.engineSendText.mockRejectedValue(new Error('Meta refused'));
+    await dispatchInboundToAiReply(ARGS);
+    expect(billing.recordUsage).not.toHaveBeenCalled();
+  });
+});

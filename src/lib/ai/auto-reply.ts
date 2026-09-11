@@ -9,6 +9,12 @@ import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import {
+  assertWritable,
+  assertPlanFeature,
+  assertQuota,
+  recordUsage,
+} from '@/lib/billing/enforce'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -49,6 +55,33 @@ export async function dispatchInboundToAiReply(
 
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
+
+    // Fase 3 §4 + §5. Three separate gates, all of them SILENT: this
+    // runs inside the webhook's `after()` block, so there is nobody to
+    // return an error to. The inbound message is already stored (CP11 —
+    // "lo entrante nunca se bloquea"); what stops here is the outbound
+    // reply, and the thread simply waits for a human.
+    //
+    //   1. read-only account (suspended / expired / past grace),
+    //   2. the plan does not include `ai_autoreply`,
+    //   3. the monthly `ai_replies` allowance is spent.
+    //
+    // The allowance is charged whichever key paid the provider: with
+    // the platform key (f0.4) the reply costs us money directly, and
+    // with the tenant's own key it still consumes our pipeline — the
+    // metric counts replies, not tokens, so `config.keySource` does not
+    // enter into it.
+    try {
+      const entitlements = await assertWritable(accountId)
+      await assertPlanFeature(accountId, 'ai_autoreply', entitlements)
+      await assertQuota(accountId, 'ai_replies', 1)
+    } catch (err) {
+      console.warn(
+        `[ai auto-reply] account ${accountId} is not entitled to an AI reply right now:`,
+        err instanceof Error ? err.message : err,
+      )
+      return
+    }
 
     // Deterministic, user-configured responders win over the LLM — the
     // caller already excludes messages a Flow consumed. Message-level
@@ -189,6 +222,12 @@ export async function dispatchInboundToAiReply(
       text,
       aiGenerated: true,
     })
+
+    // Counted after the reply actually left. The transition/handoff
+    // message is not an AI reply and returns above without counting.
+    // `messages_out` is charged separately, inside `engineSendText`:
+    // an AI reply is also an outbound message.
+    await recordUsage(accountId, 'ai_replies', 1)
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }

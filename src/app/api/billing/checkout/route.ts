@@ -149,7 +149,11 @@ async function loadPlanName(
 export async function POST(request: Request) {
   try {
     // admin+ only: contracting spends the tenant's money.
-    const ctx = await requireRole('admin');
+    //
+    // `allowReadOnly` because this route is the WAY OUT of the §5
+    // read-only lock: a suspended account that could not reach its own
+    // checkout would have no way to start paying again.
+    const ctx = await requireRole('admin', { allowReadOnly: true });
 
     const limit = checkRateLimit(
       `admin:billingCheckout:${ctx.userId}`,
@@ -327,7 +331,9 @@ export async function POST(request: Request) {
  */
 export async function GET(request: Request) {
   try {
-    const ctx = await requireRole('admin');
+    // Read-only status; same `allowReadOnly` rationale as POST — the
+    // return page has to work while the account is locked.
+    const ctx = await requireRole('admin', { allowReadOnly: true });
 
     const subscriptionId = new URL(request.url).searchParams
       .get('subscription_id')

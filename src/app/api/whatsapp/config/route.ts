@@ -7,6 +7,8 @@ import {
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
+import { assertStockLimit, assertWritable } from '@/lib/billing/enforce'
+import { toErrorResponse } from '@/lib/auth/account'
 
 /**
  * Resolve the caller's account_id from their profile. Inlined here
@@ -201,6 +203,39 @@ export async function POST(request: Request) {
           { status: 400 }
         )
       }
+    }
+
+    // Fase 3 §4 + §5. This route resolves its account by hand instead
+    // of through `requireRole`, so the read-only gate that `requireRole`
+    // applies everywhere else has to be spelled out here, and the
+    // `numbers` limit goes with it.
+    //
+    // `numbers` is a STOCK limit: how many WhatsApp numbers this
+    // account has bound right now. Today `whatsapp_config` has a
+    // UNIQUE(account_id) so the count is 0 or 1 and no plan can trip
+    // the cap; the check is written against the count rather than
+    // against that constraint so it keeps meaning something when f4.2
+    // drops the UNIQUE. Saving over the account's existing row is an
+    // edit, not a new number, and consumes nothing.
+    const { count: numberCount, error: numberCountErr } = await supabase
+      .from('whatsapp_config')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', accountId)
+      .neq('phone_number_id', phone_number_id)
+    if (numberCountErr) {
+      // Fail closed: an uncounted number is not a free number.
+      console.error('Error counting configured numbers:', numberCountErr)
+      return NextResponse.json(
+        { error: 'Failed to validate configuration' },
+        { status: 500 }
+      )
+    }
+
+    try {
+      const entitlements = await assertWritable(accountId)
+      assertStockLimit(entitlements, 'numbers', numberCount ?? 0)
+    } catch (err) {
+      return toErrorResponse(err)
     }
 
     // Reject if another account has already claimed this phone_number_id.

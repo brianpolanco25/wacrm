@@ -15,6 +15,7 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
+import { assertQuota, recordUsage } from '@/lib/billing/enforce'
 
 interface BroadcastResult {
   phone: string
@@ -119,6 +120,13 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+
+    // Fase 3 §4: `broadcast_recipients`. The whole campaign is checked
+    // as one batch BEFORE the first send — refusing halfway through
+    // would leave the operator with a partially delivered blast and no
+    // way to tell which half went. `toErrorResponse` turns the throw
+    // into a 402 naming the metric, the limit and `/billing`.
+    await assertQuota(accountId, 'broadcast_recipients', recipients.length)
 
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
@@ -230,6 +238,11 @@ export async function POST(request: Request) {
         failedCount++
       }
     }
+
+    // Counted after the fan-out and only for what actually left:
+    // invalid numbers and Meta rejections are not recipients the
+    // customer reached, so they are not billable.
+    await recordUsage(accountId, 'broadcast_recipients', sentCount)
 
     return NextResponse.json({
       success: true,

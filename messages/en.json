@@ -1767,6 +1767,12 @@
     "checkoutFailed": "Could not start the checkout",
     "cancelledNotice": "Checkout cancelled. Nothing was charged.",
     "taxNote": "Prices in USD, taxes not included. Changing plan applies at the next renewal.",
+    "lockedTitle": "This account is read-only",
+    "lockedBody": "Your subscription is not up to date, so everyone on this account can read but not write: no sending, no broadcasts, no AI replies. Incoming WhatsApp messages keep arriving and nothing is deleted. Settle the subscription and everything comes back exactly as it was.",
+    "pastDueTitle": "A payment did not go through",
+    "pastDueBody": "PayPal could not charge your subscription. The account keeps working for now; update the payment method to avoid an interruption.",
+    "pastDueBodyWithDate": "PayPal could not charge your subscription. The account keeps working until {date}; update the payment method to avoid an interruption.",
+    "fixNow": "Fix billing",
     "return": {
       "title": "We are confirming your payment",
       "body": "PayPal has your approval. Your plan switches on as soon as the payment confirmation reaches us, usually within seconds. You can close this page safely — nothing is lost.",

@@ -32,6 +32,7 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { assertStockLimit, getEntitlements } from "@/lib/billing/enforce";
 
 // Resolve the base URL we publish invite links under.
 //
@@ -213,6 +214,51 @@ export async function POST(request: Request) {
       }
       label = trimmed === "" ? null : trimmed;
     }
+
+    // Fase 3 §4: `operators`. A seat is a seat whether it is already
+    // occupied or merely promised, so the headcount is members PLUS
+    // outstanding invitations — otherwise an admin on a 3-seat plan
+    // issues ten links and lets the limit be discovered by whoever
+    // redeems the fourth, when there is no polite way to refuse them.
+    //
+    // This is a STOCK limit: it is counted live, not accumulated in
+    // `usage_counters`. Removing a member gives the seat back, and a
+    // monotonic counter could never express that.
+    const entitlements = await getEntitlements(ctx.accountId);
+    const [
+      { count: memberCount, error: memberErr },
+      { count: pendingCount, error: pendingErr },
+    ] = await Promise.all([
+      ctx.supabase
+        .from("profiles")
+        .select("user_id", { count: "exact", head: true })
+        .eq("account_id", ctx.accountId),
+      ctx.supabase
+        .from("account_invitations")
+        .select("id", { count: "exact", head: true })
+        .eq("account_id", ctx.accountId)
+        .is("accepted_at", null)
+        .gt("expires_at", new Date().toISOString()),
+    ]);
+
+    if (memberErr || pendingErr) {
+      // Fail closed: a headcount we could not take must not read as
+      // "zero seats used" and hand out an unlimited number of links.
+      console.error("[POST /api/account/invitations] seat count error:", {
+        memberErr,
+        pendingErr,
+      });
+      return NextResponse.json(
+        { error: "Failed to check the seat limit" },
+        { status: 500 },
+      );
+    }
+
+    assertStockLimit(
+      entitlements,
+      "operators",
+      (memberCount ?? 0) + (pendingCount ?? 0),
+    );
 
     const { token, hash } = generateInviteToken();
 

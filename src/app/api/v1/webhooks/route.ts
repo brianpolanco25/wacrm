@@ -8,6 +8,7 @@
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
+import { assertPlanFeature } from '@/lib/billing/enforce';
 import { ok, okList, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { normalizeEvents } from '@/lib/webhooks/events';
@@ -21,6 +22,9 @@ import {
 export async function GET(request: Request) {
   try {
     const ctx = await requireApiKey(request, 'webhooks:manage');
+    // Fase 3 §4: outbound webhooks are their own plan feature, on top
+    // of `api` (which `requireApiKey` already checked).
+    await assertPlanFeature(ctx.accountId, 'webhooks');
 
     const { data, error } = await ctx.supabase
       .from('webhook_endpoints')
@@ -49,6 +53,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const ctx = await requireApiKey(request, 'webhooks:manage');
+    await assertPlanFeature(ctx.accountId, 'webhooks');
 
     const body = (await request.json().catch(() => null)) as Record<
       string,
@@ -93,7 +98,10 @@ export async function POST(request: Request) {
 
     // Secret shown exactly once.
     return ok(
-      { ...serializeWebhookEndpoint(created as Record<string, unknown>), secret },
+      {
+        ...serializeWebhookEndpoint(created as Record<string, unknown>),
+        secret,
+      },
       201
     );
   } catch (err) {

@@ -32,6 +32,24 @@ const h = vi.hoisted(() => ({
   },
 }))
 
+// CP11: every billing gate, wired so it explodes if the storing path
+// ever touches it. See the describe block at the end of this file.
+const billingGates = vi.hoisted(() => ({
+  assertWritable: vi.fn(async () => {}),
+  assertQuota: vi.fn(async () => {}),
+  assertPlanFeature: vi.fn(async () => {}),
+  getEntitlements: vi.fn(async () => {}),
+  recordUsage: vi.fn(async () => {}),
+}))
+vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
+  assertWritable: billingGates.assertWritable,
+  assertQuota: billingGates.assertQuota,
+  assertPlanFeature: billingGates.assertPlanFeature,
+  getEntitlements: billingGates.getEntitlements,
+  recordUsage: billingGates.recordUsage,
+}))
+
 vi.mock('next/server', () => ({
   after: (cb: () => Promise<void> | void) => {
     h.state.afterCallbacks.push(cb)
@@ -538,3 +556,55 @@ describe('inbound webhook: after() awaits automations (#368)', () => {
     expect(h.state.automationCompleted).toBe(3)
   })
 })
+
+// ---------------------------------------------------------------------------
+// CP11 / fase 3 §4 — "lo entrante nunca se bloquea".
+//
+// Every billing gate in the enforcement layer is wired to REFUSE here, as
+// a suspended account with every allowance spent would. The inbound
+// message must still land: losing a customer's message over an unpaid
+// invoice is damage that cannot be repaired, and it would break the
+// tenant's relationship with Meta, who is the one actually charging them
+// for the conversation.
+//
+// This is a structural guard as much as a behavioural one: the webhook
+// must not consult the billing layer at all on the storing path, so the
+// day someone adds an `assertWritable` to it, this test goes red.
+// ---------------------------------------------------------------------------
+describe('inbound webhook: billing never blocks what comes in (CP11)', () => {
+  beforeEach(() => {
+    billingGates.assertWritable.mockRejectedValue(
+      new Error('billing said no — and it must not be asked')
+    );
+    billingGates.assertQuota.mockRejectedValue(
+      new Error('billing said no — and it must not be asked')
+    );
+    billingGates.getEntitlements.mockRejectedValue(
+      new Error('billing said no — and it must not be asked')
+    );
+  });
+
+  it('stores the inbound message with the subscription suspended and every quota spent', async () => {
+    await runWebhook();
+
+    // The message is on record…
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+    });
+    // …and the conversation was bumped so a human sees it in the inbox.
+    expect(h.state.rpcCalls).toHaveLength(1);
+    expect(h.state.rpcCalls[0]).toMatchObject({
+      name: 'bump_conversation_on_inbound',
+    });
+  });
+
+  it('never asks the billing layer anything while storing an inbound', async () => {
+    await runWebhook();
+
+    expect(billingGates.assertWritable).not.toHaveBeenCalled();
+    expect(billingGates.assertQuota).not.toHaveBeenCalled();
+    expect(billingGates.getEntitlements).not.toHaveBeenCalled();
+  });
+});

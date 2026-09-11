@@ -15,6 +15,7 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import { assertQuota, recordUsage } from '@/lib/billing/enforce'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -66,6 +67,9 @@ export async function engineSendText(
   args: SendTextEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // Fase 3 §4: `messages_out`, same cap as a manual send.
+  await assertQuota(args.accountId, 'messages_out', 1)
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -147,6 +151,8 @@ export async function engineSendText(
     })
     .eq('id', args.conversationId)
 
+  await recordUsage(args.accountId, 'messages_out', 1)
+
   return { whatsapp_message_id: waMessageId }
 }
 
@@ -176,6 +182,9 @@ export async function engineSendMedia(
   args: SendMediaEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // Fase 3 §4: `messages_out`, same cap as a manual send.
+  await assertQuota(args.accountId, 'messages_out', 1)
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -264,6 +273,8 @@ export async function engineSendMedia(
     })
     .eq('id', args.conversationId)
 
+  await recordUsage(args.accountId, 'messages_out', 1)
+
   return { whatsapp_message_id: waMessageId }
 }
 
@@ -325,6 +336,11 @@ async function sendInteractiveViaMeta(
   input: SendInput,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // Fase 3 §4: `messages_out`. Buttons and lists are outbound messages
+  // like any other — leaving them uncounted would make the cap a
+  // suggestion.
+  await assertQuota(input.accountId, 'messages_out', 1)
 
   // Scope the contact + whatsapp_config lookups by account_id —
   // same defense-in-depth rationale as automations/meta-send.ts.
@@ -456,6 +472,8 @@ async function sendInteractiveViaMeta(
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.conversationId)
+
+  await recordUsage(input.accountId, 'messages_out', 1)
 
   return { whatsapp_message_id: waMessageId }
 }
