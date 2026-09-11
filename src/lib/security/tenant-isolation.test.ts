@@ -7,6 +7,7 @@ import {
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { hashApiKey } from '@/lib/api-keys/keys';
 import { API_SCOPES } from '@/lib/api-keys/scopes';
+import { currentPeriodStart } from '@/lib/billing/entitlements';
 
 // ============================================================
 // Tenant-isolation suite.
@@ -255,6 +256,8 @@ import * as aiTest from '@/app/api/ai/test/route';
 
 const PAST = '2026-01-01T00:00:00.000Z';
 const OLDER = '2025-12-31T00:00:00.000Z';
+/** Far enough out that the seeded subscriptions are never mid-lapse. */
+const FUTURE = '2099-01-01T00:00:00.000Z';
 
 /**
  * Two parallel accounts. B is seeded first in every table on purpose,
@@ -490,6 +493,37 @@ function seed(): FakeDatabase {
         total_tokens: 2,
         created_at: new Date().toISOString(),
       },
+      // Fase 3: both accounts are on the same plan, ACTIVE, with room
+      // to spare — the enforcement layer (`assertWritable`,
+      // `assertPlanFeature`, `assertQuota`) now runs on nearly every
+      // route here, and an account without these rows 500s before the
+      // leak it is being tested for could ever happen. The point of the
+      // suite is unchanged: what is audited is whether the billing
+      // queries carry their own account scope.
+      subscription: {
+        id: `sub-${tag}`,
+        account_id: acct,
+        plan_id: 'pro',
+        status: 'active',
+        provider: 'paypal',
+        provider_subscription_id: `paypal-${tag}`,
+        cycle: 'month',
+        trial_ends_at: null,
+        grace_until: null,
+        current_period_end: FUTURE,
+        cancel_at_period_end: false,
+        last_event_at: null,
+        created_at: created,
+        updated_at: created,
+      },
+      usageCounter: {
+        id: `counter-${tag}`,
+        account_id: acct,
+        metric: 'messages_out',
+        period_start: currentPeriodStart(),
+        value: 1,
+        updated_at: created,
+      },
     };
   };
 
@@ -522,6 +556,37 @@ function seed(): FakeDatabase {
       ai_knowledge_documents: both('knowledge'),
       ai_usage_log: both('usage'),
       message_templates: both('template'),
+      subscriptions: both('subscription'),
+      usage_counters: both('usageCounter'),
+      // The price list is a global catalogue with no account_id: one
+      // row shared by every tenant, seeded by migration 041.
+      plans: [
+        {
+          id: 'pro',
+          name: 'Pro',
+          price_usd_month: 79,
+          price_usd_year: 790,
+          limits: {
+            operators: 10,
+            contacts: 10000,
+            messages_out: 15000,
+            ai_replies: 3000,
+            broadcast_recipients: 10000,
+            knowledge_documents: 50,
+            numbers: 1,
+            retention_months: 24,
+          },
+          features: [
+            'ai_autoreply',
+            'ai_knowledge',
+            'auto_assign',
+            'api',
+            'webhooks',
+          ],
+          is_public: true,
+          sort_order: 2,
+        },
+      ],
       tags: [],
       contact_tags: [],
     },
@@ -570,6 +635,36 @@ function seed(): FakeDatabase {
         return null;
       },
       claim_ai_reply_slot: () => true,
+      // Migration 041: upsert keyed by (account_id, metric, period).
+      // Modelled per account so a counter written against the wrong
+      // tenant is visible in the snapshot of B.
+      increment_usage: (args, db) => {
+        const accountId = args.p_account_id as string;
+        const metric = args.p_metric as string;
+        const period = currentPeriodStart();
+        const row = db
+          .rows('usage_counters')
+          .find(
+            (c) =>
+              c.account_id === accountId &&
+              c.metric === metric &&
+              c.period_start === period
+          );
+        const delta = Number(args.p_delta ?? 1);
+        if (row) {
+          row.value = Number(row.value ?? 0) + delta;
+          return row.value;
+        }
+        db.rows('usage_counters').push({
+          id: db.nextId('usage_counters'),
+          account_id: accountId,
+          metric,
+          period_start: period,
+          value: delta,
+          updated_at: new Date().toISOString(),
+        });
+        return delta;
+      },
     }
   );
 }
@@ -780,6 +875,21 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
     op: 'update',
     by: ['id'],
     reason: 'Claims / marks the queued row the sweep just read.',
+  },
+  {
+    table: 'plans',
+    op: 'select',
+    by: ['id'],
+    reason:
+      'The price list, not tenant data: `plans` has NO account_id column ' +
+      '(migration 041 makes it a global catalogue keyed by a text id — ' +
+      "'inicio' | 'pro' | 'negocio') and every account reads the same three " +
+      'rows. There is no filter to add here; the tenancy of the billing ' +
+      'layer lives one query earlier, in the `subscriptions` read that ' +
+      "yields this plan id, and that one does carry .eq('account_id', …) — " +
+      'audited, unwaived, on every route below. The only thing this read ' +
+      'can leak is a public price. Waived by id so an unfiltered ' +
+      '`select * from plans` on a covered route would still be reported.',
   },
 ];
 

@@ -54,6 +54,21 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
     (mocks.sendTemplateMessage as unknown as (...a: unknown[]) => unknown)(
       ...args
     ),
+  // Fase 2 (private media) routes the template header through
+  // `resolveTemplateHeaderMedia`, which reads this export at module
+  // scope. Without it the whole pass fails up front and nothing is sent,
+  // which would read here as "the fase 3 counter is broken".
+  uploadMedia: vi.fn(async () => ({ mediaId: 'meta-media-1' })),
+}));
+
+// Fase 2 (private media): the route resolves the template header
+// through `resolveTemplateHeaderMedia`, and passes it a service-role
+// client built here. Unmocked it tries to build a real one and every
+// recipient fails with "supabaseUrl is required" — which would read as
+// "the fase 3 counter never counts". The template row is null in these
+// tests, so nothing is actually read through it.
+vi.mock('@/lib/flows/admin-client', () => ({
+  supabaseAdmin: () => ({ from: () => ({}), storage: {} }),
 }));
 
 vi.mock('@/lib/whatsapp/template-body', () => ({

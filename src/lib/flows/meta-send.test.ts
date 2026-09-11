@@ -53,6 +53,10 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   sendInteractiveButtons: (...a: unknown[]) =>
     (h.sendInteractiveButtons as unknown as (...x: unknown[]) => unknown)(...a),
   sendInteractiveList: vi.fn(async () => ({ messageId: 'wamid.list' })),
+  // Fase 2 (private media) made `engineSendMedia` go through
+  // `resolveOutboundMedia`, which reads this export at module scope —
+  // without it the mock throws before the fase 3 gate under test runs.
+  uploadMedia: vi.fn(async () => ({ mediaId: 'meta-media-1' })),
 }));
 
 vi.mock('./admin-client', () => ({
