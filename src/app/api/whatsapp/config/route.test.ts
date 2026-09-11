@@ -23,6 +23,7 @@ type ConfigRow = {
   id: string;
   phone_number_id: string;
   registered_at: string | null;
+  is_default?: boolean;
 };
 
 const mocks = vi.hoisted(() => ({
@@ -82,6 +83,7 @@ const supabase = {
     const entry = {
       table,
       counting: false,
+      writing: false,
       filters: [] as [string, unknown][],
     };
     const chain: Record<string, unknown> = {
@@ -101,13 +103,21 @@ const supabase = {
         return chain;
       },
       insert: (row: Record<string, unknown>) => {
+        entry.writing = true;
         mocks.state.inserted = row;
         return chain;
       },
       update: (row: Record<string, unknown>) => {
+        entry.writing = true;
         mocks.state.updated = row;
         return chain;
       },
+      delete: () => {
+        entry.writing = true;
+        return chain;
+      },
+      order: () => chain,
+      limit: () => chain,
       maybeSingle: async () => {
         if (table === 'profiles') {
           return { data: { account_id: 'acct-1' }, error: null };
@@ -122,7 +132,29 @@ const supabase = {
       },
       then: (resolve: (v: unknown) => unknown) => {
         if (!entry.counting) {
-          // A write (update/insert): resolves with no error.
+          if (entry.writing) {
+            // A write (update/insert/delete): resolves with no error.
+            return resolve({ data: [{ id: 'cfg-new' }], error: null });
+          }
+          if (table === 'whatsapp_config') {
+            // The "which row does this save overwrite?" lookup. Post-053
+            // it is a plain list query — `.maybeSingle()` would error the
+            // moment the account has two numbers — so it has to honour
+            // the filters the route applied (`id` or `phone_number_id`).
+            if (mocks.state.existingError) {
+              return resolve({ data: null, error: mocks.state.existingError });
+            }
+            const byId = entry.filters.find(([c]) => c === 'id')?.[1];
+            const byPhone = entry.filters.find(
+              ([c]) => c === 'phone_number_id'
+            )?.[1];
+            const rows = mocks.state.rows.filter(
+              (r) =>
+                (byId === undefined || r.id === byId) &&
+                (byPhone === undefined || r.phone_number_id === byPhone)
+            );
+            return resolve({ data: rows, error: null });
+          }
           return resolve({ data: null, error: null });
         }
         // The real count honours the filters, so excluding the edited
@@ -203,12 +235,14 @@ describe('POST /api/whatsapp/config — numbers + read-only (fase 3 §4/§5)', (
 
   it('lets a 1-number plan swap its number: editing the row is not a second number', async () => {
     // The onboarding path: the account saved Meta's test number first
-    // and now saves the production one. Same row, `numbers: 1`.
+    // and now saves the production one. Same row, `numbers: 1`. Post-053
+    // the row is named explicitly with `config_id` — without it, saving
+    // a DIFFERENT number is by definition a second number (next test).
     mocks.state.rows = [
       { id: 'cfg-1', phone_number_id: 'pn-old', registered_at: null },
     ];
 
-    const res = await post({ phone_number_id: 'pn-prod' });
+    const res = await post({ phone_number_id: 'pn-prod', config_id: 'cfg-1' });
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -219,6 +253,58 @@ describe('POST /api/whatsapp/config — numbers + read-only (fase 3 §4/§5)', (
     // …and the count that fed the cap excluded that row BY ID.
     expect(mocks.state.counted).toHaveLength(1);
     expect(mocks.state.counted[0].filters).toContainEqual(['neq:id', 'cfg-1']);
+  });
+
+  // ---- fase 4 §1 / plan §7: the cap is real now that 053 dropped
+  // UNIQUE(account_id). Two shapes, and the difference between them is
+  // the whole point: re-saving a number you already have is an edit and
+  // costs nothing; a second, different number is what the plan sells.
+  it('a 1-number plan can re-save the number it already has', async () => {
+    mocks.state.rows = [
+      { id: 'cfg-1', phone_number_id: 'pn-a', registered_at: null },
+    ];
+
+    const res = await post({ phone_number_id: 'pn-a' });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.saved).toBe(true);
+    // Matched by number, with no id in the body: still an edit.
+    expect(mocks.state.updated).toMatchObject({ phone_number_id: 'pn-a' });
+    expect(mocks.state.inserted).toBeNull();
+    expect(mocks.state.counted[0].filters).toContainEqual(['neq:id', 'cfg-1']);
+  });
+
+  it('402s the same account on a SECOND, different number', async () => {
+    mocks.state.rows = [
+      { id: 'cfg-1', phone_number_id: 'pn-a', registered_at: null },
+    ];
+
+    const res = await post({ phone_number_id: 'pn-b' });
+    const json = await res.json();
+
+    expect(res.status).toBe(402);
+    expect(json.code).toBe('plan_limit_reached');
+    expect(json.metric).toBe('numbers');
+    expect(json.limit).toBe(1);
+    expect(json.used).toBe(1);
+    expect(json.upgradeUrl).toBe('/billing');
+    expect(mocks.state.inserted).toBeNull();
+    expect(mocks.state.updated).toBeNull();
+  });
+
+  it('404s a config_id that is not one of the account rows', async () => {
+    // CP3: an id from another account resolves to nothing here, and
+    // "nothing" must read as not-found rather than as "create a row".
+    mocks.state.rows = [
+      { id: 'cfg-1', phone_number_id: 'pn-a', registered_at: null },
+    ];
+
+    const res = await post({ phone_number_id: 'pn-a', config_id: 'cfg-of-b' });
+
+    expect(res.status).toBe(404);
+    expect(mocks.state.inserted).toBeNull();
+    expect(mocks.state.updated).toBeNull();
   });
 
   it('402s when the plan leaves no room for the number being saved', async () => {

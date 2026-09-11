@@ -48,6 +48,16 @@ behaviour changes**; nothing is limited by plan yet.
 > the checkout that created each subscription) and an index over the payment
 > events; no existing data is changed.
 
+> **Migration required:** apply
+> `supabase/migrations/053_whatsapp_config_multi_number.sql` before an account
+> can connect a second WhatsApp number. It drops the one-number-per-account
+> constraint, adds `is_default` / `label` / the display metadata to
+> `whatsapp_config`, and adds `whatsapp_config_id` to `conversations` and
+> `broadcasts` — backfilled to the number each account already had, so
+> nothing changes for a single-number account. Both new foreign keys are
+> `ON DELETE SET NULL`: disconnecting a number never deletes a conversation
+> or a campaign.
+
 > **Migration required:** apply `supabase/migrations/046_seed_trials.sql` and
 > `supabase/migrations/052_redeem_invitation_billing.sql` **together** before
 > plan limits take effect. 046 gives every existing account — and every account
@@ -58,6 +68,34 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Added
 
+- **Several WhatsApp numbers per company.** Settings → WhatsApp is now a
+  list of connected numbers with an "Add number" button; each card shows
+  its name, its connection and registration state, and can be renamed,
+  made the default, or removed on its own. The number a message goes out
+  through is the one the customer wrote to — the conversation remembers
+  it — falling back to the account default for a chat that has never had
+  one. A customer who writes to two of your numbers still has a single
+  conversation; the replies simply follow whichever number they used
+  last.
+  - **Broadcasts** ask which number to send from when there is more than
+    one, and freeze the answer on the campaign: pausing and resuming days
+    later keeps the same sender instead of restarting the 24-hour window
+    on another number.
+  - **Public API:** `POST /api/v1/messages` accepts an optional `from`
+    (a `phone_number_id` of your account) to choose the sender. See
+    `docs/public-api.md`.
+  - **Plan limits:** the `numbers` allowance is now real. Re-saving a
+    number you already have is an edit and costs nothing; a second,
+    different number on a one-number plan answers 402 with the upgrade
+    link.
+  - **Heads-up:** `DELETE /api/whatsapp/config` now requires an `?id=`.
+    Called without one it used to delete every number the account had,
+    which was the intent with one number and a disaster with three.
+  - Known limitation: message templates and inbound-media downloads
+    still work against the account's default number. That is correct
+    when the numbers share one WhatsApp Business Account (the normal
+    case) and wrong when they do not; templates are per-WABA in Meta and
+    fixing it properly needs a schema change.
 - **Available-agent handoff.** AI handoffs and automation round-robin
   assignment can route chats to the online owner, admin or agent with the
   lightest open/pending workload. If nobody is online, chats remain in the

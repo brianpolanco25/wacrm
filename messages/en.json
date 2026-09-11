@@ -803,7 +803,9 @@
         "sending": "Sending...",
         "preparing": "Preparing...",
         "progressDesc": "Processing {current} of {total} recipients...",
-        "toastFailedPreview": "Failed to load preview data"
+        "toastFailedPreview": "Failed to load preview data",
+        "sendFrom": "Send from",
+        "sendFromHint": "The number this campaign goes out through. It is fixed for the whole campaign: pausing and resuming keeps the same sender."
       }
     }
   },
@@ -1530,7 +1532,26 @@
       "step4_3": "Paste the <strong class=\"text-foreground\">Webhook Callback URL</strong> from above",
       "step4_4": "Enter the same <strong class=\"text-foreground\">Verify Token</strong> you set here",
       "step4_5": "Subscribe to \"messages\" webhook field",
-      "metaDocs": "Meta WhatsApp API Documentation"
+      "metaDocs": "Meta WhatsApp API Documentation",
+      "numbersTitle": "Connected numbers",
+      "numbersDesc": "Every WhatsApp number this account sends from. The default is used when nothing else picks one.",
+      "addNumber": "Add number",
+      "noNumbers": "No WhatsApp number connected yet. Click “Add number” to connect one.",
+      "defaultBadge": "Default",
+      "makeDefault": "Make default",
+      "editNumber": "Edit",
+      "removeNumber": "Remove",
+      "removeNumberConfirm": "Remove this number? Conversations and broadcasts are kept, but replies will go out through another number.",
+      "numberRemoved": "Number removed.",
+      "numberRemoveFailed": "Could not remove the number.",
+      "defaultUpdated": "Default number updated.",
+      "defaultUpdateFailed": "Could not change the default number.",
+      "addNumberTitle": "Add a number",
+      "editNumberTitle": "Edit this number",
+      "numberLabel": "Name",
+      "numberLabelPlaceholder": "e.g. Sales",
+      "numberLabelHint": "Shown in the list and in the sender picker. Optional — falls back to the name Meta has approved.",
+      "closeForm": "Close"
     },
     "sections": {
       "overview": "Overview",
@@ -1795,7 +1816,7 @@
       "cycleUnknown": "Billing cycle not recorded yet",
       "nextChargeLabel": "Next charge",
       "periodEndLabel": "Current period ends",
-      "noNextCharge": "\u2014",
+      "noNextCharge": "—",
       "trialEnds": "Your trial ends on {date}. Pick a plan before then to keep sending.",
       "trialNoDate": "You are on the trial. Pick a plan to keep sending when it ends.",
       "cancelScheduled": "Cancelled. The service keeps running until {date} and you will not be charged again.",

@@ -230,6 +230,7 @@ import * as waBroadcast from '@/app/api/whatsapp/broadcast/route';
 import * as waBroadcastResume from '@/app/api/whatsapp/broadcast/[id]/resume/route';
 import * as waWebhook from '@/app/api/whatsapp/webhook/route';
 import * as waConfig from '@/app/api/whatsapp/config/route';
+import * as waConfigById from '@/app/api/whatsapp/config/[id]/route';
 import * as waTemplateById from '@/app/api/whatsapp/templates/[id]/route';
 import * as waTemplateSubmit from '@/app/api/whatsapp/templates/submit/route';
 import * as automationsCron from '@/app/api/automations/cron/route';
@@ -286,6 +287,11 @@ function seed(): FakeDatabase {
         verify_token: encrypt(`verify-${tag}`),
         status: 'connected',
         mirror_inbound_media: false,
+        // Fase 4 §1: each account's only number is its default. Without
+        // it the resolver falls to step 4 (oldest survivor), and B's row
+        // is seeded first — so a missing account filter would land on B.
+        is_default: true,
+        created_at: created,
       },
       contact: {
         id: `contact-${tag}`,
@@ -302,6 +308,7 @@ function seed(): FakeDatabase {
         id: `conv-${tag}`,
         account_id: acct,
         user_id: user,
+        whatsapp_config_id: `cfg-${tag}`,
         contact_id: `contact-${tag}`,
         status: 'open',
         unread_count: 0,
@@ -1863,7 +1870,7 @@ describe('/api/quick-replies (service-role writes)', () => {
 
 describe('/api/whatsapp/config', () => {
   it("GET verifies A's number with A's token, never B's", async () => {
-    const res = await waConfig.GET();
+    const res = await waConfig.GET(req('GET', '/api/whatsapp/config'));
     const body = await res.json();
     expect(body.connected).toBe(true);
     expect(h.meta.sends).toEqual([
@@ -1886,6 +1893,69 @@ describe('/api/whatsapp/config', () => {
     expect(res.status).toBe(409);
     expect(h.meta.sends).toEqual([]);
     expectBUnchanged(before);
+  });
+
+  // Fase 4 §1: the per-number route. Its id comes straight out of the
+  // URL, so it is the easiest place in the codebase to read or write
+  // another tenant's row by guessing a UUID.
+  it("GET lists only A's numbers", async () => {
+    const res = await waConfig.GET(req('GET', '/api/whatsapp/config'));
+    const body = await res.json();
+    expect(body.numbers.map((n: { id: string }) => n.id)).toEqual(['cfg-a']);
+    expectNoBIds(body);
+  });
+
+  it("PATCH on B's number → 404 and B is untouched", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waConfigById.PATCH(
+      req('PATCH', '/api/whatsapp/config/cfg-b', { label: 'stolen' }),
+      params({ id: 'cfg-b' })
+    );
+    expect(res.status).toBe(404);
+    expectBUnchanged(before);
+  });
+
+  it("DELETE on B's number → 404 and B still has it", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waConfigById.DELETE(
+      req('DELETE', '/api/whatsapp/config/cfg-b'),
+      params({ id: 'cfg-b' })
+    );
+    expect(res.status).toBe(404);
+    expectBUnchanged(before);
+  });
+
+  it("PATCH renames A's own number and leaves B's default alone", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waConfigById.PATCH(
+      req('PATCH', '/api/whatsapp/config/cfg-a', {
+        label: 'Sales',
+        is_default: true,
+      }),
+      params({ id: 'cfg-a' })
+    );
+    expect(res.status).toBe(200);
+    const a = h.db.rows('whatsapp_config').find((r) => r.id === 'cfg-a');
+    expect(a?.label).toBe('Sales');
+    expect(a?.is_default).toBe(true);
+    // The "clear the old default" half of the promotion is scoped by
+    // account: B's number must still be B's default.
+    expectBUnchanged(before);
+  });
+
+  it("DELETE ?id= on the collection route only removes A's row", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waConfig.DELETE(
+      req('DELETE', '/api/whatsapp/config?id=cfg-b')
+    );
+    expect(res.status).toBe(404);
+    expectBUnchanged(before);
+  });
+
+  it('DELETE without an id refuses rather than wiping every number', async () => {
+    const res = await waConfig.DELETE(req('DELETE', '/api/whatsapp/config'));
+    expect(res.status).toBe(400);
+    expect(h.db.rows('whatsapp_config')).toHaveLength(2);
   });
 });
 
