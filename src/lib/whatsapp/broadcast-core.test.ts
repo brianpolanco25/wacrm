@@ -11,6 +11,10 @@ import {
 // them so these tests focus on the persistence boundary.
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: () => 'plain-access-token',
+  // `resolve-config.ts` also asks whether the stored ciphertext is in
+  // the pre-f2.3 CBC format, to self-heal it in the background.
+  encrypt: (v: string) => v,
+  isLegacyFormat: () => false,
 }));
 vi.mock('@/lib/api/v1/contacts', () => ({
   findOrCreateContact: (...args: unknown[]) =>
@@ -103,17 +107,24 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
   const database = {
     from(table: string) {
       if (table === 'whatsapp_config') {
-        return {
-          select: () => ({
-            eq: () => ({
-              single: () =>
-                Promise.resolve({
-                  data: { phone_number_id: 'pn-1', access_token: 'enc' },
-                  error: null,
-                }),
+        // Post-053 the sender is resolved by `resolve-config.ts`: with
+        // no explicit choice it reads the account default, which ends
+        // on `.maybeSingle()` rather than the old `.single()`.
+        const chain: Record<string, unknown> = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: () =>
+            Promise.resolve({
+              data: {
+                id: 'cfg-1',
+                account_id: 'acc',
+                phone_number_id: 'pn-1',
+                access_token: 'enc',
+              },
+              error: null,
             }),
-          }),
         };
+        return chain;
       }
       if (table === 'message_templates') {
         const chain: Record<string, unknown> = {
@@ -124,15 +135,25 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
         return chain;
       }
       if (table === 'broadcasts' || table === 'broadcast_recipients') {
-        calls.usedDirectInsert++;
-        return {
-          insert: () => ({
-            select: () => ({
-              single: () =>
-                Promise.resolve({ data: { id: 'orphan' }, error: null }),
-            }),
-          }),
+        const chain: Record<string, unknown> = {
+          insert: () => {
+            // Only an INSERT here is the old non-atomic path. The UPDATE
+            // that stamps `whatsapp_config_id` on the row the RPC just
+            // created (migration 053) is not.
+            calls.usedDirectInsert++;
+            return {
+              select: () => ({
+                single: () =>
+                  Promise.resolve({ data: { id: 'orphan' }, error: null }),
+              }),
+            };
+          },
+          update: () => chain,
+          eq: () => chain,
+          then: (resolve: (v: { data: null; error: null }) => void) =>
+            resolve({ data: null, error: null }),
         };
+        return chain;
       }
       throw new Error(`unexpected table: ${table}`);
     },
@@ -196,7 +217,7 @@ describe('createBroadcast atomicity (#370)', () => {
 function statusDb(
   counts: Record<string, number>,
   total: number,
-  writes: { update?: Record<string, unknown> },
+  writes: { update?: Record<string, unknown> }
 ) {
   return {
     from(table: string) {
@@ -225,7 +246,10 @@ function statusDb(
 describe('finalizeBroadcastStatus', () => {
   it('leaves a capped pass in "sending" while recipients are still pending', async () => {
     const writes: { update?: Record<string, unknown> } = {};
-    await finalizeBroadcastStatus(statusDb({ pending: 25 }, 1025, writes), 'b-1');
+    await finalizeBroadcastStatus(
+      statusDb({ pending: 25 }, 1025, writes),
+      'b-1'
+    );
     // No write at all — the UI keeps offering Resume.
     expect(writes.update).toBeUndefined();
   });
@@ -234,7 +258,7 @@ describe('finalizeBroadcastStatus', () => {
     const writes: { update?: Record<string, unknown> } = {};
     await finalizeBroadcastStatus(
       statusDb({ pending: 0, failed: 10 }, 10, writes),
-      'b-1',
+      'b-1'
     );
     expect(writes.update?.status).toBe('failed');
   });
@@ -243,7 +267,7 @@ describe('finalizeBroadcastStatus', () => {
     const writes: { update?: Record<string, unknown> } = {};
     await finalizeBroadcastStatus(
       statusDb({ pending: 0, failed: 3 }, 10, writes),
-      'b-1',
+      'b-1'
     );
     // 7 people got the message; failed_count carries the other 3.
     expect(writes.update?.status).toBe('sent');
@@ -255,12 +279,11 @@ describe('finalizeBroadcastStatus', () => {
     // failed. Pre-fix this wrote 'failed' off a pass-local counter.
     await finalizeBroadcastStatus(
       statusDb({ pending: 0, failed: 200 }, 1000, writes),
-      'b-1',
+      'b-1'
     );
     expect(writes.update?.status).toBe('sent');
   });
 });
-
 
 // ============================================================
 // Fase 3 §4 — `broadcast_recipients` lives in the core, not in one
@@ -424,10 +447,7 @@ describe('deliverBroadcast — broadcast_recipients (fase 3 §4)', () => {
       .mockRejectedValueOnce(new Error('Meta said no'));
     const { db, updates } = deliverDb();
 
-    await deliverBroadcast(
-      db,
-      planOf('acc', ['14155550123', '14155550124'])
-    );
+    await deliverBroadcast(db, planOf('acc', ['14155550123', '14155550124']));
 
     expect(updates.map((u) => u.status)).toEqual(['sent', 'failed']);
     expect(billing.recordUsage).toHaveBeenCalledWith(

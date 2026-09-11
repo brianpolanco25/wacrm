@@ -43,6 +43,8 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
 
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: () => 'plain-token',
+  encrypt: (v: string) => v,
+  isLegacyFormat: () => false,
 }));
 
 vi.mock('@/lib/whatsapp/template-body', () => ({
@@ -86,6 +88,8 @@ function fakeDb() {
           if (col === 'status') status = val as string;
           return chain;
         },
+        order: () => chain,
+        limit: () => chain,
         update: (row: Record<string, unknown>) => {
           if (table === 'broadcast_recipients') updates.push(row);
           return chain;
@@ -94,7 +98,20 @@ function fakeDb() {
           data: { phone_number_id: 'pn-1', access_token: 'enc' },
           error: null,
         }),
-        maybeSingle: async () => ({ data: null, error: null }),
+        // Post-053 the sender number is the account default, read with
+        // `.maybeSingle()` — `.single()` would error on the second number.
+        maybeSingle: async () =>
+          table === 'whatsapp_config'
+            ? {
+                data: {
+                  id: 'cfg-1',
+                  account_id: 'acct-1',
+                  phone_number_id: 'pn-1',
+                  access_token: 'enc',
+                },
+                error: null,
+              }
+            : { data: null, error: null },
         then: (resolve: (r: { count: number; error: null }) => unknown) =>
           resolve({ count: status === 'pending' ? 0 : 1, error: null }),
       };

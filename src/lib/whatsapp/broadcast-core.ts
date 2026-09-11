@@ -19,7 +19,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
-import { decrypt } from '@/lib/whatsapp/encryption';
+import {
+  resolveWhatsAppConfig,
+  WhatsAppConfigError,
+  type WhatsAppConfigRow,
+} from '@/lib/whatsapp/resolve-config';
 import { resolveTemplateHeaderMedia } from '@/lib/whatsapp/outbound-media';
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 import {
@@ -45,6 +49,17 @@ export class BroadcastError extends Error {
   }
 }
 
+/**
+ * Remap a `WhatsAppConfigError` from the shared resolver onto the
+ * broadcast error family, keeping code and status.
+ */
+export function toBroadcastError(err: unknown): unknown {
+  if (err instanceof WhatsAppConfigError) {
+    return new BroadcastError(err.code, err.message, err.status);
+  }
+  return err;
+}
+
 export interface BroadcastRecipientInput {
   /** E.164 phone. */
   to: string;
@@ -57,6 +72,12 @@ export interface CreateBroadcastParams {
   templateName: string;
   templateLanguage?: string | null;
   recipients: BroadcastRecipientInput[];
+  /**
+   * Sender number for the whole campaign (fase 4 §1). Omitted = the
+   * account default. Once chosen it is frozen on the `broadcasts` row:
+   * a resume must not switch numbers mid-campaign.
+   */
+  whatsAppConfigId?: string | null;
 }
 
 interface PlannedRecipient {
@@ -120,21 +141,23 @@ export async function createBroadcast(
     );
   }
 
-  // Config (fail fast + provides the audit trail owner already resolved
-  // by the caller). Meta send needs phone_number_id + decrypted token.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-  if (configError || !config) {
-    throw new BroadcastError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+  // Which number does this campaign go out through? (fase 4 §1). The
+  // caller's explicit choice wins; otherwise the account default. It is
+  // stamped on the `broadcasts` row below so a resume days later leaves
+  // through the SAME number — see broadcast-resume.
+  let config: WhatsAppConfigRow;
+  let accessToken: string;
+  try {
+    const resolved = await resolveWhatsAppConfig(db, {
+      accountId,
+      configId: params.whatsAppConfigId,
+      withToken: true,
+    });
+    config = resolved.row;
+    accessToken = resolved.accessToken;
+  } catch (err) {
+    throw toBroadcastError(err);
   }
-  const accessToken = decrypt(config.access_token);
 
   // Template row (once) for header/button components; guard a
   // malformed local row rather than N identical opaque failures.
@@ -260,6 +283,23 @@ export async function createBroadcast(
   }
 
   const broadcastId = createdRows[0].broadcast_id as string;
+
+  // Freeze the sender number on the campaign (migration 053). A second
+  // statement rather than an eighth RPC parameter: the transactional
+  // function of 037 is granted to `service_role` only and its signature
+  // is referenced by name in four GRANT/REVOKE lines, so widening it
+  // buys a migration's worth of risk to save a write. If this UPDATE
+  // loses (process dies between the two), the column stays NULL and a
+  // resume falls back to the default — the behaviour of every campaign
+  // created before 053, not a new failure mode.
+  const { error: sealErr } = await db
+    .from('broadcasts')
+    .update({ whatsapp_config_id: config.id })
+    .eq('id', broadcastId)
+    .eq('account_id', accountId);
+  if (sealErr) {
+    console.error('[broadcast-core] seal sender number failed:', sealErr);
+  }
 
   // Pair each inserted recipient row back to its phone/params by
   // contact_id — unambiguous now that duplicates are collapsed.

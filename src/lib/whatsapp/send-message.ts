@@ -34,7 +34,11 @@ import {
   interactivePayloadPreviewText,
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
-import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import {
+  resolveWhatsAppConfig,
+  WhatsAppConfigError,
+  type WhatsAppConfigRow,
+} from '@/lib/whatsapp/resolve-config';
 import {
   OutboundMediaError,
   resolveOutboundMedia,
@@ -80,6 +84,18 @@ export class SendMessageError extends Error {
   }
 }
 
+/**
+ * Remap a `WhatsAppConfigError` from the shared resolver onto this
+ * module's error family, preserving both the machine code and the
+ * status so callers keep behaving exactly as before.
+ */
+export function toSendMessageError(err: unknown): unknown {
+  if (err instanceof WhatsAppConfigError) {
+    return new SendMessageError(err.code, err.message, err.status);
+  }
+  return err;
+}
+
 export interface SendMessageParams {
   conversationId: string;
   messageType: string;
@@ -95,6 +111,13 @@ export interface SendMessageParams {
   /** Structured payload for `messageType === 'interactive'`. */
   interactivePayload?: InteractiveMessagePayload | null;
   replyToMessageId?: string | null;
+  /**
+   * Explicit sender number (fase 4 §1). Omitted by the inbox, which
+   * has a conversation and therefore already knows its number; sent by
+   * the "contact → send template" path, where no thread exists yet,
+   * and by `/api/v1/messages` after translating its public `from`.
+   */
+  whatsAppConfigId?: string | null;
 }
 
 export interface SendMessageResult {
@@ -126,8 +149,13 @@ export function validateSendMessageParams(params: {
   templateName?: string | null;
   interactivePayload?: InteractiveMessagePayload | null;
 }): void {
-  const { messageType, contentText, mediaUrl, templateName, interactivePayload } =
-    params;
+  const {
+    messageType,
+    contentText,
+    mediaUrl,
+    templateName,
+    interactivePayload,
+  } = params;
 
   if (!messageType) {
     throw new SendMessageError('bad_request', 'message_type is required', 400);
@@ -208,6 +236,7 @@ export async function sendMessageToConversation(
     templateMessageParams,
     interactivePayload,
     replyToMessageId,
+    whatsAppConfigId,
   } = params;
 
   if (!conversationId) {
@@ -266,37 +295,24 @@ export async function sendMessageToConversation(
     );
   }
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-
-  if (configError || !config) {
-    throw new SendMessageError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
-  }
-
-  const accessToken = decrypt(config.access_token);
-
-  // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-  if (isLegacyFormat(config.access_token)) {
-    void db
-      .from('whatsapp_config')
-      .update({ access_token: encrypt(accessToken) })
-      .eq('id', config.id)
-      .then(({ error }: { error: { message: string } | null }) => {
-        if (error) {
-          console.warn(
-            '[send-message] access_token GCM upgrade failed:',
-            error.message
-          );
-        }
-      });
+  // Which number does this go out through? (fase 4 §1). An explicit
+  // `whatsAppConfigId` wins; otherwise the conversation's own number —
+  // the one the customer wrote to — and only then the account default.
+  // Dropping the UNIQUE(account_id) of 017 made the old `.single()`
+  // here a PGRST116 waiting for the second number.
+  let config: WhatsAppConfigRow;
+  let accessToken: string;
+  try {
+    const resolved = await resolveWhatsAppConfig(db, {
+      accountId,
+      configId: whatsAppConfigId,
+      conversationId,
+      withToken: true,
+    });
+    config = resolved.row;
+    accessToken = resolved.accessToken;
+  } catch (err) {
+    throw toSendMessageError(err);
   }
 
   // Resolve the reply target to its Meta message_id. The parent must

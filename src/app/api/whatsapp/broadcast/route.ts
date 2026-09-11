@@ -1,35 +1,44 @@
-import { NextResponse } from 'next/server'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
-import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
-import { decrypt } from '@/lib/whatsapp/encryption'
-import { resolveTemplateHeaderMedia } from '@/lib/whatsapp/outbound-media'
-import { supabaseAdmin } from '@/lib/flows/admin-client'
-import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
-import { resolveTemplateRow } from '@/lib/whatsapp/template-body'
+import { NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
+import {
+  resolveWhatsAppConfig,
+  WhatsAppConfigError,
+  type WhatsAppConfigRow,
+} from '@/lib/whatsapp/resolve-config';
+import { resolveTemplateHeaderMedia } from '@/lib/whatsapp/outbound-media';
+import { supabaseAdmin } from '@/lib/flows/admin-client';
+import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
+import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import {
   sanitizePhoneForMeta,
   isValidE164,
   phoneVariants,
   isRecipientNotAllowedError,
-} from '@/lib/whatsapp/phone-utils'
+} from '@/lib/whatsapp/phone-utils';
 import {
   checkRateLimit,
   rateLimitResponse,
   RATE_LIMITS,
-} from '@/lib/rate-limit'
-import { assertQuota, recordUsage } from '@/lib/billing/enforce'
+} from '@/lib/rate-limit';
+import { assertQuota, recordUsage } from '@/lib/billing/enforce';
 
 interface BroadcastResult {
-  phone: string
-  status: 'sent' | 'failed'
-  whatsapp_message_id?: string
-  error?: string
+  phone: string;
+  status: 'sent' | 'failed';
+  whatsapp_message_id?: string;
+  error?: string;
 }
 
 type OutstandingLookup =
-  | { ok: true; outstanding: number | null }
-  | { ok: false; response: NextResponse }
+  | {
+      ok: true;
+      outstanding: number | null;
+      /** Sender number frozen on the campaign (migration 053). */
+      whatsAppConfigId: string | null;
+    }
+  | { ok: false; response: NextResponse };
 
 /**
  * How many recipients of the PERSISTED campaign still have to go out.
@@ -56,54 +65,58 @@ type OutstandingLookup =
 async function outstandingRecipients(
   supabase: SupabaseClient,
   accountId: string,
-  broadcastId: unknown,
+  broadcastId: unknown
 ): Promise<OutstandingLookup> {
   if (typeof broadcastId !== 'string' || broadcastId.length === 0) {
-    return { ok: true, outstanding: null }
+    return { ok: true, outstanding: null, whatsAppConfigId: null };
   }
 
   // Ownership first. An id belonging to another tenant must not be
   // measurable from here — and must never be billed to this account.
   const { data: broadcast, error: lookupError } = await supabase
     .from('broadcasts')
-    .select('id')
+    .select('id, whatsapp_config_id')
     .eq('id', broadcastId)
     .eq('account_id', accountId)
-    .maybeSingle()
+    .maybeSingle();
 
   if (lookupError || !broadcast) {
     return {
       ok: false,
       response: NextResponse.json(
         { error: 'Broadcast not found' },
-        { status: 404 },
+        { status: 404 }
       ),
-    }
+    };
   }
 
   const { count, error: countError } = await supabase
     .from('broadcast_recipients')
     .select('id', { count: 'exact', head: true })
     .eq('broadcast_id', broadcastId)
-    .eq('status', 'pending')
+    .eq('status', 'pending');
 
   if (countError) {
     // Fail closed, same rule as the stock limits: "we could not count"
     // can never be read as "you are using none of your allowance".
     console.error(
       '[broadcast] outstanding recipient count failed:',
-      countError,
-    )
+      countError
+    );
     return {
       ok: false,
       response: NextResponse.json(
         { error: 'Could not measure this campaign against your plan limit' },
-        { status: 500 },
+        { status: 500 }
       ),
-    }
+    };
   }
 
-  return { ok: true, outstanding: count ?? 0 }
+  return {
+    ok: true,
+    outstanding: count ?? 0,
+    whatsAppConfigId: (broadcast.whatsapp_config_id as string | null) ?? null,
+  };
 }
 
 /**
@@ -129,16 +142,16 @@ async function outstandingRecipients(
  * shape is what actually fixes that.
  */
 interface NewRecipient {
-  phone: string
+  phone: string;
   /** Body variable values, one per {{N}}. Legacy field. */
-  params?: string[]
+  params?: string[];
   /**
    * Structured per-send values (header text variable, media URL
    * override, URL/COPY_CODE button values). When set, takes
    * precedence over `params` for the body too — see
    * sendTemplateMessage for the merge rules.
    */
-  messageParams?: SendTimeParams
+  messageParams?: SendTimeParams;
 }
 
 export async function POST(request: Request) {
@@ -155,17 +168,17 @@ export async function POST(request: Request) {
     // to arbitrary phone numbers from the account's WhatsApp number.
     // Nothing about that is recoverable after the fact, so the check has
     // to happen here.
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const { supabase, accountId, userId } = await requireRole('agent');
 
     // Per-user broadcast budget. Note: this limits how often a user
     // can *start* a campaign, not how many messages go out inside
     // one — the fan-out loop below runs without additional gating.
-    const limit = checkRateLimit(`broadcast:${userId}`, RATE_LIMITS.broadcast)
+    const limit = checkRateLimit(`broadcast:${userId}`, RATE_LIMITS.broadcast);
     if (!limit.success) {
-      return rateLimitResponse(limit)
+      return rateLimitResponse(limit);
     }
 
-    const body = await request.json()
+    const body = await request.json();
     const {
       recipients: newRecipients,
       phone_numbers,
@@ -175,20 +188,20 @@ export async function POST(request: Request) {
       // Set by the wizard so the allowance below is weighed per
       // campaign instead of per batch of ten. Optional on purpose.
       broadcast_id,
-    } = body
+    } = body;
 
     // Normalize to a list of {phone, params} regardless of shape.
-    let recipients: NewRecipient[]
+    let recipients: NewRecipient[];
     if (Array.isArray(newRecipients) && newRecipients.length > 0) {
-      recipients = newRecipients
+      recipients = newRecipients;
     } else if (Array.isArray(phone_numbers) && phone_numbers.length > 0) {
       const shared: string[] = Array.isArray(template_params)
         ? template_params
-        : []
+        : [];
       recipients = phone_numbers.map((phone: string) => ({
         phone,
         params: shared,
-      }))
+      }));
     } else {
       return NextResponse.json(
         {
@@ -196,14 +209,14 @@ export async function POST(request: Request) {
             'Provide either `recipients` (preferred) or `phone_numbers` — must be a non-empty array',
         },
         { status: 400 }
-      )
+      );
     }
 
     if (!template_name) {
       return NextResponse.json(
         { error: 'template_name is required' },
         { status: 400 }
-      )
+      );
     }
 
     // Fase 3 §4: `broadcast_recipients`, weighed PER CAMPAIGN and not
@@ -216,32 +229,47 @@ export async function POST(request: Request) {
     const lookup = await outstandingRecipients(
       supabase,
       accountId,
-      broadcast_id,
-    )
-    if (!lookup.ok) return lookup.response
+      broadcast_id
+    );
+    if (!lookup.ok) return lookup.response;
     await assertQuota(
       accountId,
       'broadcast_recipients',
-      Math.max(lookup.outstanding ?? 0, recipients.length),
-    )
+      Math.max(lookup.outstanding ?? 0, recipients.length)
+    );
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
-
-    if (configError || !config) {
-      return NextResponse.json(
-        {
-          error:
-            'WhatsApp not configured. Please set up your WhatsApp integration first.',
-        },
-        { status: 400 }
-      )
+    // Fase 4 §1: this endpoint delivers ONE BATCH of a campaign that
+    // the wizard created client-side, so the sender number is whatever
+    // that `broadcasts` row froze — never the account default, or the
+    // batches of a single campaign would leave through different
+    // numbers as soon as someone changed the default mid-send.
+    // `lookup.whatsAppConfigId` is null for a direct caller with no
+    // `broadcast_id` and for campaigns older than migration 053; both
+    // fall through to the default, which is what they used anyway.
+    let config: WhatsAppConfigRow;
+    let accessToken: string;
+    try {
+      const resolved = await resolveWhatsAppConfig(supabase, {
+        accountId,
+        configId: lookup.whatsAppConfigId ?? null,
+        withToken: true,
+      });
+      config = resolved.row;
+      accessToken = resolved.accessToken;
+    } catch (err) {
+      if (err instanceof WhatsAppConfigError) {
+        return NextResponse.json(
+          {
+            error:
+              err.code === 'whatsapp_number_not_found'
+                ? 'The WhatsApp number this broadcast was sent from is no longer connected. Reconnect it, or start a new broadcast from another number.'
+                : 'WhatsApp not configured. Please set up your WhatsApp integration first.',
+          },
+          { status: 400 }
+        );
+      }
+      throw err;
     }
-
-    const accessToken = decrypt(config.access_token)
 
     // Load the template row once so sendTemplateMessage can build
     // header + button components on each iteration. Loading inside
@@ -252,34 +280,34 @@ export async function POST(request: Request) {
       supabase,
       accountId,
       template_name,
-      template_language,
-    )
+      template_language
+    );
     if (resolvedTemplate.malformed) {
       return NextResponse.json(
         {
           error:
             'Template row is malformed locally — run "Sync from Meta" in Settings to repair it before broadcasting.',
         },
-        { status: 500 },
-      )
+        { status: 500 }
+      );
     }
-    const templateRow = resolvedTemplate.row
+    const templateRow = resolvedTemplate.row;
 
-    const results: BroadcastResult[] = []
-    let sentCount = 0
-    let failedCount = 0
+    const results: BroadcastResult[] = [];
+    let sentCount = 0;
+    let failedCount = 0;
 
     for (const recipient of recipients) {
-      const sanitized = sanitizePhoneForMeta(recipient.phone)
+      const sanitized = sanitizePhoneForMeta(recipient.phone);
 
       if (!isValidE164(sanitized)) {
         results.push({
           phone: recipient.phone,
           status: 'failed',
           error: 'Invalid phone number format',
-        })
-        failedCount++
-        continue
+        });
+        failedCount++;
+        continue;
       }
 
       // A bucket-hosted media header (the template's own or this
@@ -287,7 +315,7 @@ export async function POST(request: Request) {
       // (number, object), so the common "same header for everyone"
       // case uploads once for the whole broadcast. Scoped to this
       // account: an override naming another account's object is refused.
-      let messageParams = recipient.messageParams
+      let messageParams = recipient.messageParams;
       try {
         messageParams = await resolveTemplateHeaderMedia(
           templateRow,
@@ -298,23 +326,23 @@ export async function POST(request: Request) {
             accessToken,
             storage: supabaseAdmin().storage,
             db: supabaseAdmin(),
-          },
-        )
+          }
+        );
       } catch (error) {
         results.push({
           phone: recipient.phone,
           status: 'failed',
           error: error instanceof Error ? error.message : 'Unknown error',
-        })
-        failedCount++
-        continue
+        });
+        failedCount++;
+        continue;
       }
 
       // Retry with phone variants on "not in allowed list" so numbers
       // that differ only in a trunk-prefix 0 still reach recipients.
-      const variants = phoneVariants(sanitized)
-      let sentMessageId: string | null = null
-      let lastError: string | null = null
+      const variants = phoneVariants(sanitized);
+      let sentMessageId: string | null = null;
+      let lastError: string | null = null;
 
       for (const variant of variants) {
         try {
@@ -327,18 +355,18 @@ export async function POST(request: Request) {
             template: templateRow ?? undefined,
             messageParams,
             params: recipient.params ?? [],
-          })
-          sentMessageId = result.messageId
-          lastError = null
-          break
+          });
+          sentMessageId = result.messageId;
+          lastError = null;
+          break;
         } catch (error) {
           const errorMessage =
-            error instanceof Error ? error.message : 'Unknown error'
+            error instanceof Error ? error.message : 'Unknown error';
           if (!isRecipientNotAllowedError(errorMessage)) {
-            lastError = errorMessage
-            break
+            lastError = errorMessage;
+            break;
           }
-          lastError = errorMessage
+          lastError = errorMessage;
           // retry with next variant
         }
       }
@@ -348,26 +376,26 @@ export async function POST(request: Request) {
           phone: recipient.phone,
           status: 'sent',
           whatsapp_message_id: sentMessageId,
-        })
-        sentCount++
+        });
+        sentCount++;
       } else {
         console.error(
           `Failed to send broadcast to ${recipient.phone}:`,
           lastError
-        )
+        );
         results.push({
           phone: recipient.phone,
           status: 'failed',
           error: lastError || 'Unknown error',
-        })
-        failedCount++
+        });
+        failedCount++;
       }
     }
 
     // Counted after the fan-out and only for what actually left:
     // invalid numbers and Meta rejections are not recipients the
     // customer reached, so they are not billable.
-    await recordUsage(accountId, 'broadcast_recipients', sentCount)
+    await recordUsage(accountId, 'broadcast_recipients', sentCount);
 
     return NextResponse.json({
       success: true,
@@ -375,11 +403,11 @@ export async function POST(request: Request) {
       sent: sentCount,
       failed: failedCount,
       results,
-    })
+    });
   } catch (error) {
     // requireRole throws Unauthorized/Forbidden; toErrorResponse maps
     // those to 401/403 and collapses anything else to a generic 500.
-    console.error('Error in WhatsApp broadcast POST:', error)
-    return toErrorResponse(error)
+    console.error('Error in WhatsApp broadcast POST:', error);
+    return toErrorResponse(error);
   }
 }

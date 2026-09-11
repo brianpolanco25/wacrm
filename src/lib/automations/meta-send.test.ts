@@ -30,6 +30,7 @@ vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: (v: string) => v,
   encrypt: (v: string) => v,
+  isLegacyFormat: () => false,
 }));
 
 vi.mock('@/lib/whatsapp/meta-api', () => ({
@@ -63,10 +64,27 @@ vi.mock('./admin-client', () => ({
           h.state.inserts.push(row);
           return Promise.resolve({ error: null });
         },
-        maybeSingle: async () =>
-          table === 'contacts'
-            ? { data: { id: 'ct-1', phone: '+15551234567' }, error: null }
-            : { data: null, error: null },
+        // Post-053: conversation → its whatsapp_config_id → the row.
+        maybeSingle: async () => {
+          if (table === 'contacts') {
+            return { data: { id: 'ct-1', phone: '+15551234567' }, error: null };
+          }
+          if (table === 'conversations') {
+            return { data: { whatsapp_config_id: 'cfg-1' }, error: null };
+          }
+          if (table === 'whatsapp_config') {
+            return {
+              data: {
+                id: 'cfg-1',
+                account_id: 'acct-1',
+                phone_number_id: 'pn-1',
+                access_token: 'token',
+              },
+              error: null,
+            };
+          }
+          return { data: null, error: null };
+        },
         single: async () =>
           table === 'whatsapp_config'
             ? {

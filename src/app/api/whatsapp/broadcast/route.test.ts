@@ -47,6 +47,7 @@ vi.mock('@/lib/rate-limit', () => ({
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: (v: string) => v,
   encrypt: (v: string) => v,
+  isLegacyFormat: () => false,
 }));
 
 vi.mock('@/lib/whatsapp/meta-api', () => ({
@@ -112,10 +113,27 @@ function supabaseMock({
             },
             error: null,
           }),
-          maybeSingle: async () => ({
-            data: campaignOwned ? { id: 'bc-1' } : null,
-            error: null,
-          }),
+          maybeSingle: async () => {
+            // Post-053 the sender is resolved from the campaign's frozen
+            // `whatsapp_config_id`; both ends are `.maybeSingle()`.
+            if (table === 'whatsapp_config') {
+              return {
+                data: {
+                  id: 'cfg-1',
+                  account_id: 'acct-1',
+                  phone_number_id: 'pn-1',
+                  access_token: 'token',
+                },
+                error: null,
+              };
+            }
+            return {
+              data: campaignOwned
+                ? { id: 'bc-1', whatsapp_config_id: 'cfg-1' }
+                : null,
+              error: null,
+            };
+          },
           // The head/count query of the outstanding-recipient lookup.
           then: (resolve: (r: unknown) => unknown) =>
             resolve({ count: pending, error: countError }),

@@ -185,12 +185,18 @@ describe('SendMessageError', () => {
 // ============================================================
 
 const sendTemplateMessage = vi.fn(async () => ({ messageId: 'wamid.1' }));
+const sendTextMessage = vi.fn(
+  async (_args: { phoneNumberId: string; accessToken: string }) => ({
+    messageId: 'wamid.text',
+  })
+);
 
 // Stub only the senders — the module also exports INTERACTIVE_LIMITS,
 // which `interactive.ts` needs for the payload validation covered above.
 vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  sendTextMessage: vi.fn(async () => ({ messageId: 'wamid.text' })),
+  sendTextMessage: (...args: unknown[]) =>
+    (sendTextMessage as unknown as (...a: unknown[]) => unknown)(...args),
   sendTemplateMessage: (...args: unknown[]) =>
     (sendTemplateMessage as unknown as (...a: unknown[]) => unknown)(...args),
   sendMediaMessage: vi.fn(async () => ({ messageId: 'wamid.media' })),
@@ -253,7 +259,16 @@ function sendPathDb(
           if (table === 'conversations') captured.conversation = row;
           return builder;
         },
-        maybeSingle: async () => ({ data: null, error: null }),
+        // Post-053 the sender number is resolved by `resolve-config.ts`:
+        // conversation → its `whatsapp_config_id` → that row. Both legs
+        // land on `maybeSingle`, so it has to be table-aware now.
+        maybeSingle: async () => {
+          if (table === 'conversations') {
+            return { data: { whatsapp_config_id: 'cfg-1' }, error: null };
+          }
+          if (table === 'whatsapp_config') return { data: config, error: null };
+          return { data: null, error: null };
+        },
         single: async () => {
           if (table === 'conversations') {
             return { data: conversation, error: null };
@@ -314,12 +329,16 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
 
   it('reads body values out of the structured params shape too', async () => {
     const captured: CapturedWrites = {};
-    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
-      conversationId: 'cv-1',
-      messageType: 'template',
-      templateName: 'order_update',
-      templateMessageParams: { body: ['B456', 'Monday'] },
-    });
+    await sendMessageToConversation(
+      sendPathDb([TEMPLATE_ROW], captured),
+      'acct-1',
+      {
+        conversationId: 'cv-1',
+        messageType: 'template',
+        templateName: 'order_update',
+        templateMessageParams: { body: ['B456', 'Monday'] },
+      }
+    );
     expect(captured.message?.content_text).toBe(
       'Your order B456 ships on Monday'
     );
@@ -327,30 +346,39 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
 
   it("does not override the composer's pre-rendered text", async () => {
     const captured: CapturedWrites = {};
-    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
-      conversationId: 'cv-1',
-      messageType: 'template',
-      templateName: 'order_update',
-      templateParams: ['A123', 'Friday'],
-      contentText: 'rendered by the composer',
-    });
+    await sendMessageToConversation(
+      sendPathDb([TEMPLATE_ROW], captured),
+      'acct-1',
+      {
+        conversationId: 'cv-1',
+        messageType: 'template',
+        templateName: 'order_update',
+        templateParams: ['A123', 'Friday'],
+        contentText: 'rendered by the composer',
+      }
+    );
     expect(captured.message?.content_text).toBe('rendered by the composer');
   });
 
   it("sends the local row's language when the caller names none", async () => {
     sendTemplateMessage.mockClear();
     const captured: CapturedWrites = {};
-    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
-      conversationId: 'cv-1',
-      messageType: 'template',
-      templateName: 'order_update',
-      templateParams: ['A123', 'Friday'],
-    });
+    await sendMessageToConversation(
+      sendPathDb([TEMPLATE_ROW], captured),
+      'acct-1',
+      {
+        conversationId: 'cv-1',
+        messageType: 'template',
+        templateName: 'order_update',
+        templateParams: ['A123', 'Friday'],
+      }
+    );
     // Previously pinned to 'en_US', which matched no row and made Meta
     // reject the send as a missing translation.
     expect(
-      (sendTemplateMessage.mock.calls[0] as unknown as [{ language: string }])[0]
-        .language
+      (
+        sendTemplateMessage.mock.calls[0] as unknown as [{ language: string }]
+      )[0].language
     ).toBe('en');
   });
 
@@ -449,5 +477,152 @@ describe('sendMessageToConversation — messages_out (fase 3 §4)', () => {
       sendMessageToConversation(db, 'acct-1', textParams)
     ).rejects.toBeInstanceOf(SendMessageError);
     expect(billing.recordUsage).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// Fase 4 §1 (criterio 4, fila 4b del plan) — varios números.
+//
+// The account has two. What decides which one a message leaves through
+// is the conversation it belongs to, unless the caller names one. Both
+// used to be impossible: the old `.single()` on `account_id` raised
+// PGRST116 the moment a second row existed, so this file's whole point
+// is that the second row is now normal.
+// ============================================================
+
+/**
+ * Two-number account. `whatsapp_config` returns whichever row is asked
+ * for by id, and the conversation is sealed onto `cfg-support`.
+ */
+function multiNumberDb(captured: CapturedWrites): SupabaseClient {
+  const configs: Record<string, Record<string, unknown>> = {
+    'cfg-sales': {
+      id: 'cfg-sales',
+      account_id: 'acct-1',
+      phone_number_id: 'pn-sales',
+      access_token: 'tok-sales',
+      is_default: true,
+    },
+    'cfg-support': {
+      id: 'cfg-support',
+      account_id: 'acct-1',
+      phone_number_id: 'pn-support',
+      access_token: 'tok-support',
+      is_default: false,
+    },
+  };
+
+  return {
+    from(table: string) {
+      let askedId: string | null = null;
+      let askedDefault = false;
+      const builder: Record<string, unknown> = {
+        select: () => builder,
+        eq: (col: string, val: unknown) => {
+          if (table === 'whatsapp_config' && col === 'id') {
+            askedId = val as string;
+          }
+          if (table === 'whatsapp_config' && col === 'is_default') {
+            askedDefault = true;
+          }
+          return builder;
+        },
+        order: () => builder,
+        limit: () => builder,
+        insert: (row: Record<string, unknown>) => {
+          if (table === 'messages') captured.message = row;
+          return builder;
+        },
+        update: (row: Record<string, unknown>) => {
+          if (table === 'conversations') captured.conversation = row;
+          return builder;
+        },
+        maybeSingle: async () => {
+          if (table === 'conversations') {
+            return { data: { whatsapp_config_id: 'cfg-support' }, error: null };
+          }
+          if (table === 'whatsapp_config') {
+            if (askedId) return { data: configs[askedId] ?? null, error: null };
+            if (askedDefault) {
+              return { data: configs['cfg-sales'], error: null };
+            }
+          }
+          return { data: null, error: null };
+        },
+        single: async () => {
+          if (table === 'conversations') {
+            return {
+              data: {
+                id: 'cv-1',
+                contact: { id: 'ct-1', phone: '+15551234567' },
+              },
+              error: null,
+            };
+          }
+          if (table === 'messages')
+            return { data: { id: 'msg-1' }, error: null };
+          return { data: null, error: null };
+        },
+        then: (resolve: (r: { data: unknown[]; error: null }) => unknown) =>
+          resolve({ data: [], error: null }),
+      };
+      return builder;
+    },
+  } as unknown as SupabaseClient;
+}
+
+describe('sendMessageToConversation — several numbers (fase 4 §1)', () => {
+  beforeEach(() => {
+    sendTextMessage.mockClear();
+  });
+
+  it("sends through the conversation's own number, not the account default", async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(multiNumberDb(captured), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'text',
+      contentText: 'hello',
+    });
+
+    expect(sendTextMessage).toHaveBeenCalledTimes(1);
+    expect(sendTextMessage.mock.calls[0][0]).toMatchObject({
+      phoneNumberId: 'pn-support',
+      accessToken: 'tok-support',
+    });
+  });
+
+  it('sends through the number the caller named, when it names one', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(multiNumberDb(captured), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'text',
+      contentText: 'hello',
+      // The "contact → send template" path and the public API's `from`.
+      whatsAppConfigId: 'cfg-sales',
+    });
+
+    expect(sendTextMessage.mock.calls[0][0]).toMatchObject({
+      phoneNumberId: 'pn-sales',
+      accessToken: 'tok-sales',
+    });
+  });
+
+  it("a number that is not this account's is a 404, and nothing is sent", async () => {
+    const captured: CapturedWrites = {};
+    const err = await sendMessageToConversation(
+      multiNumberDb(captured),
+      'acct-1',
+      {
+        conversationId: 'cv-1',
+        messageType: 'text',
+        contentText: 'hello',
+        whatsAppConfigId: 'cfg-of-another-account',
+      }
+    ).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SendMessageError);
+    expect(err.status).toBe(404);
+    expect(sendTextMessage).not.toHaveBeenCalled();
+    expect(captured.message).toBeUndefined();
   });
 });

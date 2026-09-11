@@ -13,7 +13,15 @@ const h = vi.hoisted(() => ({
     priorCustomerMsgCount: 0,
     /** Row `lookupInternalIdByMetaId` resolves for a `context.id`. */
     replyContextParent: null as { id: string } | null,
-    conversation: { id: 'conv-1', unread_count: 0, account_id: 'acc-1' },
+    conversation: {
+      id: 'conv-1',
+      unread_count: 0,
+      account_id: 'acc-1',
+      // The number this thread runs on (migration 053).
+      whatsapp_config_id: 'cfg-pn-1',
+    },
+    /** Updates written to `conversations` — the seal of fase 4 §1. */
+    conversationUpdates: [] as Record<string, unknown>[],
     upsertCalls: [] as { row: Record<string, unknown>; options: unknown }[],
     rpcCalls: [] as { name: string; args: Record<string, unknown> }[],
     afterCallbacks: [] as (() => Promise<void> | void)[],
@@ -76,12 +84,17 @@ vi.mock('@supabase/supabase-js', () => ({
           // phone_number_id, and the GET verification loop's bare
           // select() over every row. The select result is therefore a
           // promise (the loop awaits it directly) that also carries `eq`.
-          const byPhone = () =>
+          // One row per phone_number_id, with a distinct `id`: post-053
+          // the webhook seals that id onto the conversation, and two
+          // numbers of the SAME account have to be told apart.
+          const byPhone = (_col: string, phoneNumberId: string) =>
             Promise.resolve({
               data: [
                 {
+                  id: `cfg-${phoneNumberId}`,
                   account_id: 'acc-1',
                   user_id: 'user-1',
+                  phone_number_id: phoneNumberId,
                   access_token: 'enc',
                   mirror_inbound_media: h.state.mirrorInboundMedia,
                 },
@@ -102,6 +115,7 @@ vi.mock('@supabase/supabase-js', () => ({
         }
         case 'conversations':
           // findOrCreateConversation: select().eq().eq().order().limit()
+          // and, post-053, update().eq().eq() to re-seal the number.
           return {
             select: () => ({
               eq: () => ({
@@ -116,6 +130,12 @@ vi.mock('@supabase/supabase-js', () => ({
                 }),
               }),
             }),
+            update: (row: Record<string, unknown>) => {
+              h.state.conversationUpdates.push(row);
+              return {
+                eq: () => ({ eq: () => Promise.resolve({ error: null }) }),
+              };
+            },
           };
         case 'broadcast_recipients':
           // flagBroadcastReplyIfAny: select().eq().eq().in().order().limit()
@@ -255,7 +275,10 @@ const TEXT_MESSAGE = {
   text: { body: 'hello' },
 };
 
-function inboundRequest(message: Record<string, unknown> = TEXT_MESSAGE) {
+function inboundRequest(
+  message: Record<string, unknown> = TEXT_MESSAGE,
+  phoneNumberId = 'pn-1'
+) {
   const body = {
     entry: [
       {
@@ -263,7 +286,7 @@ function inboundRequest(message: Record<string, unknown> = TEXT_MESSAGE) {
           {
             field: 'messages',
             value: {
-              metadata: { phone_number_id: 'pn-1' },
+              metadata: { phone_number_id: phoneNumberId },
               contacts: [{ wa_id: '15551230000', profile: { name: 'Ada' } }],
               messages: [message],
             },
@@ -278,8 +301,11 @@ function inboundRequest(message: Record<string, unknown> = TEXT_MESSAGE) {
   } as unknown as Request;
 }
 
-async function runWebhook(message?: Record<string, unknown>) {
-  const res = await POST(inboundRequest(message));
+async function runWebhook(
+  message?: Record<string, unknown>,
+  phoneNumberId?: string
+) {
+  const res = await POST(inboundRequest(message, phoneNumberId));
   // Drain the after() callback exactly as the runtime would.
   for (const cb of h.state.afterCallbacks) await cb();
   return res;
@@ -290,7 +316,13 @@ beforeEach(() => {
   h.state.messageUpsertResult = [{ id: 'msg-1' }];
   h.state.priorCustomerMsgCount = 0;
   h.state.replyContextParent = null;
-  h.state.conversation = { id: 'conv-1', unread_count: 0, account_id: 'acc-1' };
+  h.state.conversation = {
+    id: 'conv-1',
+    unread_count: 0,
+    account_id: 'acc-1',
+    whatsapp_config_id: 'cfg-pn-1',
+  };
+  h.state.conversationUpdates = [];
   h.state.upsertCalls = [];
   h.state.rpcCalls = [];
   h.state.afterCallbacks = [];
@@ -785,5 +817,56 @@ describe('inbound webhook: billing never blocks what comes in (CP11)', () => {
     // Not "a message exists by the end" — one already existed at each
     // engine's entry.
     expect(storedWhenAsked.every((n) => n === 1)).toBe(true);
+  });
+});
+
+// ============================================================
+// Fase 4 §1 (criterio 4, fila 4d del plan) — «recibe correctamente en
+// todos». One account, two numbers: both inbounds are stored, and the
+// thread remembers the number the customer wrote to LAST, which is the
+// one the reply has to leave through.
+//
+// The (account_id, contact_id) unique index of migration 036 stays: a
+// contact who writes to two of a company's numbers still has ONE
+// conversation. What changes is which number that conversation runs on.
+// ============================================================
+
+describe('inbound webhook: several numbers per account (fase 4 §1)', () => {
+  it('stores messages arriving on either number of the same account', async () => {
+    await runWebhook(undefined, 'pn-sales');
+    await runWebhook({ ...TEXT_MESSAGE, id: 'wamid.2' }, 'pn-support');
+
+    const stored = h.state.upsertCalls.map((c) => c.row.message_id);
+    expect(stored).toContain(TEXT_MESSAGE.id);
+    expect(stored).toContain('wamid.2');
+    // Both land in the same account's single conversation: the
+    // (account_id, contact_id) unique index of 036 is untouched.
+    for (const call of h.state.upsertCalls) {
+      expect(call.row.conversation_id).toBe('conv-1');
+    }
+  });
+
+  it('seals the conversation with the number the customer wrote to', async () => {
+    // The thread is currently on pn-1; the customer writes to support.
+    await runWebhook(undefined, 'pn-support');
+
+    expect(h.state.conversationUpdates).toContainEqual({
+      whatsapp_config_id: 'cfg-pn-support',
+    });
+  });
+
+  it('does not rewrite the seal when the number has not changed', async () => {
+    h.state.conversation = {
+      id: 'conv-1',
+      unread_count: 0,
+      account_id: 'acc-1',
+      whatsapp_config_id: 'cfg-pn-sales',
+    };
+
+    await runWebhook(undefined, 'pn-sales');
+
+    expect(
+      h.state.conversationUpdates.filter((u) => 'whatsapp_config_id' in u)
+    ).toHaveLength(0);
   });
 });
