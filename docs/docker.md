@@ -122,8 +122,56 @@ nowhere. Set it. Being a `NEXT_PUBLIC_*` variable it is **baked into the
 image at build time** (see the build arguments below), not read at runtime.
 
 Nothing here activates a subscription: the return page only reports status
-and the plan turns on when the PayPal webhook arrives. `PAYPAL_WEBHOOK_ID`
-belongs to that webhook and is not needed yet.
+and the plan turns on when the PayPal webhook arrives.
+
+## PayPal webhook (`/api/billing/webhook`)
+
+This endpoint is what actually turns a payment into service. Point a PayPal
+webhook at `https://<your deployment>/api/billing/webhook` and subscribe it to
+the six events the app acts on:
+
+```
+BILLING.SUBSCRIPTION.ACTIVATED
+BILLING.SUBSCRIPTION.UPDATED
+BILLING.SUBSCRIPTION.CANCELLED
+BILLING.SUBSCRIPTION.SUSPENDED
+BILLING.SUBSCRIPTION.PAYMENT.FAILED
+PAYMENT.SALE.COMPLETED
+```
+
+| Variable            | Purpose                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| `PAYPAL_WEBHOOK_ID` | Id of that webhook in PayPal. Required to verify every delivery. |
+
+PayPal does not sign with HMAC: every delivery is verified by calling PayPal
+back with the five `paypal-transmission-*` headers, the raw body and this id.
+**Without `PAYPAL_WEBHOOK_ID` the endpoint rejects everything** — it fails
+closed on purpose, the same way the Meta webhook does without
+`META_APP_SECRET`. A forgotten variable must mean "nobody gets service", never
+"anybody can grant themselves service". It is server-only and, like the rest of
+the PayPal credentials, belongs to one environment: the sandbox webhook id and
+the live one are different values.
+
+Sandbox and live each need their own webhook and their own id. After changing
+the deployment URL, update the webhook in PayPal and re-copy the id — a webhook
+that still points at the old host delivers nothing, and subscriptions silently
+stop activating.
+
+### When an event could not be applied
+
+A delivery that verifies but cannot be matched to an account (for instance a
+PayPal subscription created outside the app) is still stored, and left in the
+reconciliation queue instead of being guessed at:
+
+```sql
+SELECT received_at, event_type, error, payload
+  FROM billing_events
+ WHERE processed_at IS NULL AND error IS NOT NULL
+ ORDER BY received_at DESC;
+```
+
+Nothing is lost — the full payload is on the row — but nothing is applied
+either. Fix the cause and replay the event from PayPal's webhook dashboard.
 
 ## Plain Docker (no Compose)
 

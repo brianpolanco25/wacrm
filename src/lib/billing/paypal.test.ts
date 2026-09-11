@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetPayPalForTests,
   approvalLink,
+  verifyWebhookSignature,
   createPlan,
   createProduct,
   createSubscription,
@@ -343,5 +344,96 @@ describe('approvalLink', () => {
     expect(approvalLink(undefined)).toBeNull();
     expect(approvalLink([])).toBeNull();
     expect(approvalLink([{ rel: 'approve' }])).toBeNull();
+  });
+});
+
+describe('verifyWebhookSignature', () => {
+  const headers = {
+    transmissionId: 'tx-1',
+    transmissionTime: '2026-03-01T10:00:00Z',
+    transmissionSig: 'sig-1',
+    certUrl: 'https://api.sandbox.paypal.com/cert.pem',
+    authAlgo: 'SHA256withRSA',
+  };
+
+  // The bytes PayPal signed. Key order, spacing and number formatting
+  // all differ from what JSON.stringify(JSON.parse(x)) would produce,
+  // which is the whole point: a re-encoded body verifies as FAILURE.
+  const rawBody =
+    '{ "event_type":"BILLING.SUBSCRIPTION.ACTIVATED",  "id":"WH-1",\n' +
+    '  "amount": 79.00 }';
+
+  it('sends the delivered bytes verbatim as webhook_event', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse({ verification_status: 'SUCCESS' }));
+
+    await expect(
+      verifyWebhookSignature(headers, rawBody, 'WH-ID')
+    ).resolves.toBe(true);
+
+    const { url, init } = lastCall();
+    expect(url).toBe(
+      'https://api-m.sandbox.paypal.com/v1/notifications/verify-webhook-signature'
+    );
+    const sent = String(init.body);
+    expect(sent).toContain(`"webhook_event":${rawBody}`);
+    expect(sent).not.toBe(JSON.stringify(JSON.parse(sent)));
+
+    // It is still valid JSON, and every header landed in its field.
+    expect(JSON.parse(sent)).toMatchObject({
+      auth_algo: 'SHA256withRSA',
+      cert_url: 'https://api.sandbox.paypal.com/cert.pem',
+      transmission_id: 'tx-1',
+      transmission_sig: 'sig-1',
+      transmission_time: '2026-03-01T10:00:00Z',
+      webhook_id: 'WH-ID',
+      webhook_event: { id: 'WH-1' },
+    });
+  });
+
+  it('is false for anything that is not an explicit SUCCESS', async () => {
+    for (const body of [
+      { verification_status: 'FAILURE' },
+      { verification_status: 'success' },
+      { nothing: true },
+      null,
+    ]) {
+      __resetPayPalForTests();
+      fetchMock.mockReset();
+      fetchMock
+        .mockResolvedValueOnce(tokenResponse())
+        .mockResolvedValueOnce(jsonResponse(body));
+
+      await expect(
+        verifyWebhookSignature(headers, '{"id":"WH-1"}', 'WH-ID')
+      ).resolves.toBe(false);
+    }
+  });
+
+  it('throws instead of returning false when PayPal cannot be reached', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse({ name: 'INTERNAL' }, 500));
+
+    await expect(
+      verifyWebhookSignature(headers, '{"id":"WH-1"}', 'WH-ID')
+    ).rejects.toMatchObject({ name: 'PayPalError', status: 500 });
+  });
+
+  it('escapes a header that tries to break out of its JSON string', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse({ verification_status: 'FAILURE' }));
+
+    await verifyWebhookSignature(
+      { ...headers, transmissionId: '","webhook_id":"attacker' },
+      '{"id":"WH-1"}',
+      'WH-ID'
+    );
+
+    const parsed = JSON.parse(String(lastCall().init.body));
+    expect(parsed.webhook_id).toBe('WH-ID');
+    expect(parsed.transmission_id).toBe('","webhook_id":"attacker');
   });
 });

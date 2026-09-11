@@ -33,8 +33,25 @@ behaviour changes**; nothing is limited by plan yet.
 > together with it — 048 alone would break invitation redemption for
 > anyone who ever abandoned a checkout.
 
+> **Migration required:** apply
+> `supabase/migrations/050_subscription_event_watermark.sql` before enabling
+> the PayPal webhook. It adds `subscriptions.last_event_at` (NULL for every
+> existing row) and an index; no existing data is touched.
+
 ### Added
 
+- **PayPal webhook** (`POST /api/billing/webhook`). The plan turns on here and
+  nowhere else: an approved payment activates the subscription even if the
+  customer closed the browser instead of coming back. It handles activation,
+  plan and quantity updates, cancellation (service runs to the end of the paid
+  cycle), suspension, failed payments (seven days of grace) and renewals. Every
+  delivery is verified with PayPal before anything is read from it, and a
+  delivery that cannot be verified is rejected — set `PAYPAL_WEBHOOK_ID` or the
+  endpoint accepts nothing. A repeated event is recorded once and applied once,
+  and an event that arrives out of order can never undo a newer one. Events that
+  cannot be matched to an account are kept unapplied in `billing_events` for
+  reconciliation rather than guessed at. Nothing here limits what an account can
+  do yet, and inbound WhatsApp messages are never affected.
 - **Plan checkout** (`/billing`). An owner or admin picks a plan and a
   billing cycle, approves the payment on PayPal and comes back to
   `/billing/return`, which only says "we are confirming your payment".

@@ -136,9 +136,27 @@ export async function paypalFetch<T = unknown>(
   init: {
     method?: string;
     body?: unknown;
+    /**
+     * Already-serialised request body. Takes precedence over `body`
+     * and is sent byte for byte.
+     *
+     * The webhook verification call needs this: PayPal signed the
+     * exact bytes it delivered, and `JSON.parse` + `JSON.stringify`
+     * does not round-trip them (key order, number formatting, escapes
+     * and whitespace all move). Re-encoding turns a genuine event into
+     * a FAILURE.
+     */
+    rawBody?: string;
     headers?: Record<string, string>;
   } = {}
 ): Promise<{ status: number; data: T }> {
+  const payload =
+    init.rawBody !== undefined
+      ? init.rawBody
+      : init.body === undefined
+        ? undefined
+        : JSON.stringify(init.body);
+
   const attempt = async (token: string) =>
     fetch(`${paypalBaseUrl()}${path}`, {
       method: init.method ?? 'GET',
@@ -148,7 +166,7 @@ export async function paypalFetch<T = unknown>(
         Accept: 'application/json',
         ...(init.headers ?? {}),
       },
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body: payload,
     });
 
   let res = await attempt(await getAccessToken());
@@ -385,4 +403,69 @@ export function approvalLink(
     }
   }
   return null;
+}
+
+// ------------------------------------------------------------
+// Webhook signature verification (Fase 3 §3).
+//
+// PayPal does NOT sign with HMAC. The signature is an RSA one over a
+// string built from the transmission headers, the webhook id and a
+// CRC32 of the raw body, checked against a certificate PayPal serves.
+// Rather than reimplement that (and its certificate chain handling),
+// the documented path is to hand the five `paypal-transmission-*`
+// headers plus the event back to PayPal and let it answer SUCCESS or
+// FAILURE. Same shape as `verifyMetaWebhookSignature`, different
+// algorithm — and here the algorithm is a network call.
+// ------------------------------------------------------------
+
+/** The five headers PayPal attaches to every webhook delivery. */
+export interface PayPalTransmissionHeaders {
+  transmissionId: string;
+  transmissionTime: string;
+  transmissionSig: string;
+  certUrl: string;
+  authAlgo: string;
+}
+
+/**
+ * Ask PayPal whether this delivery is genuine.
+ *
+ * `rawBody` must be the exact bytes received (`await request.text()`
+ * before any parsing). It is spliced into the verification request as
+ * a raw JSON fragment, never re-serialised — see `paypalFetch`.
+ *
+ * Returns `true` only for an explicit `SUCCESS`. Every other answer —
+ * `FAILURE`, an unexpected shape, a malformed body — is a rejection.
+ * Network and HTTP failures throw `PayPalError` so the caller can tell
+ * "PayPal says no" from "we could not ask"; both fail closed, but only
+ * the second is worth an alert.
+ */
+export async function verifyWebhookSignature(
+  headers: PayPalTransmissionHeaders,
+  rawBody: string,
+  webhookId: string
+): Promise<boolean> {
+  // Hand-built so `webhook_event` keeps the delivered bytes. `rawBody`
+  // has already been proven to be valid JSON by the caller; every
+  // other value goes through JSON.stringify, so nothing here can break
+  // out of its string.
+  const requestBody =
+    '{' +
+    [
+      `"auth_algo":${JSON.stringify(headers.authAlgo)}`,
+      `"cert_url":${JSON.stringify(headers.certUrl)}`,
+      `"transmission_id":${JSON.stringify(headers.transmissionId)}`,
+      `"transmission_sig":${JSON.stringify(headers.transmissionSig)}`,
+      `"transmission_time":${JSON.stringify(headers.transmissionTime)}`,
+      `"webhook_id":${JSON.stringify(webhookId)}`,
+      `"webhook_event":${rawBody}`,
+    ].join(',') +
+    '}';
+
+  const { data } = await paypalFetch<{ verification_status?: unknown }>(
+    '/v1/notifications/verify-webhook-signature',
+    { method: 'POST', rawBody: requestBody }
+  );
+
+  return data?.verification_status === 'SUCCESS';
 }

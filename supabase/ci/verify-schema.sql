@@ -158,6 +158,25 @@ BEGIN
       'redeem_invitation() does not handle checkout_intents; the RESTRICT FK of 048 will break invitation redemption (migration 049)';
   END IF;
 
+  -- ------------------------------------------------------------
+  -- 050: marca de agua del webhook de PayPal.
+  -- ------------------------------------------------------------
+  -- Sin `last_event_at` el manejador no puede distinguir un evento que
+  -- llega tarde de uno nuevo, y un ACTIVATED reentregado reactivaría
+  -- una suscripción cancelada.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'last_event_at'
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.last_event_at is missing (migration 050)';
+  END IF;
+  -- La cola de reconciliación: eventos verificados que no se pudieron
+  -- aplicar quedan con processed_at NULL y `error` puesto.
+  IF to_regclass('public.billing_events_unprocessed_idx') IS NULL THEN
+    RAISE EXCEPTION 'billing_events_unprocessed_idx is missing (migration 050)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
