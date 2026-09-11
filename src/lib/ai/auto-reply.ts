@@ -10,6 +10,7 @@ import { logAiUsage } from './usage';
 import { latestUserMessage } from './query';
 import { engineSendText } from '@/lib/flows/meta-send';
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
+import { claimInboundAutoReply } from '@/lib/automations/reply-marker';
 import type { AiConfig } from './types';
 
 interface DispatchArgs {
@@ -17,6 +18,10 @@ interface DispatchArgs {
   accountId: string;
   conversationId: string;
   contactId: string;
+  /** Internal `messages.id` of the inbound we are reacting to. It is the
+   *  key of the per-message reservation that decides whether an
+   *  automation already answered THIS message (fase 1, §4). */
+  inboundMessageId: string;
   /** The account's WhatsApp config owner, used for the outbound send's
    *  audit columns (mirrors how the flow runner passes it through). */
   configOwnerUserId: string;
@@ -35,6 +40,7 @@ interface DispatchArgs {
  *   - a human agent is assigned (they own the thread)
  *   - auto-reply was disabled for this conversation (prior handoff)
  *   - the per-conversation reply cap is reached
+ *   - an automation already answered THIS inbound message
  *   - there's nothing to reply to
  *
  * The 24h WhatsApp session window is inherently open here — we're
@@ -52,23 +58,6 @@ export async function dispatchInboundToAiReply(
     const config = await loadAiConfig(db, accountId);
     if (!config || !config.autoReplyEnabled) return;
 
-    // Deterministic, user-configured responders win over the LLM — the
-    // caller already excludes messages a Flow consumed. Message-level
-    // automations (`new_message_received` / `keyword_match`) are
-    // dispatched independently for this same inbound and may send their
-    // own reply, so if the account has any active one we stand down to
-    // avoid double-texting the customer. (Relationship triggers like
-    // `first_inbound_message` don't count — they're not per-message
-    // auto-responders.)
-    const { data: autoResponders } = await db
-      .from('automations')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .in('trigger_type', ['new_message_received', 'keyword_match'])
-      .limit(1);
-    if (autoResponders && autoResponders.length > 0) return;
-
     const { data: conv, error: convErr } = await db
       .from('conversations')
       .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
@@ -81,6 +70,33 @@ export async function dispatchInboundToAiReply(
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
     if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return;
+
+    // Deterministic, user-configured responders win over the LLM. The
+    // caller already excludes messages a Flow consumed; message-level
+    // automations (`new_message_received` / `keyword_match`) are
+    // dispatched for this same inbound, just before us in the webhook's
+    // `after()` block, and reserve the reply before they send.
+    //
+    // This used to be an account-wide guard — "the account has an active
+    // keyword automation, therefore the bot is mute everywhere" — which
+    // turned one automation answering "opening hours" into a silent
+    // company-wide outage of the AI agent. Now the question is asked per
+    // message, and asking it IS taking the reservation: whoever inserts
+    // the `inbound_auto_replies` row first is the only one that talks
+    // (migration 051). Losing means an automation answered this message,
+    // or another dispatch of the same inbound got here first — either
+    // way we stay quiet, including the handoff notice below, because
+    // that would be a second automatic message about the same inbound.
+    //
+    // Placed after the cheap gates (so an owned or paused thread writes
+    // no rows) and before the model call (so a message an automation
+    // already answered costs nothing).
+    const won = await claimInboundAutoReply(db, {
+      accountId,
+      messageId: args.inboundMessageId,
+      responder: 'ai',
+    });
+    if (!won) return;
 
     const messages = await buildConversationContext(db, conversationId);
     if (messages.length === 0) return;

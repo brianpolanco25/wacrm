@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
-import { runAutomationsForTrigger } from '@/lib/automations/engine'
+import {
+  runAutomationsForTrigger,
+  type AutomationContext,
+} from '@/lib/automations/engine'
 import type { AutomationTriggerType } from '@/types'
 
 /**
@@ -24,11 +27,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'trigger_type required' }, { status: 400 })
   }
 
+  // `inbound_message_id` is not caller input: it keys the per-message
+  // reservation that decides who answers a customer message (migration
+  // 051), and the engine takes that reservation through the service-role
+  // client. A forged id would let this account reserve ANOTHER account's
+  // inbound and silence that account's AI reply for it. The only
+  // legitimate source is the webhook that just stored the message.
+  const context: AutomationContext = {
+    ...((body.context ?? {}) as AutomationContext),
+  }
+  delete context.inbound_message_id
+
   await runAutomationsForTrigger({
     accountId,
     triggerType: body.trigger_type as AutomationTriggerType,
     contactId: body.contact_id ?? null,
-    context: body.context ?? {},
+    context,
   })
 
   return NextResponse.json({ ok: true })

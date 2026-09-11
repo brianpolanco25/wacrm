@@ -739,6 +739,14 @@ async function processMessage(
     return
   }
 
+  // Internal id of the row we just stored. It keys the per-message
+  // reservation that lets exactly one automatic responder — an
+  // automation or the AI — answer this inbound (migration 051). Meta's
+  // `message.id` would work as a key too, but the internal uuid is the
+  // one both dispatches already deal in, and it lets the marker cascade
+  // away with the message.
+  const inboundMessageId = insertedRows[0].id as string
+
   // Update conversation. The unread bump is done DB-side (migration 037's
   // bump_conversation_on_inbound) rather than as a read-modify-write of the
   // snapshot loaded above: two inbound messages for the same conversation
@@ -859,6 +867,10 @@ async function processMessage(
       context: {
         message_text: inboundText,
         conversation_id: conversation.id,
+        // Lets a run that answers the customer reserve the reply to this
+        // inbound, so the AI stands down for THIS message instead of for
+        // the whole account.
+        inbound_message_id: inboundMessageId,
         // Only set on interactive taps; drives the interactive_reply
         // trigger's exact-id match.
         interactive_reply_id: interactiveReplyId ?? undefined,
@@ -871,11 +883,20 @@ async function processMessage(
   // the account has enabled it. Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
+  //
+  // Deliberately AFTER the automation loop above, which is awaited: by
+  // the time the AI asks "did an automation already answer this
+  // message?", every automation that was going to has either reserved
+  // the reply or finished without sending. The reservation itself is
+  // atomic (PK on `inbound_auto_replies.message_id`), so the guarantee
+  // does not rest on this ordering alone — but the ordering is what
+  // makes the common case answer "no" instead of "maybe later".
   if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
       contactId: contactRecord.id,
+      inboundMessageId,
       configOwnerUserId,
     })
   }

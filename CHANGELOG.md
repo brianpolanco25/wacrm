@@ -18,8 +18,9 @@ behaviour changes**; nothing is limited by plan yet.
 > **Migration required:** apply
 > `supabase/migrations/040_conversation_assignment_integrity.sql` and
 > `supabase/migrations/041_billing_model.sql`,
-> `supabase/migrations/042_pick_available_agent.sql` and
-> `supabase/migrations/043_ai_handoff_mode.sql`. 040 nulls any
+> `supabase/migrations/042_pick_available_agent.sql`,
+> `supabase/migrations/043_ai_handoff_mode.sql` and
+> `supabase/migrations/051_automation_reply_marker.sql`. 040 nulls any
 > `conversations.assigned_agent_id` that points at a deleted user before
 > adding the foreign key, so a handful of stale "Assigned" badges may
 > disappear — those chats return to the unassigned queue.
@@ -67,6 +68,17 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Fixed
 
+- **One automation no longer silences the AI assistant everywhere.** A
+  single active automation with a "new message received" or "keyword
+  match" trigger used to mute the assistant across the whole company, in
+  every chat, with nothing in the interface to say why — so adding a
+  keyword reply for "opening hours" quietly switched the AI agent off.
+  The assistant now stands back only on the individual messages an
+  automation actually answered; every other message is still answered.
+  The customer still never gets two automatic replies to the same
+  message: whichever responder reserves it first is the only one that
+  sends. Settings → AI now also warns when automations that can answer
+  on message content exist, with a link to the list.
 - **Dangling conversation assignments.** `conversations.assigned_agent_id`
   now references `auth.users` with `ON DELETE SET NULL`, so removing an
   operator returns their chats to the unassigned queue instead of leaving

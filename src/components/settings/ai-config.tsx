@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import Link from 'next/link';
 import {
   Loader2,
   Sparkles,
@@ -9,6 +10,7 @@ import {
   Trash2,
   Eye,
   EyeOff,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
@@ -31,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
@@ -38,6 +41,7 @@ import {
   DEFAULT_HANDOFF_MESSAGE,
   handoffMessagePayload,
 } from '@/lib/ai/handoff-message';
+import { overlappingAutomations } from '@/lib/ai/automation-overlap';
 import type { AiProvider, HandoffMode } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
@@ -105,6 +109,12 @@ export function AiConfig() {
   // must not overwrite the seeded default with '' on a first save.
   const [handoffMessageEdited, setHandoffMessageEdited] = useState(false);
   const [members, setMembers] = useState<AccountMember[]>([]);
+  // Safety net for the per-message guard (fase 1, §4). An automation
+  // that answers on message content pre-empts the bot for the messages
+  // it replies to; that is intended, but it must not be invisible.
+  const [overlapping, setOverlapping] = useState<
+    { id: string; name?: string | null }[]
+  >([]);
 
   // Guard keyed on the account (not a bare boolean) so an in-place
   // account switch — ownership transfer, multi-account membership —
@@ -163,6 +173,12 @@ export function AiConfig() {
     // older deployment without the endpoint the picker just shows the
     // queue option.
     void fetchAccountMembers().then(setMembers);
+    // Best-effort: the warning is informational, so a failure here just
+    // leaves it hidden rather than blocking the panel.
+    void fetch('/api/automations')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setOverlapping(overlappingAutomations(data?.automations)))
+      .catch(() => {});
   }, [accountId, fetchConfig]);
 
   // Swap the model default when the provider changes, unless the user
@@ -312,6 +328,28 @@ export function AiConfig() {
         <p className="border-border bg-muted/40 text-muted-foreground mb-4 rounded-md border px-3 py-2 text-sm">
           {t('adminOnlyConfig')}
         </p>
+      )}
+
+      {overlapping.length > 0 && (
+        <Alert className="mb-4 border-amber-600/40 bg-amber-950/40">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-400" />
+            <div className="flex-1">
+              <AlertTitle className="mb-1 text-amber-200">
+                {t('overlapTitle', { count: overlapping.length })}
+              </AlertTitle>
+              <AlertDescription className="text-sm text-amber-100/80">
+                {t('overlapBody')}{' '}
+                <Link
+                  href="/automations"
+                  className="font-medium underline underline-offset-2"
+                >
+                  {t('overlapLink')}
+                </Link>
+              </AlertDescription>
+            </div>
+          </div>
+        </Alert>
       )}
 
       <div className="space-y-6">

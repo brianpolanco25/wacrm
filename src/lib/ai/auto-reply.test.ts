@@ -10,7 +10,16 @@ const h = vi.hoisted(() => ({
   engineSendText: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
-    autoResponders: [] as { id: string }[],
+    /** `inbound_auto_replies` (migration 051), keyed the way Postgres
+     *  keys it: by message id alone. Pre-seed an entry to stand for "an
+     *  automation already answered this inbound". */
+    autoReplyClaims: new Map<string, Record<string, unknown>>(),
+    /** Error the reservation upsert resolves with. */
+    claimWriteError: null as { message: string } | null,
+    claimUpserts: [] as Record<string, unknown>[],
+    /** Tables the dispatch touched, to prove the account-wide automation
+     *  lookup is gone for good. */
+    tablesRead: [] as string[],
     claim: true as boolean,
     /** What `pick_available_agent` returns (null = nobody online). */
     pick: null as string | null,
@@ -39,16 +48,33 @@ vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }));
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
-      if (table === 'automations') {
-        // .select().eq().eq().in().limit() → active auto-responders
-        const chain = {
-          select: () => chain,
-          eq: () => chain,
-          in: () => chain,
-          limit: () =>
-            Promise.resolve({ data: h.state.autoResponders, error: null }),
+      h.state.tablesRead.push(table);
+      if (table === 'inbound_auto_replies') {
+        // `.upsert(payload, { onConflict: 'message_id', ignoreDuplicates
+        //  : true }).select()` — the row comes back only on a genuine
+        // insert, which is how Postgres reports who won the reservation.
+        return {
+          upsert: (payload: Record<string, unknown>) => ({
+            select: () => {
+              h.state.claimUpserts.push(payload);
+              if (h.state.claimWriteError) {
+                return Promise.resolve({
+                  data: null,
+                  error: h.state.claimWriteError,
+                });
+              }
+              const key = payload.message_id as string;
+              if (h.state.autoReplyClaims.has(key)) {
+                return Promise.resolve({ data: [], error: null });
+              }
+              h.state.autoReplyClaims.set(key, payload);
+              return Promise.resolve({
+                data: [{ message_id: key }],
+                error: null,
+              });
+            },
+          }),
         };
-        return chain;
       }
       // conversations
       const selectChain = {
@@ -117,6 +143,7 @@ const ARGS = {
   accountId: 'acct-1',
   conversationId: 'conv-1',
   contactId: 'contact-1',
+  inboundMessageId: 'msg-1',
   configOwnerUserId: 'user-1',
 };
 
@@ -143,7 +170,10 @@ beforeEach(() => {
     ai_autoreply_disabled: false,
     ai_reply_count: 0,
   };
-  h.state.autoResponders = [];
+  h.state.autoReplyClaims = new Map();
+  h.state.claimWriteError = null;
+  h.state.claimUpserts = [];
+  h.state.tablesRead = [];
   h.state.claim = true;
   h.state.pick = null;
   h.state.updatePayload = null;
@@ -183,13 +213,6 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     const systemPrompt = h.generateReply.mock.calls[0][0]
       .systemPrompt as string;
     expect(systemPrompt).toContain('Returns accepted within 30 days.');
-  });
-
-  it('stands down when an active message-level automation exists', async () => {
-    h.state.autoResponders = [{ id: 'auto-1' }];
-    await dispatchInboundToAiReply(ARGS);
-    expect(h.generateReply).not.toHaveBeenCalled();
-    expect(h.engineSendText).not.toHaveBeenCalled();
   });
 
   it('does not send when the atomic slot claim loses the race', async () => {
@@ -447,9 +470,12 @@ describe('dispatchInboundToAiReply — handoff transition message (fase 1)', () 
 
   it('sends exactly one notice when two inbounds hand off concurrently', async () => {
     h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: MSG }));
+    // Two DIFFERENT customer messages a second apart, so each takes its
+    // own per-message reservation (fase 1 §4) and both really do reach
+    // the handoff write — which is the race this test is about.
     await Promise.all([
-      dispatchInboundToAiReply(ARGS),
-      dispatchInboundToAiReply(ARGS),
+      dispatchInboundToAiReply({ ...ARGS, inboundMessageId: 'msg-1' }),
+      dispatchInboundToAiReply({ ...ARGS, inboundMessageId: 'msg-2' }),
     ]);
     // Both dispatches read `ai_autoreply_disabled = false` and both try
     // to write; the conditional UPDATE lets exactly one through, and only
@@ -457,5 +483,118 @@ describe('dispatchInboundToAiReply — handoff transition message (fase 1)', () 
     expect(h.state.updateAttempts).toBe(2);
     expect(h.state.updatesApplied).toBe(1);
     expect(h.engineSendText).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Fase 1, §4 — the guard is per message, not per account.
+ *
+ * What it replaced: "the account has ONE active `keyword_match` or
+ * `new_message_received` automation → the bot is mute in every chat of
+ * the company". One automation answering "opening hours" used to turn
+ * the whole AI agent off, silently.
+ */
+describe('dispatchInboundToAiReply — per-message automation guard (fase 1)', () => {
+  it('replies when no automation answered this message, even with active ones in the account', async () => {
+    // Criterion 1. The account may be full of active keyword
+    // automations; none of them answered THIS inbound, so the marker
+    // table is empty and the bot talks. The old guard failed this by
+    // construction — it never looked at the message.
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' })
+    );
+    // And it is no longer decided by an account-wide census of
+    // automations: that query is gone.
+    expect(h.state.tablesRead).not.toContain('automations');
+  });
+
+  it('stays quiet when an automation already answered this message', async () => {
+    // Criterion 2. The engine reserved the reply for msg-1 just before
+    // sending, inside the same `after()` block, so our reservation loses.
+    h.state.autoReplyClaims.set('msg-1', {
+      message_id: 'msg-1',
+      account_id: 'acct-1',
+      responder: 'automation',
+      automation_id: 'auto-9',
+    });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.generateReply).not.toHaveBeenCalled();
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(h.state.rpcCalls).toHaveLength(0);
+  });
+
+  it('still replies to the NEXT message the automation did not answer', async () => {
+    h.state.autoReplyClaims.set('msg-1', { responder: 'automation' });
+
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+
+    await dispatchInboundToAiReply({ ...ARGS, inboundMessageId: 'msg-2' });
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends exactly one automatic reply when the same inbound is dispatched twice', async () => {
+    // Criterion 3. Two dispatches of the same message (a Meta redelivery
+    // racing the first one) both pass the cheap gates; the primary key on
+    // `inbound_auto_replies.message_id` lets exactly one through.
+    await Promise.all([
+      dispatchInboundToAiReply(ARGS),
+      dispatchInboundToAiReply(ARGS),
+    ]);
+
+    expect(h.state.claimUpserts).toHaveLength(2);
+    expect(h.state.autoReplyClaims.size).toBe(1);
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not send the handoff notice either when it lost the reservation', async () => {
+    // The transition message is a second automatic message about the same
+    // inbound, so losing the reservation has to silence it too.
+    h.state.autoReplyClaims.set('msg-1', { responder: 'automation' });
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: 'A human…' }));
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(h.state.updateAttempts).toBe(0);
+  });
+
+  it('tags the reservation with the dispatch account (it is service-role, RLS does not apply)', async () => {
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.state.claimUpserts).toEqual([
+      {
+        message_id: 'msg-1',
+        account_id: 'acct-1',
+        responder: 'ai',
+        automation_id: null,
+      },
+    ]);
+  });
+
+  it('reserves nothing for a thread a human already owns', async () => {
+    h.state.conv = {
+      assigned_agent_id: 'agent-9',
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+    };
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.state.claimUpserts).toEqual([]);
+  });
+
+  it('fails closed when the reservation cannot be written', async () => {
+    h.state.claimWriteError = { message: 'relation does not exist' };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await dispatchInboundToAiReply(ARGS);
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(h.generateReply).not.toHaveBeenCalled();
+    expect(h.engineSendText).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,10 @@ const h = vi.hoisted(() => ({
     /** What `pick_available_agent` returns (null = nobody online). */
     pick: null as string | null,
     conversationUpdates: [] as Record<string, unknown>[],
+    /** `inbound_auto_replies` (migration 051), keyed by message id the
+     *  way its primary key is. */
+    autoReplyClaims: new Map<string, Record<string, unknown>>(),
+    claimUpserts: [] as Record<string, unknown>[],
   },
 }));
 
@@ -73,6 +77,18 @@ vi.mock('./admin-client', () => {
       return { data: { steps_executed: [], status: 'success' }, error: null };
     }
     if (table === 'automation_steps') return { data: state.steps, error: null };
+    if (table === 'inbound_auto_replies') {
+      if (type === 'upsert') {
+        const payload = ops.payload as Record<string, unknown>;
+        state.claimUpserts.push(payload);
+        const key = payload.message_id as string;
+        // ON CONFLICT DO NOTHING on the message-id primary key.
+        if (state.autoReplyClaims.has(key)) return { data: [], error: null };
+        state.autoReplyClaims.set(key, payload);
+        return { data: [{ message_id: key }], error: null };
+      }
+      return { data: null, error: null };
+    }
     return { data: null, error: null };
   }
 
@@ -143,6 +159,8 @@ beforeEach(() => {
   h.state.rpcCalls = [];
   h.state.pick = null;
   h.state.conversationUpdates = [];
+  h.state.autoReplyClaims = new Map();
+  h.state.claimUpserts = [];
 });
 
 describe('assign_conversation — round_robin picks the available agent (fase 1)', () => {
@@ -690,5 +708,128 @@ describe('triggerMatches — keyword_match', () => {
     expect(on(automation({ keywords: ['hi'], match_type: 'word' }), '')).toBe(
       false
     );
+  });
+});
+
+/**
+ * Fase 1, §4 — the automation engine leaves a per-message record so the
+ * AI agent can stand down for the one inbound an automation answered,
+ * instead of for the whole account.
+ */
+describe('per-message reply marker (fase 1)', () => {
+  function keywordAutomation(keywords: string[]) {
+    return {
+      id: 'a1',
+      account_id: ACCOUNT,
+      user_id: 'u1',
+      trigger_type: 'keyword_match',
+      trigger_config: { keywords, match_type: 'contains' },
+      is_active: true,
+    };
+  }
+
+  function sendStep() {
+    return {
+      id: 's1',
+      automation_id: 'a1',
+      step_type: 'send_message',
+      position: 0,
+      parent_step_id: null,
+      step_config: { text: 'We open at 9am.' },
+    };
+  }
+
+  const inbound = {
+    message_text: 'what are your opening hours?',
+    conversation_id: 'conv-1',
+    inbound_message_id: 'msg-1',
+  };
+
+  it('reserves the reply for the inbound it is answering, scoped to the account', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [keywordAutomation(['hours'])];
+    h.state.steps = [sendStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'keyword_match',
+      contactId: 'c1',
+      context: inbound,
+    });
+
+    expect(h.state.claimUpserts).toEqual([
+      {
+        message_id: 'msg-1',
+        account_id: ACCOUNT,
+        responder: 'automation',
+        automation_id: 'a1',
+      },
+    ]);
+  });
+
+  it('leaves no reservation when the keyword does not match (the AI keeps this message)', async () => {
+    // Acceptance criterion 1, from the automation side: the automation
+    // exists and is active, but it never ran for this inbound, so nothing
+    // is reserved and the AI is free to answer.
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [keywordAutomation(['refund'])];
+    h.state.steps = [sendStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'keyword_match',
+      contactId: 'c1',
+      context: inbound,
+    });
+
+    expect(h.state.claimUpserts).toEqual([]);
+    expect(h.state.autoReplyClaims.size).toBe(0);
+  });
+
+  it('reserves nothing when the run has no inbound behind it (tag event, manual dispatch)', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [
+      {
+        ...keywordAutomation([]),
+        trigger_type: 'tag_added',
+        trigger_config: { tag_id: 't1' },
+      },
+    ];
+    h.state.steps = [sendStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'tag_added',
+      contactId: 'c1',
+      context: { tag_id: 't1', conversation_id: 'conv-1' },
+    });
+
+    expect(h.state.claimUpserts).toEqual([]);
+  });
+
+  it('reserves once even when the run sends several messages', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [keywordAutomation(['hours'])];
+    h.state.steps = [
+      sendStep(),
+      {
+        ...sendStep(),
+        id: 's2',
+        position: 1,
+        step_config: { text: 'Anything else?' },
+      },
+    ];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'keyword_match',
+      contactId: 'c1',
+      context: inbound,
+    });
+
+    // Both steps ask; Postgres hands the reservation out once. The engine
+    // ignores the answer — deterministic automations always win.
+    expect(h.state.claimUpserts).toHaveLength(2);
+    expect(h.state.autoReplyClaims.size).toBe(1);
   });
 });

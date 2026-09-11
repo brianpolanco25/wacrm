@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   Automation,
   AutomationLogStepResult,
@@ -30,6 +31,7 @@ import {
   engineSendInteractive,
 } from './meta-send';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
+import { claimInboundAutoReply } from './reply-marker';
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 
 // ------------------------------------------------------------
@@ -49,6 +51,12 @@ export interface AutomationContext {
   agent_id?: string;
   /** Button / list-row id the customer tapped, for interactive_reply. */
   interactive_reply_id?: string;
+  /** Internal `messages.id` of the inbound that triggered this run, when
+   *  there is one (the webhook sets it; tag events and the manual engine
+   *  endpoint don't). It is the key of the per-message reservation that
+   *  keeps the AI from answering an inbound an automation already
+   *  answered — see `reserveReplyToInbound` below. */
+  inbound_message_id?: string;
 }
 
 export interface DispatchInput {
@@ -376,6 +384,37 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
   }
 }
 
+/**
+ * Record that this automation is about to answer the inbound message
+ * that triggered the run, so the AI auto-reply stands down for that one
+ * message instead of for the whole account (fase 1, §4).
+ *
+ * Called BEFORE the send, not after: a crash between the two leaves the
+ * reservation taken and the customer un-answered, which is the safe
+ * direction. The other way round — send first, record after — leaves a
+ * window in which the AI can answer the same message too.
+ *
+ * The return value is deliberately ignored. Deterministic,
+ * user-configured automations always win over the model, and one run may
+ * legitimately send several messages; only the first of them takes the
+ * reservation and the rest are no-ops.
+ */
+async function reserveReplyToInbound(
+  db: SupabaseClient,
+  args: ExecuteArgs
+): Promise<void> {
+  const messageId = args.context.inbound_message_id;
+  // No inbound behind this run (tag event, cron resume of a relationship
+  // trigger, manual dispatch) — there is nothing to reserve.
+  if (!messageId) return;
+  await claimInboundAutoReply(db, {
+    accountId: args.automation.account_id,
+    messageId,
+    responder: 'automation',
+    automationId: args.automation.id,
+  });
+}
+
 async function runStep(
   step: AutomationStep,
   args: ExecuteArgs
@@ -389,6 +428,7 @@ async function runStep(
       const text = interpolate(cfg.text, args);
       if (!text.trim()) throw new Error('send_message has empty text');
       const conversationId = await resolveConversationId(args);
+      await reserveReplyToInbound(db, args);
       const { whatsapp_message_id } = await engineSendText({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -410,6 +450,7 @@ async function runStep(
       const check = validateInteractivePayload(payload);
       if (!check.ok) throw new Error(check.error);
       const conversationId = await resolveConversationId(args);
+      await reserveReplyToInbound(db, args);
       const { whatsapp_message_id } = await engineSendInteractive({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -444,6 +485,7 @@ async function runStep(
             })
             .map((k) => String(cfg.variables![k]))
         : [];
+      await reserveReplyToInbound(db, args);
       const { whatsapp_message_id } = await engineSendTemplate({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,

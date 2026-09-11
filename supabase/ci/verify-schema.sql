@@ -140,6 +140,49 @@ BEGIN
     RAISE EXCEPTION 'ai_configs.handoff_message lost its seeded English default (migration 043)';
   END IF;
 
+  -- Migración 051: la reserva por mensaje entrante que sustituye a la
+  -- guarda global «la cuenta tiene automatizaciones → la IA se calla».
+  IF to_regclass('public.inbound_auto_replies') IS NULL THEN
+    RAISE EXCEPTION 'inbound_auto_replies is missing (migration 051)';
+  END IF;
+  -- La exclusión mutua ES la clave primaria, y tiene que ser message_id
+  -- A SECAS: con (account_id, message_id) dos respondedores con distinta
+  -- cuenta no chocarían y el cliente podría recibir dos respuestas.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.inbound_auto_replies'::regclass
+      AND contype = 'p'
+      AND conkey = ARRAY[
+        (SELECT attnum FROM pg_attribute
+          WHERE attrelid = 'public.inbound_auto_replies'::regclass
+            AND attname = 'message_id')
+      ]::smallint[]
+  ) THEN
+    RAISE EXCEPTION 'inbound_auto_replies must be keyed on message_id alone (migration 051)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'inbound_auto_replies_responder_check'
+      AND conrelid = 'public.inbound_auto_replies'::regclass
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION 'inbound_auto_replies_responder_check is missing (migration 051)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relname = 'inbound_auto_replies' AND relrowsecurity
+  ) THEN
+    RAISE EXCEPTION 'inbound_auto_replies must have RLS enabled (migration 051)';
+  END IF;
+  -- Sin políticas: es estado interno del webhook, solo lo toca el rol de
+  -- servicio. Una política aquí sería una fuga, no una mejora.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'inbound_auto_replies'
+  ) THEN
+    RAISE EXCEPTION 'inbound_auto_replies must have no RLS policies (migration 051)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
