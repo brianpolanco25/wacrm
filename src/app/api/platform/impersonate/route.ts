@@ -163,6 +163,10 @@ export async function POST(request: Request) {
   // this feature exists to prevent.
   const { error: logErr } = await admin.from('impersonation_log').insert({
     id: session.logId,
+    // Written out rather than left to the column default of migration
+    // 058: this bitácora now holds suspend and reactivate rows too, and
+    // everything that reads a session filters on this value.
+    action: 'impersonation',
     actor_user_id: ctx.userId,
     account_id: accountId,
     account_name: (account.name as string | null) ?? null,

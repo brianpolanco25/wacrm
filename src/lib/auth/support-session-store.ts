@@ -44,6 +44,10 @@ export async function isSupportSessionOpen(session: {
     .eq('id', session.logId)
     .eq('account_id', session.accountId)
     .eq('actor_user_id', session.actorUserId)
+    // Migration 058 put suspend/reactivate in this same bitácora. A row
+    // that is not a session can never be read as one, whatever its
+    // timestamps say.
+    .eq('action', 'impersonation')
     .is('ended_at', null)
     .maybeSingle();
 
@@ -86,6 +90,9 @@ export async function sweepExpiredSupportSessions(): Promise<number> {
   const { data, error } = await supabaseAdmin()
     .from('impersonation_log')
     .update({ ended_at: new Date().toISOString(), ended_reason: 'expired' })
+    // Only sessions expire. The suspend/reactivate rows of 058 carry no
+    // `expires_at` at all and have nothing to close.
+    .eq('action', 'impersonation')
     .is('ended_at', null)
     .lt('expires_at', new Date().toISOString())
     .select('id');

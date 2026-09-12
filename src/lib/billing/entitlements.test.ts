@@ -228,6 +228,8 @@ describe('hasFeature / assertFeature', () => {
     limits: {},
     features: ['ai_autoreply'],
     readOnly: false,
+    readOnlyReason: null,
+    manualHold: false,
     trialEndsAt: null,
   };
   it('is a plain membership check', () => {

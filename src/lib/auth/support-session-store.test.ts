@@ -9,7 +9,9 @@ interface Row extends Record<string, unknown> {
   id: string;
   actor_user_id: string;
   account_id: string;
-  expires_at: string;
+  /** Migration 058: this bitácora also records suspend / reactivate. */
+  action: string;
+  expires_at: string | null;
   ended_at: string | null;
   ended_reason?: string | null;
 }
@@ -99,6 +101,7 @@ function row(over: Partial<Row> = {}): Row {
     id: 'log-1',
     actor_user_id: ACTOR,
     account_id: ACCOUNT_A,
+    action: 'impersonation',
     expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
     ended_at: null,
     ...over,
@@ -148,9 +151,26 @@ describe('isSupportSessionOpen', () => {
         ['id', 'log-1'],
         ['account_id', ACCOUNT_A],
         ['actor_user_id', ACTOR],
+        ['action', 'impersonation'],
         ['ended_at', null],
       ])
     );
+  });
+
+  it('never reads a suspend row as a session (migration 058)', async () => {
+    // The platform bitácora holds three kinds of row now. A suspension
+    // has no expiry at all, so "expires_at > now()" would not save us if
+    // someone ever wrote one with a date — the `action` filter does.
+    h.rows = [row({ action: 'suspend', expires_at: null })];
+    expect(await isSupportSessionOpen(SESSION)).toBe(false);
+
+    h.rows = [
+      row({
+        action: 'suspend',
+        expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }),
+    ];
+    expect(await isSupportSessionOpen(SESSION)).toBe(false);
   });
 
   it('fails closed when the database errors', async () => {
@@ -200,6 +220,7 @@ describe('sweepExpiredSupportSessions', () => {
     const [query] = h.queries;
     expect(query.op).toBe('update');
     expect(query.filters.map(([c]) => c).sort()).toEqual([
+      'action',
       'ended_at',
       'lt:expires_at',
     ]);
@@ -207,6 +228,20 @@ describe('sweepExpiredSupportSessions', () => {
       'ended_at',
       'ended_reason',
     ]);
+  });
+
+  it('leaves the suspend / reactivate rows of 058 alone', async () => {
+    // They carry no deadline, so there is nothing to expire — and a
+    // sweep that closed them would rewrite the record of a suspension
+    // that is still in force.
+    h.rows = [
+      row({ id: 'held', action: 'suspend', expires_at: null }),
+      row({ id: 'freed', action: 'reactivate', expires_at: null }),
+    ];
+
+    expect(await sweepExpiredSupportSessions()).toBe(0);
+    expect(h.rows[0].ended_at).toBeNull();
+    expect(h.rows[1].ended_at).toBeNull();
   });
 
   it('reports zero and does not throw when the sweep fails', async () => {

@@ -746,6 +746,141 @@ BEGIN
       'contacts_select was not extended with the support-session predicate (migration 057)';
   END IF;
 
+  -- ============================================================
+  -- Migration 058: panel de plataforma (suspensión manual, bitácora
+  -- ampliada y las dos consultas del panel).
+  -- ============================================================
+
+  -- La retención manual, en sus tres columnas.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name IN ('manual_hold_at', 'manual_hold_by', 'manual_hold_reason')
+    GROUP BY table_name HAVING count(*) = 3
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions is missing the manual hold columns (migration 058)';
+  END IF;
+
+  -- SET NULL, nunca CASCADE: borrar al operador que suspendió a un
+  -- moroso no puede reactivarlo como efecto colateral (CP2).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'subscriptions_manual_hold_by_fkey'
+      AND conrelid = 'public.subscriptions'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions.manual_hold_by is missing its FK or it is not ON DELETE SET NULL (migration 058)';
+  END IF;
+
+  -- Una retención sin motivo legible no es auditable. Se afirma el
+  -- contenido del CHECK, no solo su existencia.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'subscriptions_manual_hold_reason_check'
+      AND conrelid = 'public.subscriptions'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%char_length%'
+      AND pg_get_constraintdef(oid) LIKE '%btrim%'
+      AND pg_get_constraintdef(oid) LIKE '%manual_hold_reason%'
+  ) THEN
+    RAISE EXCEPTION
+      'the manual hold has no minimum-length reason CHECK (migration 058)';
+  END IF;
+
+  IF to_regclass('public.idx_subscriptions_manual_hold') IS NULL THEN
+    RAISE EXCEPTION
+      'idx_subscriptions_manual_hold is missing (migration 058)';
+  END IF;
+
+  -- LO QUE HACE QUE LA SUSPENSIÓN MANUAL SIGNIFIQUE ALGO: `subscriptions`
+  -- sigue SIN NINGUNA política de escritura desde el cliente. Con una,
+  -- un inquilino se levantaría su propia retención.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'subscriptions'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions grew a client write policy — a tenant could lift its own manual hold (migrations 041/058)';
+  END IF;
+
+  -- La bitácora distingue los tres actos del operador.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'impersonation_log'
+      AND column_name = 'action' AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log.action is missing or nullable (migration 058)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_action_check'
+      AND conrelid = 'public.impersonation_log'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%impersonation%'
+      AND pg_get_constraintdef(oid) LIKE '%suspend%'
+      AND pg_get_constraintdef(oid) LIKE '%reactivate%'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log.action has no CHECK naming the three actions (migration 058)';
+  END IF;
+
+  -- `expires_at` es nullable ahora, pero NO para una sesión de soporte:
+  -- ahí es el predicado de lectura de la 057 y su pérdida sería una
+  -- sesión que no caduca nunca.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_session_needs_expiry'
+      AND conrelid = 'public.impersonation_log'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%expires_at IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'an impersonation row could be written with no expiry (migration 058)';
+  END IF;
+
+  -- Y el predicado de lectura solo cuenta filas de impersonación: una
+  -- fila de suspensión no puede conceder la lectura de nadie.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session'
+      AND p.prosrc LIKE '%action%'
+  ) THEN
+    RAISE EXCEPTION
+      'has_open_support_session does not restrict itself to impersonation rows (migration 058)';
+  END IF;
+
+  -- El listado del panel: existe, NO es SECURITY DEFINER y ningún rol de
+  -- cliente puede ejecutarlo. Las tres cosas juntas son lo que impide
+  -- que un inquilino obtenga el censo de clientes del servicio.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'platform_account_list'
+      AND p.prosecdef = false
+  ) THEN
+    RAISE EXCEPTION
+      'platform_account_list() is missing or is SECURITY DEFINER (migration 058)';
+  END IF;
+  IF has_function_privilege('authenticated',
+       'public.platform_account_list(text, integer, integer)', 'EXECUTE')
+     OR has_function_privilege('anon',
+       'public.platform_account_list(text, integer, integer)', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'platform_account_list() is executable by a client role (migration 058)';
+  END IF;
+  IF NOT has_function_privilege('service_role',
+       'public.platform_account_list(text, integer, integer)', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'platform_account_list() is not executable by service_role (migration 058)';
+  END IF;
+
+  IF to_regclass('public.billing_events_subscription_resource_idx') IS NULL THEN
+    RAISE EXCEPTION
+      'billing_events_subscription_resource_idx is missing (migration 058)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

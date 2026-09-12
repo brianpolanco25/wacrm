@@ -87,6 +87,8 @@ function entitlements(overrides: Partial<Entitlements> = {}): Entitlements {
     limits: { operators: 3, knowledge_documents: 10, retention_months: null },
     features: ['ai_autoreply'],
     readOnly: false,
+    readOnlyReason: null,
+    manualHold: false,
     trialEndsAt: null,
     ...overrides,
   };

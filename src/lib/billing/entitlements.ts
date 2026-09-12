@@ -14,7 +14,11 @@
 //     uses Pro's limits; its end date is stamped by fase 3 when it
 //     seeds subscriptions, so `trialEndsAt` is null here.
 //   - `readOnly` is true when the subscription is `suspended` or
-//     `expired`, or when it is `past_due` and `grace_until` has passed.
+//     `expired`, or when it is `past_due` and `grace_until` has passed,
+//     or when a platform operator put a MANUAL HOLD on the account
+//     (migration 058). The hold is a separate axis from `status` on
+//     purpose: `status` is what the PayPal webhook rewrites, so a hold
+//     stored there would be lifted by the next payment event.
 //   - Quotas are checked against `usage_counters` for the CURRENT
 //     calendar month (same anchor as `increment_usage`, which uses
 //     `date_trunc('month', now())`). A `null` limit means unlimited; an
@@ -39,8 +43,23 @@ export interface Entitlements {
   /** Per-metric caps for the current period. `null` = unlimited. */
   limits: Record<string, number | null>;
   features: string[];
-  /** Solo lectura: la suscripción venció y pasó la gracia. */
+  /**
+   * Solo lectura: la suscripción venció y pasó la gracia, O un operador
+   * de la plataforma puso una retención manual.
+   */
   readOnly: boolean;
+  /**
+   * Why, when `readOnly` is true. `null` when the account may write.
+   *
+   * Worth distinguishing because the two have different ways out: a
+   * `subscription` lock is settled at `/billing` by the customer, and a
+   * `manual_hold` is lifted only by the operator who put it there —
+   * telling a manually suspended tenant to go and pay would send them
+   * to a checkout that changes nothing.
+   */
+  readOnlyReason: 'subscription' | 'manual_hold' | null;
+  /** A platform operator suspended this account by hand (058). */
+  manualHold: boolean;
   /** ISO timestamp, or null when the account is not on a dated trial. */
   trialEndsAt: string | null;
 }
@@ -153,6 +172,7 @@ interface SubscriptionRow {
   status: string;
   trial_ends_at: string | null;
   grace_until: string | null;
+  manual_hold_at: string | null;
 }
 
 interface PlanRow {
@@ -177,7 +197,7 @@ export async function getEntitlements(
 
   const { data: sub, error: subErr } = await db
     .from('subscriptions')
-    .select('plan_id, status, trial_ends_at, grace_until')
+    .select('plan_id, status, trial_ends_at, grace_until, manual_hold_at')
     .eq('account_id', accountId)
     .maybeSingle();
   if (subErr) throw subErr;
@@ -202,12 +222,26 @@ export async function getEntitlements(
   }
   const planRow = plan as PlanRow;
 
+  // The manual hold of migration 058. Read off the row we were already
+  // fetching, so honouring it costs nothing on the write path.
+  const manualHold = Boolean(subscription?.manual_hold_at);
+  const subscriptionLock = isReadOnly(status, subscription?.grace_until ?? null);
+
   return {
     planId,
     status,
     limits: normalizeLimits(planRow.limits),
     features: Array.isArray(planRow.features) ? planRow.features : [],
-    readOnly: isReadOnly(status, subscription?.grace_until ?? null),
+    readOnly: subscriptionLock || manualHold,
+    // The hold wins the label when both apply: it is the one the tenant
+    // cannot resolve on their own, so it is the one they must be told
+    // about.
+    readOnlyReason: manualHold
+      ? 'manual_hold'
+      : subscriptionLock
+        ? 'subscription'
+        : null,
+    manualHold,
     trialEndsAt: subscription?.trial_ends_at ?? null,
   };
 }

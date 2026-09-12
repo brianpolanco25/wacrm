@@ -465,6 +465,9 @@ describe('the expiry sweep', () => {
     // a session is the moment to tidy up.
     h.log.push({
       id: 'abandoned',
+      // Migration 058 made this bitácora hold three kinds of row; the
+      // sweep only touches the sessions.
+      action: 'impersonation',
       actor_user_id: PLAIN_OWNER,
       account_id: ACCOUNT_B,
       account_name: 'Customer B',
