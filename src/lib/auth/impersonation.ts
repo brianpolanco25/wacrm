@@ -56,20 +56,19 @@ import { unstable_rethrow } from 'next/navigation';
 
 import { isPlatformAdmin } from './platform-admins';
 import {
+  MIN_REASON_LENGTH,
   SUPPORT_ACTIVE_COOKIE,
   SUPPORT_COOKIE,
   SUPPORT_SESSION_TTL_MS,
 } from './support-cookie';
 import { isSupportSessionOpen } from './support-session-store';
 
-export { SUPPORT_ACTIVE_COOKIE, SUPPORT_COOKIE, SUPPORT_SESSION_TTL_MS };
-
-/**
- * Minimum length of the reason recorded in `impersonation_log`. Mirrored
- * by a CHECK constraint in migration 055: a bitácora full of "ok" audits
- * nothing, and the route is not the only way a row could be inserted.
- */
-export const MIN_REASON_LENGTH = 10;
+export {
+  MIN_REASON_LENGTH,
+  SUPPORT_ACTIVE_COOKIE,
+  SUPPORT_COOKIE,
+  SUPPORT_SESSION_TTL_MS,
+};
 
 /** What the signed cookie carries. Kept small — it travels on every request. */
 export interface SupportSession {

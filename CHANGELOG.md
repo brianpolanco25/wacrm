@@ -339,6 +339,34 @@ behaviour changes**; nothing is limited by plan yet.
 > account". No write policy is touched, and with no support session open
 > nothing about who can see what changes.
 
+- **Platform panel.** Operators of the service get their own section at
+  `/platform`, visible only to them: every company on the service with its
+  plan, subscription state, team size, consumption for the cycle, signup
+  date and last activity, and a file per account with consumption against
+  the plan's caps, the billing history from the payment provider, the
+  team, and the state of every WhatsApp number connected to it. From that
+  file an operator can open a support session (the audited impersonation
+  above) or suspend and reactivate the account by hand. Both ask for a
+  reason and both are recorded with who, when, which company and why.
+  - **A manual suspension is not a billing status.** A suspended account
+    behaves exactly like one that has not paid — everyone can read,
+    nobody can write, and incoming WhatsApp messages keep arriving and
+    keep being stored — but it is a separate switch, so paying an invoice
+    (or any event from PayPal) does **not** lift it. The account is told
+    so, and is not sent to the checkout, because the checkout cannot lift
+    it. Only an operator can.
+  - Customer access tokens and payment-provider payloads are never shown
+    in the panel: it answers "what happened to this account", not "show
+    me this customer's credentials".
+
+> **Migration required:** `supabase/migrations/058_platform_panel.sql`
+> adds the manual-hold columns to `subscriptions` (NULL for every existing
+> row, so nothing is suspended by applying it), records suspend and
+> reactivate in the same audit table as impersonation, and adds the
+> function the account list is built from — granted to the service role
+> and to no client role. Nothing about who can see or do what changes for
+> an ordinary account.
+
 ### Fixed
 
 - **One automation no longer silences the AI assistant everywhere.** A

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { usePlatformAdmin } from "@/hooks/use-platform-admin";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import {
@@ -18,6 +19,7 @@ import {
   Radio,
   Settings,
   Shield,
+  ShieldUser,
   User,
   UserCog,
   Users,
@@ -105,6 +107,16 @@ const bottomNavItems = [
   { href: "/settings", labelKey: "settings", icon: Settings },
 ];
 
+// Fase 4 §2. NOT part of `bottomNavItems`: it is not a section of the
+// product, it is the operator's own panel, and it is rendered only when
+// `/api/platform/me` says so. Hiding the link is cosmetic — the pages
+// themselves 404 for anyone without a `platform_admins` row.
+const platformNavItem = {
+  href: "/platform",
+  labelKey: "platform",
+  icon: ShieldUser,
+};
+
 interface SidebarProps {
   /** Controlled on mobile by the Header's hamburger button. Ignored on lg+. */
   open?: boolean;
@@ -116,7 +128,9 @@ import { useTranslations } from "next-intl";
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const { user, profile, profileLoading, account, accountRole, signOut } =
+    useAuth();
+  const isPlatformAdmin = usePlatformAdmin(!!user);
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
   // Only surface the account-name strip when it actually carries
@@ -271,7 +285,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <div className="my-4 border-t border-border" />
 
           <ul className="flex flex-col gap-1">
-            {bottomNavItems.map((item) => {
+            {(isPlatformAdmin
+              ? [...bottomNavItems, platformNavItem]
+              : bottomNavItems
+            ).map((item) => {
               const isActive = pathname.startsWith(item.href);
               return (
                 <li key={item.href}>

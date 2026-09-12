@@ -107,6 +107,20 @@ export function supportFlagAccountId(cookieString: string): string | null {
 export const SUPPORT_SESSION_TTL_MS = 30 * 60 * 1000;
 
 /**
+ * Minimum length of the reason recorded in `impersonation_log`. Mirrored
+ * by a CHECK constraint in migrations 055 and 058: a bitácora full of
+ * "ok" audits nothing, and the route is not the only way a row could be
+ * inserted.
+ *
+ * It lives in THIS module — the one with no imports — because three very
+ * different runtimes need it: the routes (Node), and the platform panel
+ * in the browser, which greys out its buttons until the operator has
+ * written a real reason. Importing it from `impersonation.ts` would drag
+ * `node:crypto` and `next/headers` into a client bundle.
+ */
+export const MIN_REASON_LENGTH = 10;
+
+/**
  * The actor named inside a support token, WITHOUT verifying its signature,
  * or `null` if the token is not even shaped like one.
  *

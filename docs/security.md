@@ -409,3 +409,48 @@ Rows whose deadline passed with nobody around to close them are swept the
 next time any operator opens or closes a session. `expires_at` is on the
 row regardless, so the real window is auditable even when `ended_at` is
 still null.
+
+### Suspending an account by hand
+
+The panel at `/platform` can put an account on hold and lift it again
+(`POST /api/platform/accounts/<id>/hold` with
+`{ action: 'suspend' | 'reactivate', reason }`, migration 058). A held
+account is read-only for everyone in it — the same rung as a delinquent
+subscription — and, like that one, **keeps receiving**: the WhatsApp
+webhook never consults the billing layer, so no customer message is lost
+because their supplier was cut off.
+
+Two properties are worth stating because they are the reason the hold is
+not simply `subscriptions.status = 'suspended'`:
+
+- **PayPal cannot lift it.** `status` is the column the payment webhook
+  rewrites on every event. The hold lives in `manual_hold_at` /
+  `manual_hold_by` / `manual_hold_reason`, which no gateway event
+  touches, so an account can be `active` at PayPal and still held here.
+- **The tenant cannot lift it.** `subscriptions` has no client write
+  policy at all (041, still asserted in CI), so the only way in is the
+  service role behind `requirePlatformAdmin()`.
+
+The customer is told, in their own language, that the service operator
+suspended the account and that paying will not lift it — pointing them at
+a checkout that changes nothing would be worse than saying nothing.
+
+Both acts are audited in the same `impersonation_log`, told apart by
+`action`:
+
+```sql
+-- Everything the platform has done to one account.
+SELECT action, actor_user_id, reason, started_at
+FROM impersonation_log
+WHERE account_id = '<uuid>'
+ORDER BY started_at DESC;
+
+-- Who is on hold right now, and why.
+SELECT account_id, manual_hold_at, manual_hold_by, manual_hold_reason
+FROM subscriptions
+WHERE manual_hold_at IS NOT NULL;
+```
+
+`expires_at` is null on those rows — suspending opens no window — and the
+CHECK of 058 still requires it for a session, which is what keeps a
+suspension from ever being read as one.

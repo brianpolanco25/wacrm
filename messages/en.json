@@ -38,7 +38,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
     "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "menuSignOut": "Sign out",
+    "platform": "Platform"
   },
   "Header": {
     "dashboard": "Dashboard",
@@ -1866,6 +1867,55 @@
       "slowTitle": "Still confirming",
       "slowBody": "This is taking longer than usual. Your payment is safe and the plan switches on the moment PayPal confirms it — no need to pay again.",
       "backToDashboard": "Go to dashboard"
+    },
+    "heldTitle": "This account has been suspended by the service operator",
+    "heldBody": "An operator of the service has put this account on hold, so everyone here can read but not write: no sending, no broadcasts, no AI replies. Incoming WhatsApp messages keep arriving and nothing is deleted. Paying will not lift this one — contact support."
+  },
+  "Platform": {
+    "title": "Platform accounts",
+    "subtitle": "Every company on the service: plan, subscription state, team, consumption for the cycle and last activity.",
+    "search": "Search",
+    "searchPlaceholder": "Company name or account id",
+    "loading": "Loading…",
+    "loadFailed": "The account list could not be loaded. This is a failure, not an empty service — do not read it as 'no customers'.",
+    "empty": "No account matches that search.",
+    "notFound": "There is no account with that id.",
+    "held": "Suspended by the operator",
+    "previous": "Previous",
+    "next": "Next",
+    "pageOf": "Showing {from}–{to} of {total}",
+    "backToList": "Back to the account list",
+    "createdOn": "Signed up {date}",
+    "lastActivityOn": "Last activity {date}",
+    "actions": "Operator actions",
+    "reasonLabel": "Reason",
+    "reasonPlaceholder": "Ticket 88: chargebacks on three invoices",
+    "reasonHelp": "Required, at least {min} characters. It is recorded with your name and the moment, and it cannot be edited afterwards.",
+    "suspend": "Suspend this account",
+    "reactivate": "Lift the suspension",
+    "impersonate": "Open a support session",
+    "suspended": "The account is suspended. It can read, it cannot write, and incoming messages keep arriving.",
+    "reactivated": "The suspension has been lifted.",
+    "actionFailed": "The action could not be completed. Nothing was changed.",
+    "heldSince": "Suspended on {date} — {reason}",
+    "usageTitle": "Consumption this cycle",
+    "usageNote": "Straight from the usage counters, against the plan's caps. Seats, numbers and knowledge documents are a headcount of rows rather than counters, so they are not listed here.",
+    "whatsappTitle": "WhatsApp connection",
+    "whatsappNone": "This account has no WhatsApp number connected.",
+    "defaultNumber": "Default",
+    "membersTitle": "Team ({count})",
+    "billingTitle": "Billing history",
+    "billingNone": "Nothing from the payment provider for this account yet.",
+    "auditTitle": "What the platform has done to this account",
+    "auditNone": "Nothing yet: no support session and no suspension.",
+    "columns": {
+      "name": "Company",
+      "plan": "Plan",
+      "status": "Subscription",
+      "members": "Team",
+      "usage": "Messages / AI / broadcast",
+      "createdAt": "Signed up",
+      "lastActivity": "Last activity"
     }
   }
 }
