@@ -263,6 +263,9 @@ vi.mock('@/lib/webhooks/deliver', () => ({
 
 import { GET, POST } from './route';
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api';
+// The real error class: `vi.mock` above keeps everything it does not
+// name, so this is the very object the enforcement layer throws.
+import { AccountLockedError } from '@/lib/billing/enforce';
 
 const mockGetMediaUrl = vi.mocked(getMediaUrl);
 const mockDownloadMedia = vi.mocked(downloadMedia);
@@ -785,6 +788,26 @@ describe('inbound webhook: billing never blocks what comes in (CP11)', () => {
     expect(h.state.rpcCalls[0]).toMatchObject({
       name: 'bump_conversation_on_inbound',
     });
+  });
+
+  it('stores it while a PLATFORM OPERATOR holds the account suspended (fase 4 §2)', async () => {
+    // The manual hold of migration 058 is a read-only lock like any
+    // other, and CP11 does not bend for it either: cutting a customer
+    // off from sending must never lose the messages their own customers
+    // send them. The gate is wired to refuse with the exact error a hold
+    // produces.
+    billingGates.assertWritable.mockRejectedValue(
+      new AccountLockedError('active', true)
+    );
+
+    await runWebhook();
+
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+    });
+    expect(billingGates.assertWritable).not.toHaveBeenCalled();
   });
 
   it('never asks the billing layer anything while storing an inbound', async () => {

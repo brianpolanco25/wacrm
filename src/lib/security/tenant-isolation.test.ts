@@ -269,6 +269,9 @@ import * as aiTest from '@/app/api/ai/test/route';
 import { getCurrentAccount } from '@/lib/auth/account';
 import * as platformImpersonate from '@/app/api/platform/impersonate/route';
 import * as platformImpersonateStop from '@/app/api/platform/impersonate/stop/route';
+import * as platformAccounts from '@/app/api/platform/accounts/route';
+import * as platformAccountById from '@/app/api/platform/accounts/[id]/route';
+import * as platformAccountHold from '@/app/api/platform/accounts/[id]/hold/route';
 
 // ---- seed ------------------------------------------------------------
 
@@ -617,6 +620,11 @@ function seed(): FakeDatabase {
       // row is put here by hand, and the tests that need one add it.
       platform_admins: [],
       impersonation_log: [],
+      // Migrations 048 and 041. Declared even though empty so that
+      // merely READING them does not make the table appear and show up
+      // as a difference in an account snapshot.
+      checkout_intents: [],
+      billing_events: [],
     },
     {
       // Migration 037: one transaction for the broadcast + recipients.
@@ -692,6 +700,45 @@ function seed(): FakeDatabase {
           updated_at: new Date().toISOString(),
         });
         return delta;
+      },
+      // Migration 058: the census of the platform panel. Cross-account by
+      // definition — it is the list of every customer — and granted to
+      // `service_role` alone. Modelled thinly: one row per account, with
+      // the aggregates the panel reads.
+      platform_account_list: (args, db) => {
+        const search = ((args.p_search as string | null) ?? '')
+          .trim()
+          .toLowerCase();
+        const all = db.rows('accounts').filter(
+          (a) =>
+            !search ||
+            String(a.name ?? '')
+              .toLowerCase()
+              .includes(search) ||
+            a.id === search
+        );
+        return all.map((a) => {
+          const sub = db
+            .rows('subscriptions')
+            .find((r) => r.account_id === a.id);
+          return {
+            account_id: a.id,
+            name: a.name,
+            created_at: a.created_at ?? PAST,
+            member_count: db
+              .rows('profiles')
+              .filter((pr) => pr.account_id === a.id).length,
+            plan_id: sub?.plan_id ?? null,
+            subscription_status: sub?.status ?? null,
+            manual_hold_at: sub?.manual_hold_at ?? null,
+            trial_ends_at: sub?.trial_ends_at ?? null,
+            current_period_end: sub?.current_period_end ?? null,
+            grace_until: sub?.grace_until ?? null,
+            last_activity_at: null,
+            usage: {},
+            total_count: all.length,
+          };
+        });
       },
     }
   );
@@ -928,6 +975,36 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
       'on rows that were already past `expires_at`, reads nothing and ' +
       'moves no customer data. The OTHER update on this table — closing ' +
       'one named session — filters by `account_id` and is not waived.',
+  },
+  {
+    table: 'rpc:platform_account_list',
+    by: [],
+    reason:
+      'THE census. Listing every company of the service is the entire ' +
+      'job of the platform panel (fase 4 §2), so there is no account to ' +
+      'scope it by — an account filter here would make the feature ' +
+      'impossible rather than safer. What bounds it instead: the ' +
+      'function is granted to `service_role` and to NO client role ' +
+      '(migration 058, asserted in verify-schema.sql), it is not ' +
+      'SECURITY DEFINER so a mis-grant would still meet the RLS, and ' +
+      'its only caller is GET /api/platform/accounts, which starts with ' +
+      'requirePlatformAdmin(). A company owner gets 403 before it runs — ' +
+      'and there is a test below that says so.',
+  },
+  {
+    table: 'billing_events',
+    op: 'select',
+    by: ['provider', 'event_type'],
+    reason:
+      'The gateway log has NO account_id column at all (migration 041 ' +
+      'makes it the global record of what PayPal sent). The tenant ' +
+      "filter is the list of THIS account's PayPal subscription ids, " +
+      'collected one query earlier from `subscriptions` and ' +
+      '`checkout_intents` — both scoped by account_id, both holding that ' +
+      'id under a UNIQUE constraint, so an id in the list cannot belong ' +
+      'to anyone else. Applied as a database filter (`.in(...)`), never ' +
+      'as a scan filtered afterwards in our process, and skipped ' +
+      'entirely when the list is empty.',
   },
   {
     table: 'plans',
@@ -2344,5 +2421,206 @@ describe('/api/platform (support sessions, service role)', () => {
     await platformImpersonateStop.POST();
     const closed = await (await platformImpersonate.GET()).json();
     expect(closed.session).toBeNull();
+  });
+});
+
+// ============================================================
+// /api/platform/accounts — the panel of fase 4 §2, against the same two
+// seeded companies.
+//
+// This is where the acceptance criterion is graded: «un administrador de
+// plataforma ve todas las cuentas; un `owner` normal no ve más que la
+// suya». The actor is USER_A, owner of A, and the answer has to be that
+// he sees none of this at all — not a filtered view, not his own row.
+// ============================================================
+
+describe('/api/platform/accounts (the panel, service role)', () => {
+  const HOLD_REASON = 'chargebacks on three invoices, ticket 88';
+
+  function holdReq(accountId: string, body: unknown) {
+    return platformAccountHold.POST(
+      req('POST', `/api/platform/accounts/${accountId}/hold`, body),
+      { params: Promise.resolve({ id: accountId }) }
+    );
+  }
+
+  function detailReq(accountId: string) {
+    return platformAccountById.GET(
+      req('GET', `/api/platform/accounts/${accountId}`),
+      { params: Promise.resolve({ id: accountId }) }
+    );
+  }
+
+  /**
+   * The company the operator acts ON, with a subscription of its own.
+   *
+   * It is `TARGET` rather than B for the same reason the impersonation
+   * block uses it: `/api/platform/accounts/[id]` validates the id as a
+   * UUID before going near the database (a non-uuid against a `uuid`
+   * column is a cast error, not an empty result) and the suite's A/B
+   * fixtures are `acct-a` / `acct-b`. What the isolation tests need from
+   * the second company is that it is NOT A — and A keeps all its
+   * fixtures, which is the side that has to survive untouched.
+   */
+  function seedTargetWithSubscription() {
+    seedTargetAccount();
+    h.db.rows('subscriptions').push({
+      account_id: TARGET,
+      plan_id: 'pro',
+      status: 'active',
+      provider: 'paypal',
+      provider_subscription_id: null,
+      current_period_end: null,
+      grace_until: null,
+      trial_ends_at: null,
+      cancel_at_period_end: false,
+      cycle: 'month',
+      manual_hold_at: null,
+      manual_hold_by: null,
+      manual_hold_reason: null,
+    });
+  }
+
+  it('403s the owner of A on the census, and tells him nothing about B', async () => {
+    const before = h.db.snapshot(B);
+
+    const res = await platformAccounts.GET(
+      req('GET', '/api/platform/accounts')
+    );
+
+    expect(res.status).toBe(403);
+    expectNoBIds(await res.json());
+    expectBUnchanged(before);
+  });
+
+  it("403s the owner of A on B's file — and on his OWN account's file too", async () => {
+    expect((await detailReq(B)).status).toBe(403);
+    // The panel is not a second door into your own data either: a tenant
+    // reads their own subscription through /api/billing/*, with a role
+    // check and without the gateway payloads.
+    expect((await detailReq(A)).status).toBe(403);
+  });
+
+  it('403s the owner of A trying to suspend anybody, including himself', async () => {
+    const before = h.db.snapshot(B);
+
+    expect(
+      (await holdReq(B, { action: 'suspend', reason: HOLD_REASON })).status
+    ).toBe(403);
+    expect(
+      (await holdReq(A, { action: 'suspend', reason: HOLD_REASON })).status
+    ).toBe(403);
+
+    // Neither company moved, and nothing was written to the bitácora.
+    expectBUnchanged(before);
+    expect(h.db.rows('impersonation_log')).toEqual([]);
+    for (const row of h.db.rows('subscriptions')) {
+      expect(row.manual_hold_at ?? null).toBeNull();
+    }
+  });
+
+  it('gives a platform admin every account, and the owner of A none', async () => {
+    makePlatformAdmin(USER_A);
+
+    const res = await platformAccounts.GET(
+      req('GET', '/api/platform/accounts')
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const ids = body.accounts.map((row: Row) => row.accountId);
+    // Both halves of the criterion in one assertion: the operator sees
+    // A and B, and the test above showed the same user, without the
+    // platform_admins row, saw neither.
+    expect(new Set(ids)).toEqual(new Set([A, B]));
+  });
+
+  it("lets a platform admin read another company's file without touching A's", async () => {
+    makePlatformAdmin(USER_A);
+    seedTargetWithSubscription();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await detailReq(TARGET);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.accountId).toBe(TARGET);
+    expect(body.name).toBe('Company T');
+    // The members are the target's, and neither of the other two
+    // companies appears anywhere in the body.
+    expect(body.members.map((m: Row) => m.userId)).toEqual([USER_TARGET]);
+    expect(stringsIn(body).filter((value) => h.db.idsOf(A).has(value))).toEqual(
+      []
+    );
+    expectNoBIds(body);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+  });
+
+  it('suspends one company by hand: A and B do not move, and it is on the record', async () => {
+    makePlatformAdmin(USER_A);
+    seedTargetWithSubscription();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await holdReq(TARGET, {
+      action: 'suspend',
+      reason: HOLD_REASON,
+    });
+    expect(res.status).toBe(200);
+
+    const held = h.db
+      .rows('subscriptions')
+      .find((row) => row.account_id === TARGET)!;
+    expect(held.manual_hold_at).toBeTruthy();
+    expect(held.manual_hold_reason).toBe(HOLD_REASON);
+    expect(held.manual_hold_by).toBe(USER_A);
+    // `status` is untouched: it belongs to the PayPal webhook, and a hold
+    // stored there would be lifted by the next payment event.
+    expect(held.status).toBe('active');
+
+    // The other two are exactly as they were — this is the write that
+    // could most easily land on the wrong company.
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    for (const row of h.db.rows('subscriptions')) {
+      if (row.account_id === TARGET) continue;
+      expect(row.manual_hold_at ?? null).toBeNull();
+    }
+
+    // And the bitácora of f4.4 has the four things the spec names.
+    const trail = h.db.rows('impersonation_log');
+    expect(trail).toHaveLength(1);
+    expect(trail[0]).toMatchObject({
+      action: 'suspend',
+      actor_user_id: USER_A,
+      account_id: TARGET,
+      reason: HOLD_REASON,
+    });
+  });
+
+  it('reactivating clears the hold, and only on the company it names', async () => {
+    makePlatformAdmin(USER_A);
+    seedTargetWithSubscription();
+    await holdReq(TARGET, { action: 'suspend', reason: HOLD_REASON });
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await holdReq(TARGET, {
+      action: 'reactivate',
+      reason: 'refunded, ticket 88 closed',
+    });
+    expect(res.status).toBe(200);
+
+    const freed = h.db
+      .rows('subscriptions')
+      .find((row) => row.account_id === TARGET)!;
+    expect(freed.manual_hold_at).toBeNull();
+    expect(freed.manual_hold_by).toBeNull();
+    expect(freed.manual_hold_reason).toBeNull();
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    // Two lines in the trail: suspending and lifting are both acts.
+    expect(h.db.rows('impersonation_log')).toHaveLength(2);
   });
 });

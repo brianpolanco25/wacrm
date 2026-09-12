@@ -602,6 +602,42 @@ describe('activation', () => {
     });
   });
 
+  it('does NOT lift a manual hold (fase 4 §2)', async () => {
+    // The reason the hold is its own column and not `status = suspended`.
+    // An operator cut this account off; the customer paying an unrelated
+    // invoice must not undo that decision, and neither must PayPal.
+    db.checkout_intents.push(intent(ACCOUNT_A, 'I-1'));
+    db.subscriptions.push(
+      subscriptionRow(ACCOUNT_A, {
+        status: 'suspended',
+        provider_subscription_id: 'I-1',
+        manual_hold_at: '2026-03-01T00:00:00.000Z',
+        manual_hold_by: '11111111-1111-4111-8111-111111111111',
+        manual_hold_reason: 'chargebacks, ticket 88',
+      })
+    );
+
+    const res = await post(activated('I-1'));
+    expect(await res.json()).toMatchObject({ status: 'processed' });
+
+    const row = accountOf(ACCOUNT_A)!;
+    // PayPal's half of the truth moved…
+    expect(row.status).toBe('active');
+    // …and the operator's half did not.
+    expect(row.manual_hold_at).toBe('2026-03-01T00:00:00.000Z');
+    expect(row.manual_hold_reason).toBe('chargebacks, ticket 88');
+
+    // Stronger than the row check: the patch never mentions the hold at
+    // all, so no future event can clear it by accident either.
+    for (const write of writesTo('subscriptions')) {
+      expect(Object.keys(write.payload ?? {})).not.toContain('manual_hold_at');
+      expect(Object.keys(write.payload ?? {})).not.toContain('manual_hold_by');
+      expect(Object.keys(write.payload ?? {})).not.toContain(
+        'manual_hold_reason'
+      );
+    }
+  });
+
   it('marks the event processed with no error', async () => {
     db.checkout_intents.push(intent(ACCOUNT_A, 'I-1'));
 
