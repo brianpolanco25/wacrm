@@ -44,6 +44,13 @@ const h = vi.hoisted(() => ({
     fromCalls: [] as string[],
     /** Plaintext verify tokens the GET loop "decrypts" from whatsapp_config. */
     configVerifyTokens: ['tenant-verify-token'] as string[],
+    /** Every write against whatsapp_config. The GET must never make one. */
+    configWrites: [] as string[],
+    /** Filters/limits the GET's verify-token query applied. */
+    configVerifyQuery: null as {
+      notNull: boolean;
+      limit: number | null;
+    } | null,
   },
 }));
 
@@ -108,9 +115,30 @@ vi.mock('@supabase/supabase-js', () => ({
             })),
             error: null,
           });
+          // The GET loop's chain post-f4.1:
+          // `.select().not('verify_token','is',null).limit(n)`.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const listChain: any = Object.assign(all, { eq: byPhone });
+          listChain.not = (column: string) => {
+            h.state.configVerifyQuery = {
+              notNull: column === 'verify_token',
+              limit: h.state.configVerifyQuery?.limit ?? null,
+            };
+            return listChain;
+          };
+          listChain.limit = (n: number) => {
+            h.state.configVerifyQuery = {
+              notNull: h.state.configVerifyQuery?.notNull ?? false,
+              limit: n,
+            };
+            return listChain;
+          };
           return {
-            select: () => Object.assign(all, { eq: byPhone }),
-            update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+            select: () => listChain,
+            update: () => {
+              h.state.configWrites.push('update');
+              return { eq: () => Promise.resolve({ error: null }) };
+            },
           };
         }
         case 'conversations':
@@ -334,6 +362,8 @@ beforeEach(() => {
   h.state.storageUploadError = null;
   h.state.fromCalls = [];
   h.state.configVerifyTokens = ['tenant-verify-token'];
+  h.state.configWrites = [];
+  h.state.configVerifyQuery = null;
   vi.unstubAllEnvs();
   // `unstubAllEnvs` only undoes previous `stubEnv` calls; it does not
   // clear a variable exported in the developer's shell. The self-hosted
@@ -726,6 +756,40 @@ describe('webhook GET verification: platform token short path', () => {
     const res = (await GET(verifyRequest('tenant-verify-token'))) as Response;
     expect(res.status).toBe(200);
     expect(h.state.fromCalls).toContain('whatsapp_config');
+  });
+
+  // ------------------------------------------------------------
+  // Fase 4 §1 (§5 of the design note): the self-hosted loop stays, the
+  // write inside it does not.
+  //
+  // The old version re-encrypted a legacy CBC verify token to GCM on
+  // the way past — a database UPDATE triggered by an unauthenticated
+  // GET, reachable by anyone who guesses a verify token. The versioned
+  // decrypt of f2.3 reads the legacy format unaided, so the write bought
+  // nothing and cost an unauthenticated write path.
+  // ------------------------------------------------------------
+  it('the per-tenant loop verifies without writing anything back', async () => {
+    h.state.configVerifyTokens = ['tenant-verify-token'];
+
+    const res = (await GET(verifyRequest('tenant-verify-token'))) as Response;
+
+    expect(res.status).toBe(200);
+    expect(h.state.fromCalls).toContain('whatsapp_config');
+    // The point of the test: zero writes on an unauthenticated GET.
+    expect(h.state.configWrites).toEqual([]);
+  });
+
+  it('a mismatching token writes nothing either', async () => {
+    await GET(verifyRequest('nobody-has-this'));
+    expect(h.state.configWrites).toEqual([]);
+  });
+
+  it('the scan skips rows without a verify token and is bounded', async () => {
+    // Platform signup writes `verify_token = NULL`, so in a mixed
+    // deployment those rows are dead weight in this query; the limit is
+    // the ceiling that keeps a subscribe from scanning the whole table.
+    await GET(verifyRequest('tenant-verify-token'));
+    expect(h.state.configVerifyQuery).toEqual({ notNull: true, limit: 200 });
   });
 
   it('the 403 of the platform path warns without echoing either token', async () => {

@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextResponse, after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { decrypt } from '@/lib/whatsapp/encryption';
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api';
 import { mirrorInboundMedia } from '@/lib/whatsapp/mirror-inbound-media';
 import { normalizePhone } from '@/lib/whatsapp/phone-utils';
@@ -168,10 +168,40 @@ export async function GET(request: Request) {
       );
     }
 
-    // Fetch all whatsapp configs to check verify tokens
+    // ========================================================
+    // SELF-HOSTED ONLY (S5)
+    //
+    // Everything from here to the end of this handler is unreachable in
+    // platform mode: the short path above returns first whenever
+    // META_WEBHOOK_VERIFY_TOKEN is set, and the integrated signup
+    // (fase 4 §1) writes `verify_token = NULL` on every row it creates,
+    // so in a platform deployment there is nothing here to match
+    // anyway. It stays because the self-hosted install — one Meta app
+    // per business, each with its own verify token typed into settings
+    // — has no other way to answer Meta's subscribe, and criterion 5 of
+    // the spec says that install keeps working. The day self-hosting is
+    // retired, this block goes with it.
+    //
+    // Two things this block deliberately does NOT do any more:
+    //
+    //   * It does not WRITE. The previous version re-encrypted a legacy
+    //     CBC verify token to GCM on the way past — a database update
+    //     triggered by an UNAUTHENTICATED GET, reachable by anyone who
+    //     guesses a verify token. The versioned decrypt of f2.3 reads
+    //     the legacy format without any help, and
+    //     `scripts/reencrypt-secrets.ts` is the supported way to
+    //     rewrite it.
+    //   * It does not read the whole table. `.not('verify_token', 'is',
+    //     null)` skips the rows platform signup created, and the
+    //     `limit` is a ceiling for the mixed case (a self-hosted
+    //     instance part-way through a migration to platform).
+    // ========================================================
+    const VERIFY_SCAN_LIMIT = 200;
     const { data: configs, error: configError } = await supabaseAdmin()
       .from('whatsapp_config')
-      .select('id, verify_token');
+      .select('id, verify_token')
+      .not('verify_token', 'is', null)
+      .limit(VERIFY_SCAN_LIMIT);
 
     if (configError || !configs) {
       console.error('Error fetching configs for verification:', configError);
@@ -181,45 +211,33 @@ export async function GET(request: Request) {
       );
     }
 
-    // Check if any config's verify_token matches. Also collect the
-    // matching row so we can opportunistically upgrade its token to
-    // GCM if it was still in the legacy CBC format.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let matchedConfig: any = null;
+    if (configs.length >= VERIFY_SCAN_LIMIT) {
+      // More per-tenant verify tokens than a self-hosted install can
+      // plausibly have. Either this deployment should be in platform
+      // mode (set META_WEBHOOK_VERIFY_TOKEN) or a subscribe is being
+      // answered by scanning a table, which does not scale and is the
+      // problem fase 2 flagged.
+      console.warn(
+        `[webhook] verify-token scan hit its ${VERIFY_SCAN_LIMIT}-row ceiling — ` +
+          'set META_WEBHOOK_VERIFY_TOKEN to use the platform path instead.'
+      );
+    }
+
+    // Does any config's verify_token match? Read-only: a hit answers
+    // the challenge and nothing else happens.
     for (const config of configs) {
       if (!config.verify_token) continue;
       try {
         if (decrypt(config.verify_token) === verifyToken) {
-          matchedConfig = config;
-          break;
+          // Return challenge as plain text
+          return new Response(challenge, {
+            status: 200,
+            headers: { 'Content-Type': 'text/plain' },
+          });
         }
       } catch {
         // Malformed / wrong-key token row — skip it and keep checking.
       }
-    }
-
-    if (matchedConfig) {
-      // Fire-and-forget GCM upgrade. Safe to run on every subscribe
-      // since it's a no-op once the column is already GCM.
-      if (isLegacyFormat(matchedConfig.verify_token)) {
-        void supabaseAdmin()
-          .from('whatsapp_config')
-          .update({ verify_token: encrypt(verifyToken) })
-          .eq('id', matchedConfig.id)
-          .then(({ error }: { error: unknown }) => {
-            if (error) {
-              console.warn(
-                '[webhook] verify_token GCM upgrade failed:',
-                (error as { message?: string })?.message ?? error
-              );
-            }
-          });
-      }
-      // Return challenge as plain text
-      return new Response(challenge, {
-        status: 200,
-        headers: { 'Content-Type': 'text/plain' },
-      });
     }
 
     return NextResponse.json(

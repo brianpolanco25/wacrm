@@ -231,6 +231,7 @@ import * as waBroadcastResume from '@/app/api/whatsapp/broadcast/[id]/resume/rou
 import * as waWebhook from '@/app/api/whatsapp/webhook/route';
 import * as waConfig from '@/app/api/whatsapp/config/route';
 import * as waConfigById from '@/app/api/whatsapp/config/[id]/route';
+import * as waEmbeddedSignup from '@/app/api/whatsapp/embedded-signup/route';
 import * as waTemplateById from '@/app/api/whatsapp/templates/[id]/route';
 import * as waTemplateSubmit from '@/app/api/whatsapp/templates/submit/route';
 import * as automationsCron from '@/app/api/automations/cron/route';
@@ -1956,6 +1957,113 @@ describe('/api/whatsapp/config', () => {
     const res = await waConfig.DELETE(req('DELETE', '/api/whatsapp/config'));
     expect(res.status).toBe(400);
     expect(h.db.rows('whatsapp_config')).toHaveLength(2);
+  });
+});
+
+// ============================================================
+// Registro integrado (fase 4 §1). Two reasons it belongs here: the
+// ownership check runs with the service role (it HAS to — under RLS the
+// caller cannot see another tenant's row), and everything the request
+// names — the phone number, the WABA — is attacker-controlled.
+// ============================================================
+
+describe('/api/whatsapp/embedded-signup', () => {
+  const ENV = ['META_APP_ID', 'META_CONFIG_ID'] as const;
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const k of ENV) saved[k] = process.env[k];
+    process.env.META_APP_ID = 'app-123';
+    process.env.META_CONFIG_ID = 'cfgid-456';
+    // The code exchange is the one Meta call that goes through global
+    // fetch instead of `meta-api.ts`.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            json: async () => ({ access_token: 'fresh-token' }),
+          }) as unknown as Response
+      )
+    );
+  });
+
+  afterEach(() => {
+    for (const k of ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    vi.unstubAllGlobals();
+  });
+
+  const signup = (body: Record<string, unknown>) =>
+    waEmbeddedSignup.POST(req('POST', '/api/whatsapp/embedded-signup', body));
+
+  it("refuses to claim B's number and leaves B's row untouched", async () => {
+    const before = h.db.snapshot(B);
+    const res = await signup({
+      code: 'the-code',
+      phone_number_id: 'pn-b',
+      waba_id: 'waba-b',
+    });
+
+    expect(res.status).toBe(409);
+    // The code is single use: it must not be spent on a request that
+    // cannot succeed.
+    expect(fetch).not.toHaveBeenCalled();
+    expect(h.meta.sends).toEqual([]);
+    expectBUnchanged(before);
+  });
+
+  it("reconnects A's own number and writes only inside A", async () => {
+    // A's seeded plan leaves no room for a SECOND number, so the shape
+    // that exercises the write path end to end is a reconnection — which
+    // is also the one the upsert of §1.7 exists for. What matters here
+    // is where the write lands: the upsert keys on
+    // (account_id, phone_number_id), and B's row carries the same
+    // columns one account over.
+    const before = h.db.snapshot(B);
+    const res = await signup({
+      code: 'the-code',
+      phone_number_id: 'pn-a',
+      waba_id: 'waba-a',
+    });
+
+    expect(res.status).toBe(200);
+    const rows = h.db.rows('whatsapp_config');
+    expect(rows.filter((r) => r.phone_number_id === 'pn-a')).toHaveLength(1);
+    const updated = rows.find((r) => r.phone_number_id === 'pn-a');
+    expect(updated?.account_id).toBe(A);
+    expect(updated?.provisioned_via).toBe('embedded_signup');
+    expectBUnchanged(before);
+  });
+
+  it("402s rather than letting A exceed its plan on B's back", async () => {
+    const before = h.db.snapshot(B);
+    const res = await signup({
+      code: 'the-code',
+      phone_number_id: 'pn-a-second',
+      waba_id: 'waba-a',
+    });
+
+    // The count of "numbers already bound" must be A's own, not the
+    // whole table: if it leaked B's row the number would be 2, and if it
+    // ignored A's it would be 0 and the limit would never bite.
+    expect(res.status).toBe(402);
+    expect((await res.json()).metric).toBe('numbers');
+    expectBUnchanged(before);
+  });
+
+  it('GET exposes the public ids and never the app secret', async () => {
+    const res = await waEmbeddedSignup.GET();
+    const body = await res.json();
+    expect(body.enabled).toBe(true);
+    expect(JSON.stringify(body)).not.toContain(
+      process.env.META_APP_SECRET as string
+    );
+    expectNoBIds(body);
   });
 });
 
