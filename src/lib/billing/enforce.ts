@@ -63,21 +63,33 @@ export const BILLING_UPGRADE_PATH = '/billing';
 
 /**
  * The account may only read: the subscription is suspended/expired, or
- * past due with the grace period spent. 403, not 402 — the caller is
+ * past due with the grace period spent, or a platform operator put a
+ * manual hold on it (migration 058). 403, not 402 — the caller is
  * authenticated and the action exists, they just have no write rights
  * right now (exactly what a `viewer` gets).
+ *
+ * The two causes carry different messages because they have different
+ * ways out: a billing lock is settled at `/billing`, a manual hold is
+ * lifted only by the operator who put it there. Telling a manually
+ * suspended tenant to go and pay would send them to a checkout that
+ * changes nothing about their lock.
  */
 export class AccountLockedError extends Error {
   readonly status = 403 as const;
   readonly code = 'account_read_only' as const;
   readonly subscriptionStatus: string;
+  /** True when the cause is the platform operator, not the gateway. */
+  readonly manualHold: boolean;
 
-  constructor(subscriptionStatus: string) {
+  constructor(subscriptionStatus: string, manualHold = false) {
     super(
-      `This account is read-only while its subscription is '${subscriptionStatus}'. Settle the subscription to write again.`
+      manualHold
+        ? 'This account has been suspended by the service operator and is read-only. Contact support to have it reactivated.'
+        : `This account is read-only while its subscription is '${subscriptionStatus}'. Settle the subscription to write again.`
     );
     this.name = 'AccountLockedError';
     this.subscriptionStatus = subscriptionStatus;
+    this.manualHold = manualHold;
   }
 }
 
@@ -118,6 +130,8 @@ export interface BillingErrorPayload {
   used?: number;
   feature?: string;
   subscriptionStatus?: string;
+  /** Present on `account_read_only`: the operator suspended it by hand. */
+  manualHold?: boolean;
   status: number;
 }
 
@@ -136,6 +150,7 @@ export function billingErrorPayload(err: unknown): BillingErrorPayload | null {
       code: err.code,
       upgradeUrl: BILLING_UPGRADE_PATH,
       subscriptionStatus: err.subscriptionStatus,
+      manualHold: err.manualHold,
       status: err.status,
     };
   }
@@ -191,7 +206,7 @@ export async function assertWritable(
   entitlements?: Entitlements
 ): Promise<Entitlements> {
   const e = entitlements ?? (await getEntitlements(accountId));
-  if (e.readOnly) throw new AccountLockedError(e.status);
+  if (e.readOnly) throw new AccountLockedError(e.status, e.manualHold);
   return e;
 }
 

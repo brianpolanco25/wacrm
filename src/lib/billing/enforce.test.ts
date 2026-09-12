@@ -87,6 +87,8 @@ function entitlements(overrides: Partial<Entitlements> = {}): Entitlements {
     limits: { operators: 3, knowledge_documents: 10, retention_months: null },
     features: ['ai_autoreply'],
     readOnly: false,
+    readOnlyReason: null,
+    manualHold: false,
     trialEndsAt: null,
     ...overrides,
   };
@@ -135,6 +137,44 @@ describe('assertWritable', () => {
       });
     }
   );
+
+  it('refuses an account a platform operator suspended by hand (fase 4 §2)', async () => {
+    h.state.subscription = {
+      plan_id: 'pro',
+      // Healthy as far as PayPal is concerned. The hold is what stops it.
+      status: 'active',
+      trial_ends_at: null,
+      grace_until: null,
+      manual_hold_at: '2026-09-01T00:00:00.000Z',
+    };
+
+    await expect(assertWritable(ACCOUNT)).rejects.toBeInstanceOf(
+      AccountLockedError
+    );
+    await assertWritable(ACCOUNT).catch((err: AccountLockedError) => {
+      expect(err.status).toBe(403);
+      expect(err.manualHold).toBe(true);
+      // And it does NOT tell the customer to go and pay: the checkout
+      // cannot lift an operator's hold, so sending them there would be a
+      // dead end dressed up as a fix.
+      expect(err.message).toMatch(/service operator/i);
+      expect(err.message).not.toMatch(/settle/i);
+    });
+  });
+
+  it('says the subscription — not the operator — when the gateway is the cause', async () => {
+    h.state.subscription = {
+      plan_id: 'pro',
+      status: 'suspended',
+      trial_ends_at: null,
+      grace_until: null,
+      manual_hold_at: null,
+    };
+    await assertWritable(ACCOUNT).catch((err: AccountLockedError) => {
+      expect(err.manualHold).toBe(false);
+      expect(err.message).toMatch(/suspended/);
+    });
+  });
 
   it('lets a past_due account write while the grace period holds', async () => {
     h.state.subscription = {
@@ -363,6 +403,15 @@ describe('billingErrorPayload', () => {
       status: 403,
       upgradeUrl: BILLING_UPGRADE_PATH,
     });
+  });
+
+  it('tells the wire which of the two locks it is', () => {
+    expect(
+      billingErrorPayload(new AccountLockedError('suspended'))
+    ).toMatchObject({ manualHold: false });
+    expect(
+      billingErrorPayload(new AccountLockedError('active', true))
+    ).toMatchObject({ code: 'account_read_only', manualHold: true });
   });
 
   it('returns null for anything that is not a billing error', () => {

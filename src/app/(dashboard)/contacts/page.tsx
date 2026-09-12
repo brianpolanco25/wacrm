@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -67,6 +68,12 @@ interface ContactWithTags extends Contact {
 export default function ContactsPage() {
   const t = useTranslations('Contacts.page');
   const supabase = createClient();
+  // The account this page is showing. Normally the signed-in user's own;
+  // during a support session, the customer's. Every list below filters by
+  // it explicitly — since migration 057 RLS answers a platform operator
+  // with BOTH companies' rows, so it is no longer a filter for one
+  // account (see `useAuth`).
+  const { accountId } = useAuth();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
@@ -104,7 +111,11 @@ export default function ContactsPage() {
   const fetchSeq = useRef(0);
 
   const fetchTags = useCallback(async () => {
-    const { data } = await supabase.from('tags').select('*');
+    if (!accountId) return;
+    const { data } = await supabase
+      .from('tags')
+      .select('*')
+      .eq('account_id', accountId);
     if (data) {
       const map: Record<string, Tag> = {};
       data.forEach((t) => (map[t.id] = t));
@@ -116,9 +127,10 @@ export default function ContactsPage() {
         return pruned.length === prev.length ? prev : pruned;
       });
     }
-  }, [supabase]);
+  }, [supabase, accountId]);
 
   const fetchContacts = useCallback(async () => {
+    if (!accountId) return;
     const seq = ++fetchSeq.current;
     setLoading(true);
     // The visible rows are about to change — drop any selection that
@@ -157,6 +169,7 @@ export default function ContactsPage() {
       let query = supabase
         .from('contacts')
         .select('*', { count: 'exact' })
+        .eq('account_id', accountId)
         .order('created_at', { ascending: false })
         .range(from, to);
 
@@ -207,7 +220,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap, t]);
+  }, [supabase, accountId, page, search, selectedTagIds, tagsMap, t]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not

@@ -4,6 +4,7 @@ import { Suspense, useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import {
   CONVERSATION_SELECT,
   normalizeConversation,
@@ -39,6 +40,9 @@ export default function InboxPage() {
 
 function InboxPageInner() {
   const t = useTranslations('Inbox.page');
+  // The account this inbox is showing — the customer's during a support
+  // session (see `useAuth`).
+  const { accountId } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   /**
@@ -133,77 +137,75 @@ function InboxPageInner() {
   // conversations stuck on "No messages yet" until the user reloaded.
   // Also self-heals if a realtime event was missed: callers can invoke
   // this whenever they reference a conversation id they don't recognise.
-  const hydrateConversation = useCallback(async (convId: string) => {
-    if (hydratingConvIdsRef.current.has(convId)) return;
-    hydratingConvIdsRef.current.add(convId);
-    try {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('conversations')
-        .select(CONVERSATION_SELECT)
-        .eq('id', convId)
-        .maybeSingle();
-      if (error) {
-        // Supabase errors have non-enumerable properties — log fields
-        // explicitly so the console message isn't just `{}`.
-        console.error('Failed to hydrate conversation:', {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        });
-        return;
-      }
-      if (!data) return;
-      const fetched = normalizeConversation(data);
-      setConversations((prev) => {
-        const existing = prev.find((c) => c.id === fetched.id);
-        if (existing) {
-          // Already in state — keep its fields (a realtime UPDATE may
-          // have landed while the fetch was in flight and patched
-          // last_message_text / unread_count to fresher values than
-          // the row we just read). Only backfill `contact`, which the
-          // realtime payloads never carry.
-          return prev.map((c) =>
-            c.id === fetched.id
-              ? { ...c, contact: c.contact ?? fetched.contact }
-              : c
-          );
+  // The account filter is not redundant with `.eq('id', …)`: the id here
+  // comes off a realtime payload, not off the list, and since migration
+  // 057 an operator with an open support session can read their OWN
+  // company's conversations too. Without it, a message arriving in the
+  // operator's inbox during a support session hydrated that conversation
+  // straight into the customer's list.
+  const hydrateConversation = useCallback(
+    async (convId: string) => {
+      if (!accountId) return;
+      if (hydratingConvIdsRef.current.has(convId)) return;
+      hydratingConvIdsRef.current.add(convId);
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('conversations')
+          .select(CONVERSATION_SELECT)
+          .eq('id', convId)
+          .eq('account_id', accountId)
+          .maybeSingle();
+        if (error) {
+          // Supabase errors have non-enumerable properties — log fields
+          // explicitly so the console message isn't just `{}`.
+          console.error('Failed to hydrate conversation:', {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          });
+          return;
         }
-        return [fetched, ...prev];
-      });
-    } finally {
-      hydratingConvIdsRef.current.delete(convId);
-    }
-  }, []);
+        if (!data) return;
+        const fetched = normalizeConversation(data);
+        setConversations((prev) => {
+          const existing = prev.find((c) => c.id === fetched.id);
+          if (existing) {
+            // Already in state — keep its fields (a realtime UPDATE may
+            // have landed while the fetch was in flight and patched
+            // last_message_text / unread_count to fresher values than
+            // the row we just read). Only backfill `contact`, which the
+            // realtime payloads never carry.
+            return prev.map((c) =>
+              c.id === fetched.id
+                ? { ...c, contact: c.contact ?? fetched.contact }
+                : c,
+            );
+          }
+          return [fetched, ...prev];
+        });
+      } finally {
+        hydratingConvIdsRef.current.delete(convId);
+      }
+    },
+    [accountId],
+  );
 
   // Check WhatsApp connection status on mount
+  //
+  // whatsapp_config is one-row-per-account post-multi-user, so a
+  // `.eq('user_id', user.id)` here would miss the row for any teammate
+  // who didn't personally save the config — the "WhatsApp not connected"
+  // banner used to show in the shared inbox even though the admin had it
+  // configured. Query by account instead, and by the account this browser
+  // is SHOWING: reading it off the operator's own profile during a
+  // support session would report the operator's number under the
+  // customer's banner.
   useEffect(() => {
+    if (!accountId) return;
     const checkConnection = async () => {
       const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
-
-      if (!user) return;
-
-      // whatsapp_config is one-row-per-account post-multi-user, so
-      // the previous `.eq('user_id', user.id)` would miss the row
-      // for any teammate who didn't personally save the config —
-      // the "WhatsApp not connected" banner would show in the
-      // shared inbox even though the admin had it configured.
-      // Resolve account_id via the profile and query by that.
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('account_id')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      const accountId = profile?.account_id as string | undefined;
-      if (!accountId) {
-        setWhatsappConnected(false);
-        return;
-      }
 
       // "Is at least one number connected?" — post-053 an account can
       // have several, and `.maybeSingle()` would error on the second.
@@ -218,7 +220,7 @@ function InboxPageInner() {
     };
 
     checkConnection();
-  }, []);
+  }, [accountId]);
 
   // Handle realtime message events
   const handleMessageEvent = useCallback(
@@ -349,6 +351,9 @@ function InboxPageInner() {
   // throttle) are simply lost. We need a way to catch up.
   const { isConnected } = useRealtime({
     channelName: 'inbox-realtime',
+    // The account this inbox is showing. Events from any other one are
+    // dropped before they reach the handlers above.
+    accountId,
     onMessageEvent: handleMessageEvent,
     onConversationEvent: handleConversationEvent,
     enabled: true,

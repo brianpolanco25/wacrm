@@ -62,6 +62,15 @@ export async function GET() {
       // The single flag the banner branches on. Derived server-side so
       // the browser never re-implements the grace-period arithmetic.
       readOnly: entitlements.readOnly,
+      // Fase 4 §2: the lock can also be a platform operator's manual
+      // hold (migration 058), and that one is NOT settled at
+      // `/billing` — pointing the tenant at a checkout would be a dead
+      // end. The reason travels so the banner can say the right thing.
+      // The operator's own wording is deliberately NOT exposed: it is
+      // an internal note ("chargebacks, ticket 88") written for other
+      // operators, not a customer-facing message.
+      manualHold: entitlements.manualHold,
+      readOnlyReason: entitlements.readOnlyReason,
       graceUntil: dates?.grace_until ?? null,
       trialEndsAt: entitlements.trialEndsAt,
       currentPeriodEnd: dates?.current_period_end ?? null,

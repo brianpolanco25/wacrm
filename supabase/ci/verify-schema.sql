@@ -602,6 +602,325 @@ BEGIN
       'idx_conversations_account_contact is missing — 036 must survive 053';
   END IF;
 
+  -- Migration 055: operador de la plataforma e impersonación auditada.
+  IF to_regclass('public.platform_admins') IS NULL THEN
+    RAISE EXCEPTION 'public.platform_admins is missing (migration 055)';
+  END IF;
+  IF to_regclass('public.impersonation_log') IS NULL THEN
+    RAISE EXCEPTION 'public.impersonation_log is missing (migration 055)';
+  END IF;
+
+  -- El operador vive FUERA del enum de roles de cuenta. Si alguien lo
+  -- añadiera ahí, `owner` y «administro todas las empresas» volverían a
+  -- ser el mismo permiso, que es justo lo que el spec prohíbe.
+  IF EXISTS (
+    SELECT 1 FROM pg_enum e
+    JOIN pg_type t ON t.oid = e.enumtypid
+    WHERE t.typname = 'account_role_enum'
+      AND e.enumlabel NOT IN ('owner', 'admin', 'agent', 'viewer')
+  ) THEN
+    RAISE EXCEPTION
+      'account_role_enum grew a value beyond owner/admin/agent/viewer — the platform operator must not live in it (migration 055)';
+  END IF;
+
+  -- La función de pertenencia: existe, es STABLE y es SECURITY DEFINER.
+  -- Sin DEFINER la política de platform_admins sería recursiva y la tabla
+  -- quedaría ilegible; sin la función, las políticas de abajo no existen.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'is_platform_admin'
+      AND p.prosecdef AND p.provolatile = 's'
+  ) THEN
+    RAISE EXCEPTION
+      'is_platform_admin() is missing, not SECURITY DEFINER, or not STABLE (migration 055)';
+  END IF;
+
+  -- RLS activada en ambas tablas.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname IN ('platform_admins', 'impersonation_log')
+      AND c.relrowsecurity
+    HAVING count(*) = 2
+  ) THEN
+    RAISE EXCEPTION
+      'RLS is not enabled on both platform_admins and impersonation_log (migration 055)';
+  END IF;
+
+  -- Lectura solo para administradores de plataforma…
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'platform_admins'
+      AND policyname = 'platform_admins_select' AND cmd = 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'the platform_admins read policy is missing (migration 055)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'impersonation_log'
+      AND policyname = 'impersonation_log_select' AND cmd = 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'the impersonation_log read policy is missing (migration 055)';
+  END IF;
+
+  -- …y escritura para nadie desde el cliente. Una política de escritura
+  -- en platform_admins es una escalada a todas las cuentas del servicio;
+  -- una en impersonation_log permite falsificar la bitácora.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN ('platform_admins', 'impersonation_log')
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'platform_admins/impersonation_log must have no write policies (migration 055)';
+  END IF;
+
+  -- La bitácora no cuelga de accounts ni de auth.users: tiene que
+  -- sobrevivir al borrado de la cuenta auditada (ver cabecera de 055).
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.impersonation_log'::regclass AND contype = 'f'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log grew a foreign key — the audit trail must survive deleting the account (migration 055)';
+  END IF;
+
+  -- Motivo obligatorio y no trivial, comprobado en la base y no solo en
+  -- la ruta: una bitácora con motivos vacíos no audita nada.
+  --
+  -- El predicado nombra `char_length` y `btrim` a propósito: buscar
+  -- «%reason%» lo satisfacía también el CHECK de `ended_reason`, así que
+  -- la aserción no podía fallar aunque alguien borrase el mínimo.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.impersonation_log'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%char_length%'
+      AND pg_get_constraintdef(oid) ILIKE '%btrim%'
+      AND pg_get_constraintdef(oid) ILIKE '%reason%'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log.reason has no minimum-length CHECK (migration 055)';
+  END IF;
+
+  -- ============================================================
+  -- 057 — lectura de la cuenta impersonada desde la RLS
+  -- ============================================================
+
+  -- El predicado y el «o» existen, son STABLE y SECURITY DEFINER (una
+  -- política que los llama sin DEFINER leería impersonation_log con RLS).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session'
+      AND p.prosecdef AND p.provolatile = 's'
+  ) THEN
+    RAISE EXCEPTION
+      'has_open_support_session() is missing, not SECURITY DEFINER, or not STABLE (migration 057)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'can_read_account'
+      AND p.prosecdef AND p.provolatile = 's'
+  ) THEN
+    RAISE EXCEPTION
+      'can_read_account() is missing, not SECURITY DEFINER, or not STABLE (migration 057)';
+  END IF;
+
+  -- El predicado exige fila ABIERTA y NO CADUCADA: sin esas dos
+  -- condiciones, pulsar «salir» dejaría de cortar el acceso y la ventana
+  -- de 30 minutos no la impondría nadie.
+  IF (SELECT prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session')
+     NOT ILIKE '%ended_at is null%' THEN
+    RAISE EXCEPTION
+      'has_open_support_session() does not require an OPEN row (migration 057)';
+  END IF;
+  IF (SELECT prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session')
+     NOT ILIKE '%expires_at%' THEN
+    RAISE EXCEPTION
+      'has_open_support_session() does not honour expires_at (migration 057)';
+  END IF;
+
+  -- LO IMPORTANTE DE 057: el predicado de soporte vive SOLO en políticas
+  -- de SELECT. Una sesión de soporte que pudiera escribir en la cuenta del
+  -- cliente es exactamente el accidente que esta feature existe para
+  -- impedir, y la RLS es la única capa que ve las peticiones que el
+  -- navegador manda directamente a Supabase.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND cmd <> 'SELECT'
+      AND (COALESCE(qual, '') || COALESCE(with_check, ''))
+          ~ '(has_open_support_session|can_read_account)'
+  ) THEN
+    RAISE EXCEPTION
+      'a write policy (INSERT/UPDATE/DELETE/ALL) carries the support-session predicate — support sessions are READ ONLY (migration 057)';
+  END IF;
+
+  -- Y al revés: ninguna política de SELECT puede haberse quedado atrás
+  -- llamando a is_account_member directamente. Una tabla nueva cuya
+  -- política de lectura no pase por can_read_account sería invisible
+  -- durante una sesión de soporte — la vista mal etiquetada de siempre,
+  -- otra vez. Esta aserción es lo que hace que 057 no haga falta
+  -- re-ejecutarla: quien añada la tabla se entera en CI.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND cmd = 'SELECT'
+      AND qual LIKE '%is_account_member(%'
+  ) THEN
+    RAISE EXCEPTION
+      'a SELECT policy still calls is_account_member() directly; use can_read_account() so support sessions can read (migration 057)';
+  END IF;
+
+  -- Muestra concreta: si el bucle de 057 no corrió, esto lo dice con
+  -- nombre y apellido en vez de con un conteo.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'contacts'
+      AND policyname = 'contacts_select' AND qual LIKE '%can_read_account%'
+  ) THEN
+    RAISE EXCEPTION
+      'contacts_select was not extended with the support-session predicate (migration 057)';
+  END IF;
+
+  -- ============================================================
+  -- Migration 058: panel de plataforma (suspensión manual, bitácora
+  -- ampliada y las dos consultas del panel).
+  -- ============================================================
+
+  -- La retención manual, en sus tres columnas.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name IN ('manual_hold_at', 'manual_hold_by', 'manual_hold_reason')
+    GROUP BY table_name HAVING count(*) = 3
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions is missing the manual hold columns (migration 058)';
+  END IF;
+
+  -- SET NULL, nunca CASCADE: borrar al operador que suspendió a un
+  -- moroso no puede reactivarlo como efecto colateral (CP2).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'subscriptions_manual_hold_by_fkey'
+      AND conrelid = 'public.subscriptions'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions.manual_hold_by is missing its FK or it is not ON DELETE SET NULL (migration 058)';
+  END IF;
+
+  -- Una retención sin motivo legible no es auditable. Se afirma el
+  -- contenido del CHECK, no solo su existencia.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'subscriptions_manual_hold_reason_check'
+      AND conrelid = 'public.subscriptions'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%char_length%'
+      AND pg_get_constraintdef(oid) LIKE '%btrim%'
+      AND pg_get_constraintdef(oid) LIKE '%manual_hold_reason%'
+  ) THEN
+    RAISE EXCEPTION
+      'the manual hold has no minimum-length reason CHECK (migration 058)';
+  END IF;
+
+  IF to_regclass('public.idx_subscriptions_manual_hold') IS NULL THEN
+    RAISE EXCEPTION
+      'idx_subscriptions_manual_hold is missing (migration 058)';
+  END IF;
+
+  -- LO QUE HACE QUE LA SUSPENSIÓN MANUAL SIGNIFIQUE ALGO: `subscriptions`
+  -- sigue SIN NINGUNA política de escritura desde el cliente. Con una,
+  -- un inquilino se levantaría su propia retención.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'subscriptions'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'subscriptions grew a client write policy — a tenant could lift its own manual hold (migrations 041/058)';
+  END IF;
+
+  -- La bitácora distingue los tres actos del operador.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'impersonation_log'
+      AND column_name = 'action' AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log.action is missing or nullable (migration 058)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_action_check'
+      AND conrelid = 'public.impersonation_log'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%impersonation%'
+      AND pg_get_constraintdef(oid) LIKE '%suspend%'
+      AND pg_get_constraintdef(oid) LIKE '%reactivate%'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log.action has no CHECK naming the three actions (migration 058)';
+  END IF;
+
+  -- `expires_at` es nullable ahora, pero NO para una sesión de soporte:
+  -- ahí es el predicado de lectura de la 057 y su pérdida sería una
+  -- sesión que no caduca nunca.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_session_needs_expiry'
+      AND conrelid = 'public.impersonation_log'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%expires_at IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'an impersonation row could be written with no expiry (migration 058)';
+  END IF;
+
+  -- Y el predicado de lectura solo cuenta filas de impersonación: una
+  -- fila de suspensión no puede conceder la lectura de nadie.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session'
+      AND p.prosrc LIKE '%action%'
+  ) THEN
+    RAISE EXCEPTION
+      'has_open_support_session does not restrict itself to impersonation rows (migration 058)';
+  END IF;
+
+  -- El listado del panel: existe, NO es SECURITY DEFINER y ningún rol de
+  -- cliente puede ejecutarlo. Las tres cosas juntas son lo que impide
+  -- que un inquilino obtenga el censo de clientes del servicio.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'platform_account_list'
+      AND p.prosecdef = false
+  ) THEN
+    RAISE EXCEPTION
+      'platform_account_list() is missing or is SECURITY DEFINER (migration 058)';
+  END IF;
+  IF has_function_privilege('authenticated',
+       'public.platform_account_list(text, integer, integer)', 'EXECUTE')
+     OR has_function_privilege('anon',
+       'public.platform_account_list(text, integer, integer)', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'platform_account_list() is executable by a client role (migration 058)';
+  END IF;
+  IF NOT has_function_privilege('service_role',
+       'public.platform_account_list(text, integer, integer)', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'platform_account_list() is not executable by service_role (migration 058)';
+  END IF;
+
+  IF to_regclass('public.billing_events_subscription_resource_idx') IS NULL THEN
+    RAISE EXCEPTION
+      'billing_events_subscription_resource_idx is missing (migration 058)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

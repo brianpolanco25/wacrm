@@ -84,22 +84,32 @@ export function SettingsOverview({
               r.json()
             )
           : Promise.resolve(null),
+        // Every count carries `account_id`. RLS used to be that filter;
+        // migration 057 lets a platform operator with an open support
+        // session read the impersonated account too, so an unfiltered
+        // count would add up two companies. The pre-existing `user_id`
+        // filters stay as they were — they are what the template and
+        // tag managers themselves list by.
         supabase
           .from('message_templates')
           .select('id', { count: 'exact', head: true })
+          .eq('account_id', acctId)
           .eq('user_id', userId),
         supabase
           .from('message_templates')
           .select('id', { count: 'exact', head: true })
+          .eq('account_id', acctId)
           .eq('user_id', userId)
           .eq('status', 'PENDING'),
         supabase
           .from('tags')
           .select('id', { count: 'exact', head: true })
+          .eq('account_id', acctId)
           .eq('user_id', userId),
         supabase
           .from('custom_fields')
-          .select('id', { count: 'exact', head: true }),
+          .select('id', { count: 'exact', head: true })
+          .eq('account_id', acctId),
       ]);
 
       if (cancelled) return;

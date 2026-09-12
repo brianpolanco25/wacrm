@@ -220,6 +220,7 @@ function likeToRegex(pattern: string, flags: string): RegExp {
 }
 
 function compare(actual: unknown, op: string, expected: unknown): boolean {
+  if (op.startsWith('not.')) return !compare(actual, op.slice(4), expected);
   switch (op) {
     case 'eq':
       return actual === expected;
@@ -553,6 +554,16 @@ export class FakeQuery implements PromiseLike<Result> {
   }
   filter(c: string, op: string, v: unknown): this {
     return this.add(op, c, v);
+  }
+  /**
+   * PostgREST's negation: `.not('last_message_at', 'is', null)`.
+   *
+   * Recorded as its own op so the scope audit still sees the column —
+   * a negated filter is a filter, and a waiver has to be able to name
+   * it.
+   */
+  not(c: string, op: string, v: unknown): this {
+    return this.add(`not.${op}`, c, v);
   }
   or(expr: string): this {
     this.orClauses.push(parseOrExpression(expr));

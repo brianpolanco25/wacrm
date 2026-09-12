@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -66,6 +67,10 @@ export function Step4ScheduleSend({
   progress,
 }: Step4Props) {
   const t = useTranslations('Broadcasts.wizard');
+  // The account the reach is counted over — the customer's during a
+  // support session (see `useAuth`). Migration 057 means RLS alone would
+  // add up two companies' contacts here.
+  const { accountId } = useAuth();
   const [showConfirm, setShowConfirm] = useState(false);
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
@@ -101,6 +106,7 @@ export function Step4ScheduleSend({
   }, []);
 
   useEffect(() => {
+    if (!accountId) return;
     async function calculateReach() {
       setLoadingReach(true);
       try {
@@ -109,7 +115,8 @@ export function Step4ScheduleSend({
         if (audience.type === 'all') {
           const { count } = await supabase
             .from('contacts')
-            .select('*', { count: 'exact', head: true });
+            .select('*', { count: 'exact', head: true })
+            .eq('account_id', accountId);
           setEstimatedReach(count ?? 0);
         } else if (
           audience.type === 'tags' &&
@@ -136,7 +143,7 @@ export function Step4ScheduleSend({
     }
 
     calculateReach();
-  }, [audience]);
+  }, [audience, accountId]);
 
   const audienceLabel =
     audience.type === 'all'

@@ -10,17 +10,24 @@ const h = vi.hoisted(() => ({
     plans: {} as Record<string, Record<string, unknown>>,
     usage: null as Record<string, unknown> | null,
     usageError: null as { message: string } | null,
-    queries: [] as { table: string; filters: [string, unknown][] }[],
+    queries: [] as {
+      table: string;
+      filters: [string, unknown][];
+      columns: string;
+    }[],
   },
 }));
 
 vi.mock('@/lib/automations/admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
-      const q = { table, filters: [] as [string, unknown][] };
+      const q = { table, filters: [] as [string, unknown][], columns: '' };
       h.state.queries.push(q);
       const chain = {
-        select: () => chain,
+        select: (columns = '') => {
+          q.columns = columns;
+          return chain;
+        },
         eq: (col: string, val: unknown) => {
           q.filters.push([col, val]);
           return chain;
@@ -98,6 +105,9 @@ function subscribed(overrides: Record<string, unknown> = {}) {
     status: 'active',
     trial_ends_at: null,
     grace_until: null,
+    // Migration 058. NULL is "no hold", which is every row until an
+    // operator puts one.
+    manual_hold_at: null,
     ...overrides,
   };
 }
@@ -203,6 +213,57 @@ describe('getEntitlements', () => {
       subscribed({ status: 'past_due', grace_until: null });
       expect((await getEntitlements(ACCOUNT)).readOnly).toBe(false);
     });
+
+    // ------------------------------------------------------------
+    // The manual hold of fase 4 §2 / migration 058.
+    // ------------------------------------------------------------
+
+    it('a manual hold makes a perfectly healthy account read-only', async () => {
+      subscribed({ status: 'active', manual_hold_at: '2026-09-01T00:00:00Z' });
+      const e = await getEntitlements(ACCOUNT);
+      expect(e.readOnly).toBe(true);
+      expect(e.manualHold).toBe(true);
+      expect(e.readOnlyReason).toBe('manual_hold');
+      // The subscription itself is untouched: the hold is a second axis,
+      // which is what stops a PayPal event from lifting it.
+      expect(e.status).toBe('active');
+    });
+
+    it('says manual_hold when both causes apply — it is the one the tenant cannot fix', async () => {
+      subscribed({
+        status: 'suspended',
+        manual_hold_at: '2026-09-01T00:00:00Z',
+      });
+      const e = await getEntitlements(ACCOUNT);
+      expect(e.readOnlyReason).toBe('manual_hold');
+    });
+
+    it('says subscription when only the gateway locked it', async () => {
+      subscribed({ status: 'suspended' });
+      const e = await getEntitlements(ACCOUNT);
+      expect(e.readOnlyReason).toBe('subscription');
+      expect(e.manualHold).toBe(false);
+    });
+
+    it('lifting the hold restores writing with no other repair', async () => {
+      subscribed({ status: 'active', manual_hold_at: null });
+      const e = await getEntitlements(ACCOUNT);
+      expect(e.readOnly).toBe(false);
+      expect(e.readOnlyReason).toBeNull();
+      expect(e.manualHold).toBe(false);
+    });
+
+    it('reads the hold off the row it was already fetching', async () => {
+      // The reason it lives in `subscriptions` and not in a table of its
+      // own: this runs before every write in the app.
+      subscribed({ status: 'active', manual_hold_at: '2026-09-01T00:00:00Z' });
+      await getEntitlements(ACCOUNT);
+      const subQuery = h.state.queries.find((q) => q.table === 'subscriptions');
+      expect(subQuery?.columns).toContain('manual_hold_at');
+      expect(
+        h.state.queries.filter((q) => q.table === 'subscriptions')
+      ).toHaveLength(1);
+    });
   });
 });
 
@@ -228,6 +289,8 @@ describe('hasFeature / assertFeature', () => {
     limits: {},
     features: ['ai_autoreply'],
     readOnly: false,
+    readOnlyReason: null,
+    manualHold: false,
     trialEndsAt: null,
   };
   it('is a plain membership check', () => {

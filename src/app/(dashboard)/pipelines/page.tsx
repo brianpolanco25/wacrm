@@ -73,17 +73,24 @@ export default function PipelinesPage() {
   // Guard against double-seeding (React StrictMode double-effect in dev).
   const seedAttempted = useRef(false);
 
+  // Every read below is filtered by `accountId` — the customer's during
+  // a support session. Migration 057 widened SELECT policies for platform
+  // operators, so RLS on its own would return two companies' pipelines
+  // here (see `useAuth`). The stage / deal loaders inherit the filter
+  // through the pipeline id they are given.
   const loadPipelines = useCallback(async () => {
+    if (!accountId) return [];
     const { data, error } = await supabase
       .from("pipelines")
       .select("*")
+      .eq("account_id", accountId)
       .order("created_at");
     if (error) {
       console.error("Failed to load pipelines:", error.message);
       return [];
     }
     return data ?? [];
-  }, [supabase]);
+  }, [supabase, accountId]);
 
   const loadStages = useCallback(
     async (pipelineId: string) => {

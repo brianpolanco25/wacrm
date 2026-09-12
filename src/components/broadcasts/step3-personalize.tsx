@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { Contact, CustomField, MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,6 +78,11 @@ export function Step3Personalize({
   onBack,
 }: Step3Props) {
   const t = useTranslations('Broadcasts.wizard');
+  // The account the preview should come from — the customer's during a
+  // support session (see `useAuth`). RLS is no longer a one-account
+  // filter for platform operators (migration 057), and a preview built
+  // from the wrong company's contact would be worse than the sample.
+  const { accountId } = useAuth();
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [loadingFields, setLoadingFields] = useState(true);
   const [firstContact, setFirstContact] = useState<Contact | null>(null);
@@ -88,14 +94,20 @@ export function Step3Personalize({
   // Load user's custom fields + a representative contact for the
   // live preview. Fall back to sample data if no contacts exist yet.
   useEffect(() => {
+    if (!accountId) return;
     let cancelled = false;
     (async () => {
       const supabase = createClient();
       const [fieldsRes, contactRes] = await Promise.all([
-        supabase.from('custom_fields').select('*').order('field_name'),
+        supabase
+          .from('custom_fields')
+          .select('*')
+          .eq('account_id', accountId)
+          .order('field_name'),
         supabase
           .from('contacts')
           .select('*')
+          .eq('account_id', accountId)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle(),
@@ -126,7 +138,7 @@ export function Step3Personalize({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   const placeholders = useMemo(() => {
     const matches = template.body_text.match(/\{\{(\d+)\}\}/g);

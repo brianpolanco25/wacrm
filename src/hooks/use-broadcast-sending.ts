@@ -164,13 +164,24 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  // Audience resolution reads the contact book of the account this
+  // browser is showing. The `all` branch filters by `account_id`
+  // explicitly: RLS stopped being a one-account filter in migration 057
+  // (a platform operator inside a support session reads the impersonated
+  // account too), and "all contacts" must mean one company's. The
+  // branches that start from tag / custom-field ids inherit the account
+  // from those ids.
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
     const supabase = createClient();
 
     let contacts: Contact[] = [];
+    if (!accountId) return contacts;
 
     if (audience.type === 'all') {
-      const { data, error } = await supabase.from('contacts').select('*');
+      const { data, error } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('account_id', accountId);
       if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
       contacts = data ?? [];
     } else if (
@@ -260,6 +271,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     const { data: existing, error: lookupErr } = await supabase
       .from('contacts')
       .select('*')
+      .eq('account_id', accountId)
       .eq('user_id', user.id)
       .in('phone', phones);
     if (lookupErr) {

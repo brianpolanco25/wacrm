@@ -283,3 +283,174 @@ emisión con un segundo miembro de A y un objeto legado
   stored public shape. After 044 an integrator cannot fetch it directly;
   a follow-up should return a signed URL (service role, scoped to the
   key's account) or a proxy route.
+
+## Platform operators and support sessions
+
+The service has one role that lives outside every company:
+`platform_admins` (migration 055). It is deliberately **not** a value of
+`account_role_enum` — mixing "I administer my company" with "I administer
+every company" in the same column turns any role-assignment bug into a
+total escalation.
+
+### Granting the first operator
+
+There is no seed. Sowing an email or a uuid in a migration would put a
+back door in the repository, so the first operator is created by hand
+against the database — from the Supabase SQL editor or with the service
+role.
+
+```sql
+-- Substitute the address. Idempotent.
+INSERT INTO platform_admins (user_id, granted_by, note)
+SELECT u.id, u.id, 'bootstrap operator'
+FROM auth.users u
+WHERE u.email = 'operator@example.com'
+ON CONFLICT (user_id) DO NOTHING;
+
+-- Check:
+SELECT pa.user_id, u.email, pa.granted_at, pa.note
+FROM platform_admins pa JOIN auth.users u ON u.id = pa.user_id;
+```
+
+Subsequent operators are granted by an existing one:
+
+```sql
+INSERT INTO platform_admins (user_id, granted_by, note)
+SELECT incoming.id, granting.id, 'on-call support'
+FROM auth.users incoming, auth.users granting
+WHERE incoming.email = 'support@example.com'
+  AND granting.email = 'operator@example.com'
+ON CONFLICT (user_id) DO NOTHING;
+```
+
+Revoking:
+
+```sql
+DELETE FROM platform_admins WHERE user_id = (
+  SELECT id FROM auth.users WHERE email = 'support@example.com'
+);
+```
+
+Revoking also ends any support session that person had open: the server
+re-reads `platform_admins` on every request (`resolveSupportSession`) and
+so does the RLS predicate (`has_open_support_session`, migration 057).
+
+### What a support session is
+
+`POST /api/platform/impersonate` with `{ account_id, reason }` opens one.
+The reason is mandatory and has a minimum length — it is the column that
+makes the audit trail worth keeping. Every open and every close is a row
+in `impersonation_log`.
+
+A session lasts 30 minutes and is **read-only**, enforced in four places
+because there are four ways out of this application:
+
+| Layer                   | What it stops                                                                                                                                                                                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RLS (057)               | Only SELECT policies learned the support predicate, so the impersonated account cannot be written to at all — including by requests the browser sends straight to Supabase.                                                       |
+| `middleware.ts`         | Any mutating request that reaches Next gets a 403, whatever route it was for.                                                                                                                                                     |
+| `@/lib/supabase/client` | The browser client refuses `insert/update/delete/upsert/rpc` and every writing `storage` operation (uploads included), which is what stops an operator from editing **their own** company by mistake under the customer's banner. |
+| Effective role `viewer` | Every `requireRole()` above `viewer` refuses.                                                                                                                                                                                     |
+
+The operator never stops being themselves: `profiles.account_id` is never
+moved. The account swap is derived per request from a signed, `httpOnly`
+cookie plus the open row in `impersonation_log`, and it expires on its
+own.
+
+#### What the operator sees
+
+Widening the SELECT policies (057) made the customer's rows readable, but
+it also stopped RLS from being a filter for _one_ account: it now answers
+"my account **or** the one I am supporting". So the browser is told which
+account it is showing — the companion flag cookie `wacrm_support_active`
+carries the impersonated `account_id`, `useAuth().accountId` returns it
+while the session lasts, and every list in the panel filters by it
+explicitly. Without that, contacts, conversations, pipelines and
+broadcasts came back as both companies' rows merged under the customer's
+name.
+
+The flag grants nothing. It is readable and writable by the browser, and
+all it does is add `account_id = <uuid>` to the operator's own queries —
+a filter can only remove rows, and RLS still decides which ones come
+back.
+
+Two things a support session deliberately does **not** show:
+
+- **Attachments.** The signed URL for every attachment is requested by
+  the browser with the user's own JWT (`src/lib/media/signed-url.ts`), so
+  the bucket policy decides — and the `storage.objects` policies were not
+  widened. During a session no attachment of the customer's loads.
+- **Lists that are scoped by the signed-in person rather than the
+  account** — the template and tag managers' own `user_id` filters, and
+  the notification bell. They come back empty, which is the truth: those
+  rows are the operator's, not the customer's.
+
+### Auditing
+
+```sql
+-- The last sessions, and whether they were closed.
+SELECT actor_user_id, account_id, account_name, reason,
+       started_at, expires_at, ended_at, ended_reason
+FROM impersonation_log
+ORDER BY started_at DESC
+LIMIT 50;
+
+-- Sessions still open right now.
+SELECT * FROM impersonation_log
+WHERE ended_at IS NULL AND expires_at > now();
+```
+
+`impersonation_log` has no foreign keys on purpose: the trail has to
+survive deleting the audited account or the auditing user, which is
+precisely when somebody would want to read it. That is also why it stores
+`account_name` as a snapshot.
+
+Rows whose deadline passed with nobody around to close them are swept the
+next time any operator opens or closes a session. `expires_at` is on the
+row regardless, so the real window is auditable even when `ended_at` is
+still null.
+
+### Suspending an account by hand
+
+The panel at `/platform` can put an account on hold and lift it again
+(`POST /api/platform/accounts/<id>/hold` with
+`{ action: 'suspend' | 'reactivate', reason }`, migration 058). A held
+account is read-only for everyone in it — the same rung as a delinquent
+subscription — and, like that one, **keeps receiving**: the WhatsApp
+webhook never consults the billing layer, so no customer message is lost
+because their supplier was cut off.
+
+Two properties are worth stating because they are the reason the hold is
+not simply `subscriptions.status = 'suspended'`:
+
+- **PayPal cannot lift it.** `status` is the column the payment webhook
+  rewrites on every event. The hold lives in `manual_hold_at` /
+  `manual_hold_by` / `manual_hold_reason`, which no gateway event
+  touches, so an account can be `active` at PayPal and still held here.
+- **The tenant cannot lift it.** `subscriptions` has no client write
+  policy at all (041, still asserted in CI), so the only way in is the
+  service role behind `requirePlatformAdmin()`.
+
+The customer is told, in their own language, that the service operator
+suspended the account and that paying will not lift it — pointing them at
+a checkout that changes nothing would be worse than saying nothing.
+
+Both acts are audited in the same `impersonation_log`, told apart by
+`action`:
+
+```sql
+-- Everything the platform has done to one account.
+SELECT action, actor_user_id, reason, started_at
+FROM impersonation_log
+WHERE account_id = '<uuid>'
+ORDER BY started_at DESC;
+
+-- Who is on hold right now, and why.
+SELECT account_id, manual_hold_at, manual_hold_by, manual_hold_reason
+FROM subscriptions
+WHERE manual_hold_at IS NOT NULL;
+```
+
+`expires_at` is null on those rows — suspending opens no window — and the
+CHECK of 058 still requires it for a session, which is what keeps a
+suspension from ever being read as one.

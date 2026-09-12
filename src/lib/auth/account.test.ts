@@ -245,6 +245,31 @@ describe('requireRole — billing read-only gate (fase 3 §5)', () => {
     );
   });
 
+  it('refuses an OWNER of an account the PLATFORM suspended by hand (fase 4 §2)', async () => {
+    // The manual hold of migration 058 reaches the permission layer
+    // through the same gate as the dunning ladder, and that is the whole
+    // point of putting it inside `getEntitlements`: f3.4 honours it
+    // without a line of its own.
+    createClient.mockReturnValue(memberClient("owner"));
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError("active", true)
+    );
+    await expect(requireRole("agent")).rejects.toMatchObject({
+      status: 403,
+      manualHold: true,
+    });
+  });
+
+  it('lets a manually suspended account keep READING — it is a hold, not a ban', async () => {
+    createClient.mockReturnValue(memberClient("owner"));
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError("active", true)
+    );
+    const ctx = await requireRole("viewer");
+    expect(ctx.accountId).toBe("acct-1");
+    expect(billing.assertWritable).not.toHaveBeenCalled();
+  });
+
   it('still reports an insufficient role as a role problem, before billing', async () => {
     createClient.mockReturnValue(memberClient('viewer'));
     billing.assertWritable.mockRejectedValue(

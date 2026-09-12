@@ -350,6 +350,64 @@ behaviour changes**; nothing is limited by plan yet.
   (they are read as-is), and `scripts/reencrypt-secrets.ts` remains the
   supported way to rewrite them. The lookup also skips rows without a
   verify token and is bounded, so the check no longer scans the table.
+- **Platform operator and audited support sessions.** A new
+  `platform_admins` table names the people who operate the service, apart
+  from — and never mixed with — the `owner`/`admin`/`agent`/`viewer` roles
+  inside a company. They get their own routes under `/api/platform/*`,
+  closed with 403 to everybody else including company owners, and can open
+  a **support session** on a customer account with a written reason. While
+  one is open, a permanent banner names the account being viewed and offers
+  the way out, and every list in the panel — contacts, inbox, pipelines,
+  broadcasts, settings — shows **that customer's** rows and only theirs,
+  never the operator's own and never the two mixed. The operator can
+  change none of it: reads are granted by row-level security, writes are
+  not, and every save attempted anywhere in the app is refused, on the
+  customer's account and on their own, including uploads. Attachments are
+  the one thing a support session cannot see — the storage policies were
+  deliberately left alone. The start and the end of the
+  session are recorded with actor, account, moment and reason. Sessions
+  last 30 minutes, expire on their own, and pressing "exit" ends one for
+  good: the token cannot be reused afterwards. Nothing is seeded: the
+  first operator is added with SQL against the database — see
+  `docs/security.md`, "Platform operators and support sessions".
+
+> **Migration required:** `supabase/migrations/055_platform_admins.sql`
+> adds `platform_admins` and `impersonation_log`, both readable only by
+> platform administrators and writable from no client at all. The audit
+> table deliberately carries no foreign keys, so the trail survives
+> deleting the account or the user it is about.
+> `supabase/migrations/057_support_session_reads.sql` then extends every
+> **read** policy in the schema with "…or an open support session on this
+> account". No write policy is touched, and with no support session open
+> nothing about who can see what changes.
+
+- **Platform panel.** Operators of the service get their own section at
+  `/platform`, visible only to them: every company on the service with its
+  plan, subscription state, team size, consumption for the cycle, signup
+  date and last activity, and a file per account with consumption against
+  the plan's caps, the billing history from the payment provider, the
+  team, and the state of every WhatsApp number connected to it. From that
+  file an operator can open a support session (the audited impersonation
+  above) or suspend and reactivate the account by hand. Both ask for a
+  reason and both are recorded with who, when, which company and why.
+  - **A manual suspension is not a billing status.** A suspended account
+    behaves exactly like one that has not paid — everyone can read,
+    nobody can write, and incoming WhatsApp messages keep arriving and
+    keep being stored — but it is a separate switch, so paying an invoice
+    (or any event from PayPal) does **not** lift it. The account is told
+    so, and is not sent to the checkout, because the checkout cannot lift
+    it. Only an operator can.
+  - Customer access tokens and payment-provider payloads are never shown
+    in the panel: it answers "what happened to this account", not "show
+    me this customer's credentials".
+
+> **Migration required:** `supabase/migrations/058_platform_panel.sql`
+> adds the manual-hold columns to `subscriptions` (NULL for every existing
+> row, so nothing is suspended by applying it), records suspend and
+> reactivate in the same audit table as impersonation, and adds the
+> function the account list is built from — granted to the service role
+> and to no client role. Nothing about who can see or do what changes for
+> an ordinary account.
 
 ### Fixed
 

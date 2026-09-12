@@ -15,6 +15,7 @@ import {
 import { AttentionBadge } from "@/components/inbox/attention-badge";
 import { useAiAccountStatus } from "@/hooks/use-ai-account-status";
 import { usePresence } from "@/hooks/use-presence";
+import { useAuth } from "@/hooks/use-auth";
 import { presenceLabel, type PresenceStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Profile, Tag } from "@/types";
@@ -63,6 +64,11 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
+  // The account this list is showing. Normally the signed-in user's own;
+  // the customer's during a support session. Every fetch below filters by
+  // it — since migration 057, RLS answers a platform operator with both
+  // companies' rows (see `useAuth`).
+  const { accountId } = useAuth();
   
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
@@ -124,6 +130,7 @@ export function ConversationList({
   });
 
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     let cancelled = false;
 
@@ -131,6 +138,7 @@ export function ConversationList({
       const { data, error } = await supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
+        .eq("account_id", accountId)
         .order("last_message_at", { ascending: false });
 
       if (cancelled) return;
@@ -157,29 +165,36 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken]);
+  }, [resyncToken, accountId]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from("tags").select("*").order("name");
+      const { data } = await supabase
+        .from("tags")
+        .select("*")
+        .eq("account_id", accountId)
+        .order("name");
       if (!cancelled && data) setTags(data as Tag[]);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     let cancelled = false;
     (async () => {
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
+        .eq("account_id", accountId)
         .order("full_name");
       if (cancelled) return;
       if (error) {
@@ -193,7 +208,7 @@ export function ConversationList({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   const profilesByUserId = useMemo(() => {
     const m = new Map<string, Profile>();

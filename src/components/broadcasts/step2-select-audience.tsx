@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,6 +48,12 @@ export function Step2SelectAudience({
   onBack,
 }: Step2Props) {
   const t = useTranslations('Broadcasts.wizard');
+  // The account this wizard is about — the customer's during a support
+  // session. Filtering is explicit because RLS stopped narrowing to one
+  // account for platform operators in migration 057 (see `useAuth`);
+  // the id lists below (`contact_tags`, `contact_custom_values`) inherit
+  // the account through the tag / field ids they are given.
+  const { accountId } = useAuth();
 
   const OPERATOR_OPTIONS = useMemo<{ value: CustomFieldOperator; label: string }[]>(() => [
     { value: 'is', label: t('selectAudience.operatorIs') },
@@ -95,22 +102,28 @@ export function Step2SelectAudience({
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
   useEffect(() => {
+    if (!accountId) return;
     async function fetchTags() {
       setLoadingTags(true);
       try {
         const supabase = createClient();
-        const { data } = await supabase.from('tags').select('*').order('name');
+        const { data } = await supabase
+          .from('tags')
+          .select('*')
+          .eq('account_id', accountId)
+          .order('name');
         setTags(data ?? []);
       } finally {
         setLoadingTags(false);
       }
     }
     fetchTags();
-  }, []);
+  }, [accountId]);
 
   // Lazy-load custom fields only when that audience type is active.
   useEffect(() => {
     if (audience.type !== 'custom_field') return;
+    if (!accountId) return;
     async function fetchFields() {
       setLoadingFields(true);
       try {
@@ -118,6 +131,7 @@ export function Step2SelectAudience({
         const { data } = await supabase
           .from('custom_fields')
           .select('*')
+          .eq('account_id', accountId)
           .order('field_name');
         setCustomFields(data ?? []);
       } finally {
@@ -125,9 +139,10 @@ export function Step2SelectAudience({
       }
     }
     fetchFields();
-  }, [audience.type]);
+  }, [audience.type, accountId]);
 
   const fetchEstimatedCount = useCallback(async () => {
+    if (!accountId) return;
     setLoadingCount(true);
     try {
       const supabase = createClient();
@@ -194,7 +209,8 @@ export function Step2SelectAudience({
         // "All" — fetch the total, then subtract exclude set if any.
         const { count } = await supabase
           .from('contacts')
-          .select('*', { count: 'exact', head: true });
+          .select('*', { count: 'exact', head: true })
+          .eq('account_id', accountId);
         const total = count ?? 0;
         setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
       }
@@ -207,6 +223,7 @@ export function Step2SelectAudience({
     audience.customField,
     audience.csvContacts,
     audience.excludeTagIds,
+    accountId,
   ]);
 
   useEffect(() => {

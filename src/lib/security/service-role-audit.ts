@@ -76,7 +76,21 @@ export interface ScopeViolation {
 
 function filterColumns(entry: QueryLogEntry): string[] {
   return entry.filters
-    .filter((f) => f.op === 'eq' || f.op === 'in' || f.op === 'is')
+    .filter(
+      (f) =>
+        f.op === 'eq' ||
+        f.op === 'in' ||
+        f.op === 'is' ||
+        // Range filters count too. They can never BE an account scope —
+        // nobody writes `account_id < x` — but a waiver has to be able to
+        // name them, or "closes the rows whose deadline has passed" would
+        // have to be waived as the much broader "any update filtered by
+        // ended_at".
+        f.op === 'lt' ||
+        f.op === 'lte' ||
+        f.op === 'gt' ||
+        f.op === 'gte'
+    )
     .map((f) => f.column);
 }
 

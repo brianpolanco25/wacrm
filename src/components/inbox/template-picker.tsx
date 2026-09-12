@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
 import { useTranslations } from "next-intl";
+import { useAuth } from "@/hooks/use-auth";
 
 export interface TemplateSendValues {
   body: string[];
@@ -80,6 +81,9 @@ export function TemplatePicker({
   onSelect,
 }: TemplatePickerProps) {
   const t = useTranslations("Inbox.templatePicker");
+  // The account whose templates to offer — the customer's during a
+  // support session (see `useAuth`).
+  const { accountId } = useAuth();
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,6 +94,7 @@ export function TemplatePicker({
 
   useEffect(() => {
     if (!open) return;
+    if (!accountId) return;
 
     let cancelled = false;
     (async () => {
@@ -107,13 +112,16 @@ export function TemplatePicker({
         return;
       }
 
-      // Scope by RLS (message_templates_select → is_account_member), NOT by
-      // user_id. Templates are account-owned, so filtering on the caller's
-      // user_id hid templates that a teammate created — leaving them unable
-      // to send approved templates in a shared account.
+      // Scope by account, NOT by user_id. Templates are account-owned, so
+      // filtering on the caller's user_id hid templates that a teammate
+      // created — leaving them unable to send approved templates in a
+      // shared account. RLS is no longer enough on its own: migration 057
+      // lets a platform operator read the impersonated account as well,
+      // so the filter has to be explicit.
       const { data, error } = await supabase
         .from("message_templates")
         .select("*")
+        .eq("account_id", accountId)
         .eq("status", "APPROVED")
         .order("created_at", { ascending: false });
 
@@ -130,7 +138,7 @@ export function TemplatePicker({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, accountId]);
 
   function resetSelection() {
     setSelected(null);
