@@ -555,6 +555,46 @@ BEGIN
       'broadcasts.whatsapp_config_id is missing or its FK is not ON DELETE SET NULL (migration 053)';
   END IF;
 
+  -- Registro integrado (054). Las tres columnas son ADD COLUMN IF NOT
+  -- EXISTS, así que un nombre mal escrito aplicaría en verde y dejaría
+  -- la ruta guardando en una columna que no existe.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'whatsapp_config'
+      AND column_name = 'registration_pin'
+  ) THEN
+    RAISE EXCEPTION 'whatsapp_config.registration_pin is missing (migration 054)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'whatsapp_config'
+      AND column_name = 'token_expires_at'
+  ) THEN
+    RAISE EXCEPTION 'whatsapp_config.token_expires_at is missing (migration 054)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'whatsapp_config'
+      AND column_name = 'provisioned_via'
+      AND is_nullable = 'NO'
+      AND column_default LIKE '%manual%'
+  ) THEN
+    RAISE EXCEPTION
+      'whatsapp_config.provisioned_via is missing, nullable or not defaulted to manual (migration 054)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.whatsapp_config'::regclass
+      AND conname = 'whatsapp_config_provisioned_via_check'
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION
+      'whatsapp_config_provisioned_via_check is missing (migration 054)';
+  END IF;
+
   -- El índice único (account_id, contact_id) de la 036 se MANTIENE:
   -- f4.2 decidió no partir conversaciones por número.
   IF to_regclass('public.idx_conversations_account_contact') IS NULL THEN
