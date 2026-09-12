@@ -50,15 +50,59 @@ is included.
   it and restart again — the full runbook is in `docs/security.md`.
   Leaving a retired key in place indefinitely means a leaked old key
   still reads every row it ever wrote.
-- `META_WEBHOOK_VERIFY_TOKEN` is optional and only for platform
-  deployments: one Meta app in front of every tenant. Set it to the same
-  random string you type into the Meta app's webhook settings and the
-  `GET` verification compares against it in constant time instead of
-  decrypting every `whatsapp_config` row. Leave it unset on a
-  self-hosted install where each business brings its own Meta app — the
-  per-tenant lookup then works as before. The value is trimmed, so an
-  empty or whitespace-only one counts as unset. Details in
-  `docs/security.md`.
+- `META_WEBHOOK_VERIFY_TOKEN` is for platform deployments: one Meta app
+  in front of every tenant. Set it to the same random string you type
+  into the Meta app's webhook settings and the `GET` verification
+  compares against it in constant time instead of decrypting every
+  `whatsapp_config` row. Leave it unset on a self-hosted install where
+  each business brings its own Meta app — the per-tenant lookup then
+  works as before. The value is trimmed, so an empty or whitespace-only
+  one counts as unset. Details in `docs/security.md`.
+  **It is optional only in self-hosted mode.** With the integrated
+  sign-up enabled (see below) every row is saved with no per-tenant
+  verify token, so this variable becomes the only thing Meta can verify
+  the webhook against: without it, verification answers 403 forever and
+  no inbound message arrives. Settings → WhatsApp shows a warning when
+  the integrated sign-up is on and this is missing.
+
+## Integrated WhatsApp sign-up (platform mode)
+
+Optional, and off unless configured. With it, a company connects
+WhatsApp from inside Settings → WhatsApp — Meta's own dialog, with **our**
+app — instead of opening a developer account, creating an app, passing
+business verification and pasting tokens. Without it the app is
+self-hosted: the manual form is the only way in, and it keeps working
+exactly as before.
+
+| Variable             | Required         | What it does                                                                                                                                                                                                           |
+| -------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `META_APP_ID`        | in platform mode | Our Meta app id. It already existed for image-header templates; it is now also half of the code-for-token exchange.                                                                                                    |
+| `META_CONFIG_ID`     | in platform mode | The Embedded Signup configuration created in the Meta app panel (App → WhatsApp → Embedded Signup). **This is the switch**: set, the Connect button appears and the route works; unset, the deployment is self-hosted. |
+| `META_APP_SECRET`    | always           | Already required for webhook signature verification; the exchange needs it too. Never leaves the server.                                                                                                               |
+| `META_GRAPH_VERSION` | no               | Defaults to `v21.0`. Lets you move to a newer Graph version without a deploy.                                                                                                                                          |
+
+None of these is a `NEXT_PUBLIC_*`, so none is baked into the image:
+changing one is a container restart, not a rebuild. The browser asks the
+server for the two public ids through `GET /api/whatsapp/embedded-signup`.
+
+Before any of it works there is paperwork that is not code: business
+verification, the app in live mode, and approval of the
+`whatsapp_business_management` and `whatsapp_business_messaging`
+permissions.
+
+**Configure the webhook once, at app level** (Meta app panel → WhatsApp →
+Configuration): URL `https://<your-domain>/api/whatsapp/webhook`, verify
+token = the value of `META_WEBHOOK_VERIFY_TOKEN`, subscribed fields
+`messages` and `message_template_status_update`. Tenants never configure
+a webhook again.
+
+> **Moving an existing self-hosted instance to platform mode:** rows
+> connected the old way hold a token minted by the _customer's_ Meta app,
+> and Meta signs their webhooks with _that_ app's secret — so those
+> deliveries start failing signature verification with 401. That is the
+> correct behaviour, not a bug. Each tenant has to reconnect once through
+> the dialog. `whatsapp_config.provisioned_via` tells the two apart
+> (`manual` vs `embedded_signup`).
 
 ## Platform AI keys (optional)
 
@@ -66,9 +110,9 @@ By default every account brings its own OpenAI / Anthropic key in
 Settings → AI. A deployment that wants to pay for AI on behalf of its
 accounts (the SaaS model) can set a platform-level key per provider:
 
-| Variable | Used when |
-|---|---|
-| `AI_PLATFORM_OPENAI_API_KEY` | an account's provider is `openai` and it has not saved its own key |
+| Variable                        | Used when                                                             |
+| ------------------------------- | --------------------------------------------------------------------- |
+| `AI_PLATFORM_OPENAI_API_KEY`    | an account's provider is `openai` and it has not saved its own key    |
 | `AI_PLATFORM_ANTHROPIC_API_KEY` | an account's provider is `anthropic` and it has not saved its own key |
 
 Resolution order for the **chat** key (drafts, auto-reply, playground,
@@ -106,8 +150,8 @@ these server-only runtime variables; it is safe to run again **against the same
 environment's database** because it keeps the stored provider ids and uses
 stable PayPal request ids:
 
-| Variable               | Purpose                                                              |
-| ---------------------- | -------------------------------------------------------------------- |
+| Variable               | Purpose                                                             |
+| ---------------------- | ------------------------------------------------------------------- |
 | `PAYPAL_CLIENT_ID`     | PayPal REST API client credential                                   |
 | `PAYPAL_CLIENT_SECRET` | PayPal REST API client secret                                       |
 | `PAYPAL_ENV`           | `sandbox` (default) or `live`; create and check sandbox plans first |
@@ -221,7 +265,7 @@ _did_ complete is never applied twice, however often PayPal resends it.
 `NEXT_PUBLIC_SITE_URL` from the sections above. Two operational notes:
 
 - **`BILLING.SUBSCRIPTION.UPDATED` is not optional.** It is the event that
-  applies a plan change made from Settings: the app revises the *same* PayPal
+  applies a plan change made from Settings: the app revises the _same_ PayPal
   subscription (no second subscription, no double charge) and the change lands
   only when that event arrives. If the webhook is not subscribed to it, a
   customer who changes plan keeps being billed and served on the old one.

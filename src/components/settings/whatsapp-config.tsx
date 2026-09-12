@@ -37,6 +37,10 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
+import {
+  EmbeddedSignupButton,
+  useEmbeddedSignup,
+} from './embedded-signup-button';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
 
 const MASKED_TOKEN = '••••••••••••••••';
@@ -59,6 +63,14 @@ export function WhatsAppConfig() {
     profileLoading,
     canEditSettings,
   } = useAuth();
+
+  // Fase 4 §1. ONE flag, answered by the server, governs every
+  // difference between the platform shape of this page and the
+  // self-hosted one: the Connect button, the manual form being folded
+  // away, the webhook verify-token field and the webhook URL card.
+  // Nothing here sniffs the environment on its own.
+  const signup = useEmbeddedSignup();
+  const platformMode = signup?.enabled === true;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -540,6 +552,127 @@ export function WhatsAppConfig() {
     toast.success('Webhook URL copied to clipboard');
   }
 
+  // The manual credential fields. Extracted so the same markup can
+  // render two ways: expanded in self-hosted mode (the only way to
+  // connect a number there) and folded into an "advanced" accordion
+  // in platform mode, where the dialog is the normal path and this is
+  // the recovery one — for a number the dialog cannot reach, or for
+  // support walking somebody through a stuck connection.
+  const manualCredentialFields = (
+    <>
+      <div className="space-y-2">
+        <Label className="text-muted-foreground">{t('numberLabel')}</Label>
+        <Input
+          placeholder={t('numberLabelPlaceholder')}
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+        />
+        <p className="text-muted-foreground text-xs">{t('numberLabelHint')}</p>
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-muted-foreground">{t('phoneNumberId')}</Label>
+        <Input
+          placeholder="e.g. 100234567890123"
+          value={phoneNumberId}
+          onChange={(e) => setPhoneNumberId(e.target.value)}
+          className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-muted-foreground">{t('wabaId')}</Label>
+        <Input
+          placeholder="e.g. 100234567890456"
+          value={wabaId}
+          onChange={(e) => setWabaId(e.target.value)}
+          className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-muted-foreground">{t('accessToken')}</Label>
+        <div className="relative">
+          <Input
+            type={showToken ? 'text' : 'password'}
+            placeholder={t('accessTokenPlaceholder')}
+            value={accessToken}
+            onChange={(e) => {
+              setAccessToken(e.target.value);
+              setTokenEdited(true);
+            }}
+            onFocus={() => {
+              if (accessToken === MASKED_TOKEN) {
+                setAccessToken('');
+                setTokenEdited(true);
+              }
+            }}
+            className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
+          />
+          <button
+            type="button"
+            onClick={() => setShowToken(!showToken)}
+            className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2 transition-colors"
+          >
+            {showToken ? (
+              <EyeOff className="size-4" />
+            ) : (
+              <Eye className="size-4" />
+            )}
+          </button>
+        </div>
+        {config && !tokenEdited && (
+          <p className="text-muted-foreground text-xs">{t('tokenHidden')}</p>
+        )}
+      </div>
+
+      {/* The per-tenant webhook verify token only exists in the
+                  self-hosted shape: one Meta app per business, each
+                  registering its own webhook. In platform mode the
+                  webhook is configured ONCE at app level with
+                  META_WEBHOOK_VERIFY_TOKEN, so the field has nothing to
+                  fill and the row is saved with NULL. */}
+      {!platformMode && (
+        <div className="space-y-2">
+          <Label className="text-muted-foreground">
+            {t('webhookVerifyToken')}
+          </Label>
+          <Input
+            placeholder={t('webhookVerifyTokenPlaceholder')}
+            value={verifyToken}
+            onChange={(e) => setVerifyToken(e.target.value)}
+            className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+          />
+          <p className="text-muted-foreground text-xs">
+            {t('webhookVerifyTokenHint')}
+          </p>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <Label className="text-muted-foreground">
+          {t('twoStepPin')}
+          <span className="text-muted-foreground ml-1">{t('optional')}</span>
+        </Label>
+        <Input
+          type="text"
+          inputMode="numeric"
+          maxLength={6}
+          placeholder={t('pinPlaceholder')}
+          value={pin}
+          onChange={(e) =>
+            setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
+          }
+          className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
+        />
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          <span dangerouslySetInnerHTML={{ __html: t('pinHint') }} />
+        </p>
+      </div>
+    </>
+  );
+
   if (loading) {
     return (
       <section className="animate-in fade-in-50 duration-200">
@@ -559,6 +692,21 @@ export function WhatsAppConfig() {
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
         {/* Main config form */}
         <div className="space-y-6">
+          {/* Operator-facing, not customer-facing: in platform mode every
+            row is written with verify_token = NULL, so without
+            META_WEBHOOK_VERIFY_TOKEN Meta's webhook verification can
+            never succeed and no inbound message will ever arrive. */}
+          {signup?.warning === 'missing_verify_token' && (
+            <Alert className="border-amber-500/40 bg-amber-500/10">
+              <AlertTriangle className="size-4 text-amber-500" />
+              <AlertTitle className="text-foreground">
+                {t('verifyTokenMissingTitle')}
+              </AlertTitle>
+              <AlertDescription className="text-muted-foreground">
+                {t('verifyTokenMissingDesc')}
+              </AlertDescription>
+            </Alert>
+          )}
           {/* Connected numbers (fase 4 §1). One card per whatsapp_config
             row: an account can have several since migration 053. The
             form below edits whichever card is open. */}
@@ -573,15 +721,31 @@ export function WhatsAppConfig() {
                     {t('numbersDesc')}
                   </CardDescription>
                 </div>
-                <Button
-                  size="sm"
-                  onClick={startAdd}
-                  disabled={!canEditSettings}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
-                >
-                  <Plus className="size-4" />
-                  {t('addNumber')}
-                </Button>
+                <div className="flex shrink-0 items-center gap-2">
+                  {signup?.enabled && (
+                    <EmbeddedSignupButton
+                      settings={signup}
+                      onConnected={() => {
+                        if (accountId) return fetchConfig(accountId);
+                      }}
+                      disabled={!canEditSettings}
+                    />
+                  )}
+                  <Button
+                    size="sm"
+                    variant={platformMode ? 'outline' : 'default'}
+                    onClick={startAdd}
+                    disabled={!canEditSettings}
+                    className={
+                      platformMode
+                        ? 'border-border text-muted-foreground hover:text-foreground hover:bg-muted shrink-0'
+                        : 'bg-primary text-primary-foreground hover:bg-primary/90 shrink-0'
+                    }
+                  >
+                    <Plus className="size-4" />
+                    {t('addNumber')}
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -850,161 +1014,69 @@ export function WhatsAppConfig() {
                     {t('apiCredentialsDesc')}
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">
-                      {t('numberLabel')}
-                    </Label>
-                    <Input
-                      placeholder={t('numberLabelPlaceholder')}
-                      value={label}
-                      onChange={(e) => setLabel(e.target.value)}
-                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-                    />
-                    <p className="text-muted-foreground text-xs">
-                      {t('numberLabelHint')}
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">
-                      {t('phoneNumberId')}
-                    </Label>
-                    <Input
-                      placeholder="e.g. 100234567890123"
-                      value={phoneNumberId}
-                      onChange={(e) => setPhoneNumberId(e.target.value)}
-                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">
-                      {t('wabaId')}
-                    </Label>
-                    <Input
-                      placeholder="e.g. 100234567890456"
-                      value={wabaId}
-                      onChange={(e) => setWabaId(e.target.value)}
-                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">
-                      {t('accessToken')}
-                    </Label>
-                    <div className="relative">
-                      <Input
-                        type={showToken ? 'text' : 'password'}
-                        placeholder={t('accessTokenPlaceholder')}
-                        value={accessToken}
-                        onChange={(e) => {
-                          setAccessToken(e.target.value);
-                          setTokenEdited(true);
-                        }}
-                        onFocus={() => {
-                          if (accessToken === MASKED_TOKEN) {
-                            setAccessToken('');
-                            setTokenEdited(true);
-                          }
-                        }}
-                        className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowToken(!showToken)}
-                        className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2 transition-colors"
-                      >
-                        {showToken ? (
-                          <EyeOff className="size-4" />
-                        ) : (
-                          <Eye className="size-4" />
-                        )}
-                      </button>
-                    </div>
-                    {config && !tokenEdited && (
-                      <p className="text-muted-foreground text-xs">
-                        {t('tokenHidden')}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">
-                      {t('webhookVerifyToken')}
-                    </Label>
-                    <Input
-                      placeholder={t('webhookVerifyTokenPlaceholder')}
-                      value={verifyToken}
-                      onChange={(e) => setVerifyToken(e.target.value)}
-                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-                    />
-                    <p className="text-muted-foreground text-xs">
-                      {t('webhookVerifyTokenHint')}
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">
-                      {t('twoStepPin')}
-                      <span className="text-muted-foreground ml-1">
-                        {t('optional')}
-                      </span>
-                    </Label>
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      placeholder={t('pinPlaceholder')}
-                      value={pin}
-                      onChange={(e) =>
-                        setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
-                      }
-                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
-                    />
-                    <p className="text-muted-foreground text-xs leading-relaxed">
-                      <span
-                        dangerouslySetInnerHTML={{ __html: t('pinHint') }}
-                      />
-                    </p>
-                  </div>
-                </CardContent>
+                {platformMode ? (
+                  <CardContent>
+                    <Accordion>
+                      <AccordionItem className="border-border">
+                        <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
+                          {t('manualSetup')}
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <p className="text-muted-foreground mb-4 text-xs">
+                            {t('manualSetupHint')}
+                          </p>
+                          <div className="space-y-4">
+                            {manualCredentialFields}
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
+                  </CardContent>
+                ) : (
+                  <CardContent className="space-y-4">
+                    {manualCredentialFields}
+                  </CardContent>
+                )}
               </Card>
 
-              {/* Webhook URL */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-foreground">
-                    {t('webhookTitle')}
-                  </CardTitle>
-                  <CardDescription className="text-muted-foreground">
-                    {t('webhookDesc')}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">
-                      {t('webhookUrl')}
-                    </Label>
-                    <div className="flex gap-2">
-                      <Input
-                        readOnly
-                        value={webhookUrl}
-                        className="bg-muted border-border text-muted-foreground font-mono text-sm"
-                      />
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={handleCopyWebhookUrl}
-                        className="border-border text-muted-foreground hover:text-foreground hover:bg-muted shrink-0"
-                      >
-                        <Copy className="size-4" />
-                      </Button>
+              {/* Webhook URL. Only the self-hosted install needs it: in
+                platform mode Meta already has this URL, configured once
+                at app level, and showing it invites a customer to paste
+                it into a Meta console they should never have to open. */}
+              {!platformMode && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-foreground">
+                      {t('webhookTitle')}
+                    </CardTitle>
+                    <CardDescription className="text-muted-foreground">
+                      {t('webhookDesc')}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      <Label className="text-muted-foreground">
+                        {t('webhookUrl')}
+                      </Label>
+                      <div className="flex gap-2">
+                        <Input
+                          readOnly
+                          value={webhookUrl}
+                          className="bg-muted border-border text-muted-foreground font-mono text-sm"
+                        />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={handleCopyWebhookUrl}
+                          className="border-border text-muted-foreground hover:text-foreground hover:bg-muted shrink-0"
+                        >
+                          <Copy className="size-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Attachment retention. Only meaningful once a number is
             connected, since it governs what the webhook does with

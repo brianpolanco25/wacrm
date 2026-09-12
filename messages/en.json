@@ -1551,7 +1551,21 @@
       "numberLabel": "Name",
       "numberLabelPlaceholder": "e.g. Sales",
       "numberLabelHint": "Shown in the list and in the sender picker. Optional — falls back to the name Meta has approved.",
-      "closeForm": "Close"
+      "closeForm": "Close",
+      "connectWhatsApp": "Connect WhatsApp",
+      "connecting": "Connecting…",
+      "sdkUnavailable": "Meta dialog unavailable",
+      "signupSuccess": "WhatsApp connected.",
+      "signupCancelled": "Sign-up cancelled at step: {step}. Nothing was saved.",
+      "signupError": "Meta reported an error: {message}",
+      "signupNotCompleted": "The connection was not completed. Nothing was saved.",
+      "signupIncomplete": "Almost there — the dialog closed before Meta handed over the authorisation. Press Connect WhatsApp again.",
+      "signupSaveFailed": "The number could not be saved. Try again.",
+      "signupRegistrationFailed": "Connected, but the number could not be registered: {message}. Add your two-step PIN under manual connection and save.",
+      "manualSetup": "Manual connection (advanced)",
+      "manualSetupHint": "You do not normally need this: use Connect WhatsApp above. Fill this in only to connect a number the dialog cannot reach, or when support asks you to.",
+      "verifyTokenMissingTitle": "Webhook verification token not configured",
+      "verifyTokenMissingDesc": "This deployment offers the integrated sign-up but has no META_WEBHOOK_VERIFY_TOKEN. Meta cannot verify the app-level webhook without it, so no inbound message will arrive. Set it and restart the server."
     },
     "sections": {
       "overview": "Overview",

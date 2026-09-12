@@ -58,6 +58,13 @@ behaviour changes**; nothing is limited by plan yet.
 > `ON DELETE SET NULL`: disconnecting a number never deletes a conversation
 > or a campaign.
 
+> **Migration required:** apply
+> `supabase/migrations/054_embedded_signup.sql` before enabling the
+> integrated WhatsApp sign-up. It adds three nullable/defaulted columns to
+> `whatsapp_config` (`registration_pin`, `token_expires_at`,
+> `provisioned_via`); existing rows are classified as `manual` and nothing
+> is rewritten.
+
 > **Migration required:** apply `supabase/migrations/046_seed_trials.sql` and
 > `supabase/migrations/052_redeem_invitation_billing.sql` **together** before
 > plan limits take effect. 046 gives every existing account — and every account
@@ -68,6 +75,29 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Added
 
+- **Connect WhatsApp without leaving the app.** On a deployment that runs
+  as a platform (one Meta app in front of every company), Settings →
+  WhatsApp gains a **Connect WhatsApp** button: Meta's own dialog opens
+  in place, the customer picks or creates their WhatsApp Business account
+  and number, and the connection is finished — no developer account, no
+  Meta console, no pasting tokens. The number is registered and the
+  business account subscribed to the app automatically, so inbound
+  messages start arriving at that company's inbox.
+  - Closing the dialog half-way saves nothing at all, and going through
+    it again with the same number refreshes it instead of adding a
+    duplicate.
+  - The manual form is still there, folded into **Manual connection
+    (advanced)** — it is the recovery path when the dialog cannot reach a
+    number, and the one support uses.
+  - **Self-hosted installs are unaffected.** Without the platform
+    variables the button does not appear, the webhook verify-token field
+    and the webhook URL stay where they were, and connecting with your
+    own Meta app works exactly as before.
+  - **For operators:** the integrated sign-up needs `META_APP_ID`,
+    `META_CONFIG_ID` and `META_APP_SECRET`, and makes
+    `META_WEBHOOK_VERIFY_TOKEN` effectively required — Settings shows a
+    warning when it is missing. `META_GRAPH_VERSION` is optional. See
+    `docs/docker.md`.
 - **Several WhatsApp numbers per company.** Settings → WhatsApp is now a
   list of connected numbers with an "Add number" button; each card shows
   its name, its connection and registration state, and can be renamed,
@@ -307,6 +337,17 @@ behaviour changes**; nothing is limited by plan yet.
 > the uploader's account). Apply it **only after** this release is live and you have
 > confirmed outbound attachments still arrive — see
 > `docs/security.md`, "Private attachments".
+
+### Security
+
+- **The webhook verification endpoint no longer writes to the database.**
+  Meta's `GET /api/whatsapp/webhook` check used to re-encrypt a legacy
+  verify token on its way past — a database write reachable by anyone who
+  guessed a verify token, with no session. It is gone: the stored token is
+  read and compared, nothing else. Legacy encrypted values keep working
+  (they are read as-is), and `scripts/reencrypt-secrets.ts` remains the
+  supported way to rewrite them. The lookup also skips rows without a
+  verify token and is bounded, so the check no longer scans the table.
 
 ### Fixed
 

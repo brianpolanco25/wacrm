@@ -42,7 +42,18 @@ const SECURITY_HEADERS = [
       // Next.js needs 'unsafe-inline' for its inline hydration script
       // and 'unsafe-eval' in dev + some production optimisations.
       // Nonce-based CSP is a later project.
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      //
+      // connect.facebook.net is Meta's JS SDK, loaded by the Embedded
+      // Signup button (fase 4 §1). Added UNCONDITIONALLY rather than
+      // gated on META_CONFIG_ID: `headers()` is serialised into the
+      // route manifest during `next build`, so a condition on a runtime
+      // environment variable would be frozen at build time and read
+      // wrong in the published Docker image. Allowing it costs nothing
+      // — this directive already carries 'unsafe-inline' and
+      // 'unsafe-eval' — and without it the console fills with
+      // violations today and the dialog breaks the day the policy is
+      // flipped from Report-Only to enforce.
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://connect.facebook.net",
       // Tailwind + inline style attributes on lots of components.
       "style-src 'self' 'unsafe-inline'",
       // Supabase public-bucket avatars, contact avatars (arbitrary
@@ -54,8 +65,13 @@ const SECURITY_HEADERS = [
       "media-src 'self' blob: https://*.supabase.co",
       "font-src 'self' data:",
       // Supabase REST + realtime (WSS). All Meta API calls happen
-      // server-side, so graph.facebook.com does not belong here.
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+      // server-side, so graph.facebook.com does not belong here —
+      // *.facebook.com does, because the JS SDK talks to it from the
+      // browser for the duration of the Embedded Signup dialog.
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.facebook.com",
+      // The SDK plants a hidden cross-domain arbitration iframe, and
+      // the signup dialog itself is Meta-hosted.
+      "frame-src https://*.facebook.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
