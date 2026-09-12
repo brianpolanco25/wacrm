@@ -7,6 +7,7 @@ import {
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { hashApiKey } from '@/lib/api-keys/keys';
 import { API_SCOPES } from '@/lib/api-keys/scopes';
+import { currentPeriodStart } from '@/lib/billing/entitlements';
 
 // ============================================================
 // Tenant-isolation suite.
@@ -243,6 +244,7 @@ import * as waBroadcast from '@/app/api/whatsapp/broadcast/route';
 import * as waBroadcastResume from '@/app/api/whatsapp/broadcast/[id]/resume/route';
 import * as waWebhook from '@/app/api/whatsapp/webhook/route';
 import * as waConfig from '@/app/api/whatsapp/config/route';
+import * as waConfigById from '@/app/api/whatsapp/config/[id]/route';
 import * as waTemplateById from '@/app/api/whatsapp/templates/[id]/route';
 import * as waTemplateSubmit from '@/app/api/whatsapp/templates/submit/route';
 import * as automationsCron from '@/app/api/automations/cron/route';
@@ -272,6 +274,8 @@ import * as platformImpersonateStop from '@/app/api/platform/impersonate/stop/ro
 
 const PAST = '2026-01-01T00:00:00.000Z';
 const OLDER = '2025-12-31T00:00:00.000Z';
+/** Far enough out that the seeded subscriptions are never mid-lapse. */
+const FUTURE = '2099-01-01T00:00:00.000Z';
 
 /**
  * Two parallel accounts. B is seeded first in every table on purpose,
@@ -300,6 +304,11 @@ function seed(): FakeDatabase {
         verify_token: encrypt(`verify-${tag}`),
         status: 'connected',
         mirror_inbound_media: false,
+        // Fase 4 §1: each account's only number is its default. Without
+        // it the resolver falls to step 4 (oldest survivor), and B's row
+        // is seeded first — so a missing account filter would land on B.
+        is_default: true,
+        created_at: created,
       },
       contact: {
         id: `contact-${tag}`,
@@ -316,6 +325,7 @@ function seed(): FakeDatabase {
         id: `conv-${tag}`,
         account_id: acct,
         user_id: user,
+        whatsapp_config_id: `cfg-${tag}`,
         contact_id: `contact-${tag}`,
         status: 'open',
         unread_count: 0,
@@ -507,6 +517,37 @@ function seed(): FakeDatabase {
         total_tokens: 2,
         created_at: new Date().toISOString(),
       },
+      // Fase 3: both accounts are on the same plan, ACTIVE, with room
+      // to spare — the enforcement layer (`assertWritable`,
+      // `assertPlanFeature`, `assertQuota`) now runs on nearly every
+      // route here, and an account without these rows 500s before the
+      // leak it is being tested for could ever happen. The point of the
+      // suite is unchanged: what is audited is whether the billing
+      // queries carry their own account scope.
+      subscription: {
+        id: `sub-${tag}`,
+        account_id: acct,
+        plan_id: 'pro',
+        status: 'active',
+        provider: 'paypal',
+        provider_subscription_id: `paypal-${tag}`,
+        cycle: 'month',
+        trial_ends_at: null,
+        grace_until: null,
+        current_period_end: FUTURE,
+        cancel_at_period_end: false,
+        last_event_at: null,
+        created_at: created,
+        updated_at: created,
+      },
+      usageCounter: {
+        id: `counter-${tag}`,
+        account_id: acct,
+        metric: 'messages_out',
+        period_start: currentPeriodStart(),
+        value: 1,
+        updated_at: created,
+      },
     };
   };
 
@@ -539,6 +580,37 @@ function seed(): FakeDatabase {
       ai_knowledge_documents: both('knowledge'),
       ai_usage_log: both('usage'),
       message_templates: both('template'),
+      subscriptions: both('subscription'),
+      usage_counters: both('usageCounter'),
+      // The price list is a global catalogue with no account_id: one
+      // row shared by every tenant, seeded by migration 041.
+      plans: [
+        {
+          id: 'pro',
+          name: 'Pro',
+          price_usd_month: 79,
+          price_usd_year: 790,
+          limits: {
+            operators: 10,
+            contacts: 10000,
+            messages_out: 15000,
+            ai_replies: 3000,
+            broadcast_recipients: 10000,
+            knowledge_documents: 50,
+            numbers: 1,
+            retention_months: 24,
+          },
+          features: [
+            'ai_autoreply',
+            'ai_knowledge',
+            'auto_assign',
+            'api',
+            'webhooks',
+          ],
+          is_public: true,
+          sort_order: 2,
+        },
+      ],
       tags: [],
       contact_tags: [],
       // Migration 055. Seeded empty: nobody operates the platform until a
@@ -591,6 +663,36 @@ function seed(): FakeDatabase {
         return null;
       },
       claim_ai_reply_slot: () => true,
+      // Migration 041: upsert keyed by (account_id, metric, period).
+      // Modelled per account so a counter written against the wrong
+      // tenant is visible in the snapshot of B.
+      increment_usage: (args, db) => {
+        const accountId = args.p_account_id as string;
+        const metric = args.p_metric as string;
+        const period = currentPeriodStart();
+        const row = db
+          .rows('usage_counters')
+          .find(
+            (c) =>
+              c.account_id === accountId &&
+              c.metric === metric &&
+              c.period_start === period
+          );
+        const delta = Number(args.p_delta ?? 1);
+        if (row) {
+          row.value = Number(row.value ?? 0) + delta;
+          return row.value;
+        }
+        db.rows('usage_counters').push({
+          id: db.nextId('usage_counters'),
+          account_id: accountId,
+          metric,
+          period_start: period,
+          value: delta,
+          updated_at: new Date().toISOString(),
+        });
+        return delta;
+      },
     }
   );
 }
@@ -826,6 +928,21 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
       'on rows that were already past `expires_at`, reads nothing and ' +
       'moves no customer data. The OTHER update on this table — closing ' +
       'one named session — filters by `account_id` and is not waived.',
+  },
+  {
+    table: 'plans',
+    op: 'select',
+    by: ['id'],
+    reason:
+      'The price list, not tenant data: `plans` has NO account_id column ' +
+      '(migration 041 makes it a global catalogue keyed by a text id — ' +
+      "'inicio' | 'pro' | 'negocio') and every account reads the same three " +
+      'rows. There is no filter to add here; the tenancy of the billing ' +
+      'layer lives one query earlier, in the `subscriptions` read that ' +
+      "yields this plan id, and that one does carry .eq('account_id', …) — " +
+      'audited, unwaived, on every route below. The only thing this read ' +
+      'can leak is a public price. Waived by id so an unfiltered ' +
+      '`select * from plans` on a covered route would still be reported.',
   },
 ];
 
@@ -1800,7 +1917,7 @@ describe('/api/quick-replies (service-role writes)', () => {
 
 describe('/api/whatsapp/config', () => {
   it("GET verifies A's number with A's token, never B's", async () => {
-    const res = await waConfig.GET();
+    const res = await waConfig.GET(req('GET', '/api/whatsapp/config'));
     const body = await res.json();
     expect(body.connected).toBe(true);
     expect(h.meta.sends).toEqual([
@@ -1823,6 +1940,69 @@ describe('/api/whatsapp/config', () => {
     expect(res.status).toBe(409);
     expect(h.meta.sends).toEqual([]);
     expectBUnchanged(before);
+  });
+
+  // Fase 4 §1: the per-number route. Its id comes straight out of the
+  // URL, so it is the easiest place in the codebase to read or write
+  // another tenant's row by guessing a UUID.
+  it("GET lists only A's numbers", async () => {
+    const res = await waConfig.GET(req('GET', '/api/whatsapp/config'));
+    const body = await res.json();
+    expect(body.numbers.map((n: { id: string }) => n.id)).toEqual(['cfg-a']);
+    expectNoBIds(body);
+  });
+
+  it("PATCH on B's number → 404 and B is untouched", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waConfigById.PATCH(
+      req('PATCH', '/api/whatsapp/config/cfg-b', { label: 'stolen' }),
+      params({ id: 'cfg-b' })
+    );
+    expect(res.status).toBe(404);
+    expectBUnchanged(before);
+  });
+
+  it("DELETE on B's number → 404 and B still has it", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waConfigById.DELETE(
+      req('DELETE', '/api/whatsapp/config/cfg-b'),
+      params({ id: 'cfg-b' })
+    );
+    expect(res.status).toBe(404);
+    expectBUnchanged(before);
+  });
+
+  it("PATCH renames A's own number and leaves B's default alone", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waConfigById.PATCH(
+      req('PATCH', '/api/whatsapp/config/cfg-a', {
+        label: 'Sales',
+        is_default: true,
+      }),
+      params({ id: 'cfg-a' })
+    );
+    expect(res.status).toBe(200);
+    const a = h.db.rows('whatsapp_config').find((r) => r.id === 'cfg-a');
+    expect(a?.label).toBe('Sales');
+    expect(a?.is_default).toBe(true);
+    // The "clear the old default" half of the promotion is scoped by
+    // account: B's number must still be B's default.
+    expectBUnchanged(before);
+  });
+
+  it("DELETE ?id= on the collection route only removes A's row", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waConfig.DELETE(
+      req('DELETE', '/api/whatsapp/config?id=cfg-b')
+    );
+    expect(res.status).toBe(404);
+    expectBUnchanged(before);
+  });
+
+  it('DELETE without an id refuses rather than wiping every number', async () => {
+    const res = await waConfig.DELETE(req('DELETE', '/api/whatsapp/config'));
+    expect(res.status).toBe(400);
+    expect(h.db.rows('whatsapp_config')).toHaveLength(2);
   });
 });
 

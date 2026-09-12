@@ -16,6 +16,7 @@
 
 import { NextResponse } from 'next/server';
 import type { RateLimitResult } from '@/lib/rate-limit';
+import { billingErrorPayload } from '@/lib/billing/enforce';
 
 export type ApiErrorCode =
   | 'unauthorized' // missing / malformed / unknown / revoked / expired key
@@ -23,6 +24,10 @@ export type ApiErrorCode =
   | 'rate_limited' // per-key budget exhausted
   | 'bad_request' // malformed input
   | 'not_found'
+  | 'account_read_only' // subscription suspended/expired: reads only
+  | 'feature_unavailable' // the plan does not include this endpoint
+  | 'quota_exceeded' // monthly allowance spent
+  | 'plan_limit_reached' // a stock limit (seats, numbers, documents) is full
   | 'internal';
 
 /**
@@ -119,6 +124,14 @@ export function fail(
  * never leak internal error text onto the public wire.
  */
 export function toApiErrorResponse(err: unknown): NextResponse {
+  // Billing (fase 3 §4/§5). The envelope stays `{ error: { code,
+  // message } }`; the extra fields ride alongside so an integrator can
+  // branch on `code` and read the metric/limit without parsing prose.
+  const billing = billingErrorPayload(err);
+  if (billing) {
+    const { status, error: message, code, ...rest } = billing;
+    return NextResponse.json({ error: { code, message, ...rest } }, { status });
+  }
   if (err instanceof ApiError) {
     return NextResponse.json(
       { error: { code: err.code, message: err.message } },

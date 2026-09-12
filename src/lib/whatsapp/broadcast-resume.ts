@@ -18,8 +18,16 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { BroadcastError, type BroadcastPlan } from '@/lib/whatsapp/broadcast-core';
-import { decrypt } from '@/lib/whatsapp/encryption';
+import {
+  BroadcastError,
+  toBroadcastError,
+  type BroadcastPlan,
+} from '@/lib/whatsapp/broadcast-core';
+import {
+  resolveWhatsAppConfig,
+  WhatsAppConfigError,
+  type WhatsAppConfigRow,
+} from '@/lib/whatsapp/resolve-config';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
@@ -146,7 +154,7 @@ export async function planBroadcastResume(
 ): Promise<ResumePlan> {
   const { data: broadcast, error: bcError } = await db
     .from('broadcasts')
-    .select('id, template_name, template_language')
+    .select('id, template_name, template_language, whatsapp_config_id')
     .eq('id', broadcastId)
     .eq('account_id', accountId)
     .maybeSingle();
@@ -166,7 +174,10 @@ export async function planBroadcastResume(
     .order('created_at', { ascending: true });
 
   if (recError) {
-    console.error('[broadcast-resume] recipient load failed:', recError.message);
+    console.error(
+      '[broadcast-resume] recipient load failed:',
+      recError.message
+    );
     throw new BroadcastError('internal', 'Failed to load recipients', 500);
   }
 
@@ -205,17 +216,39 @@ export async function planBroadcastResume(
     );
   }
 
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-  if (configError || !config) {
-    throw new BroadcastError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+  // The number this campaign STARTED on, never the account default
+  // (fase 4 §1). Resuming through a different number restarts the 24-hour
+  // window for every recipient and splits the campaign's quality rating
+  // across two numbers — the customer sees a stranger finish a
+  // conversation someone else began.
+  //
+  // `whatsapp_config_id` is NULL for campaigns created before migration
+  // 053 (the migration backfills them to the account's only number) and
+  // whenever the number was disconnected afterwards — the FK is
+  // ON DELETE SET NULL. Both fall through to the default; the disconnect
+  // case is reported by name below when there is nothing to fall back to.
+  let config: WhatsAppConfigRow;
+  let accessToken: string;
+  try {
+    const resolved = await resolveWhatsAppConfig(db, {
+      accountId,
+      configId: broadcast.whatsapp_config_id ?? null,
+      withToken: true,
+    });
+    config = resolved.row;
+    accessToken = resolved.accessToken;
+  } catch (err) {
+    if (
+      err instanceof WhatsAppConfigError &&
+      err.code === 'whatsapp_number_not_found'
+    ) {
+      throw new BroadcastError(
+        'whatsapp_not_configured',
+        'The WhatsApp number this broadcast was sent from is no longer connected. Reconnect it, or start a new broadcast from another number.',
+        400
+      );
+    }
+    throw toBroadcastError(err);
   }
 
   const resolvedTemplate = await resolveTemplateRow(
@@ -234,11 +267,14 @@ export async function planBroadcastResume(
 
   const plan: BroadcastPlan = {
     broadcastId,
+    // The account that owns the campaign — resolved by the query above,
+    // never taken from the request. It scopes the fan-out (fase 2) and
+    // `deliverBroadcast` bills it (fase 3).
     accountId,
     templateName: broadcast.template_name,
     templateLanguage: resolvedTemplate.language,
     phoneNumberId: config.phone_number_id,
-    accessToken: decrypt(config.access_token),
+    accessToken,
     templateRow: resolvedTemplate.row,
     planned: slice.map((row) => ({
       recipientRowId: row.id,

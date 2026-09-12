@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   accounts: new Map<string, { id: string; name: string }>(),
   sessionQueries: [] as { table: string; eq: [string, unknown][] }[],
   adminQueries: [] as { table: string; eq: [string, unknown][] }[],
+  /** Accounts the fase 3 billing gate was asked about, in order. */
+  writableChecks: [] as string[],
 }));
 
 function builderFor(
@@ -76,6 +78,19 @@ vi.mock('./admin-client', () => ({
   }),
 }));
 
+// Fase 3 §5 hung a billing gate off `requireRole` for anything above
+// `viewer`. It is stubbed here on purpose: this file is about WHOSE
+// account the context resolves to, not about the dunning ladder (that is
+// `account.test.ts`). The account it gets asked about is recorded, so the
+// merge of the two features cannot quietly start billing the wrong
+// company.
+vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
+  assertWritable: async (accountId: string) => {
+    h.writableChecks.push(accountId);
+  },
+}));
+
 vi.mock('./impersonation', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./impersonation')>()),
   resolveSupportSession: async (userId: string) => {
@@ -97,6 +112,7 @@ beforeEach(() => {
   h.resolveCalls = [];
   h.sessionQueries = [];
   h.adminQueries = [];
+  h.writableChecks = [];
   h.profiles = new Map([
     [OPERATOR, { account_id: OWN_ACCOUNT, account_role: 'owner' }],
   ]);
@@ -201,6 +217,10 @@ describe('requireRole inside a support session', () => {
         status: 403,
         message: expect.stringContaining('read-only'),
       });
+      // And it is refused for being a support session, before the fase 3
+      // billing gate is ever consulted: whether the CUSTOMER'S bill is
+      // paid has nothing to do with whether an operator may write.
+      expect(h.writableChecks).toEqual([]);
     }
   );
 
@@ -215,5 +235,8 @@ describe('requireRole inside a support session', () => {
     expect(ctx.accountId).toBe(OWN_ACCOUNT);
     expect(ctx.role).toBe('owner');
     expect(ctx.impersonation).toBeNull();
+    // Back to an ordinary request, the fase 3 gate runs again — and about
+    // the operator's OWN account, never the one they were looking at.
+    expect(h.writableChecks).toEqual([OWN_ACCOUNT]);
   });
 });

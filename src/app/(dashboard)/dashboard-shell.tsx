@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { AccountAccessAlert } from "@/components/layout/account-access-alert";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
+import { BillingStatusAlert } from "@/components/billing/billing-status-alert";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
 import type { SupportBanner } from "@/lib/auth/support-view";
 
@@ -68,6 +69,10 @@ function DashboardShellInner({
             {/* Above every page: writes are being rejected and here's why.
                 Renders nothing unless the account/role failed to resolve. */}
             <AccountAccessAlert />
+            {/* Fase 3 §5: which rung of the dunning ladder this account is
+                on, and a button to settle it. Renders nothing while the
+                subscription is healthy. */}
+            <BillingStatusAlert />
             {children}
           </main>
         </div>

@@ -22,7 +22,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
-import { SendMessageError } from '@/lib/whatsapp/send-message';
+import {
+  SendMessageError,
+  toSendMessageError,
+} from '@/lib/whatsapp/send-message';
+import {
+  resolveWhatsAppConfig,
+  type WhatsAppConfigRow,
+} from '@/lib/whatsapp/resolve-config';
 import { resolveAuditUserId, ContactError } from '@/lib/api/v1/contacts';
 
 export interface ResolvedConversation {
@@ -42,7 +49,10 @@ export async function resolveConversationByPhone(
   db: SupabaseClient,
   accountId: string,
   phone: string,
-  name?: string | null
+  name?: string | null,
+  /** Explicit sender number (the public API's `from`), already
+   *  translated to our row id. Null = the account default. */
+  configId?: string | null
 ): Promise<ResolvedConversation> {
   const sanitized = sanitizePhoneForMeta(phone);
   if (!isValidE164(sanitized)) {
@@ -54,18 +64,15 @@ export async function resolveConversationByPhone(
   }
 
   // Fail fast (and create nothing) when the account has no WhatsApp
-  // connected — the same error the send would raise anyway.
-  const { data: config } = await db
-    .from('whatsapp_config')
-    .select('id')
-    .eq('account_id', accountId)
-    .maybeSingle();
-  if (!config) {
-    throw new SendMessageError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+  // connected — the same error the send would raise anyway. Post-053
+  // an account can have several numbers, so this resolves the one this
+  // send will actually go through (explicit `from`, else the default)
+  // and seals it onto the conversation it may be about to create.
+  let config: WhatsAppConfigRow;
+  try {
+    config = (await resolveWhatsAppConfig(db, { accountId, configId })).row;
+  } catch (err) {
+    throw toSendMessageError(err);
   }
 
   // Audit user for created rows = the single account-wide default used
@@ -146,7 +153,8 @@ export async function resolveConversationByPhone(
     db,
     accountId,
     contactId,
-    ownerUserId
+    ownerUserId,
+    config.id
   );
 
   return { conversationId, contactId, contactCreated };
@@ -162,7 +170,8 @@ async function findOrCreateConversationRow(
   db: SupabaseClient,
   accountId: string,
   contactId: string,
-  ownerUserId: string
+  ownerUserId: string,
+  whatsAppConfigId: string
 ): Promise<string> {
   const { data: existing, error: findErr } = await db
     .from('conversations')
@@ -174,7 +183,11 @@ async function findOrCreateConversationRow(
 
   if (findErr) {
     console.error('[resolve-conversation] conversation lookup error:', findErr);
-    throw new SendMessageError('db_error', 'Failed to resolve conversation', 500);
+    throw new SendMessageError(
+      'db_error',
+      'Failed to resolve conversation',
+      500
+    );
   }
 
   if (existing && existing.length > 0) {
@@ -187,6 +200,10 @@ async function findOrCreateConversationRow(
       account_id: accountId,
       user_id: ownerUserId,
       contact_id: contactId,
+      // Seal the sender number onto the thread (migration 053) so every
+      // later reply — inbox, flow, automation — goes out through the
+      // same one instead of falling back to the account default.
+      whatsapp_config_id: whatsAppConfigId,
     })
     .select('id')
     .single();
@@ -205,7 +222,11 @@ async function findOrCreateConversationRow(
       }
     }
     console.error('[resolve-conversation] conversation create error:', convErr);
-    throw new SendMessageError('db_error', 'Failed to create conversation', 500);
+    throw new SendMessageError(
+      'db_error',
+      'Failed to create conversation',
+      500
+    );
   }
 
   return newConv.id;
