@@ -79,7 +79,16 @@ exactly as before.
 | `META_APP_ID`        | in platform mode | Our Meta app id. It already existed for image-header templates; it is now also half of the code-for-token exchange.                                                                                                    |
 | `META_CONFIG_ID`     | in platform mode | The Embedded Signup configuration created in the Meta app panel (App → WhatsApp → Embedded Signup). **This is the switch**: set, the Connect button appears and the route works; unset, the deployment is self-hosted. |
 | `META_APP_SECRET`    | always           | Already required for webhook signature verification; the exchange needs it too. Never leaves the server.                                                                                                               |
-| `META_GRAPH_VERSION` | no               | Defaults to `v21.0`. Lets you move to a newer Graph version without a deploy.                                                                                                                                          |
+| `META_GRAPH_VERSION` | no               | Defaults to `v21.0`, the same version the rest of the Graph calls use (`META_API_VERSION`). Lets you move the dialog and the exchange to a newer Graph version without a deploy — see the note below.                  |
+
+> **Graph version:** Meta's Embedded Signup guide recommends `v25.0` in
+> `FB.init`. The default here stays at `v21.0` on purpose, because that
+> is the version every other Graph call in the app uses
+> (`META_API_VERSION` in `src/lib/whatsapp/meta-api.ts`), and a single
+> deployment straddling two versions is hard to debug. Setting
+> `META_GRAPH_VERSION=v25.0` moves only the dialog and the code
+> exchange, which is the supported way to follow Meta's recommendation
+> without re-dating sends, media uploads and template sync.
 
 None of these is a `NEXT_PUBLIC_*`, so none is baked into the image:
 changing one is a container restart, not a rebuild. The browser asks the
@@ -89,6 +98,13 @@ Before any of it works there is paperwork that is not code: business
 verification, the app in live mode, and approval of the
 `whatsapp_business_management` and `whatsapp_business_messaging`
 permissions.
+
+**Allow your domain in the app panel**, under Facebook Login for
+Business → Settings → Client OAuth settings: the domain you serve wacrm
+from has to be listed in both **Allowed Domains for the JavaScript SDK**
+and **Valid OAuth redirect URIs**, and only `https://` domains are
+accepted. Without it the dialog opens, the customer finishes it, and
+nothing comes back to the page that opened it — no error, no row.
 
 **Configure the webhook once, at app level** (Meta app panel → WhatsApp →
 Configuration): URL `https://<your-domain>/api/whatsapp/webhook`, verify

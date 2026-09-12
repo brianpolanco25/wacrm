@@ -3,7 +3,11 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { NextIntlClientProvider } from 'next-intl';
 
-import { EmbeddedSignupButton } from './embedded-signup-button';
+import {
+  EmbeddedSignupButton,
+  buildFbLoginOptions,
+  isMetaSignupOrigin,
+} from './embedded-signup-button';
 import en from '../../../messages/en.json';
 
 /**
@@ -65,5 +69,53 @@ describe('EmbeddedSignupButton', () => {
     // Disabled until the SDK has loaded: clicking before `FB` exists
     // would do nothing and look broken.
     expect(html).toContain('disabled');
+  });
+});
+
+/**
+ * Fase 4 §1 — the two halves of the dialog contract that were realigned
+ * with Meta's live documentation (Embedded Signup v4). See
+ * `progress/meta_embedded-signup-verificacion.md`.
+ */
+describe('buildFbLoginOptions', () => {
+  it('passes only `setup` in extras, as Embedded Signup v4 documents', () => {
+    const options = buildFbLoginOptions('cfgid-456');
+    // `sessionInfoVersion` and `featureType` are from earlier versions
+    // of the flow and no longer exist: sending them is at best noise.
+    expect(options.extras).toEqual({ setup: {} });
+    expect(Object.keys(options.extras as object)).toEqual(['setup']);
+  });
+
+  it('asks for a code, overriding the SDK default', () => {
+    const options = buildFbLoginOptions('cfgid-456');
+    expect(options.config_id).toBe('cfgid-456');
+    expect(options.response_type).toBe('code');
+    // Without this Meta returns a user access token and there is no
+    // code for the server to exchange.
+    expect(options.override_default_response_type).toBe(true);
+  });
+});
+
+describe('isMetaSignupOrigin', () => {
+  it('accepts the hosts Meta serves the dialog from', () => {
+    expect(isMetaSignupOrigin('https://www.facebook.com')).toBe(true);
+    expect(isMetaSignupOrigin('https://web.facebook.com')).toBe(true);
+    // Not in the old two-origin list, and a real Meta host: this is the
+    // case a closed list would have dropped in silence.
+    expect(isMetaSignupOrigin('https://business.facebook.com')).toBe(true);
+    expect(isMetaSignupOrigin('https://facebook.com')).toBe(true);
+  });
+
+  it('rejects a look-alike domain that merely ends in facebook.com', () => {
+    // The trap in Meta's own `origin.endsWith('facebook.com')` snippet.
+    expect(isMetaSignupOrigin('https://facebook.com.evil.example')).toBe(false);
+    expect(isMetaSignupOrigin('https://notfacebook.com')).toBe(false);
+  });
+
+  it('rejects plain HTTP and anything that is not a URL', () => {
+    expect(isMetaSignupOrigin('http://www.facebook.com')).toBe(false);
+    // `postMessage` from a sandboxed frame reports the string "null".
+    expect(isMetaSignupOrigin('null')).toBe(false);
+    expect(isMetaSignupOrigin('')).toBe(false);
   });
 });

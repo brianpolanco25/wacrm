@@ -17,7 +17,18 @@
 // It is never returned, logged or sent to the client.
 // ============================================================
 
-/** Graph API version used by the code exchange and the JS SDK. */
+/**
+ * Graph API version used by the code exchange and the JS SDK.
+ *
+ * Deliberately the same value as `META_API_VERSION` in `meta-api.ts`:
+ * one deployment talking to two Graph versions at once is a debugging
+ * trap. Meta's Embedded Signup guide recommends `v25.0` in `FB.init`;
+ * moving there is a one-line change here *and* in `meta-api.ts` (plus
+ * `templates/sync`), and it re-dates every send, media and template
+ * call — out of scope for f4.1. An operator who needs it today sets
+ * `META_GRAPH_VERSION=v25.0`, which moves the dialog and the exchange
+ * without touching the rest. See `docs/docker.md`.
+ */
 export const DEFAULT_GRAPH_VERSION = 'v21.0';
 
 export interface PlatformSignupConfig {

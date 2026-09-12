@@ -96,8 +96,10 @@ behaviour changes**; nothing is limited by plan yet.
   - **For operators:** the integrated sign-up needs `META_APP_ID`,
     `META_CONFIG_ID` and `META_APP_SECRET`, and makes
     `META_WEBHOOK_VERIFY_TOKEN` effectively required — Settings shows a
-    warning when it is missing. `META_GRAPH_VERSION` is optional. See
-    `docs/docker.md`.
+    warning when it is missing, and your HTTPS domain must be listed in
+    the app's Facebook Login for Business → Client OAuth settings.
+    `META_GRAPH_VERSION` is optional and defaults to the same Graph
+    version as the rest of the app. See `docs/docker.md`.
 - **Several WhatsApp numbers per company.** Settings → WhatsApp is now a
   list of connected numbers with an "Add number" button; each card shows
   its name, its connection and registration state, and can be renamed,

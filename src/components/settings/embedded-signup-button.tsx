@@ -108,8 +108,53 @@ interface Props {
   disabled?: boolean;
 }
 
-/** Origins Meta's dialog posts its session events from. */
-const META_ORIGINS = ['https://www.facebook.com', 'https://web.facebook.com'];
+/**
+ * Is this `message` event coming from Meta's dialog?
+ *
+ * Meta's own implementation guide checks `event.origin.endsWith(
+ * 'facebook.com')`, which is deliberately broad: the dialog is served
+ * from several hosts (`www.`, `web.`, `business.`, locale variants) and
+ * a closed list of two origins would drop a session event in silence
+ * the day Meta moves it. Copying `endsWith` verbatim would also accept
+ * `https://facebook.com.evil.example`, so the host is parsed instead:
+ * exactly `facebook.com` or a real subdomain of it, over HTTPS only.
+ *
+ * Exported for the test — `openDialog` and the listener are internal.
+ */
+export function isMetaSignupOrigin(origin: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    // `postMessage` from a sandboxed iframe reports the literal
+    // string "null"; it is not ours either way.
+    return false;
+  }
+  if (url.protocol !== 'https:') return false;
+  return (
+    url.hostname === 'facebook.com' || url.hostname.endsWith('.facebook.com')
+  );
+}
+
+/**
+ * The options `FB.login` is called with.
+ *
+ * `extras` carries **only** `setup`. Embedded Signup v4 documents no
+ * other key: `sessionInfoVersion` and `featureType` belonged to earlier
+ * versions of the flow and were dropped
+ * (`progress/meta_embedded-signup-verificacion.md`). Exported so the
+ * test can pin the shape without a browser.
+ */
+export function buildFbLoginOptions(configId: string): Record<string, unknown> {
+  return {
+    config_id: configId,
+    response_type: 'code',
+    // Without this Meta hands back a user access token instead of the
+    // code, and there is nothing to exchange on the server.
+    override_default_response_type: true,
+    extras: { setup: {} },
+  };
+}
 
 export function EmbeddedSignupButton({
   settings,
@@ -133,7 +178,7 @@ export function EmbeddedSignupButton({
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
-      if (!META_ORIGINS.includes(event.origin)) return;
+      if (!isMetaSignupOrigin(event.origin)) return;
       let payload: unknown;
       try {
         // The SDK also posts non-JSON housekeeping messages through the
@@ -239,18 +284,10 @@ export function EmbeddedSignupButton({
     cancelRef.current = null;
     errorRef.current = null;
 
-    window.FB.login((response) => void finish(response), {
-      config_id: settings.config_id,
-      response_type: 'code',
-      // Without this Meta hands back a user access token instead of the
-      // code, and there is nothing to exchange on the server.
-      override_default_response_type: true,
-      extras: {
-        setup: {},
-        featureType: '',
-        sessionInfoVersion: '3',
-      },
-    });
+    window.FB.login(
+      (response) => void finish(response),
+      buildFbLoginOptions(settings.config_id)
+    );
   }
 
   if (!settings.enabled || !settings.app_id || !settings.config_id) return null;
