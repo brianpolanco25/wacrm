@@ -107,14 +107,25 @@ export function DealForm({
   }, [open, deal, defaultStageId, stages, defaultCurrency]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Load supporting data once the sheet is open
+  // Load supporting data once the sheet is open, filtered by the account
+  // being shown. Migration 057 widened the SELECT policies for a platform
+  // operator with an open support session, so an unfiltered read offers
+  // the operator's own contacts and colleagues on the customer's deal.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !accountId) return;
     let cancelled = false;
     (async () => {
       const [c, p] = await Promise.all([
-        supabase.from("contacts").select("*").order("name"),
-        supabase.from("profiles").select("*").order("full_name"),
+        supabase
+          .from("contacts")
+          .select("*")
+          .eq("account_id", accountId)
+          .order("name"),
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("account_id", accountId)
+          .order("full_name"),
       ]);
       if (cancelled) return;
       setContacts((c.data ?? []) as Contact[]);
@@ -123,7 +134,7 @@ export function DealForm({
     return () => {
       cancelled = true;
     };
-  }, [open, supabase]);
+  }, [open, supabase, accountId]);
 
   // Fetch linked conversation for the selected contact (newest open one).
   // Clearing on no-selection is sync with prop state; the populated

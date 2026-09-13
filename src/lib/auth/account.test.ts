@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // getCurrentAccount resolves the caller's account context. The
 // regression this file guards (issue #294): account loading must NOT
@@ -66,12 +66,49 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: () => createClient(),
 }));
 
-const { getCurrentAccount, UnauthorizedError, ForbiddenError } = await import(
-  "./account"
-);
+// Fase 3 §5: `requireRole` now also asks the billing layer whether the
+// account may write at all. Only that entry point is stubbed —
+// `importOriginal` keeps `AccountLockedError` and `billingErrorPayload`
+// real so `toErrorResponse` maps the genuine article.
+const billing = vi.hoisted(() => ({
+  assertWritable: vi.fn(async () => ({}) as never),
+}));
+vi.mock("@/lib/billing/enforce", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/billing/enforce")>()),
+  assertWritable: billing.assertWritable,
+}));
+
+const { AccountLockedError } = await import("@/lib/billing/enforce");
+
+const {
+  getCurrentAccount,
+  requireRole,
+  toErrorResponse,
+  UnauthorizedError,
+  ForbiddenError,
+} = await import("./account");
+
+/** A client whose profile row carries `role`, with a readable account. */
+function memberClient(role: string) {
+  return makeClient({
+    user: { id: "user-1" },
+    byTable: {
+      profiles: {
+        data: { account_id: "acct-1", account_role: role },
+        error: null,
+      },
+      accounts: { data: { id: "acct-1", name: "Acme" }, error: null },
+    },
+  }).client;
+}
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+beforeEach(() => {
+  billing.assertWritable.mockReset();
+  billing.assertWritable.mockResolvedValue({} as never);
 });
 
 describe("getCurrentAccount", () => {
@@ -172,5 +209,111 @@ describe("getCurrentAccount", () => {
     await expect(getCurrentAccount()).rejects.toThrow(
       "Profile is not linked to an account",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fase 3 §5 — the dunning ladder lives in the permission layer.
+//
+// A read-only account behaves as if every member were a `viewer`. The
+// real roles in `profiles.account_role` are never touched, so settling
+// the subscription restores them with no repair step.
+// ---------------------------------------------------------------------------
+describe('requireRole — billing read-only gate (fase 3 §5)', () => {
+  it('does not consult billing for a read (min = viewer)', async () => {
+    createClient.mockReturnValue(memberClient('viewer'));
+    const ctx = await requireRole('viewer');
+    expect(ctx.role).toBe('viewer');
+    // Reads keep working while the account is locked, and every list
+    // endpoint in the app is spared the entitlements round trip.
+    expect(billing.assertWritable).not.toHaveBeenCalled();
+  });
+
+  it("checks the caller's own account before allowing a write", async () => {
+    createClient.mockReturnValue(memberClient('agent'));
+    await requireRole('agent');
+    expect(billing.assertWritable).toHaveBeenCalledWith('acct-1');
+  });
+
+  it('refuses an OWNER of a locked account — everyone drops to viewer', async () => {
+    createClient.mockReturnValue(memberClient('owner'));
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError('suspended')
+    );
+    await expect(requireRole('admin')).rejects.toBeInstanceOf(
+      AccountLockedError
+    );
+  });
+
+  it('refuses an OWNER of an account the PLATFORM suspended by hand (fase 4 §2)', async () => {
+    // The manual hold of migration 058 reaches the permission layer
+    // through the same gate as the dunning ladder, and that is the whole
+    // point of putting it inside `getEntitlements`: f3.4 honours it
+    // without a line of its own.
+    createClient.mockReturnValue(memberClient("owner"));
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError("active", true)
+    );
+    await expect(requireRole("agent")).rejects.toMatchObject({
+      status: 403,
+      manualHold: true,
+    });
+  });
+
+  it('lets a manually suspended account keep READING — it is a hold, not a ban', async () => {
+    createClient.mockReturnValue(memberClient("owner"));
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError("active", true)
+    );
+    const ctx = await requireRole("viewer");
+    expect(ctx.accountId).toBe("acct-1");
+    expect(billing.assertWritable).not.toHaveBeenCalled();
+  });
+
+  it('still reports an insufficient role as a role problem, before billing', async () => {
+    createClient.mockReturnValue(memberClient('viewer'));
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError('suspended')
+    );
+    await expect(requireRole('admin')).rejects.toBeInstanceOf(ForbiddenError);
+    expect(billing.assertWritable).not.toHaveBeenCalled();
+  });
+
+  it('honours allowReadOnly so a locked account can still reach its checkout', async () => {
+    createClient.mockReturnValue(memberClient('admin'));
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError('suspended')
+    );
+    const ctx = await requireRole('admin', { allowReadOnly: true });
+    expect(ctx.accountId).toBe('acct-1');
+    expect(billing.assertWritable).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite the member's real role", async () => {
+    createClient.mockReturnValue(memberClient('owner'));
+    billing.assertWritable.mockRejectedValue(new AccountLockedError('expired'));
+    await requireRole('agent').catch(() => {});
+    // The downgrade is a refusal, not a write: nothing was UPDATEd.
+    const ctx = await requireRole('viewer');
+    expect(ctx.role).toBe('owner');
+  });
+});
+
+describe('toErrorResponse — billing errors (fase 3 §4/§5)', () => {
+  it('maps the read-only lock to 403 with a machine code and the way out', async () => {
+    const res = toErrorResponse(new AccountLockedError('suspended'));
+    expect(res.status).toBe(403);
+    const json = await res.json();
+    expect(json.code).toBe('account_read_only');
+    expect(json.subscriptionStatus).toBe('suspended');
+    expect(json.upgradeUrl).toBe('/billing');
+  });
+
+  it('still collapses an unknown error to a generic 500', async () => {
+    const res = toErrorResponse(new Error('internals'));
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe('Internal server error');
+    expect(json.error).not.toMatch(/internals/);
   });
 });

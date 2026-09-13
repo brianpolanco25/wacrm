@@ -146,6 +146,31 @@ curl -X POST https://your-crm.example.com/api/v1/messages \
 }
 ```
 
+#### Choosing which number it goes out from
+
+An account can have several WhatsApp numbers connected. By default the
+message leaves through the number the conversation already runs on (the
+one the customer last wrote to), falling back to the account's default
+number for a brand-new conversation.
+
+To pick one explicitly, pass `from` with the **`phone_number_id`** Meta
+gave you for that number — the same value you see in Settings →
+WhatsApp, not an internal wacrm id:
+
+```jsonc
+{
+  "to": "+14155550123",
+  "type": "text",
+  "text": "Hi 👋",
+  "from": "100234567890123"    // optional; a phone_number_id of YOUR account
+}
+```
+
+A `from` that is not one of your connected numbers is refused with
+`bad_request` (400, `'from' is not a connected number`) — including when
+it is a real number belonging to somebody else. Nothing is sent and no
+contact or conversation is created.
+
 Response (201):
 
 ```json

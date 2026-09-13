@@ -8,6 +8,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { loadEmbeddingsKey } from '@/lib/ai/config'
 import { ingestDocument } from '@/lib/ai/knowledge'
 import { AiError } from '@/lib/ai/types'
+import { assertStockLimit, getEntitlements } from '@/lib/billing/enforce'
 
 /**
  * GET /api/ai/knowledge
@@ -56,6 +57,24 @@ export async function POST(request: Request) {
         { status: 400 },
       )
     }
+
+    // Fase 3 §4: `knowledge_documents`. Stock limit — deleting a
+    // document frees the slot, so it is counted live rather than
+    // accumulated in `usage_counters`.
+    const entitlements = await getEntitlements(accountId)
+    const { count: docCount, error: countErr } = await supabase
+      .from('ai_knowledge_documents')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', accountId)
+    if (countErr) {
+      // Fail closed: "we could not count" is not "you have none".
+      console.error('[ai/knowledge POST] document count error:', countErr)
+      return NextResponse.json(
+        { error: 'Failed to check the document limit' },
+        { status: 500 },
+      )
+    }
+    assertStockLimit(entitlements, 'knowledge_documents', docCount ?? 0)
 
     const { data: doc, error } = await supabase
       .from('ai_knowledge_documents')

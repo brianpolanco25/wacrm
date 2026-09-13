@@ -23,7 +23,8 @@
 //       "params": ["A123"] | { "body": [...] }   // array = positional body; object = structured
 //     },
 //     "reply_to_message_id": "<uuid>",       // optional, must be in the same conversation
-//     "name": "Jane Doe"                     // optional, names a newly-created contact
+//     "name": "Jane Doe",                   // optional, names a newly-created contact
+//     "from": "100234567890123"              // optional, the phone_number_id to send through
 //   }
 //
 // Response (201):
@@ -32,6 +33,7 @@
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
+import { configIdForPhoneNumberId } from '@/lib/whatsapp/resolve-config';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import { resolveConversationByPhone } from '@/lib/whatsapp/resolve-conversation';
 import {
@@ -95,6 +97,23 @@ export async function POST(request: Request) {
       interactivePayload,
     });
 
+    // Fase 4 §1: an account can have several numbers. `from` names the
+    // sender by Meta's `phone_number_id` — the identifier an external
+    // client actually holds — not by our internal row UUID, which it
+    // has no way of knowing. Omitted, the conversation's own number
+    // wins, then the account default.
+    let whatsAppConfigId: string | null = null;
+    if (typeof body.from === 'string' && body.from.trim()) {
+      whatsAppConfigId = await configIdForPhoneNumberId(
+        ctx.supabase,
+        ctx.accountId,
+        body.from.trim()
+      );
+      if (!whatsAppConfigId) {
+        return fail('bad_request', "'from' is not a connected number", 400);
+      }
+    }
+
     // Find-or-create the conversation for this phone, then send. Both
     // steps share `SendMessageError`, so one catch maps the whole
     // pipeline to the envelope.
@@ -102,7 +121,8 @@ export async function POST(request: Request) {
       ctx.supabase,
       ctx.accountId,
       to,
-      typeof body.name === 'string' ? body.name : null
+      typeof body.name === 'string' ? body.name : null,
+      whatsAppConfigId
     );
 
     const result = await sendMessageToConversation(
@@ -124,6 +144,7 @@ export async function POST(request: Request) {
           typeof body.reply_to_message_id === 'string'
             ? body.reply_to_message_id
             : null,
+        whatsAppConfigId,
       }
     );
 

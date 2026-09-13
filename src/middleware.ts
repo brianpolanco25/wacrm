@@ -1,6 +1,62 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+import {
+  SUPPORT_ACTIVE_COOKIE,
+  SUPPORT_COOKIE,
+  supportCookieActor,
+} from '@/lib/auth/support-cookie'
+
+// Methods that change something. A support session is allowed none of
+// them (see `supportSessionBlocks` below).
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+// Paths a support session must never interfere with, even though the
+// cookie is on the request.
+//
+//   /api/platform/           the operator's own prefix — the exit button
+//                            lives here, so blocking it would trap them.
+//   /api/whatsapp/webhook    Non-negotiable: NOTHING about billing,
+//                            suspension or support may stop an inbound
+//                            message from being stored. Meta's request
+//                            carries no browser cookie, so this branch is
+//                            unreachable in practice; it is spelled out
+//                            anyway so a future refactor cannot make it
+//                            reachable by accident.
+//   /api/v1/                 public API, authenticated by API key. Same
+//                            reasoning: no cookies, stated explicitly.
+//   /api/automations/cron,
+//   /api/flows/cron          scheduled sweeps behind a shared secret.
+const SUPPORT_SESSION_EXEMPT = [
+  '/api/platform/',
+  '/api/whatsapp/webhook',
+  '/api/v1/',
+  '/api/automations/cron',
+  '/api/flows/cron',
+]
+
+/**
+ * True when this request must be refused because a support session is
+ * open. Defence in depth on top of the effective `viewer` role that
+ * `getCurrentAccount()` hands out during impersonation: that role stops
+ * every route which asks `requireRole('agent')` or above, but a route
+ * that talks to Supabase through the operator's own session client
+ * without consulting the role at all would write to the OPERATOR'S
+ * account while they believe they are looking at a customer's. Refusing
+ * the whole request is the only version of this that does not depend on
+ * every present and future route remembering.
+ *
+ * Presence of the cookie is enough — its signature is not checked here.
+ * Verifying it would need `node:crypto` in the Edge bundle, and the worst
+ * a forged cookie achieves is making its own holder read-only.
+ */
+function supportSessionBlocks(request: NextRequest): boolean {
+  if (!request.cookies.has(SUPPORT_COOKIE)) return false
+  if (!MUTATING_METHODS.has(request.method)) return false
+  const path = request.nextUrl.pathname
+  return !SUPPORT_SESSION_EXEMPT.some((prefix) => path.startsWith(prefix))
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
@@ -25,6 +81,16 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
+  // A support cookie that does not name the currently authenticated user is
+  // nobody's session: `resolveSupportSession` refuses it, so no banner and
+  // no exit button ever render for whoever is holding it, and leaving it in
+  // place would 403 every save they make until it expires. That is what
+  // happens on a shared machine when the operator signs out without
+  // stopping the session first. Drop it instead of blocking on it.
+  const supportToken = request.cookies.get(SUPPORT_COOKIE)?.value ?? null
+  const orphanSupportCookie =
+    supportToken !== null && supportCookieActor(supportToken) !== (user?.id ?? null)
+
   // getUser() transparently refreshes an expired access token, which
   // ROTATES the refresh token and writes the new cookies onto
   // `supabaseResponse` via setAll() above. Any response we return in
@@ -39,6 +105,21 @@ export async function middleware(request: NextRequest) {
     supabaseResponse.cookies.getAll().forEach((cookie) => {
       response.cookies.set(cookie)
     })
+    if (orphanSupportCookie) {
+      response.cookies.delete(SUPPORT_COOKIE)
+      response.cookies.delete(SUPPORT_ACTIVE_COOKIE)
+    }
+    // `next.config.ts` puts `public, s-maxage=300, stale-while-revalidate`
+    // on everything outside /api, and that value WINS over the one Next
+    // gives a dynamically rendered page (checked against a production
+    // build: a ƒ route still comes back `public, s-maxage=300`). During a
+    // support session the dashboard shell carries the CUSTOMER'S name and
+    // account id in the HTML, so a shared cache in front of this app could
+    // hand that page to somebody else for five minutes — and serve it
+    // stale for a day. Not on these responses.
+    if (supportToken !== null) {
+      response.headers.set('Cache-Control', 'private, no-store')
+    }
     return response
   }
 
@@ -70,11 +151,23 @@ export async function middleware(request: NextRequest) {
   }
 
   // Protected pages - redirect to login if not authenticated
-  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings']
+  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings', '/billing']
   if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return withRefreshedCookies(NextResponse.redirect(url))
+  }
+
+  // A support session is read-only, everywhere. See supportSessionBlocks().
+  // An orphan cookie blocks nobody: it is being dropped on this very
+  // response, and its holder is not the operator it names.
+  if (!orphanSupportCookie && supportSessionBlocks(request)) {
+    return withRefreshedCookies(
+      NextResponse.json(
+        { error: 'A support session is read-only; exit it before making changes' },
+        { status: 403 }
+      )
+    )
   }
 
   // API routes that need auth (not webhooks)
@@ -85,7 +178,7 @@ export async function middleware(request: NextRequest) {
     )
   }
 
-  return supabaseResponse
+  return withRefreshedCookies(supabaseResponse)
 }
 
 export const config = {

@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff } from 'lucide-react';
+import Link from 'next/link';
+import {
+  Loader2,
+  Sparkles,
+  CheckCircle2,
+  Trash2,
+  Eye,
+  EyeOff,
+  AlertTriangle,
+} from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import { Button } from '@/components/ui/button';
@@ -24,19 +33,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
-import type { AiProvider } from '@/lib/ai/types';
+import {
+  DEFAULT_HANDOFF_MESSAGE,
+  handoffMessagePayload,
+} from '@/lib/ai/handoff-message';
+import { overlappingAutomations } from '@/lib/ai/automation-overlap';
+import {
+  secretFieldCleared,
+  secretFieldFocused,
+  secretFieldLoaded,
+  secretFieldPayload,
+  secretFieldTyped,
+  secretFieldWillHaveValue,
+  type SecretFieldState,
+} from '@/lib/ai/secret-field';
+import type { AiProvider, HandoffMode } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
 import { useTranslations } from 'next-intl';
 
-const MASKED_KEY = '••••••••••••••••';
-
-// Radix Select can't use an empty-string item value, so the "leave
-// unassigned" choice gets a sentinel that maps to null in the payload.
-const HANDOFF_QUEUE = '__queue__';
+// Radix Select can't use an empty-string item value, so the "no agent
+// chosen yet" placeholder of the fixed-target picker gets a sentinel that
+// maps to '' in state (and is rejected on save).
+const HANDOFF_UNSET = '__unset__';
 
 const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
@@ -61,20 +84,49 @@ export function AiConfig() {
   const [configured, setConfigured] = useState(false);
   const [provider, setProvider] = useState<AiProvider>('openai');
   const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
-  const [apiKey, setApiKey] = useState('');
-  const [keyEdited, setKeyEdited] = useState(false);
+  // Both key inputs are write-only fields driven by the state machine in
+  // `@/lib/ai/secret-field`: the component never decides on its own
+  // whether a key is being set, left alone or dropped.
+  const [keyField, setKeyField] = useState<SecretFieldState>(() =>
+    secretFieldLoaded(false)
+  );
   const [showKey, setShowKey] = useState(false);
   const [hasStoredKey, setHasStoredKey] = useState(false);
-  const [embeddingsKey, setEmbeddingsKey] = useState('');
-  const [embeddingsKeyEdited, setEmbeddingsKeyEdited] = useState(false);
+  // Per provider: does this deployment have a platform-level key
+  // (supuesto S1)? When true for the chosen provider the key field may be
+  // left blank. Both false on a deployment without platform keys, which
+  // keeps the pre-S1 behaviour (key required).
+  const [platformKeyAvailable, setPlatformKeyAvailable] = useState<
+    Record<AiProvider, boolean>
+  >({ openai: false, anthropic: false });
+  const [embeddingsField, setEmbeddingsField] = useState<SecretFieldState>(() =>
+    secretFieldLoaded(false)
+  );
   const [hasStoredEmbeddingsKey, setHasStoredEmbeddingsKey] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [isActive, setIsActive] = useState(false);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [maxPerConversation, setMaxPerConversation] = useState(3);
-  // Empty string = leave unassigned (shared queue).
+  // Who the bot hands off to (fase 1): the least-loaded online agent,
+  // the shared queue, or a fixed teammate (then `handoffAgentId` applies).
+  const [handoffMode, setHandoffMode] = useState<HandoffMode>('queue');
+  // Target for `fixed` mode; empty string = none chosen yet.
   const [handoffAgentId, setHandoffAgentId] = useState('');
+  // What the bot tells the customer right before handing off. Empty =
+  // say nothing (the pre-fase-1 behaviour, kept as an explicit choice).
+  // Seeded with the same text migration 043 writes as the column default,
+  // so an account with no config row yet sees what it will actually send.
+  const [handoffMessage, setHandoffMessage] = useState(DEFAULT_HANDOFF_MESSAGE);
+  // Only a field the admin actually edited is sent: an untouched textarea
+  // must not overwrite the seeded default with '' on a first save.
+  const [handoffMessageEdited, setHandoffMessageEdited] = useState(false);
   const [members, setMembers] = useState<AccountMember[]>([]);
+  // Safety net for the per-message guard (fase 1, §4). An automation
+  // that answers on message content pre-empts the bot for the messages
+  // it replies to; that is intended, but it must not be invisible.
+  const [overlapping, setOverlapping] = useState<
+    { id: string; name?: string | null }[]
+  >([]);
 
   // Guard keyed on the account (not a bare boolean) so an in-place
   // account switch — ownership transfer, multi-account membership —
@@ -91,6 +143,10 @@ export function AiConfig() {
         toast.error(data.error ?? t('loadFailed'));
         return;
       }
+      setPlatformKeyAvailable({
+        openai: Boolean(data.platform_key_available?.openai),
+        anthropic: Boolean(data.platform_key_available?.anthropic),
+      });
       if (data.configured) {
         setConfigured(true);
         setProvider(data.provider);
@@ -100,12 +156,17 @@ export function AiConfig() {
         setAutoReplyEnabled(data.auto_reply_enabled);
         setMaxPerConversation(data.auto_reply_max_per_conversation ?? 3);
         setHandoffAgentId(data.handoff_agent_id ?? '');
+        // Rows saved before migration 043 have no mode: a configured
+        // agent meant "fixed", none meant "queue".
+        setHandoffMode(
+          data.handoff_mode ?? (data.handoff_agent_id ? 'fixed' : 'queue')
+        );
+        setHandoffMessage(data.handoff_message ?? '');
+        setHandoffMessageEdited(false);
         setHasStoredKey(Boolean(data.has_key));
-        setApiKey(data.has_key ? MASKED_KEY : '');
-        setKeyEdited(false);
+        setKeyField(secretFieldLoaded(Boolean(data.has_key)));
         setHasStoredEmbeddingsKey(Boolean(data.has_embeddings_key));
-        setEmbeddingsKey(data.has_embeddings_key ? MASKED_KEY : '');
-        setEmbeddingsKeyEdited(false);
+        setEmbeddingsField(secretFieldLoaded(Boolean(data.has_embeddings_key)));
       }
     } catch {
       toast.error(t('loadFailed'));
@@ -122,6 +183,12 @@ export function AiConfig() {
     // older deployment without the endpoint the picker just shows the
     // queue option.
     void fetchAccountMembers().then(setMembers);
+    // Best-effort: the warning is informational, so a failure here just
+    // leaves it hidden rather than blocking the panel.
+    void fetch('/api/automations')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setOverlapping(overlappingAutomations(data?.automations)))
+      .catch(() => {});
   }, [accountId, fetchConfig]);
 
   // Swap the model default when the provider changes, unless the user
@@ -135,11 +202,15 @@ export function AiConfig() {
     if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
   };
 
-  const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
+  // undefined = leave the stored key unchanged; null = the operator
+  // asked for the platform key back (supuesto S1); text = set. Never
+  // null just because the field looks empty — see `secret-field.ts`.
+  const keyPayload = () => secretFieldPayload(keyField);
+  const embeddingsKeyPayload = () => secretFieldPayload(embeddingsField);
 
-  // undefined = leave unchanged; '' typed = null (clear); text = set.
-  const embeddingsKeyPayload = () =>
-    embeddingsKeyEdited ? embeddingsKey.trim() || null : undefined;
+  // The 'use the platform key' link only makes sense when there is a
+  // stored key to give up and a platform key to land on.
+  const canUsePlatformKey = hasStoredKey && platformKeyAvailable[provider];
 
   const buildBody = () => ({
     provider,
@@ -150,7 +221,16 @@ export function AiConfig() {
     is_active: isActive,
     auto_reply_enabled: autoReplyEnabled,
     auto_reply_max_per_conversation: maxPerConversation,
-    handoff_agent_id: handoffAgentId || null,
+    handoff_mode: handoffMode,
+    // The fixed target only means something in fixed mode; clear it
+    // otherwise so a stale pick can't resurface later.
+    handoff_agent_id: handoffMode === 'fixed' ? handoffAgentId || null : null,
+    // undefined = leave unchanged (JSON.stringify drops the key, so the
+    // route keeps the stored value / the column default).
+    handoff_message: handoffMessagePayload({
+      edited: handoffMessageEdited,
+      value: handoffMessage,
+    }),
   });
 
   const handleTest = async () => {
@@ -180,8 +260,22 @@ export function AiConfig() {
       toast.error(t('missingModel'));
       return;
     }
-    if (!configured && !keyEdited) {
+    const key = keyPayload();
+    // A first save needs a key — unless the platform provides one for the
+    // chosen provider, in which case the server falls back to it.
+    if (!configured && key === undefined && !platformKeyAvailable[provider]) {
       toast.error(t('missingApiKey'));
+      return;
+    }
+    // Dropping the stored key is only offered when the platform can take
+    // over, but a provider switch after clicking the link could still
+    // land here — stop before the round trip.
+    if (key === null && !platformKeyAvailable[provider]) {
+      toast.error(t('missingApiKey'));
+      return;
+    }
+    if (handoffMode === 'fixed' && !handoffAgentId) {
+      toast.error(t('handoffFixedNeedsAgent'));
       return;
     }
     setSaving(true);
@@ -213,12 +307,19 @@ export function AiConfig() {
         toast.success(t('removeSuccess'));
         setConfigured(false);
         setHasStoredKey(false);
-        setApiKey('');
-        setKeyEdited(false);
+        setKeyField(secretFieldLoaded(false));
+        setHasStoredEmbeddingsKey(false);
+        setEmbeddingsField(secretFieldLoaded(false));
         setIsActive(false);
         setAutoReplyEnabled(false);
         setSystemPrompt('');
+        // Back to the state of an account that was never configured —
+        // otherwise the form keeps the deleted config's routing and, in
+        // `fixed` mode with no target, blocks the next save.
+        setHandoffMode('queue');
         setHandoffAgentId('');
+        setHandoffMessage(DEFAULT_HANDOFF_MESSAGE);
+        setHandoffMessageEdited(false);
       } else {
         const data = await res.json();
         toast.error(data.error ?? t('removeFailed'));
@@ -232,8 +333,9 @@ export function AiConfig() {
 
   if (loading || profileLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t('loadFailed')} {/* Re-using label or a global one, wait, loading is better. Let's use useTranslations from overview or just hardcode Loading... actually I should add loading to aiConfig */}
+      <div className="text-muted-foreground flex items-center justify-center py-16">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t('loadFailed')}{' '}
+        {/* Re-using label or a global one, wait, loading is better. Let's use useTranslations from overview or just hardcode Loading... actually I should add loading to aiConfig */}
         {/* Wait, I didn't add loading to aiConfig. I'll just use loading. */}
       </div>
     );
@@ -243,26 +345,44 @@ export function AiConfig() {
 
   return (
     <div>
-      <SettingsPanelHead
-        title={t('title')}
-        description={t('description')}
-      />
+      <SettingsPanelHead title={t('title')} description={t('description')} />
 
       {!canEdit && (
-        <p className="mb-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+        <p className="border-border bg-muted/40 text-muted-foreground mb-4 rounded-md border px-3 py-2 text-sm">
           {t('adminOnlyConfig')}
         </p>
+      )}
+
+      {overlapping.length > 0 && (
+        <Alert className="mb-4 border-amber-600/40 bg-amber-950/40">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-400" />
+            <div className="flex-1">
+              <AlertTitle className="mb-1 text-amber-200">
+                {t('overlapTitle', { count: overlapping.length })}
+              </AlertTitle>
+              <AlertDescription className="text-sm text-amber-100/80">
+                {t('overlapBody')}{' '}
+                <Link
+                  href="/automations"
+                  className="font-medium underline underline-offset-2"
+                >
+                  {t('overlapLink')}
+                </Link>
+              </AlertDescription>
+            </div>
+          </div>
+        </Alert>
       )}
 
       <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="h-4 w-4 text-primary" /> {t('providerAndKey')}
+              <Sparkles className="text-primary h-4 w-4" />{' '}
+              {t('providerAndKey')}
             </CardTitle>
-            <CardDescription>
-              {t('encryptionNotice')}
-            </CardDescription>
+            <CardDescription>{t('encryptionNotice')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -277,7 +397,9 @@ export function AiConfig() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="openai">{PROVIDER_LABEL.openai}</SelectItem>
+                    <SelectItem value="openai">
+                      {PROVIDER_LABEL.openai}
+                    </SelectItem>
                     <SelectItem value="anthropic">
                       {PROVIDER_LABEL.anthropic}
                     </SelectItem>
@@ -304,25 +426,26 @@ export function AiConfig() {
                   <Input
                     id="ai-key"
                     type={showKey ? 'text' : 'password'}
-                    value={apiKey}
-                    onChange={(e) => {
-                      setApiKey(e.target.value);
-                      setKeyEdited(true);
-                    }}
-                    onFocus={() => {
-                      if (!keyEdited && hasStoredKey) {
-                        setApiKey('');
-                        setKeyEdited(true);
-                      }
-                    }}
-                    placeholder={KEY_PLACEHOLDER[provider]}
-                    disabled={disabled}
+                    value={keyField.value}
+                    onChange={(e) =>
+                      setKeyField((s) => secretFieldTyped(s, e.target.value))
+                    }
+                    // Only drops the mask so the field can be typed into.
+                    // It is NOT a request to forget the stored key — that
+                    // is the explicit link below.
+                    onFocus={() => setKeyField(secretFieldFocused)}
+                    placeholder={
+                      keyField.clearRequested
+                        ? t('platformKeyPlaceholder')
+                        : KEY_PLACEHOLDER[provider]
+                    }
+                    disabled={disabled || keyField.clearRequested}
                     autoComplete="off"
                   />
                   <button
                     type="button"
                     onClick={() => setShowKey((s) => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
                     tabIndex={-1}
                   >
                     {showKey ? (
@@ -345,37 +468,99 @@ export function AiConfig() {
                   {t('testKey')}
                 </Button>
               </div>
+              {/* Both directions are reachable: leave the field blank on
+                  a first save to ride on the platform key, or ask for it
+                  back later with the link. */}
+              {keyField.clearRequested ? (
+                <p className="text-muted-foreground text-xs">
+                  {t('platformKeyPending')}{' '}
+                  <button
+                    type="button"
+                    onClick={() => setKeyField(secretFieldLoaded(hasStoredKey))}
+                    disabled={disabled}
+                    className="text-foreground underline underline-offset-2"
+                  >
+                    {t('keepMyKey')}
+                  </button>
+                </p>
+              ) : (
+                platformKeyAvailable[provider] && (
+                  <p className="text-muted-foreground text-xs">
+                    {hasStoredKey
+                      ? t('platformKeyStoredHint')
+                      : t('platformKeyHint')}{' '}
+                    {canUsePlatformKey && (
+                      <button
+                        type="button"
+                        onClick={() => setKeyField(secretFieldCleared())}
+                        disabled={disabled}
+                        className="text-foreground underline underline-offset-2"
+                      >
+                        {t('usePlatformKey')}
+                      </button>
+                    )}
+                  </p>
+                )
+              )}
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="ai-embeddings-key">
                 {t('embeddingsKey')}{' '}
-                <span className="font-normal text-muted-foreground">
+                <span className="text-muted-foreground font-normal">
                   {t('optionalSemanticSearch')}
                 </span>
               </Label>
               <Input
                 id="ai-embeddings-key"
                 type="password"
-                value={embeddingsKey}
-                onChange={(e) => {
-                  setEmbeddingsKey(e.target.value);
-                  setEmbeddingsKeyEdited(true);
-                }}
-                onFocus={() => {
-                  if (!embeddingsKeyEdited && hasStoredEmbeddingsKey) {
-                    setEmbeddingsKey('');
-                    setEmbeddingsKeyEdited(true);
-                  }
-                }}
+                value={embeddingsField.value}
+                onChange={(e) =>
+                  setEmbeddingsField((s) => secretFieldTyped(s, e.target.value))
+                }
+                // Same rule as the chat key: focus only unmasks. This
+                // field has no platform fallback, so clearing it turns
+                // semantic search off — it needs an explicit ask too.
+                onFocus={() => setEmbeddingsField(secretFieldFocused)}
                 placeholder="sk-... (OpenAI)"
-                disabled={disabled}
+                disabled={disabled || embeddingsField.clearRequested}
                 autoComplete="off"
               />
-              <p className="text-xs text-muted-foreground">
-                {t('embeddingsHint', {
-                  sameKeyText: provider === 'openai' ? t('sameKeyText') : '',
-                })}
+              <p className="text-muted-foreground text-xs">
+                {embeddingsField.clearRequested ? (
+                  <>
+                    {t('embeddingsKeyPending')}{' '}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEmbeddingsField(
+                          secretFieldLoaded(hasStoredEmbeddingsKey)
+                        )
+                      }
+                      disabled={disabled}
+                      className="text-foreground underline underline-offset-2"
+                    >
+                      {t('keepMyKey')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {t('embeddingsHint', {
+                      sameKeyText:
+                        provider === 'openai' ? t('sameKeyText') : '',
+                    })}{' '}
+                    {hasStoredEmbeddingsKey && (
+                      <button
+                        type="button"
+                        onClick={() => setEmbeddingsField(secretFieldCleared())}
+                        disabled={disabled}
+                        className="text-foreground underline underline-offset-2"
+                      >
+                        {t('removeEmbeddingsKey')}
+                      </button>
+                    )}
+                  </>
+                )}
               </p>
             </div>
           </CardContent>
@@ -384,9 +569,7 @@ export function AiConfig() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">{t('behaviour')}</CardTitle>
-            <CardDescription>
-              {t('behaviourDesc')}
-            </CardDescription>
+            <CardDescription>{t('behaviourDesc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -401,12 +584,12 @@ export function AiConfig() {
               />
             </div>
 
-            <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+            <div className="border-border flex items-center justify-between gap-4 rounded-md border p-3">
               <div>
-                <p className="text-sm font-medium text-foreground">
+                <p className="text-foreground text-sm font-medium">
                   {t('enableAssistant')}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-muted-foreground text-xs">
                   {t('enableAssistantDesc')}
                 </p>
               </div>
@@ -417,12 +600,12 @@ export function AiConfig() {
               />
             </div>
 
-            <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+            <div className="border-border flex items-center justify-between gap-4 rounded-md border p-3">
               <div>
-                <p className="text-sm font-medium text-foreground">
+                <p className="text-foreground text-sm font-medium">
                   {t('autoReply')}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-muted-foreground text-xs">
                   {t('autoReplyDesc')}
                 </p>
               </div>
@@ -436,7 +619,7 @@ export function AiConfig() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <Label htmlFor="ai-max">{t('maxAutoReplies')}</Label>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-muted-foreground text-xs">
                   {t('maxAutoRepliesDesc')}
                 </p>
               </div>
@@ -448,7 +631,7 @@ export function AiConfig() {
                 value={maxPerConversation}
                 onChange={(e) =>
                   setMaxPerConversation(
-                    Math.min(20, Math.max(1, Number(e.target.value) || 1)),
+                    Math.min(20, Math.max(1, Number(e.target.value) || 1))
                   )
                 }
                 disabled={disabled || !autoReplyEnabled}
@@ -457,31 +640,74 @@ export function AiConfig() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="ai-handoff">{t('handoffTo')}</Label>
-              <p className="text-xs text-muted-foreground">
+              <Label htmlFor="ai-handoff-mode">{t('handoffTo')}</Label>
+              <p className="text-muted-foreground text-xs">
                 {t('handoffToDesc')}
               </p>
               <Select
-                value={handoffAgentId || HANDOFF_QUEUE}
-                onValueChange={(v) =>
-                  setHandoffAgentId(!v || v === HANDOFF_QUEUE ? '' : v)
-                }
+                value={handoffMode}
+                onValueChange={(v) => setHandoffMode(v as HandoffMode)}
                 disabled={disabled || !autoReplyEnabled}
               >
-                <SelectTrigger id="ai-handoff">
+                <SelectTrigger id="ai-handoff-mode">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={HANDOFF_QUEUE}>
-                    {t('handoffQueue')}
-                  </SelectItem>
-                  {members.map((m) => (
-                    <SelectItem key={m.user_id} value={m.user_id}>
-                      {memberLabel(m)}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="auto">{t('handoffModeAuto')}</SelectItem>
+                  <SelectItem value="queue">{t('handoffQueue')}</SelectItem>
+                  <SelectItem value="fixed">{t('handoffModeFixed')}</SelectItem>
                 </SelectContent>
               </Select>
+              {handoffMode === 'auto' && (
+                <p className="text-muted-foreground text-xs">
+                  {t('handoffModeAutoHint')}
+                </p>
+              )}
+              {handoffMode === 'fixed' && (
+                <Select
+                  value={handoffAgentId || HANDOFF_UNSET}
+                  onValueChange={(v) =>
+                    setHandoffAgentId(!v || v === HANDOFF_UNSET ? '' : v)
+                  }
+                  disabled={disabled || !autoReplyEnabled}
+                >
+                  <SelectTrigger
+                    id="ai-handoff"
+                    aria-label={t('handoffPickAgent')}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={HANDOFF_UNSET} disabled>
+                      {t('handoffPickAgent')}
+                    </SelectItem>
+                    {members.map((m) => (
+                      <SelectItem key={m.user_id} value={m.user_id}>
+                        {memberLabel(m)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ai-handoff-message">{t('handoffMessage')}</Label>
+              <p className="text-muted-foreground text-xs">
+                {t('handoffMessageDesc')}
+              </p>
+              <Textarea
+                id="ai-handoff-message"
+                value={handoffMessage}
+                onChange={(e) => {
+                  setHandoffMessage(e.target.value);
+                  setHandoffMessageEdited(true);
+                }}
+                placeholder={t('handoffMessagePlaceholder')}
+                rows={2}
+                maxLength={1000}
+                disabled={disabled || !autoReplyEnabled}
+              />
             </div>
           </CardContent>
         </Card>
@@ -489,11 +715,10 @@ export function AiConfig() {
         <AiKnowledgeCard
           accountId={accountId}
           canEdit={canEdit}
-          hasEmbeddingsKey={
-            embeddingsKeyEdited
-              ? embeddingsKey.trim().length > 0
-              : hasStoredEmbeddingsKey
-          }
+          hasEmbeddingsKey={secretFieldWillHaveValue(
+            embeddingsField,
+            hasStoredEmbeddingsKey
+          )}
         />
 
         <div className="flex items-center justify-between">

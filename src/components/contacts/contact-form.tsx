@@ -80,7 +80,8 @@ export function ContactForm({
       setDupMatch(null);
       fetchTags();
     }
-  }, [open, contact]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, contact, accountId]);
 
   // Look up an existing contact with this number (new contacts only).
   // Runs on blur so we don't query on every keystroke.
@@ -105,10 +106,12 @@ export function ContactForm({
   }
 
   async function fetchTags() {
+    if (!accountId) return;
     setLoadingTags(true);
     const { data } = await supabase
       .from('tags')
       .select('*')
+      .eq('account_id', accountId)
       .order('name');
     if (data) setTags(data);
     setLoadingTags(false);

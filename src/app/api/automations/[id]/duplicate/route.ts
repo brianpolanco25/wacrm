@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 
@@ -11,25 +10,27 @@ export async function POST(
 
   // Duplicating creates a new automation row — a write. Enforce `agent`
   // (the service-role client below bypasses the agent-gated
-  // automations_insert RLS).
+  // automations_insert RLS) and keep the account it resolves: that
+  // filter, not RLS, is the tenant boundary for the admin client. A
+  // filter on `user_id` alone would not do — a profile moves between
+  // accounts (migrations 018 / 019) while the rows it authored stay
+  // behind, so an ex-member could otherwise read and clone inside their
+  // former account.
+  let accountId: string
+  let userId: string
   try {
-    await requireRole('agent')
+    ;({ accountId, userId } = await requireRole('agent'))
   } catch (err) {
     return toErrorResponse(err)
   }
-
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const admin = supabaseAdmin()
   const { data: original, error: origErr } = await admin
     .from('automations')
     .select('*')
     .eq('id', id)
-    .eq('user_id', user.id)
+    .eq('account_id', accountId)
+    .eq('user_id', userId)
     .maybeSingle()
   if (origErr) return NextResponse.json({ error: origErr.message }, { status: 500 })
   if (!original) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -37,10 +38,13 @@ export async function POST(
   const { data: copy, error: copyErr } = await admin
     .from('automations')
     .insert({
-      // Clone into the same account as the original. account_id is NOT
-      // NULL post-017, so the INSERT fails the constraint without it.
-      account_id: original.account_id,
-      user_id: user.id,
+      // Clone into the CALLER's account, not `original.account_id`:
+      // the row is only readable above when the two already match, and
+      // taking it from the caller keeps the write inside the tenant
+      // even if that read ever loosens. account_id is NOT NULL
+      // post-017, so the INSERT fails the constraint without it.
+      account_id: accountId,
+      user_id: userId,
       name: `${original.name} (Copy)`,
       description: original.description,
       trigger_type: original.trigger_type,

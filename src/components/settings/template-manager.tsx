@@ -19,6 +19,7 @@ import {
   MEDIA_MAX_BYTES_BY_KIND,
 } from '@/lib/storage/upload-media';
 import { useAuth } from '@/hooks/use-auth';
+import { useMediaSrc } from '@/hooks/use-media-blob-url';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -127,7 +128,7 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 export function TemplateManager() {
   const t = useTranslations('Settings.templates');
   const supabase = createClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, accountId, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -150,6 +151,11 @@ export function TemplateManager() {
   // submit route turns that into a Meta Resumable-Upload handle.
   const [uploadingHeader, setUploadingHeader] = useState(false);
   const headerFileRef = useRef<HTMLInputElement>(null);
+  // Preview of a bucket-hosted header image needs a signed URL once the
+  // bucket is private; a pasted external link renders as-is.
+  const { src: headerPreviewSrc } = useMediaSrc(
+    form.header_media_url || undefined,
+  );
 
   // Body variable indices — `[1, 2, 3]` for "{{1}} {{2}} {{3}}". We
   // re-run the extractor on every render to keep the sample-value rows
@@ -183,16 +189,21 @@ export function TemplateManager() {
       setLoading(false);
       return;
     }
-    fetchTemplates(user.id);
+    if (!accountId) return;
+    fetchTemplates(user.id, accountId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user?.id]);
+  }, [authLoading, user?.id, accountId]);
 
-  async function fetchTemplates(userId: string) {
+  // `account_id` on top of the pre-existing `user_id` filter — see the
+  // same note in `tag-manager.tsx`: since migration 057 RLS can answer
+  // for two accounts at once, and a template list must belong to one.
+  async function fetchTemplates(userId: string, acctId: string) {
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('message_templates')
         .select('*')
+        .eq('account_id', acctId)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -280,7 +291,7 @@ export function TemplateManager() {
       }
       // Refresh first, then close — re-opening the dialog
       // immediately should not show a stale list.
-      if (user) await fetchTemplates(user.id);
+      if (user && accountId) await fetchTemplates(user.id, accountId);
       toast.success(
         data.dry_run
           ? isEdit
@@ -334,7 +345,7 @@ export function TemplateManager() {
           { duration: 10000 },
         );
       }
-      await fetchTemplates(user.id);
+      if (accountId) await fetchTemplates(user.id, accountId);
     } catch (err) {
       console.error('Template sync error:', err);
       toast.error(err instanceof Error ? err.message : t('toastSyncError'));
@@ -844,7 +855,7 @@ export function TemplateManager() {
                   {form.header_format === 'image' && form.header_media_url && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={form.header_media_url}
+                      src={headerPreviewSrc ?? form.header_media_url}
                       alt="Header sample"
                       className="max-h-28 rounded-md border border-border object-contain"
                     />

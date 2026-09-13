@@ -62,16 +62,24 @@ export function TagManager() {
       setLoading(false);
       return;
     }
-    fetchTags(user.id);
+    if (!accountId) return;
+    fetchTags(user.id, accountId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user?.id]);
+  }, [authLoading, user?.id, accountId]);
 
-  async function fetchTags(userId: string) {
+  // `account_id` on top of the pre-existing `user_id` filter: RLS is no
+  // longer a one-account filter (migration 057 lets a platform operator
+  // read the account they are supporting), and this list must never mix
+  // two companies' tags. The consequence inside a support session is an
+  // empty manager — the operator's own tags are not the customer's, and
+  // an honest nothing beats somebody else's rows under their name.
+  async function fetchTags(userId: string, acctId: string) {
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('tags')
         .select('*')
+        .eq('account_id', acctId)
         .eq('user_id', userId)
         .order('created_at', { ascending: true });
 
@@ -112,7 +120,7 @@ export function TagManager() {
       toast.success(t('tagCreated'));
       setNewTagName('');
       setSelectedColor(PRESET_COLORS[3].value);
-      await fetchTags(user.id);
+      await fetchTags(user.id, accountId);
     } catch (err) {
       console.error('Create error:', err);
       toast.error(t('failedToCreateTag'));

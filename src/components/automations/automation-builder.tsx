@@ -62,6 +62,7 @@ import {
 } from "@/components/interactive/interactive-builder"
 import { interactivePayloadPreviewText } from "@/lib/whatsapp/interactive"
 import { createClient } from "@/lib/supabase/client"
+import { useAuth } from "@/hooks/use-auth"
 import {
   childPath,
   insertAt,
@@ -247,6 +248,9 @@ function useResources(): AutomationResources {
 }
 
 function ResourcesProvider({ children }: { children: ReactNode }) {
+  // The account these catalogues belong to — the customer's during a
+  // support session (see `useAuth`).
+  const { accountId } = useAuth()
   const [tags, setTags] = useState<TagRecord[]>([])
   const [members, setMembers] = useState<AccountMember[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
@@ -255,34 +259,66 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   const [stages, setStages] = useState<PipelineStageOption[]>([])
 
   useEffect(() => {
+    if (!accountId) return
     let cancelled = false
     const supabase = createClient()
 
-    // Tags, templates and custom fields come straight from the DB — RLS
-    // scopes them to the caller's account. Only APPROVED templates can
-    // actually be sent (anything else 400s at send time), matching the
-    // broadcast picker.
+    // Tags, templates, custom fields and pipelines come straight from the
+    // DB, filtered by the account being shown. RLS used to be that filter;
+    // migration 057 lets a platform operator with an open support session
+    // read the impersonated account as well, so an unfiltered catalogue
+    // would offer two companies' tags in one dropdown. Only APPROVED
+    // templates can actually be sent (anything else 400s at send time),
+    // matching the broadcast picker.
     void (async () => {
-      const [tagsRes, templatesRes, customFieldsRes, pipelinesRes, stagesRes] =
+      const [tagsRes, templatesRes, customFieldsRes, pipelinesRes] =
         await Promise.all([
-          supabase.from("tags").select("*").order("name"),
+          supabase
+            .from("tags")
+            .select("*")
+            .eq("account_id", accountId)
+            .order("name"),
           supabase
             .from("message_templates")
             .select("*")
+            .eq("account_id", accountId)
             .eq("status", "APPROVED")
             .order("name"),
-          supabase.from("custom_fields").select("*").order("field_name"),
-          supabase.from("pipelines").select("id, name").order("name"),
           supabase
-            .from("pipeline_stages")
-            .select("id, name, pipeline_id, position")
-            .order("position"),
+            .from("custom_fields")
+            .select("*")
+            .eq("account_id", accountId)
+            .order("field_name"),
+          supabase
+            .from("pipelines")
+            .select("id, name")
+            .eq("account_id", accountId)
+            .order("name"),
         ])
       if (cancelled) return
       setTags((tagsRes.data as TagRecord[] | null) ?? [])
       setTemplates((templatesRes.data as MessageTemplate[] | null) ?? [])
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])
-      setPipelines((pipelinesRes.data as PipelineOption[] | null) ?? [])
+      const pipelineRows = (pipelinesRes.data as PipelineOption[] | null) ?? []
+      setPipelines(pipelineRows)
+
+      // `pipeline_stages` has no `account_id` of its own (it hangs off
+      // `pipelines`), so it is scoped by the pipeline ids just loaded —
+      // which are already one account's. No pipelines, no stages, and no
+      // query: `.in()` with an empty list would match nothing anyway.
+      if (pipelineRows.length === 0) {
+        setStages([])
+        return
+      }
+      const stagesRes = await supabase
+        .from("pipeline_stages")
+        .select("id, name, pipeline_id, position")
+        .in(
+          "pipeline_id",
+          pipelineRows.map((p) => p.id),
+        )
+        .order("position")
+      if (cancelled) return
       setStages((stagesRes.data as PipelineStageOption[] | null) ?? [])
     })()
 
@@ -303,7 +339,7 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [accountId])
 
   return (
     <ResourcesContext.Provider

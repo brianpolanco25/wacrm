@@ -10,9 +10,18 @@ import { daysAgoStart, lastNDayKeys, localDayKey } from '@/lib/dashboard/date-ut
 const MAX_ROWS = 10_000
 const DEFAULT_WINDOW_DAYS = 30
 
+// The modes that get a fixed slot in the breakdown. The set of values the
+// `mode` CHECK accepts has already grown once (047 added 'playground' on
+// top of the two from 033), so this list is a seed, not a closed domain:
+// see the tally below.
+const KNOWN_MODES = ['auto_reply', 'draft', 'playground'] as const
+
 interface UsageRow {
   created_at: string
-  mode: 'auto_reply' | 'draft'
+  // Deliberately the open `string` the column really is. Typing it as a
+  // union made the reader silently assume the writers would never learn a
+  // new value — and a widened CHECK then turned this route into a 500.
+  mode: string
   provider: string
   model: string
   prompt_tokens: number
@@ -23,14 +32,21 @@ interface UsageRow {
 /**
  * GET /api/ai/usage?days=30  (admin+)
  *
- * Token-spend summary for the account's BYO key over the last `days`
- * (1–90, default 30): totals, per-mode + per-model breakdowns, and a
- * zero-filled daily series for charting. Admin-only, mirroring the
+ * Token-spend summary over the last `days` (1–90, default 30) for
+ * everything the account burned — on its own key or on the platform's,
+ * both land in `ai_usage_log`: totals, per-mode + per-model breakdowns,
+ * and a zero-filled daily series for charting. Admin-only, mirroring the
  * `ai_usage_log` SELECT policy — spend is billing-class.
  */
 export async function GET(request: Request) {
   try {
-    const { supabase, accountId } = await requireRole('admin')
+    // `allowReadOnly`: this is a read. Fase 3 §5 locks a delinquent
+    // account out of writing, not out of looking at what it spent —
+    // and the spend page is where an operator goes to understand the
+    // bill it is being asked to settle.
+    const { supabase, accountId } = await requireRole('admin', {
+      allowReadOnly: true,
+    })
 
     const url = new URL(request.url)
     const rawDays = Number(url.searchParams.get('days'))
@@ -78,10 +94,11 @@ export async function GET(request: Request) {
     let completionTokens = 0
     let totalTokens = 0
 
-    // Per-mode + per-model tallies.
-    const byMode = {
-      auto_reply: { calls: 0, tokens: 0 },
-      draft: { calls: 0, tokens: 0 },
+    // Per-mode + per-model tallies. The known modes are seeded so the card
+    // keeps its fixed tiles even at zero; anything else is added on sight.
+    const byMode: Record<string, { calls: number; tokens: number }> = {}
+    for (const mode of KNOWN_MODES) {
+      byMode[mode] = { calls: 0, tokens: 0 }
     }
     const modelMap = new Map<
       string,
@@ -101,9 +118,12 @@ export async function GET(request: Request) {
       completionTokens += r.completion_tokens
       totalTokens += r.total_tokens
 
-      // `mode` is DB-CHECK-constrained to these two values.
-      byMode[r.mode].calls += 1
-      byMode[r.mode].tokens += r.total_tokens
+      // Open a slot for whatever the row says instead of indexing into a
+      // fixed map: a value added to the CHECK after this deploy still gets
+      // counted, and the breakdown keeps summing to the headline total.
+      const tally = (byMode[r.mode] ??= { calls: 0, tokens: 0 })
+      tally.calls += 1
+      tally.tokens += r.total_tokens
 
       const mk = `${r.provider}:${r.model}`
       const m =

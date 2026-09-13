@@ -74,12 +74,20 @@ export async function resolveAuditUserId(
   db: SupabaseClient,
   accountId: string
 ): Promise<string> {
-  const { data: config } = await db
+  // Post-053 an account can have several numbers, so this cannot be a
+  // `.maybeSingle()` any more — it would error on the second one. Any
+  // of them answers the question equally well (this is an audit column,
+  // not a routing decision), so take the oldest for stability: the same
+  // account always attributes its API writes to the same human.
+  const { data: configs } = await db
     .from('whatsapp_config')
     .select('user_id')
     .eq('account_id', accountId)
-    .maybeSingle();
-  const configOwner = config?.user_id as string | undefined;
+    .order('created_at', { ascending: true })
+    .limit(1);
+  const configOwner = (
+    Array.isArray(configs) ? configs[0]?.user_id : undefined
+  ) as string | undefined;
   if (configOwner) return configOwner;
 
   const { data: account } = await db
@@ -184,9 +192,7 @@ export async function setContactTags(
   if (readErr) {
     throw new ContactError('Failed to read contact tags', 500);
   }
-  const existing = new Set(
-    (current ?? []).map((r) => r.tag_id as string)
-  );
+  const existing = new Set((current ?? []).map((r) => r.tag_id as string));
 
   const toAdd = [...desired].filter((id) => !existing.has(id));
   const toRemove = [...existing].filter((id) => !desired.has(id));

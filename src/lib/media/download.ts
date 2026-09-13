@@ -1,6 +1,7 @@
 import type { Message } from "@/types";
 import { loadMediaBlob, MediaResponseError } from "./blob-cache";
 import { mediaFilename } from "./filename";
+import { getSignedMediaUrl } from "./signed-url";
 
 /**
  * Save a chat attachment to the agent's machine.
@@ -31,8 +32,10 @@ export async function downloadMediaMessage(message: Message): Promise<void> {
     // A fetch that never completed is the other case: a bucket with a
     // stricter CORS policy than ours can block the XHR while the browser
     // is still perfectly able to navigate to the object. Handing the URL
-    // to a new tab gets the agent to the file, visibly.
-    if (openInNewTab(url)) return;
+    // to a new tab gets the agent to the file, visibly. A bucket object
+    // goes out as its signed URL — the stored one no longer opens once
+    // the bucket is private.
+    if (openInNewTab((await getSignedMediaUrl(url)).url)) return;
     throw error;
   }
 

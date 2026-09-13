@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Loader2, FileText, ArrowRight } from 'lucide-react';
@@ -25,8 +26,13 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The account being shown — the customer's during a support session
+  // (see `useAuth`). Explicit because RLS stopped narrowing to one
+  // account for platform operators in migration 057.
+  const { accountId } = useAuth();
 
   useEffect(() => {
+    if (!accountId) return;
     async function fetchTemplates() {
       try {
         const supabase = createClient();
@@ -36,6 +42,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
         const { data, error: fetchError } = await supabase
           .from('message_templates')
           .select('*')
+          .eq('account_id', accountId)
           .eq('status', 'APPROVED')
           .order('created_at', { ascending: false });
 
@@ -49,7 +56,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
     }
 
     fetchTemplates();
-  }, []);
+  }, [accountId, t]);
 
   if (loading) {
     return (

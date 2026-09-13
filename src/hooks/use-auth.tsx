@@ -8,10 +8,15 @@ import {
   useCallback,
   useMemo,
   useRef,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { createClient } from "@/lib/supabase/client";
-import type { User } from "@supabase/supabase-js";
+import { createClient, endSupportSession } from "@/lib/supabase/client";
+import {
+  supportAccountFromFlag,
+  supportFlagValue,
+} from "@/lib/auth/support-cookie";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import {
   canEditSettings as canEditSettingsFor,
@@ -106,7 +111,14 @@ interface AuthContextValue {
   accountStatus: AccountStatus;
   /** Underlying message when `accountStatus` is 'error' / 'unlinked'. */
   accountStatusDetail: string | null;
-  /** Account id the current user belongs to. Null while loading. */
+  /**
+   * Account the panel is looking at. The current user's own, except
+   * during a support session, when it is the impersonated one — every
+   * browser query filters by this, because since migration 057 RLS no
+   * longer narrows to a single account for an operator. Null while
+   * loading, and null (fail closed) if a support session is flagged but
+   * does not name a readable account.
+   */
   accountId: string | null;
   /** Role within that account. Null while loading. */
   accountRole: AccountRole | null;
@@ -154,6 +166,140 @@ interface ProfileRow {
   account_role: string | null;
 }
 
+// ------------------------------------------------------------
+// The account this browser is actually looking at
+//
+// Everything in this panel that talks to Supabase from the browser used
+// to be able to assume one thing: "whatever RLS lets me see belongs to my
+// account". Migration 057 ended that. A platform operator with an open
+// support session now passes `is_account_member(acc) OR
+// has_open_support_session(acc)`, so an unfiltered `select()` comes back
+// with BOTH companies' rows — interleaved, indistinguishable, under a
+// banner naming only one of them — and a query filtered by the operator's
+// own `accountId` comes back with the wrong company's rows entirely.
+//
+// So the browser has to know which account it is showing. The server tells
+// it in the support flag cookie, whose value is the impersonated
+// `account_id`; `accountId` below is that one while the session lasts and
+// the operator's own the rest of the time, and every list filters by it.
+// ------------------------------------------------------------
+
+/** The raw support flag, or null outside a browser / outside a session. */
+function readSupportFlag(): string | null {
+  if (typeof document === "undefined") return null;
+  return supportFlagValue(document.cookie);
+}
+
+/**
+ * Cookies fire no events, so there is nothing to subscribe to that would
+ * be honest. Re-read when the tab comes back to the foreground: that is
+ * when a session started or stopped somewhere else (the exit button, a
+ * second tab, the 30-minute expiry) becomes visible here.
+ */
+function subscribeSupportFlag(onChange: () => void): () => void {
+  if (typeof document === "undefined") return () => {};
+  document.addEventListener("visibilitychange", onChange);
+  window.addEventListener("focus", onChange);
+  return () => {
+    document.removeEventListener("visibilitychange", onChange);
+    window.removeEventListener("focus", onChange);
+  };
+}
+
+/**
+ * `ownAccountId` normally; the impersonated account while a support
+ * session is open; `null` when the flag is present but does not name an
+ * account.
+ *
+ * That last case fails CLOSED on purpose. Falling back to the operator's
+ * own account would put their company's rows under the customer's banner,
+ * which is exactly the failure this exists to prevent; `null` makes the
+ * lists fetch nothing and the shell show the account-access alert.
+ */
+export function effectiveAccountId(
+  ownAccountId: string | null,
+  supportFlag: string | null,
+): string | null {
+  if (supportFlag === null) return ownAccountId;
+  return supportAccountFromFlag(supportFlag);
+}
+
+/**
+ * `effectiveAccountId` as a hook. `useSyncExternalStore` rather than
+ * state+effect because the cookie is exactly that: state outside React,
+ * read during render, with a server snapshot (`null` — there is no
+ * `document` there) that the client corrects on hydration.
+ */
+export function useEffectiveAccountId(
+  ownAccountId: string | null,
+): string | null {
+  const flag = useSyncExternalStore(
+    subscribeSupportFlag,
+    readSupportFlag,
+    readSupportFlag,
+  );
+  return effectiveAccountId(ownAccountId, flag);
+}
+
+/**
+ * The `accounts` row the panel labels itself with (header name, default
+ * currency).
+ *
+ * A plain lookup by id rather than an embedded FK join: the embed
+ * (`account:accounts!inner(...)`) forces PostgREST to resolve the
+ * profiles.account_id → accounts.id relationship from its schema cache,
+ * and a stale cache (common right after a migration adds the FK) fails
+ * hard with PGRST200 and blanks the whole profile (issue #294). A point
+ * lookup needs no relationship inference.
+ */
+export async function fetchAccountSummary(
+  supabase: SupabaseClient,
+  accountId: string,
+): Promise<AccountSummary | null> {
+  const { data, error } = await supabase
+    .from("accounts")
+    // default_currency added in migration 021; narrowed to the USD
+    // fallback here for older schemas where it reads null.
+    .select("id, name, default_currency")
+    .eq("id", accountId)
+    .maybeSingle();
+  if (error) {
+    console.error("[AuthProvider] fetchAccount error:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    return null;
+  }
+  if (!data) return null;
+  return {
+    id: data.id,
+    name: data.name,
+    default_currency: data.default_currency ?? DEFAULT_CURRENCY,
+  };
+}
+
+/**
+ * The summary may only be shown while it is about the account the lists
+ * are querying.
+ *
+ * The two move on different clocks: `accountId` is re-read from the
+ * support flag cookie every time the tab regains focus, while the summary
+ * crosses the network. Whenever they disagree — a session that expired
+ * with the tab open, one started or stopped in a second tab — the honest
+ * answer is "we don't know yet", not the previous account's name. Showing
+ * it is the mislabelled view this whole round exists to prevent: the
+ * customer's name over the operator's rows, or the reverse.
+ */
+export function accountSummaryFor(
+  summary: AccountSummary | null,
+  effectiveAccountId: string | null,
+): AccountSummary | null {
+  if (!summary || !effectiveAccountId) return null;
+  return summary.id === effectiveAccountId ? summary : null;
+}
+
 /**
  * AuthProvider — wrap this around the dashboard layout.
  * Makes ONE getSession() call for the whole tree instead of one per
@@ -163,6 +309,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  // Bumped by refreshProfile() so a rename or a currency change made in
+  // Settings shows up without a reload (deals-settings.tsx saves, then
+  // refreshes). The account summary no longer rides along with the
+  // profile fetch, so it needs its own nudge.
+  const [accountRefreshTick, setAccountRefreshTick] = useState(0);
   const [loading, setLoading] = useState(true);
   // Why the account/role couldn't be established, when it couldn't.
   // Null on the happy path.
@@ -223,41 +374,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data) {
-        // Load the account with a plain lookup by id instead of an
-        // embedded FK join. The embed (`account:accounts!inner(...)`)
-        // forces PostgREST to resolve the profiles.account_id →
-        // accounts.id relationship from its schema cache; a stale cache
-        // (common right after a migration adds the FK) makes it fail
-        // hard with PGRST200 and blanks the whole profile — the user
-        // then loses account context everywhere (issue #294). A point
-        // lookup by id needs no relationship inference, so the profile
-        // (with account_id / account_role) still resolves even if the
-        // account name lookup itself can't.
-        let accountRow: AccountSummary | null = null;
-        if (data.account_id) {
-          const { data: account, error: accountErr } = await supabase
-            .from("accounts")
-            // default_currency added in migration 021; narrowed to the
-            // USD fallback below for older schemas where it reads null.
-            .select("id, name, default_currency")
-            .eq("id", data.account_id)
-            .maybeSingle();
-          if (accountErr) {
-            console.error("[AuthProvider] fetchAccount error:", {
-              message: accountErr.message,
-              details: accountErr.details,
-              hint: accountErr.hint,
-              code: accountErr.code,
-            });
-          } else if (account) {
-            accountRow = {
-              id: account.id,
-              name: account.name,
-              default_currency: account.default_currency ?? DEFAULT_CURRENCY,
-            };
-          }
-        }
-
         // Narrow the DB enum into our AccountRole union. The DB
         // constraint should make this unconditional, but a future
         // migration that broadens the enum without updating TS would
@@ -281,7 +397,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           account_id: data.account_id ?? null,
           account_role: accountRole,
         });
-        setAccount(accountRow);
         if (!data.account_id || !accountRole) {
           // The row exists but carries no tenancy. Migration 017 made
           // both columns NOT NULL for new signups, so this is a user
@@ -382,6 +497,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     const supabase = createClient();
+    // End the support session BEFORE the Supabase session. Signing out
+    // does not touch the support cookie — it is httpOnly, so this code
+    // could not delete it even if it tried — and one left behind on a
+    // shared machine used to put the next person who signs in into
+    // read-only for half an hour, with no banner to explain it and no
+    // button to undo it. The stop route closes the bitácora row too, which
+    // is the ending that would otherwise never be recorded: closing the
+    // browser is how support sessions actually end.
+    await endSupportSession();
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
@@ -391,6 +515,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshProfile = useCallback(async () => {
     if (!user?.id) return;
+    setAccountRefreshTick((n) => n + 1);
     await fetchProfile(user.id);
   }, [user?.id, fetchProfile]);
 
@@ -398,11 +523,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // every consumer render. Cheap regardless, but the memo also gives
   // each derived value a stable identity for React.memo / useEffect
   // dependencies downstream.
+  // The account this browser is showing. Equal to the profile's own
+  // account except inside a support session, where it is the customer's.
+  // The effective ROLE stays the operator's own on purpose: support is
+  // there to look at what the customer's admin sees (invitations, usage,
+  // billing screens), and downgrading the UI to `viewer` would hide the
+  // very screens tickets are about. Nothing can be written either way —
+  // RLS refuses the customer's account and `guardReadOnly` refuses the
+  // operator's own.
+  const effectiveAccount = useEffectiveAccountId(profile?.account_id ?? null);
+
+  // Resolve the name and currency of THAT account, and re-resolve it
+  // whenever it changes. It used to be read once inside `fetchProfile`,
+  // which only re-runs on an auth-state change: the flag moved on its own
+  // (expiry with the tab open, a session started or stopped in a second
+  // tab) and the header went on naming the previous company while every
+  // list had already reloaded with the other one's rows. Same trigger as
+  // the flag now, and `accountSummaryFor` below withholds the summary
+  // during the window where the fetch has not landed yet.
+  const userId = user?.id ?? null;
+  useEffect(() => {
+    if (!userId || !effectiveAccount) return;
+    let cancelled = false;
+    (async () => {
+      const summary = await fetchAccountSummary(createClient(), effectiveAccount);
+      if (!cancelled) setAccount(summary);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, effectiveAccount, accountRefreshTick]);
+
   const derived = useMemo(() => {
     const role = profile?.account_role ?? null;
     return {
       accountRole: role,
-      accountId: profile?.account_id ?? null,
+      accountId: effectiveAccount,
       isOwner: role === "owner",
       isAdmin: role === "admin",
       isAgent: role === "agent",
@@ -411,7 +567,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
     };
-  }, [profile?.account_role, profile?.account_id]);
+  }, [profile?.account_role, effectiveAccount]);
+
+  // Never hand out a summary for an account other than the one the lists
+  // are querying — see `accountSummaryFor`.
+  const shownAccount = accountSummaryFor(account, derived.accountId);
 
   // Signed out is not a broken account — the shell redirects to /login
   // before anything reads this.
@@ -434,8 +594,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profileLoading,
         signOut,
         refreshProfile,
-        account,
-        defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
+        account: shownAccount,
+        defaultCurrency: shownAccount?.default_currency ?? DEFAULT_CURRENCY,
         accountStatus,
         accountStatusDetail: statusDetail,
         ...derived,

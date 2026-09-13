@@ -132,6 +132,35 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
 }))
 
+// Fase 3 §4/§5. This file exercises the REAL `requireRole`, which now
+// also refuses writes from a read-only account, and the real send core,
+// which charges `messages_out`. Only the entry points that reach the
+// database are stubbed; `importOriginal` keeps the error classes and
+// `billingErrorPayload` real, so the 402/403 bodies asserted below are
+// the ones the route actually produces.
+const billing = vi.hoisted(() => {
+  const entitlements = {
+    planId: 'pro',
+    status: 'active' as const,
+    limits: {} as Record<string, number | null>,
+    features: ['ai_autoreply'],
+    readOnly: false,
+    trialEndsAt: null,
+  }
+  return {
+    entitlements,
+    assertWritable: vi.fn(async () => entitlements),
+    assertQuota: vi.fn(async () => {}),
+    recordUsage: vi.fn(async () => {}),
+  }
+})
+vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
+  assertWritable: billing.assertWritable,
+  assertQuota: billing.assertQuota,
+  recordUsage: billing.recordUsage,
+}))
+
 vi.mock('@/lib/flows/admin-client', () => ({
   supabaseAdmin: () => ({
     from: () => {
@@ -160,6 +189,7 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   sendMediaMessage: vi.fn(),
 }))
 
+import { AccountLockedError, QuotaExceededError } from '@/lib/billing/enforce'
 import { POST } from './route'
 
 function postContactTemplate(overrides: Record<string, unknown> = {}) {
@@ -180,6 +210,15 @@ function postContactTemplate(overrides: Record<string, unknown> = {}) {
   )
 }
 
+function resetBillingMocks() {
+  billing.assertWritable.mockReset()
+  billing.assertWritable.mockResolvedValue(billing.entitlements)
+  billing.assertQuota.mockReset()
+  billing.assertQuota.mockResolvedValue(undefined)
+  billing.recordUsage.mockReset()
+  billing.recordUsage.mockResolvedValue(undefined)
+}
+
 describe('POST /api/whatsapp/send — contact_id template path', () => {
   beforeEach(() => {
     conversationInserts.length = 0
@@ -190,6 +229,7 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     callerRole = 'admin'
     supabaseMock = makeSupabaseMock()
     sendTemplateMessage.mockClear()
+    resetBillingMocks()
   })
 
   afterEach(() => {
@@ -284,6 +324,7 @@ describe('POST /api/whatsapp/send — role enforcement', () => {
     callerRole = 'admin'
     supabaseMock = makeSupabaseMock()
     sendTemplateMessage.mockClear()
+    resetBillingMocks()
   })
 
   afterEach(() => {
@@ -314,3 +355,87 @@ describe('POST /api/whatsapp/send — role enforcement', () => {
     expect(sendTemplateMessage).toHaveBeenCalledTimes(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Fase 3 §4/§5 — the two acceptance criteria the spec spells out for
+// this route: "superar messages_out bloquea el envío con un error que
+// dice qué límite se alcanzó y cómo ampliarlo" and "una cuenta
+// suspended no puede enviar".
+// ---------------------------------------------------------------------------
+describe('POST /api/whatsapp/send — billing gates (fase 3 §4/§5)', () => {
+  beforeEach(() => {
+    conversationInserts.length = 0;
+    messageInserts.length = 0;
+    existingConversation = {
+      id: 'conv-existing',
+      account_id: 'acct-1',
+      contact_id: 'contact-1',
+      contact: CONTACT,
+    };
+    createdConversation = null;
+    contactRow = CONTACT;
+    callerRole = 'admin';
+    supabaseMock = makeSupabaseMock();
+    sendTemplateMessage.mockClear();
+    billing.assertWritable.mockReset();
+    billing.assertWritable.mockResolvedValue(billing.entitlements);
+    billing.assertQuota.mockReset();
+    billing.assertQuota.mockResolvedValue(undefined);
+    billing.recordUsage.mockReset();
+    billing.recordUsage.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('402s over messages_out, naming the metric, the limit and where to raise it', async () => {
+    billing.assertQuota.mockRejectedValue(
+      new QuotaExceededError('messages_out', 3000, 3000)
+    );
+
+    const res = await postContactTemplate();
+    const json = await res.json();
+
+    expect(res.status).toBe(402);
+    expect(json.code).toBe('quota_exceeded');
+    expect(json.metric).toBe('messages_out');
+    expect(json.limit).toBe(3000);
+    expect(json.used).toBe(3000);
+    // "cómo ampliarlo" — a link, not a shrug.
+    expect(json.upgradeUrl).toBe('/billing');
+    expect(json.error).toMatch(/messages_out/);
+    expect(json.error).toMatch(/upgrade/i);
+    expect(sendTemplateMessage).not.toHaveBeenCalled();
+    expect(messageInserts).toHaveLength(0);
+  });
+
+  it('403s an admin of a suspended account — every member behaves as a viewer', async () => {
+    callerRole = 'admin';
+    billing.assertWritable.mockRejectedValue(
+      new AccountLockedError('suspended')
+    );
+
+    const res = await postContactTemplate();
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.code).toBe('account_read_only');
+    expect(json.subscriptionStatus).toBe('suspended');
+    expect(json.upgradeUrl).toBe('/billing');
+    // Refused in the permission layer, before the send core: nothing
+    // reached Meta.
+    expect(sendTemplateMessage).not.toHaveBeenCalled();
+    expect(billing.assertQuota).not.toHaveBeenCalled();
+  });
+
+  it('counts the send once it landed', async () => {
+    const res = await postContactTemplate();
+    expect(res.status).toBe(200);
+    expect(billing.recordUsage).toHaveBeenCalledWith(
+      'acct-1',
+      'messages_out',
+      1
+    );
+  });
+});

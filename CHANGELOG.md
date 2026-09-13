@@ -9,6 +9,514 @@ Versions follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0, `MINOR` bumps cover new modules; `PATCH` bumps cover bug fixes
 and polish.
 
+## [Unreleased]
+
+Fase 0 of the SaaS programme (`docs/saas/fase-0-cimientos.md`): the
+database and server-side groundwork for billing. **No user-visible
+behaviour changes**; nothing is limited by plan yet.
+
+> **Migration required:** apply
+> `supabase/migrations/040_conversation_assignment_integrity.sql`,
+> `supabase/migrations/041_billing_model.sql`,
+> `supabase/migrations/042_pick_available_agent.sql`,
+> `supabase/migrations/043_ai_handoff_mode.sql`,
+> `supabase/migrations/047_ai_platform_key.sql` and
+> `supabase/migrations/051_automation_reply_marker.sql`. 040 nulls any
+> `conversations.assigned_agent_id` that points at a deleted user before
+> adding the foreign key, so a handful of stale "Assigned" badges may
+> disappear — those chats return to the unassigned queue.
+
+> **Migration required:** apply
+> `supabase/migrations/045_billing_provider_plans.sql` before running the
+> PayPal catalogue bootstrap script.
+
+> **Migration required:** apply
+> `supabase/migrations/048_checkout_intent.sql` before enabling checkout.
+> It adds the `checkout_intents` table; no existing data is touched.
+> Apply `supabase/migrations/049_redeem_invitation_checkout_intents.sql`
+> together with it — 048 alone would break invitation redemption for
+> anyone who ever abandoned a checkout.
+
+> **Migration required:** apply
+> `supabase/migrations/050_subscription_event_watermark.sql` before enabling
+> the PayPal webhook. It adds `subscriptions.last_event_at` (NULL for every
+> existing row) and an index; no existing data is touched.
+
+> **Migration required:** apply
+> `supabase/migrations/056_subscription_cycle_and_receipts.sql` before the
+> subscription area in Settings. It adds `subscriptions.cycle` (backfilled from
+> the checkout that created each subscription) and an index over the payment
+> events; no existing data is changed.
+
+> **Migration required:** apply
+> `supabase/migrations/053_whatsapp_config_multi_number.sql` before an account
+> can connect a second WhatsApp number. It drops the one-number-per-account
+> constraint, adds `is_default` / `label` / the display metadata to
+> `whatsapp_config`, and adds `whatsapp_config_id` to `conversations` and
+> `broadcasts` — backfilled to the number each account already had, so
+> nothing changes for a single-number account. Both new foreign keys are
+> `ON DELETE SET NULL`: disconnecting a number never deletes a conversation
+> or a campaign.
+
+> **Migration required:** apply
+> `supabase/migrations/054_embedded_signup.sql` before enabling the
+> integrated WhatsApp sign-up. It adds three nullable/defaulted columns to
+> `whatsapp_config` (`registration_pin`, `token_expires_at`,
+> `provisioned_via`); existing rows are classified as `manual` and nothing
+> is rewritten.
+
+> **Migration required:** apply `supabase/migrations/046_seed_trials.sql` and
+> `supabase/migrations/052_redeem_invitation_billing.sql` **together** before
+> plan limits take effect. 046 gives every existing account — and every account
+> created from then on — a 14-day Pro trial, counted from the moment you apply
+> it, not from when the account was created. 052 is not optional: without it
+> nobody can accept a team invitation any more, because the trial row 046
+> creates blocks the deletion of the invitee's empty personal account.
+
+### Added
+
+- **Connect WhatsApp without leaving the app.** On a deployment that runs
+  as a platform (one Meta app in front of every company), Settings →
+  WhatsApp gains a **Connect WhatsApp** button: Meta's own dialog opens
+  in place, the customer picks or creates their WhatsApp Business account
+  and number, and the connection is finished — no developer account, no
+  Meta console, no pasting tokens. The number is registered and the
+  business account subscribed to the app automatically, so inbound
+  messages start arriving at that company's inbox.
+  - Closing the dialog half-way saves nothing at all, and going through
+    it again with the same number refreshes it instead of adding a
+    duplicate.
+  - The manual form is still there, folded into **Manual connection
+    (advanced)** — it is the recovery path when the dialog cannot reach a
+    number, and the one support uses.
+  - **Self-hosted installs are unaffected.** Without the platform
+    variables the button does not appear, the webhook verify-token field
+    and the webhook URL stay where they were, and connecting with your
+    own Meta app works exactly as before.
+  - **For operators:** the integrated sign-up needs `META_APP_ID`,
+    `META_CONFIG_ID` and `META_APP_SECRET`, and makes
+    `META_WEBHOOK_VERIFY_TOKEN` effectively required — Settings shows a
+    warning when it is missing, and your HTTPS domain must be listed in
+    the app's Facebook Login for Business → Client OAuth settings.
+    `META_GRAPH_VERSION` is optional and defaults to the same Graph
+    version as the rest of the app. See `docs/docker.md`.
+- **Several WhatsApp numbers per company.** Settings → WhatsApp is now a
+  list of connected numbers with an "Add number" button; each card shows
+  its name, its connection and registration state, and can be renamed,
+  made the default, or removed on its own. The number a message goes out
+  through is the one the customer wrote to — the conversation remembers
+  it — falling back to the account default for a chat that has never had
+  one. A customer who writes to two of your numbers still has a single
+  conversation; the replies simply follow whichever number they used
+  last.
+  - **Broadcasts** ask which number to send from when there is more than
+    one, and freeze the answer on the campaign: pausing and resuming days
+    later keeps the same sender instead of restarting the 24-hour window
+    on another number.
+  - **Public API:** `POST /api/v1/messages` accepts an optional `from`
+    (a `phone_number_id` of your account) to choose the sender. See
+    `docs/public-api.md`.
+  - **Plan limits:** the `numbers` allowance is now real. Re-saving a
+    number you already have is an edit and costs nothing; a second,
+    different number on a one-number plan answers 402 with the upgrade
+    link.
+  - **Heads-up:** `DELETE /api/whatsapp/config` now requires an `?id=`.
+    Called without one it used to delete every number the account had,
+    which was the intent with one number and a disaster with three.
+  - Known limitation: message templates and inbound-media downloads
+    still work against the account's default number. That is correct
+    when the numbers share one WhatsApp Business Account (the normal
+    case) and wrong when they do not; templates are per-WABA in Meta and
+    fixing it properly needs a schema change.
+- **Available-agent handoff.** AI handoffs and automation round-robin
+  assignment can route chats to the online owner, admin or agent with the
+  lightest open/pending workload. If nobody is online, chats remain in the
+  shared unassigned queue.
+- **Handoff notice.** When the AI assistant steps back and hands a chat to
+  a human, it now texts the customer first, so the conversation doesn't
+  just go quiet. The text is editable in Settings → AI ("Message when
+  handing off"); it is sent once per handoff, is marked as AI-generated
+  and does **not** count towards the per-conversation auto-reply cap.
+  **Heads-up for existing accounts:** migration 043 seeds the field with
+  a default English notice ("Thanks for writing to us. A member of our
+  team will continue this conversation shortly."), and Postgres applies
+  that default to rows that already exist — so an account that already
+  had the assistant configured starts sending it on its next handoff
+  without changing any setting. To keep handing off silently, clear the
+  field in Settings → AI and save: an empty value means "send nothing".
+- **Who is attending, in the inbox list.** Every row now says whether the
+  AI assistant is on it, which teammate owns it (with their presence dot)
+  or that nobody is — so a chat the assistant handed off and no one picked
+  up no longer looks identical to one the assistant is handling. A new
+  "Unattended" filter in the list header shows exactly that queue. The
+  indicator costs no extra per-chat queries and follows the assignment
+  changes other members make, live. Closed chats never raise the "nobody
+  on it" flag — the filter is a work queue, not the archive. Switching
+  the assistant off in Settings → AI clears "AI replying" from the list
+  within about half a minute, no reload needed.
+- **Subscription area in Settings** (Settings → Subscription, owners and
+  admins). It shows the current plan, the state it is in — trial, active,
+  payment failed, suspended, cancelled or expired, with the grace period and a
+  scheduled cancellation spelled out — and the date of the next charge. Below
+  it, what the account has used this cycle against the plan's allowance, with
+  bars, taken straight from the usage counters the server enforces with, so the
+  figure on screen is the figure that blocks a send. Then the receipts: amount,
+  date and PayPal transaction id of every payment, including payments made on a
+  subscription that was later cancelled and replaced. A suspended account can
+  still open this page — it is where the way out lives.
+  - **Change plan** moves the _same_ PayPal subscription onto the new plan, so
+    two subscriptions can never charge at once. There is no proration: the new
+    plan applies at the next renewal, and PayPal may ask the customer to
+    approve the new amount first, which the page says before anything happens.
+    An account with nothing being charged (a trial, or a cancelled
+    subscription) is sent to `/billing` to contract instead.
+  - **Cancel** cancels at PayPal and keeps the service running to the end of
+    the cycle that was already paid for. Nothing is deleted; the account
+    becomes read-only afterwards and inbound WhatsApp messages keep arriving.
+  - **Reactivate** resumes a subscription PayPal suspended. A subscription that
+    was cancelled cannot be resumed — PayPal's cancel is final — so the page
+    offers a new checkout instead, and contracting again now works while the
+    old subscription is serving out its last paid cycle.
+  - None of these actions turns a plan on by itself: as everywhere else in
+    billing, the PayPal webhook is what changes the state.
+- **A plan change no longer renews on the wrong cycle.** The billing cycle now
+  lives on the subscription (`supabase/migrations/056_…`), not only on the
+  checkout that created it, so a customer who moves from monthly to yearly has
+  their period extended by a year instead of by a month.
+- **Plan limits are now enforced.** Outbound messages, broadcast recipients, AI
+  replies, operator seats, WhatsApp numbers and knowledge-base documents are
+  checked against the plan before the action runs and counted after it
+  succeeds, so a failed attempt never shows up on the bill. Going over a limit
+  answers with an error that names the limit, what is already used and where to
+  raise it, instead of a generic refusal. The public API (`/api/v1`) and
+  outbound webhooks are plan features: a plan without them answers with the
+  same kind of error and the API key itself stays valid, so upgrading restores
+  access with nothing to re-issue. A broadcast is weighed as a **whole
+  campaign** before its first message goes out — whether it was started from
+  the wizard, from the public API, or resumed/retried from the campaign page —
+  so a large send is refused up front instead of stopping half-delivered, and a
+  campaign refused for going over the allowance no longer leaves its recipients
+  behind as new contacts. Saving a new WhatsApp number over the one the account
+  already has counts as changing that number, not as adding a second one, so
+  the usual switch from Meta's test number to the production one works on every
+  plan. **Inbound WhatsApp messages are never affected** — an account with an
+  unpaid invoice and every allowance spent keeps receiving and storing what its
+  customers send.
+- **A subscription that lapses puts the account in read-only** instead of
+  cutting it off. While it is suspended, expired, or past due beyond the grace
+  period, everyone on the account behaves like a viewer: they can read
+  everything, and sending, broadcasting and AI replies stop. Automations and
+  chat flows stop replying too, so a suspended account no longer answers its
+  customers by itself while the banner says nothing is going out. Nobody's role
+  is changed, so settling the subscription restores the exact permissions each
+  member had, with nothing to repair. Reading keeps working everywhere,
+  including the AI spend summary and the team's pending invitations. A banner across the app says which of the
+  two states the account is in and links straight to `/billing` — which stays
+  reachable precisely so an overdue account can pay.
+- **Every account now has a 14-day Pro trial with a real end date**
+  (`supabase/migrations/046_seed_trials.sql`), including accounts created
+  before this release and those created from now on. A trial can contract a
+  plan at any time. Nothing expires the trial automatically yet.
+- **PayPal webhook** (`POST /api/billing/webhook`). The plan turns on here and
+  nowhere else: an approved payment activates the subscription even if the
+  customer closed the browser instead of coming back. It handles activation,
+  plan and quantity updates, cancellation (service runs to the end of the paid
+  cycle), suspension, failed payments (seven days of grace) and renewals. Every
+  delivery is verified with PayPal before anything is read from it, and a
+  delivery that cannot be verified is rejected — set `PAYPAL_WEBHOOK_ID` or the
+  endpoint accepts nothing. A repeated event is recorded once and applied once,
+  and an event that arrives out of order can never undo a newer one. Events that
+  cannot be matched to an account are kept unapplied in `billing_events` for
+  reconciliation rather than guessed at, and resending such a delivery from
+  PayPal's dashboard — once the cause is fixed — applies it. A customer who
+  cancels and later contracts again is activated on the new subscription; an
+  activation that reports a different plan than the one the customer asked for
+  is refused instead of granting either. Nothing here limits what an account can
+  do yet, and inbound WhatsApp messages are never affected.
+- **Plan checkout** (`/billing`). An owner or admin picks a plan and a
+  billing cycle, approves the payment on PayPal and comes back to
+  `/billing/return`, which only says "we are confirming your payment".
+  Activation is **not** done by that page: it waits for the PayPal
+  webhook, so closing the browser after approving loses nothing and
+  opening the return URL by hand grants nothing. Each attempt is recorded
+  in `checkout_intents` (plan, cycle, PayPal subscription id, account) so
+  the event can be matched to the right tenant. Contracting is refused
+  while the account already has a PayPal subscription being charged —
+  changing plan is a separate flow. Set `NEXT_PUBLIC_SITE_URL` so PayPal
+  returns customers to your deployment.
+- **PayPal catalogue bootstrap.** A server-only script creates one PayPal
+  product and the six monthly/annual plan variants, then stores their provider
+  ids in `plans`. It targets the sandbox unless `PAYPAL_ENV=live`, pages
+  through the PayPal catalogue so it reuses its product even when that product
+  is not on the first page, and expects sandbox and live to live in separate
+  databases (the stored ids belong to one environment). Billing, checkout and
+  webhooks are not enabled by this change.
+- **Billing model** (`plans`, `subscriptions`, `usage_counters`,
+  `billing_events`) with RLS, the atomic `increment_usage` RPC and the
+  seeded `inicio` / `pro` / `negocio` catalogue. Prices and limits are
+  provisional until the first paying customer. A tenant can read its own
+  subscription and never write it: only the service role does, from the
+  payment webhook.
+- **Billing rows outlive account deletion.** `subscriptions` and
+  `usage_counters` reference `accounts` with `ON DELETE RESTRICT`, so
+  `DELETE FROM accounts` now fails while an account still has billing
+  data instead of quietly taking it along. Closing an account is a
+  deliberate sequence: cancel with the provider, clear (or archive) its
+  `subscriptions` and `usage_counters` rows, then delete the account.
+  `billing_events` has no foreign key to `accounts` and is kept as the
+  audit trail.
+- **Entitlements helper** (`src/lib/billing/entitlements.ts`): resolves an
+  account's plan, limits, features and read-only state. It is what the
+  enforcement layer of "Plan limits are now enforced" above is built on.
+- **AI replies are now metered.** Every auto-reply the assistant actually
+  delivers adds one — exactly one — to the account's `ai_replies` usage
+  counter for the calendar month, and a reply that fails to send is not
+  counted. The handoff notice is an acknowledgement rather than a reply
+  and does not count either. Counters are per account whichever provider
+  key paid for the call, and they are visible to owners and admins. It is
+  this same counter that the plan allowance is checked against (see "Plan
+  limits are now enforced" above), so the figure on screen is the figure
+  that stops the next reply.
+- **Platform AI keys.** New optional server variables
+  `AI_PLATFORM_OPENAI_API_KEY` / `AI_PLATFORM_ANTHROPIC_API_KEY`. When set,
+  an account may leave the API key blank in Settings → AI and the
+  platform's key is used; an account's own key still takes precedence.
+  Without them nothing changes. `ai_configs.api_key` is now nullable
+  (migration 047). The fallback covers the chat key only — the
+  embeddings key has no platform-level equivalent.
+- **Switching back to the platform key.** An account that saved its own
+  provider key can hand it back with **Use the platform's key instead**
+  in Settings → AI (shown only when the deployment has a key for that
+  provider); the stored key is forgotten on save and the platform's is
+  used from then on. Previously a stored key could only be removed by
+  deleting the whole AI configuration. The embeddings key gained the
+  equivalent **Remove this key** action, which turns semantic
+  knowledge-base search back into keyword search.
+- **Who paid for each AI call.** `ai_usage_log` gained a `key_source`
+  column (`'account'` or `'platform'`, migration 047) so a deployment can
+  measure, per account, the model spend it is funding itself. Rows
+  written before the change are all bring-your-own-key and are recorded
+  as `'account'`.
+- **The AI playground is counted too.** Test chats in the playground are
+  real provider calls, and now log to `ai_usage_log` under a new
+  `'playground'` mode (migration 047 widens the `mode` domain) with the
+  same `key_source`. Before this they were the one LLM surface that spent
+  tokens invisibly.
+
+- **Encryption key rotation.** Stored secrets (WhatsApp tokens, AI
+  provider keys, webhook signing secrets) are now written as
+  `k<key-id>:<iv>:<ct>:<tag>`, naming the key they were encrypted with.
+  `ENCRYPTION_KEY` stays the active key; a new optional
+  `ENCRYPTION_KEY_PREVIOUS` (comma-separated) lets retired keys keep
+  decrypting old rows, and values in the two pre-existing formats still
+  decrypt with any key in the ring. `scripts/reencrypt-secrets.ts`
+  (`--dry-run` to report) rewrites everything under the current key.
+  See `docs/security.md`.
+
+  > **One-way format.** Existing rows are rewritten in the new shape by
+  > normal traffic (a send, a webhook re-verification), with or without
+  > a rotation, and an older build cannot read them: rolling back after
+  > this release asks affected accounts to re-enter their WhatsApp
+  > token, AI provider key or webhook secret. Back up
+  > `whatsapp_config`, `ai_configs` and `webhook_endpoints` first if a
+  > rollback is part of your plan.
+
+- **Platform webhook verify token.** When `META_WEBHOOK_VERIFY_TOKEN` is
+  set, the WhatsApp webhook's `GET` verification compares against it and
+  never reads `whatsapp_config`. Unset, the existing per-tenant lookup is
+  unchanged. The value is trimmed (an empty or whitespace-only one counts
+  as unset) and a mismatch is logged without echoing either token.
+- **Private attachments.** Outbound media (inbox, public API, Flow
+  `send_media`, template media headers in broadcasts) is now uploaded to
+  Meta and sent by media id instead of a public bucket link, and the
+  attachment path is checked against the sending account. The UI renders
+  bucket-hosted attachments through 10-minute signed URLs that renew
+  while open. Works with the media buckets public or private.
+
+> **Migration (apply last):** `supabase/migrations/044_private_media_buckets.sql`
+> makes `chat-media` and `flow-media` private and scopes reads to the
+> owning account (legacy `<uid>/…` paths stay readable by every member of
+> the uploader's account). Apply it **only after** this release is live and you have
+> confirmed outbound attachments still arrive — see
+> `docs/security.md`, "Private attachments".
+
+### Security
+
+- **The webhook verification endpoint no longer writes to the database.**
+  Meta's `GET /api/whatsapp/webhook` check used to re-encrypt a legacy
+  verify token on its way past — a database write reachable by anyone who
+  guessed a verify token, with no session. It is gone: the stored token is
+  read and compared, nothing else. Legacy encrypted values keep working
+  (they are read as-is), and `scripts/reencrypt-secrets.ts` remains the
+  supported way to rewrite them. The lookup also skips rows without a
+  verify token and is bounded, so the check no longer scans the table.
+- **Platform operator and audited support sessions.** A new
+  `platform_admins` table names the people who operate the service, apart
+  from — and never mixed with — the `owner`/`admin`/`agent`/`viewer` roles
+  inside a company. They get their own routes under `/api/platform/*`,
+  closed with 403 to everybody else including company owners, and can open
+  a **support session** on a customer account with a written reason. While
+  one is open, a permanent banner names the account being viewed and offers
+  the way out, and every list in the panel — contacts, inbox, pipelines,
+  broadcasts, settings — shows **that customer's** rows and only theirs,
+  never the operator's own and never the two mixed. The operator can
+  change none of it: reads are granted by row-level security, writes are
+  not, and every save attempted anywhere in the app is refused, on the
+  customer's account and on their own, including uploads. Attachments are
+  the one thing a support session cannot see — the storage policies were
+  deliberately left alone. The start and the end of the
+  session are recorded with actor, account, moment and reason. Sessions
+  last 30 minutes, expire on their own, and pressing "exit" ends one for
+  good: the token cannot be reused afterwards. Nothing is seeded: the
+  first operator is added with SQL against the database — see
+  `docs/security.md`, "Platform operators and support sessions".
+
+> **Migration required:** `supabase/migrations/055_platform_admins.sql`
+> adds `platform_admins` and `impersonation_log`, both readable only by
+> platform administrators and writable from no client at all. The audit
+> table deliberately carries no foreign keys, so the trail survives
+> deleting the account or the user it is about.
+> `supabase/migrations/057_support_session_reads.sql` then extends every
+> **read** policy in the schema with "…or an open support session on this
+> account". No write policy is touched, and with no support session open
+> nothing about who can see what changes.
+
+- **Platform panel.** Operators of the service get their own section at
+  `/platform`, visible only to them: every company on the service with its
+  plan, subscription state, team size, consumption for the cycle, signup
+  date and last activity, and a file per account with consumption against
+  the plan's caps, the billing history from the payment provider, the
+  team, and the state of every WhatsApp number connected to it. From that
+  file an operator can open a support session (the audited impersonation
+  above) or suspend and reactivate the account by hand. Both ask for a
+  reason and both are recorded with who, when, which company and why.
+  - **A manual suspension is not a billing status.** A suspended account
+    behaves exactly like one that has not paid — everyone can read,
+    nobody can write, and incoming WhatsApp messages keep arriving and
+    keep being stored — but it is a separate switch, so paying an invoice
+    (or any event from PayPal) does **not** lift it. The account is told
+    so, and is not sent to the checkout, because the checkout cannot lift
+    it. Only an operator can.
+  - Customer access tokens and payment-provider payloads are never shown
+    in the panel: it answers "what happened to this account", not "show
+    me this customer's credentials".
+
+> **Migration required:** `supabase/migrations/058_platform_panel.sql`
+> adds the manual-hold columns to `subscriptions` (NULL for every existing
+> row, so nothing is suspended by applying it), records suspend and
+> reactivate in the same audit table as impersonation, and adds the
+> function the account list is built from — granted to the service role
+> and to no client role. Nothing about who can see or do what changes for
+> an ordinary account.
+
+### Fixed
+
+- **One automation no longer silences the AI assistant everywhere.** A
+  single active automation with a "new message received" or "keyword
+  match" trigger used to mute the assistant across the whole company, in
+  every chat, with nothing in the interface to say why — so adding a
+  keyword reply for "opening hours" quietly switched the AI agent off.
+  The assistant now stands back only on the individual messages an
+  automation actually answered; every other message is still answered.
+  The customer still never gets two automatic replies to the same
+  message: both responders reserve it first and both stand back when
+  they lose — including an automation that was waiting on a "wait" step
+  and resumes minutes after the assistant already answered. Settings →
+  AI now also warns when automations that can answer an incoming message
+  exist (keyword, new-message and welcome ones alike), with a link to
+  the list.
+- **The assistant no longer talks over an automation that closed the
+  chat.** A keyword automation whose only step is "close conversation" —
+  the usual shape of a "stop"/"unsubscribe" reply — sends no message, so
+  nothing stood in the assistant's way and it answered the customer who
+  had just asked to be left alone. The assistant now stays out of closed
+  conversations; a customer writing again re-opens the thread, and the
+  assistant picks it up from there as before.
+- **Contracting again after cancelling now turns the service back on.** The
+  settings area lets a customer who cancelled buy a new subscription while the
+  cycle they already paid for runs out; the webhook then refused that new
+  subscription's activation, because the old row was still marked as running.
+  The customer paid and got nothing, and their account fell into read-only when
+  the old cycle ended. The new subscription is now adopted — and it is charged
+  on the cycle that was just bought, so going from yearly back to monthly no
+  longer extends the period by a year for a month of money. A subscription that
+  is genuinely still being charged is still protected from another one's
+  events.
+- **Changing to the plan already in force no longer bounces off PayPal.** On
+  accounts whose billing cycle was never recorded, asking for the plan and
+  cycle already in force skipped the "that is already your plan" check and
+  asked PayPal to revise the subscription anyway, which could send the customer
+  off to approve what they already had.
+- **Settings → Subscription says "admins only" to members who are not.** The
+  section could be opened by URL by anyone; it used to answer with a failed
+  request and an error card instead of the message meant for that case, and it
+  no longer asks the server for billing data it may not read. A locked account
+  that also cancelled now reads why it is locked instead of a cancellation
+  notice with a date already past.
+- **Accepting an invitation after abandoning a checkout.** Redeeming an
+  invitation dissolves the invitee's empty personal account; a checkout
+  they started and never approved used to block that with a raw database
+  error, locking them out of the team for good. Abandoned attempts are
+  now discarded with the account, while an account with a real
+  subscription behind it is refused as before ("sign up with a different
+  email") instead of being silently dissolved.
+- **Checkout guard against a second charge.** If the subscription of the
+  account could not be read, the check that stops a second PayPal
+  subscription was skipped; the checkout now stops with an error instead
+  of opening one.
+- **Return page wording.** It shows the plan's name ("Pro") rather than
+  its internal id, no longer claims a payment is active for an attempt it
+  has no record of, and the plan list stops spinning forever when the
+  catalogue request fails outright (offline, DNS): it says so.
+- **The token usage card survives the playground.** With `'playground'`
+  added to `ai_usage_log.mode`, the spend summary (Settings → AI)
+  failed to load for any account that had used the test chat: the whole
+  window came back empty. The breakdown now has its own "Playground"
+  tile, tolerates modes added later, and always adds up to the headline
+  total.
+- **Focusing the AI key field no longer deletes the stored key.** Clicking
+  or tabbing into the (masked) provider key in Settings → AI clears the
+  placeholder so you can type. Leaving without typing and saving an
+  unrelated change — a new prompt, a toggle — used to send "forget my
+  key": the account's own key was silently dropped, or the save was
+  refused for a missing key on deployments with no platform key. The key
+  is now only forgotten when it is explicitly asked for. Same fix for the
+  embeddings key field.
+- **"Test key" tests the key that will actually be used.** After asking
+  to go back to the platform's key, the button validates the platform key
+  instead of the stored one it is about to replace.
+- **Saving the AI settings with no key anywhere.** An account backed by
+  the platform key (no key of its own) could no longer be saved at all —
+  not even to turn the assistant off — once the deployment's
+  `AI_PLATFORM_*_API_KEY` was rotated away. A key is now required only
+  when the save actually has credentials to verify.
+- **Dangling conversation assignments.** `conversations.assigned_agent_id`
+  now references `auth.users` with `ON DELETE SET NULL`, so removing an
+  operator returns their chats to the unassigned queue instead of leaving
+  a nameless "Assigned" badge. A new `(account_id, assigned_agent_id)`
+  index backs the "my chats" / "unassigned" lookups.
+
+- **Flow editing scoped to the account.** Saving, deleting and
+  activating a flow wrote through the service-role client filtering only
+  by row id, so the account was never part of the query. Ownership is
+  now resolved before the write and every query carries the caller's
+  account. Same fix for the two lookups the runners did by id alone (the
+  flow behind a live run, the automation behind a queued step).
+- **Automation editing scoped to the account.** Saving an automation
+  loaded and updated the row through the service-role client by row id
+  alone, leaning on a per-author check in application code. Both queries
+  now carry the caller's account, matching the RLS policy the
+  service-role client bypasses.
+- **Former team members can no longer touch the automations they left
+  behind.** Reading, deleting and duplicating an automation matched on
+  the author's user id only. Because removing a member (or accepting an
+  invitation to another company) moves the profile to a different
+  account while the automations they created stay put, someone who had
+  left could still delete one of their old company's automations — the
+  endpoint even answered `ok` — or clone it back inside that company.
+  All three now filter by the caller's current account, and deleting an
+  automation that isn't yours answers `404` instead of a blanket `ok`.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same
@@ -81,7 +589,7 @@ sidebar — it's no longer tucked inside Settings.
 - **AI Agents (sidebar).** A dedicated `/agents` area with two tabs:
   - **Playground** — a test chat to message your agent and see its
     grounded, multi-turn replies (and where it would hand off to a human)
-    *before* it ever answers a real customer. Runs the exact same path as
+    _before_ it ever answers a real customer. Runs the exact same path as
     the auto-reply bot (knowledge-base retrieval + your provider), and
     works even before you flip the master switch on, so you can try, then
     enable. Backed by `POST /api/ai/playground`.
@@ -157,7 +665,7 @@ returned to the client after saving.
 ## [0.4.0] — 2026-07-01
 
 Completes the public API (#245): **outbound event webhooks** so
-automations can *react* to activity instead of polling.
+automations can _react_ to activity instead of polling.
 
 ### Added
 
@@ -218,11 +726,11 @@ always did.
   - `POST /api/v1/broadcasts` + `GET /api/v1/broadcasts/{id}` — launch a
     template broadcast to a recipient list and poll its progress
     (`broadcasts:send`).
-  All list endpoints share one cursor-pagination contract
-  (`{ data, meta: { next_cursor } }`). No migration required — the
-  scopes already existed and the tables are unchanged. Outbound event
-  webhooks (react to inbound messages) are the remaining roadmap item.
-  See `docs/public-api.md`. ([#245](https://github.com/ArnasDon/wacrm/issues/245))
+    All list endpoints share one cursor-pagination contract
+    (`{ data, meta: { next_cursor } }`). No migration required — the
+    scopes already existed and the tables are unchanged. Outbound event
+    webhooks (react to inbound messages) are the remaining roadmap item.
+    See `docs/public-api.md`. ([#245](https://github.com/ArnasDon/wacrm/issues/245))
 
 ### Changed
 
@@ -261,8 +769,8 @@ always did.
 
 - `supabase/migrations/020_account_sharing_followups.sql` —
   composite partial indexes on `automations(account_id,
-  trigger_type) WHERE is_active` and `flows(account_id) WHERE
-  status='active'` for the engine dispatch hot path; updated
+trigger_type) WHERE is_active` and `flows(account_id) WHERE
+status='active'` for the engine dispatch hot path; updated
   `flow-media` storage RLS to allow account-member writes under
   the new path convention. Idempotent.
 
@@ -453,10 +961,10 @@ when two users on the same instance saved the same WhatsApp
 - **Inbound WhatsApp messages no longer silently disappear** when two
   users have claimed the same `phone_number_id`. Previously the
   webhook used `.single()` to look up the owning config, which errors
-  `PGRST116` for both 0 rows *and* ≥2 rows — the second user's save
+  `PGRST116` for both 0 rows _and_ ≥2 rows — the second user's save
   put the DB into the ≥2-row state and every inbound message was
-  dropped while the log misleadingly reported *"No config found for
-  phone_number_id"*. Three layers of fix: `POST /api/whatsapp/config`
+  dropped while the log misleadingly reported _"No config found for
+  phone_number_id"_. Three layers of fix: `POST /api/whatsapp/config`
   now returns **409** when another user has already claimed the
   number, the webhook lookup distinguishes 0 rows from ≥2 rows and
   logs the conflicting `user_id`s, and a new DB constraint

@@ -51,7 +51,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { createClient } from '@/lib/supabase/client';
+import { createClient, endSupportSession } from '@/lib/supabase/client';
 
 interface PeekOk {
   ok: true;
@@ -205,6 +205,12 @@ export default function JoinPage() {
   const handleSignOutAndRetry = useCallback(async () => {
     setSigningOut(true);
     try {
+      // End the support session first, exactly as `useAuth().signOut()`
+      // does. This is the other sign-out in the app, and skipping it
+      // would leave the bitácora row open and both support cookies alive
+      // for whoever signs in next on this browser — the httpOnly one
+      // cannot be dropped from here any other way.
+      await endSupportSession();
       await createClient().auth.signOut();
       // Hard reload so the new auth state propagates everywhere
       // (middleware, AuthProvider). Preserves the invite token in

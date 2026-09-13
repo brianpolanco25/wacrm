@@ -59,7 +59,7 @@ function sweepExpired(now: number) {
 
 export function checkRateLimit(
   key: string,
-  { limit, windowMs }: RateLimitOptions,
+  { limit, windowMs }: RateLimitOptions
 ): RateLimitResult {
   const now = Date.now();
 
@@ -73,7 +73,12 @@ export function checkRateLimit(
 
   if (!entry || entry.resetAt <= now) {
     buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return { success: true, remaining: limit - 1, reset: now + windowMs, limit };
+    return {
+      success: true,
+      remaining: limit - 1,
+      reset: now + windowMs,
+      limit,
+    };
   }
 
   if (entry.count >= limit) {
@@ -94,7 +99,10 @@ export function checkRateLimit(
  * draft-ietf-httpapi-ratelimit-headers). Callers just `return` this.
  */
 export function rateLimitResponse(result: RateLimitResult): NextResponse {
-  const retryAfterSec = Math.max(1, Math.ceil((result.reset - Date.now()) / 1000));
+  const retryAfterSec = Math.max(
+    1,
+    Math.ceil((result.reset - Date.now()) / 1000)
+  );
   return NextResponse.json(
     {
       error: 'Rate limit exceeded',
@@ -108,7 +116,7 @@ export function rateLimitResponse(result: RateLimitResult): NextResponse {
         'X-RateLimit-Remaining': String(result.remaining),
         'X-RateLimit-Reset': String(Math.ceil(result.reset / 1000)),
       },
-    },
+    }
   );
 }
 
@@ -165,6 +173,13 @@ export const RATE_LIMITS = {
    *  key past the provider's own rate limit. 60/min ≈ three busy agents
    *  drafting flat-out. */
   aiDraftAccount: { limit: 60, windowMs: 60_000 },
+  /** Embedded Signup exchange (fase 4 §1), per user. Each successful
+   *  call spends a single-use code and makes four round trips to Meta,
+   *  so the honest rate is "a handful of attempts while the customer
+   *  fights with the dialog". 10/min bounds a script hammering the
+   *  code exchange without ever getting in a real admin's way — the
+   *  realistic worst case is three or four retries in a row. */
+  embeddedSignup: { limit: 10, windowMs: 60_000 },
   /** AI auto-reply generation, per account. The per-conversation cap
    *  (`auto_reply_max_per_conversation`) bounds one thread; this bounds
    *  the whole account across threads, so a burst of inbound from many

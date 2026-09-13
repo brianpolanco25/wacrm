@@ -71,6 +71,7 @@ export function CustomFieldsPanel() {
     const { data } = await supabase
       .from('custom_fields')
       .select('*')
+      .eq('account_id', accountId)
       .order('field_name');
     setFields((data as CustomField[] | null) ?? []);
     setLoading(false);

@@ -35,6 +35,7 @@ import { hashApiKey, looksLikeApiKey } from '@/lib/api-keys/keys';
 import { hasScope, type ApiScope } from '@/lib/api-keys/scopes';
 import { forbidden, rateLimited, unauthorized } from '@/lib/api/v1/respond';
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
+import { assertPlanFeature, assertWritable } from '@/lib/billing/enforce';
 
 export interface ApiKeyContext {
   /** Discriminant — lets shared logic tell key auth from cookie auth. */
@@ -103,6 +104,23 @@ export async function requireApiKey(
 
   if (scope && !hasScope(row.scopes, scope)) {
     throw forbidden(`This API key is missing the '${scope}' scope`);
+  }
+
+  // Fase 3 §4: the public API is a plan FEATURE (`api`), not something
+  // every tier gets. Checked after the scope so a wrong-scope key still
+  // reads as a scope problem, and after the rate limit so an unpaid
+  // plan cannot be used to probe for free.
+  //
+  // The key itself stays valid — nothing is revoked — so upgrading the
+  // plan restores access with no action from the tenant.
+  const entitlements = await assertPlanFeature(row.account_id, 'api');
+
+  // §5: a read-only account keeps READING through its keys and stops
+  // writing. Method-based because that is the only thing this function
+  // knows about the request; every /api/v1 write is a POST/PATCH/
+  // PUT/DELETE.
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    await assertWritable(row.account_id, entitlements);
   }
 
   touchLastUsed(row.id);
