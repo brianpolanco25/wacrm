@@ -75,6 +75,16 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Added
 
+- **The header says how long the free trial has left.** While the
+  account's subscription is on trial, every member — owner, admin, agent
+  or viewer — sees a countdown in the dashboard header ("Trial ends in 5
+  days", "Trial ends today" on the last day) that links straight to
+  `/billing`. It disappears the moment a plan is contracted, and it
+  never shows for an account that is no longer on trial: the read-only
+  and past-due notices already cover those. It costs no extra request —
+  the billing status behind the existing dunning banner is now read once
+  per account and shared by both.
+
 - **Connect WhatsApp without leaving the app.** On a deployment that runs
   as a platform (one Meta app in front of every company), Settings →
   WhatsApp gains a **Connect WhatsApp** button: Meta's own dialog opens

@@ -1882,6 +1882,9 @@
       "slowBody": "This is taking longer than usual. Your payment is safe and the plan switches on the moment PayPal confirms it — no need to pay again.",
       "backToDashboard": "Go to dashboard"
     },
+    "trialEndsIn": "Trial ends in {days} {days, plural, =1 {day} other {days}}",
+    "trialEndsToday": "Trial ends today",
+    "trialChoosePlan": "Choose a plan",
     "heldTitle": "This account has been suspended by the service operator",
     "heldBody": "An operator of the service has put this account on hold, so everyone here can read but not write: no sending, no broadcasts, no AI replies. Incoming WhatsApp messages keep arriving and nothing is deleted. Paying will not lift this one — contact support."
   },

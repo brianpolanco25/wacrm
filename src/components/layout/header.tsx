@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import { TrialBanner } from "@/components/billing/trial-banner";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "dashboard",
@@ -73,7 +74,10 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         </h1>
       </div>
 
-      <div className="flex items-center gap-1 sm:gap-2">
+      <div className="flex min-w-0 items-center gap-1 sm:gap-2">
+        {/* p6.2 §2: how long the free trial has left, with the way to
+            end it. Renders nothing unless the subscription is trialing. */}
+        <TrialBanner />
         <ModeToggle />
 
         <DropdownMenu>

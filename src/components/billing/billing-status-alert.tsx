@@ -25,12 +25,11 @@
 // reads.
 // ============================================================
 
-import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { CreditCard, TriangleAlert } from 'lucide-react';
 
-import { useAuth } from '@/hooks/use-auth';
+import { useBillingStatus } from '@/hooks/use-billing-status';
 import { Button } from '@/components/ui/button';
 import {
   Alert,
@@ -39,41 +38,16 @@ import {
   AlertTitle,
 } from '@/components/ui/alert';
 
-interface BillingStatus {
-  planId: string;
-  status: string;
-  readOnly: boolean;
-  /** A platform operator suspended the account by hand (fase 4 §2). */
-  manualHold?: boolean;
-  graceUntil: string | null;
-  trialEndsAt: string | null;
-  currentPeriodEnd: string | null;
-  cancelAtPeriodEnd: boolean;
-}
-
 export function BillingStatusAlert() {
-  const { user } = useAuth();
   const router = useRouter();
   const t = useTranslations('Billing');
-  const [status, setStatus] = useState<BillingStatus | null>(null);
-
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    // A failed fetch leaves the banner hidden on purpose: the server is
-    // the thing that actually blocks writes, and inventing a "your
-    // account is suspended" notice out of a network blip would be
-    // worse than saying nothing.
-    fetch('/api/billing/status')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: BillingStatus | null) => {
-        if (!cancelled && data) setStatus(data);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+  // Shared with the header's trial countdown (p6.2): one
+  // `/api/billing/status` read per account serves both. A failed read
+  // resolves to null and leaves the banner hidden on purpose — the
+  // server is the thing that actually blocks writes, and inventing a
+  // "your account is suspended" notice out of a network blip would be
+  // worse than saying nothing.
+  const status = useBillingStatus();
 
   if (!status) return null;
   const locked = status.readOnly;
@@ -89,11 +63,7 @@ export function BillingStatusAlert() {
     <Alert variant="destructive" className="mb-4">
       {locked ? <TriangleAlert /> : <CreditCard />}
       <AlertTitle>
-        {held
-          ? t('heldTitle')
-          : locked
-            ? t('lockedTitle')
-            : t('pastDueTitle')}
+        {held ? t('heldTitle') : locked ? t('lockedTitle') : t('pastDueTitle')}
       </AlertTitle>
       <AlertDescription>
         {held
