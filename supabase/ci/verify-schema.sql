@@ -958,6 +958,77 @@ BEGIN
       (SELECT price_usd_year  FROM public.plans WHERE id = 'negocio');
   END IF;
 
+
+  -- ------------------------------------------------------------
+  -- 060: identidad por BSUID en `contacts`.
+  -- ------------------------------------------------------------
+  -- Las dos columnas nuevas, el índice único parcial que impide que un
+  -- mismo BSUID se parta en dos contactos de la misma cuenta, el
+  -- NOT NULL relajado en `phone` y la invariante que lo sustituye.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'contacts'
+      AND column_name = 'wa_user_id'
+  ) THEN
+    RAISE EXCEPTION 'contacts.wa_user_id is missing (migration 060)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'contacts'
+      AND column_name = 'wa_username'
+  ) THEN
+    RAISE EXCEPTION 'contacts.wa_username is missing (migration 060)';
+  END IF;
+
+  IF to_regclass('public.idx_contacts_account_wa_user_id') IS NULL THEN
+    RAISE EXCEPTION
+      'idx_contacts_account_wa_user_id is missing (migration 060)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    WHERE i.indexrelid = 'public.idx_contacts_account_wa_user_id'::regclass
+      AND i.indisunique
+      AND i.indpred IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION
+      'idx_contacts_account_wa_user_id must be UNIQUE and partial (migration 060)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'contacts'
+      AND column_name = 'phone' AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'contacts.phone is still NOT NULL — a BSUID-only contact cannot be stored (migration 060)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.contacts'::regclass
+      AND conname = 'contacts_phone_or_wa_user_id_check'
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION
+      'contacts_phone_or_wa_user_id_check is missing (migration 060)';
+  END IF;
+
+  -- La búsqueda por nombre de usuario vive dentro del cuerpo de la
+  -- función: si una migración futura re-creara `filter_contacts_by_tags`
+  -- desde la copia de la 025, el username dejaría de buscarse sin que
+  -- ningún test de la app se enterara.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'filter_contacts_by_tags'
+      AND p.prosrc LIKE '%wa_username%'
+  ) THEN
+    RAISE EXCEPTION
+      'filter_contacts_by_tags no longer searches wa_username (migration 060)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
