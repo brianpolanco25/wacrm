@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
+import { contactDisplayName, contactHandle } from "@/lib/contacts/display";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -756,7 +757,7 @@ export function MessageThread({
     return map;
   }, [reactions]);
 
-  const contactDisplayName = contact?.name || contact?.phone || "Customer";
+  const contactLabel = contactDisplayName(contact, "Customer");
 
   // Author label for a quoted message: "You" when we sent the parent,
   // contact name when the customer sent it.
@@ -764,9 +765,9 @@ export function MessageThread({
     (m: Message): string => {
       const isAgentMsg =
         m.sender_type === "agent" || m.sender_type === "bot";
-      return isAgentMsg ? "You" : contactDisplayName;
+      return isAgentMsg ? "You" : contactLabel;
     },
-    [contactDisplayName],
+    [contactLabel],
   );
 
   const handleStartReply = useCallback(
@@ -884,7 +885,7 @@ export function MessageThread({
     );
   }
 
-  const displayName = contact.name || contact.phone;
+  const displayName = contactDisplayName(contact, t("noPhone"));
   const messageGroups = groupMessagesByDate(messages);
   const currentStatus = STATUS_OPTIONS.find(
     (s) => s.value === conversation.status
@@ -926,7 +927,9 @@ export function MessageThread({
           </div>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
-            <p className="truncate text-xs text-muted-foreground">{contact.phone}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {contactHandle(contact) ?? t("noPhone")}
+            </p>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
               the name + back arrow keep their room. */}
@@ -1118,7 +1121,7 @@ export function MessageThread({
                           authorLabel:
                             parent.sender_type === "agent" || parent.sender_type === "bot"
                               ? t("me") 
-                              : contact?.name || contact?.phone || "Unknown",
+                              : contactDisplayName(contact, "Unknown"),
                           preview: buildReplyPreview(parent, tQuote),
                         }
                       : null;
@@ -1201,7 +1204,7 @@ export function MessageThread({
         items={mediaGallery}
         activeId={mediaMessageId}
         onActiveIdChange={handleMediaChange}
-        contactLabel={contactDisplayName}
+        contactLabel={contactLabel}
       />
     </div>
   );

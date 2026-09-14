@@ -50,6 +50,7 @@ import {
   LayoutTemplate,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { contactHandle } from '@/lib/contacts/display';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -119,7 +120,7 @@ export function ContactDetailView({
     if (data) {
       setContact(data);
       setEditName(data.name ?? '');
-      setEditPhone(data.phone);
+      setEditPhone(data.phone ?? '');
       setEditEmail(data.email ?? '');
       setEditCompany(data.company ?? '');
     }
@@ -225,7 +226,9 @@ export function ContactDetailView({
   ]);
 
   async function copyPhone() {
-    if (!contact) return;
+    // Fase 6 §5: sin teléfono no hay nada que copiar; el botón enseña
+    // «@usuario» o el hueco traducido y no hace nada al pulsarlo.
+    if (!contact?.phone) return;
     await navigator.clipboard.writeText(contact.phone);
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
@@ -446,7 +449,7 @@ export function ContactDetailView({
                         className="hover:text-primary flex cursor-pointer items-center gap-1 transition-colors"
                       >
                         <Phone className="size-3" />
-                        {contact.phone}
+                        {contactHandle(contact) ?? t('noPhone')}
                         {copiedPhone ? (
                           <Check className="text-primary size-3" />
                         ) : (

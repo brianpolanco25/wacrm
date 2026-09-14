@@ -117,7 +117,8 @@ export function resolveVariables(
     if (v.type === 'field') {
       const fieldMap: Record<string, string | undefined> = {
         name: contact.name,
-        phone: contact.phone,
+        // Fase 6 §5: sin teléfono, la variable queda vacía.
+        phone: contact.phone ?? undefined,
         email: contact.email,
         company: contact.company,
       };

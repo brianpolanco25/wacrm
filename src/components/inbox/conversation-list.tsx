@@ -22,6 +22,10 @@ import type { Conversation, ConversationStatus, Profile, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
+import {
+  contactDisplayName,
+  contactMatchesSearch,
+} from "@/lib/contacts/display";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -263,10 +267,10 @@ export function ConversationList({
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter((c) => {
-        const name = c.contact?.name?.toLowerCase() ?? "";
-        const phone = c.contact?.phone?.toLowerCase() ?? "";
         const lastMsg = c.last_message_text?.toLowerCase() ?? "";
-        return name.includes(q) || phone.includes(q) || lastMsg.includes(q);
+        // Nombre, teléfono y —desde fase 6 §5— nombre de usuario, con
+        // arroba o sin ella.
+        return contactMatchesSearch(c.contact, search) || lastMsg.includes(q);
       });
     }
 
@@ -571,7 +575,7 @@ function ConversationItem({
   t,
 }: ConversationItemProps) {
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || t("unknown");
+  const displayName = contactDisplayName(contact, t("unknown"));
   const initials = displayName.charAt(0).toUpperCase();
 
   const handleClick = useCallback(() => {

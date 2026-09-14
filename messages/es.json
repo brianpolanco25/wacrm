@@ -160,7 +160,8 @@
       "attentionAi": "Responde la IA",
       "attentionAssigned": "Asignada",
       "attentionUnattended": "Nadie la atiende",
-      "unknown": "Desconocido"
+      "unknown": "Desconocido",
+      "noPhone": "Sin número"
     },
     "messageThread": {
       "backToConversations": "Volver a las conversaciones",
@@ -184,7 +185,8 @@
       "selectConversation": "Elige una conversación",
       "selectConversationHint": "Elige una conversación de la izquierda para empezar a escribir",
       "today": "Hoy",
-      "yesterday": "Ayer"
+      "yesterday": "Ayer",
+      "noPhone": "Sin número"
     },
     "sessionTimer": {
       "expired": "Vencida",
@@ -297,7 +299,8 @@
       "deals": "Oportunidades",
       "noTags": "Sin etiquetas",
       "noDeals": "Sin oportunidades",
-      "addNotePlaceholder": "Añade una nota..."
+      "addNotePlaceholder": "Añade una nota...",
+      "noPhone": "Sin número"
     },
     "aiBanner": {
       "pausedTitle": "El asistente de IA está en pausa aquí",
@@ -352,7 +355,8 @@
       "toastFailedDelete": "No se pudo eliminar el contacto",
       "toastDeleted": "Contacto eliminado",
       "toastBulkFailedDelete": "No se pudieron eliminar los contactos",
-      "toastBulkDeleted": "{count} contactos eliminados"
+      "toastBulkDeleted": "{count} contactos eliminados",
+      "noPhone": "Sin número"
     },
     "form": {
       "addTitle": "Añadir contacto",
@@ -447,7 +451,8 @@
       "toastCustomFieldsSaved": "Campos personalizados guardados",
       "toastCustomFieldsFailed": "No se pudieron guardar los campos personalizados",
       "toastTemplateSent": "Plantilla «{name}» enviada",
-      "toastTemplateFailed": "No se pudo enviar la plantilla: {reason}"
+      "toastTemplateFailed": "No se pudo enviar la plantilla: {reason}",
+      "noPhone": "Sin número"
     },
     "importModal": {
       "title": "Importar contactos",
@@ -701,7 +706,8 @@
       "retryFailed": "Reintentar los fallidos ({count})",
       "toastResumeStarted": "Enviando a {count} destinatarios en segundo plano.",
       "toastResumeStartedCapped": "Enviando a {count} destinatarios en segundo plano. Los {remaining} restantes necesitarán otra pasada.",
-      "toastResumeFailed": "No se pudo reanudar: {error}"
+      "toastResumeFailed": "No se pudo reanudar: {error}",
+      "noPhone": "Sin número"
     },
     "new": {
       "title": "Nueva difusión",

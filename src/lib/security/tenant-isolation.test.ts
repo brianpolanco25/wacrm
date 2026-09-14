@@ -1265,6 +1265,24 @@ describe('/api/v1 (service role via API key)', () => {
     expectBUnchanged(before);
   });
 
+  it('POST /messages con `to_user_id` escribe al contacto de A, no al de B (fase 6 §5)', async () => {
+    const before = h.db.snapshot(B);
+    const res = await v1Messages.POST(
+      req(
+        'POST',
+        '/api/v1/messages',
+        { to_user_id: SHARED_WA_USER_ID, type: 'text', text: 'hola' },
+        asKeyA
+      )
+    );
+    const body = await res.json();
+    expect(res.status).toBe(201);
+    expect(body.data.contact_id).toBe('contact-a');
+    expect(body.data.conversation_id).toBe('conv-a');
+    expect(h.meta.sends.map((s) => s.args.phoneNumberId)).toEqual(['pn-a']);
+    expectBUnchanged(before);
+  });
+
   it("POST /messages refuses a media_url that names B's storage object", async () => {
     const before = h.db.snapshot(B);
     const res = await v1Messages.POST(

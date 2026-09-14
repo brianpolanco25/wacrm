@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { contactDisplayName } from '@/lib/contacts/display'
 import {
   daysAgoStart,
   DOW_SHORT_MON_FIRST,
@@ -272,7 +273,7 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
   const [msgs, contacts, deals, broadcasts, autoLogs] = await Promise.all([
     db
       .from('messages')
-      .select('id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone))')
+      .select('id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone, wa_username))')
       .eq('sender_type', 'customer')
       .order('created_at', { ascending: false })
       .limit(10),
@@ -293,7 +294,7 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
       .limit(5),
     db
       .from('automation_logs')
-      .select('id, trigger_event, status, created_at, automation:automations(name), contact:contacts(name, phone)')
+      .select('id, trigger_event, status, created_at, automation:automations(name), contact:contacts(name, phone, wa_username)')
       .order('created_at', { ascending: false })
       .limit(10),
   ])
@@ -314,7 +315,7 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
   }>) {
     const conv = Array.isArray(m.conversations) ? m.conversations[0] : m.conversations
     const contact = Array.isArray(conv?.contacts) ? conv?.contacts[0] : conv?.contacts
-    const who = contact?.name || contact?.phone || 'Unknown'
+    const who = contactDisplayName(contact, 'Unknown')
     items.push({
       id: `msg-${m.id}`,
       kind: 'message',
@@ -382,7 +383,7 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
   }>) {
     const automation = Array.isArray(l.automation) ? l.automation[0] : l.automation
     const contact = Array.isArray(l.contact) ? l.contact[0] : l.contact
-    const who = contact?.name || contact?.phone || 'a contact'
+    const who = contactDisplayName(contact, 'a contact')
     const autoName = automation?.name || 'Automation'
     items.push({
       id: `auto-${l.id}`,

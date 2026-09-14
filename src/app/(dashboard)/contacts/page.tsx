@@ -58,6 +58,7 @@ import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
+import { contactDisplayName, contactHandle } from '@/lib/contacts/display';
 
 const PAGE_SIZE = 25;
 
@@ -175,8 +176,13 @@ export default function ContactsPage() {
 
       if (term) {
         const like = `%${term}%`;
+        // El nombre de usuario se busca sin la arroba: es como está
+        // guardado (fase 6 §5), y quien escribe «@ada» espera
+        // encontrarlo igual. El RPC del filtro por etiquetas hace lo
+        // mismo (migración 060).
+        const likeUsername = `%${term.replace(/^@+/, '')}%`;
         query = query.or(
-          `name.ilike.${like},phone.ilike.${like},email.ilike.${like}`
+          `name.ilike.${like},phone.ilike.${like},email.ilike.${like},wa_username.ilike.${likeUsername}`
         );
       }
 
@@ -629,7 +635,7 @@ export default function ContactsPage() {
                     <Checkbox
                       checked={selected.has(contact.id)}
                       onCheckedChange={() => toggleSelect(contact.id)}
-                      aria-label={`Select ${contact.name || contact.phone}`}
+                      aria-label={`Select ${contactDisplayName(contact, t('noPhone'))}`}
                     />
                   </TableCell>
                   <TableCell className="text-foreground font-medium">
@@ -640,7 +646,9 @@ export default function ContactsPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
-                    {contact.phone}
+                    {contactHandle(contact) ?? (
+                      <span className="italic">{t('noPhone')}</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden text-sm md:table-cell">
                     {contact.email || (
@@ -820,7 +828,7 @@ export default function ContactsPage() {
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
               {t('deleteContactDesc', {
-                name: deleteTarget?.name || deleteTarget?.phone || '',
+                name: contactDisplayName(deleteTarget, t('noPhone')),
               })}
             </DialogDescription>
           </DialogHeader>

@@ -221,7 +221,9 @@ export function Step3Personalize({
         } else if (mapping.type === 'field' && mapping.value) {
           const fieldMap: Record<string, string | undefined> = {
             name: contact.name,
-            phone: contact.phone,
+            // Fase 6 §5: sin teléfono la variable queda vacía en lugar
+            // de romper la personalización.
+            phone: contact.phone ?? undefined,
             email: contact.email,
             company: contact.company,
           };

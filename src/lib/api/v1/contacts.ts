@@ -28,6 +28,14 @@ export interface ApiContact {
   phone: string | null;
   /** Nombre de usuario de WhatsApp, sin arroba. Null si no tiene. */
   wa_username: string | null;
+  /**
+   * BSUID: el identificador con el que Meta nombra a este cliente para
+   * este negocio. Es lo que hay que pasar como `to_user_id` en
+   * `POST /api/v1/messages` cuando no hay teléfono, así que sale en la
+   * respuesta o el envío por nombre de usuario sería inalcanzable
+   * desde fuera.
+   */
+  wa_user_id: string | null;
   name: string | null;
   email: string | null;
   company: string | null;
@@ -56,6 +64,7 @@ export function serializeContact(row: Record<string, unknown>): ApiContact {
     id: row.id as string,
     phone: (row.phone as string | null) ?? null,
     wa_username: (row.wa_username as string | null) ?? null,
+    wa_user_id: (row.wa_user_id as string | null) ?? null,
     name: (row.name as string | null) ?? null,
     email: (row.email as string | null) ?? null,
     company: (row.company as string | null) ?? null,

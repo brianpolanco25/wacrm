@@ -20,8 +20,13 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
+import {
+  findContactByWaUserId,
+  findExistingContact,
+  isUniqueViolation,
+} from '@/lib/contacts/dedupe';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
+import { isValidBsuid } from '@/lib/whatsapp/bsuid';
 import {
   SendMessageError,
   toSendMessageError,
@@ -39,26 +44,59 @@ export interface ResolvedConversation {
   contactCreated: boolean;
 }
 
+/** A quién va dirigido: teléfono (`to`) o BSUID (`to_user_id`). */
+export interface ConversationTarget {
+  phone?: string | null;
+  waUserId?: string | null;
+}
+
 /**
- * Find or create the contact + conversation for `phone` within
- * `accountId`. Throws `SendMessageError` (shared with the send core,
- * so the route maps one error family) on a bad phone, a missing
- * WhatsApp config, or a DB failure.
+ * Compat: la firma de siempre, por teléfono.
  */
 export async function resolveConversationByPhone(
   db: SupabaseClient,
   accountId: string,
   phone: string,
   name?: string | null,
+  configId?: string | null
+): Promise<ResolvedConversation> {
+  return resolveConversationForTarget(db, accountId, { phone }, name, configId);
+}
+
+/**
+ * Find or create the contact + conversation for a recipient within
+ * `accountId`. Throws `SendMessageError` (shared with the send core,
+ * so the route maps one error family) on a bad recipient, a missing
+ * WhatsApp config, or a DB failure.
+ *
+ * Fase 6 §5: el destinatario puede llegar como teléfono E.164 o como
+ * BSUID. Con los dos, manda el teléfono —es la identidad estable— y el
+ * BSUID solo se guarda en el contacto que se cree.
+ */
+export async function resolveConversationForTarget(
+  db: SupabaseClient,
+  accountId: string,
+  target: ConversationTarget,
+  name?: string | null,
   /** Explicit sender number (the public API's `from`), already
    *  translated to our row id. Null = the account default. */
   configId?: string | null
 ): Promise<ResolvedConversation> {
-  const sanitized = sanitizePhoneForMeta(phone);
-  if (!isValidE164(sanitized)) {
+  const sanitized = sanitizePhoneForMeta(target.phone ?? '');
+  const waUserId = target.waUserId?.trim() ?? '';
+  const hasPhone = isValidE164(sanitized);
+
+  if (!hasPhone && !waUserId) {
     throw new SendMessageError(
       'bad_request',
       "'to' must be a valid phone number in E.164 format (e.g. +14155550123)",
+      400
+    );
+  }
+  if (!hasPhone && !isValidBsuid(waUserId)) {
+    throw new SendMessageError(
+      'bad_request',
+      "'to_user_id' must be a WhatsApp user id in the form CC.<alphanumerics>",
       400
     );
   }
@@ -95,7 +133,11 @@ export async function resolveConversationByPhone(
   let contactId: string;
   let contactCreated = false;
 
-  const existing = await findExistingContact(db, accountId, sanitized);
+  // El teléfono manda en la búsqueda; el BSUID cubre a quien nunca nos
+  // dio número.
+  const existing =
+    (hasPhone ? await findExistingContact(db, accountId, sanitized) : null) ??
+    (waUserId ? await findContactByWaUserId(db, accountId, waUserId) : null);
   if (existing) {
     contactId = existing.id;
     if (name && name !== existing.name) {
@@ -110,8 +152,9 @@ export async function resolveConversationByPhone(
       .insert({
         account_id: accountId,
         user_id: ownerUserId,
-        phone: sanitized,
-        name: name || sanitized,
+        phone: hasPhone ? sanitized : null,
+        wa_user_id: waUserId || null,
+        name: name || (hasPhone ? sanitized : waUserId),
       })
       .select('id')
       .single();
@@ -120,7 +163,13 @@ export async function resolveConversationByPhone(
       // Lost a race against a concurrent inbound/API create — the
       // unique index (migration 022) rejected the duplicate. Re-resolve.
       if (isUniqueViolation(createErr)) {
-        const raced = await findExistingContact(db, accountId, sanitized);
+        const raced =
+          (hasPhone
+            ? await findExistingContact(db, accountId, sanitized)
+            : null) ??
+          (waUserId
+            ? await findContactByWaUserId(db, accountId, waUserId)
+            : null);
         if (raced) {
           contactId = raced.id;
         } else {

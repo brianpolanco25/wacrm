@@ -76,7 +76,7 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
       {/* Contact row */}
       <div className="mt-2 flex items-center gap-2">
         <span className="bg-muted text-foreground flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold">
-          {initials(deal.contact?.name, deal.contact?.phone)}
+          {initials(deal.contact?.name, deal.contact?.phone ?? undefined)}
         </span>
         <span className="text-muted-foreground truncate text-xs">
           {contactLabel}

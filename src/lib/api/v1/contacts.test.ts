@@ -26,9 +26,10 @@ describe('serializeContact', () => {
     expect(serializeContact(row)).toEqual({
       id: 'c1',
       phone: '+14155550123',
-      // Fase 6 §5: el nombre de usuario viaja en la respuesta pública,
-      // null cuando el contacto no tiene.
+      // Fase 6 §5: el nombre de usuario y el BSUID viajan en la
+      // respuesta pública, null cuando el contacto no los tiene.
       wa_username: null,
+      wa_user_id: null,
       name: 'Jane',
       email: null,
       company: 'Acme',

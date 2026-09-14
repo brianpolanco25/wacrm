@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { resolveConversationByPhone } from './resolve-conversation';
+import {
+  resolveConversationByPhone,
+  resolveConversationForTarget,
+} from './resolve-conversation';
 import { SendMessageError } from './send-message';
 
 // ------------------------------------------------------------
@@ -9,7 +12,12 @@ import { SendMessageError } from './send-message';
 // (like/maybeSingle/single) resolve to configured data; the builder
 // itself is thenable so an awaited `update().eq()` resolves cleanly.
 // ------------------------------------------------------------
-type ContactRow = { id: string; phone: string; name?: string | null };
+type ContactRow = {
+  id: string;
+  phone: string | null;
+  name?: string | null;
+  wa_user_id?: string | null;
+};
 
 interface Script {
   /** whatsapp_config row: read by the audit-user lookup (`.limit(1)`)
@@ -19,6 +27,10 @@ interface Script {
   /** Per-call `.like` results — overrides contactCandidates. Lets a
    *  test simulate "miss, then hit" for the unique-race path. */
   contactCandidatesByCall?: ContactRow[][];
+  /** Contacto que la búsqueda por BSUID resuelve (fase 6 §5). */
+  contactByWaUserId?: ContactRow | null;
+  /** Filas insertadas en `contacts`, para inspeccionarlas. */
+  contactInserts?: Record<string, unknown>[];
   insertedContactId?: string; // contacts insert -> single
   insertContactError?: { code?: string } | null;
   /** Conversation lookup result (oldest-first `.order().limit(1)`).
@@ -39,8 +51,9 @@ function makeDb(script: Script): SupabaseClient {
 
   const builder: Record<string, unknown> = {
     select: () => builder,
-    insert: () => {
+    insert: (row: Record<string, unknown>) => {
       mode = 'insert';
+      if (table === 'contacts') script.contactInserts?.push(row);
       return builder;
     },
     update: () => {
@@ -79,6 +92,12 @@ function makeDb(script: Script): SupabaseClient {
     maybeSingle: () => {
       if (table === 'whatsapp_config')
         return Promise.resolve({ data: script.config ?? null, error: null });
+      // findContactByWaUserId: select().eq().eq().maybeSingle()
+      if (table === 'contacts')
+        return Promise.resolve({
+          data: script.contactByWaUserId ?? null,
+          error: null,
+        });
       return Promise.resolve({ data: null, error: null });
     },
     single: () => {
@@ -217,5 +236,106 @@ describe('resolveConversationByPhone', () => {
       contactId: 'c1',
       contactCreated: false,
     });
+  });
+});
+
+// ============================================================
+// Destinatario por BSUID (fase 6 §5).
+// ============================================================
+
+describe('resolveConversationForTarget — BSUID', () => {
+  it('rechaza un `to_user_id` con formato imposible antes de tocar la base', async () => {
+    const db = {
+      from() {
+        throw new Error('should not query');
+      },
+    } as unknown as SupabaseClient;
+    const err = await resolveConversationForTarget(db, 'acct', {
+      waUserId: 'no-es-un-bsuid',
+    }).catch((e: SendMessageError) => e);
+    expect(err).toBeInstanceOf(SendMessageError);
+    expect((err as SendMessageError).message).toMatch(/to_user_id/);
+  });
+
+  it('protesta cuando no llega ni `to` ni `to_user_id`', async () => {
+    const db = {
+      from() {
+        throw new Error('should not query');
+      },
+    } as unknown as SupabaseClient;
+    await expect(
+      resolveConversationForTarget(db, 'acct', {})
+    ).rejects.toBeInstanceOf(SendMessageError);
+  });
+
+  it('encuentra el contacto por BSUID sin crear nada', async () => {
+    const contactInserts: Record<string, unknown>[] = [];
+    const db = makeDb({
+      config: { id: 'cfg-1', user_id: 'owner-1' },
+      contactByWaUserId: { id: 'c1', phone: null, wa_user_id: 'US.13497' },
+      existingConversation: { id: 'cv1' },
+      contactInserts,
+    });
+
+    const res = await resolveConversationForTarget(db, 'acct', {
+      waUserId: 'US.13497',
+    });
+
+    expect(res).toEqual({
+      conversationId: 'cv1',
+      contactId: 'c1',
+      contactCreated: false,
+    });
+    expect(contactInserts).toHaveLength(0);
+  });
+
+  it('crea el contacto sin teléfono cuando el BSUID es nuevo', async () => {
+    const contactInserts: Record<string, unknown>[] = [];
+    const db = makeDb({
+      config: { id: 'cfg-1', user_id: 'owner-1' },
+      contactByWaUserId: null,
+      insertedContactId: 'c-new',
+      existingConversation: null,
+      insertedConversationId: 'cv-new',
+      contactInserts,
+    });
+
+    const res = await resolveConversationForTarget(
+      db,
+      'acct',
+      { waUserId: 'US.13497' },
+      'Ada'
+    );
+
+    expect(res).toEqual({
+      conversationId: 'cv-new',
+      contactId: 'c-new',
+      contactCreated: true,
+    });
+    expect(contactInserts[0]).toMatchObject({
+      account_id: 'acct',
+      phone: null,
+      wa_user_id: 'US.13497',
+      name: 'Ada',
+    });
+  });
+
+  it('con teléfono y BSUID busca por teléfono: es la identidad estable', async () => {
+    const contactInserts: Record<string, unknown>[] = [];
+    const db = makeDb({
+      config: { id: 'cfg-1', user_id: 'owner-1' },
+      contactCandidates: [{ id: 'c1', phone: '14155550123' }],
+      contactByWaUserId: { id: 'c-otro', phone: null },
+      existingConversation: { id: 'cv1' },
+      contactInserts,
+    });
+
+    const res = await resolveConversationForTarget(db, 'acct', {
+      phone: '+14155550123',
+      waUserId: 'US.13497',
+    });
+
+    expect(res.contactId).toBe('c1');
+    expect(contactInserts).toHaveLength(0);
   });
 });

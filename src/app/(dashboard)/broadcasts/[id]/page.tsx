@@ -41,6 +41,7 @@ import {
   getRecipientStatus,
 } from '@/lib/broadcast-status';
 import { useTranslations } from 'next-intl';
+import { contactHandle } from '@/lib/contacts/display';
 
 interface StatCardProps {
   label: string;
@@ -217,7 +218,9 @@ export default function BroadcastDetailPage() {
     ];
     const rows = recipients.map((r) => [
       r.contact?.name ?? '',
-      r.contact?.phone ?? '',
+      // Fase 6 §5: sin teléfono va el «@usuario»; sin ninguno de los
+      // dos, la celda queda vacía (la columna no desaparece).
+      contactHandle(r.contact) ?? '',
       r.status,
       r.sent_at ?? '',
       r.delivered_at ?? '',
@@ -600,7 +603,7 @@ export default function BroadcastDetailPage() {
                         {recipient.contact?.name ?? 'Unknown'}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {recipient.contact?.phone ?? '-'}
+                        {contactHandle(recipient.contact) ?? t('noPhone')}
                       </TableCell>
                       <TableCell>
                         <span

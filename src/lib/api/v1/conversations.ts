@@ -22,7 +22,8 @@ export interface ApiConversation {
   updated_at: string;
   contact: {
     id: string;
-    phone: string;
+    /** Null cuando el contacto solo se identifica por su BSUID. */
+    phone: string | null;
     name: string | null;
     email: string | null;
     company: string | null;
@@ -65,7 +66,7 @@ export function serializeConversation(conv: Conversation): ApiConversation {
     contact: c
       ? {
           id: c.id,
-          phone: c.phone,
+          phone: c.phone ?? null,
           name: c.name ?? null,
           email: c.email ?? null,
           company: c.company ?? null,

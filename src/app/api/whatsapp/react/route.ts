@@ -6,7 +6,12 @@ import {
   WhatsAppConfigError,
   type WhatsAppConfigRow,
 } from '@/lib/whatsapp/resolve-config';
-import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils';
+import {
+  recipientAttempts,
+  resolveRecipient,
+  RecipientError,
+  type MetaRecipient,
+} from '@/lib/whatsapp/recipient';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -72,7 +77,7 @@ export async function POST(request: Request) {
 
     const { data: conversation, error: convError } = await supabase
       .from('conversations')
-      .select('id, account_id, contact:contacts(phone)')
+      .select('id, account_id, contact:contacts(phone, wa_user_id)')
       .eq('id', targetMessage.conversation_id)
       .eq('account_id', accountId)
       .maybeSingle();
@@ -87,11 +92,20 @@ export async function POST(request: Request) {
     const contact = Array.isArray(conversation.contact)
       ? conversation.contact[0]
       : conversation.contact;
-    if (!contact?.phone) {
-      return NextResponse.json(
-        { error: 'Contact phone number not found' },
-        { status: 400 }
-      );
+    // Fase 6 §5: se reacciona al teléfono si lo hay y al BSUID si no.
+    // Una reacción no admite reintentos por variantes (o llega o no),
+    // así que basta con el primer intento del resolutor.
+    let target: MetaRecipient;
+    try {
+      target = recipientAttempts(resolveRecipient(contact ?? {}))[0];
+    } catch (err) {
+      if (err instanceof RecipientError) {
+        return NextResponse.json(
+          { error: 'Contact phone number not found' },
+          { status: 400 }
+        );
+      }
+      throw err;
     }
 
     // The number this thread runs on (fase 4 §1): a reaction has to
@@ -116,13 +130,11 @@ export async function POST(request: Request) {
       }
       throw err;
     }
-    const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
-
     try {
       await sendReactionMessage({
         phoneNumberId: config.phone_number_id,
         accessToken,
-        to: sanitizedPhone,
+        ...target,
         targetMessageId: targetMessage.message_id,
         emoji,
       });

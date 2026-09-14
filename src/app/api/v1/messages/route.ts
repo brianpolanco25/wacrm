@@ -4,7 +4,8 @@
 // The headline public endpoint (issue #245). Unlike the dashboard's
 // `/api/whatsapp/send` (which takes an internal `conversation_id`),
 // this takes a phone number — what an external automation actually
-// has — resolves-or-creates the contact + conversation, then runs the
+// has — o el BSUID de quien escribió con nombre de usuario y nunca dio
+// número, resolves-or-creates the contact + conversation, then runs the
 // same shared send core.
 //
 // Auth: API key with the `messages:send` scope. Account context (and
@@ -12,7 +13,8 @@
 //
 // Body:
 //   {
-//     "to": "+14155550123",                 // required, E.164
+//     "to": "+14155550123",                 // E.164; requerido salvo to_user_id
+//     "to_user_id": "US.1349…",             // BSUID de WhatsApp (fase 6 §5)
 //     "type": "text",                        // text|template|image|video|document|audio (default: text)
 //     "text": "Hello!",                      // text body, or media caption
 //     "media_url": "https://…/file.pdf",     // required for image/video/document/audio
@@ -35,7 +37,7 @@
 import { requireApiKey } from '@/lib/auth/api-context';
 import { configIdForPhoneNumberId } from '@/lib/whatsapp/resolve-config';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
-import { resolveConversationByPhone } from '@/lib/whatsapp/resolve-conversation';
+import { resolveConversationForTarget } from '@/lib/whatsapp/resolve-conversation';
 import {
   sendMessageToConversation,
   validateSendMessageParams,
@@ -55,9 +57,15 @@ export async function POST(request: Request) {
       return fail('bad_request', 'Request body must be a JSON object', 400);
     }
 
+    // Fase 6 §5: el destinatario puede ser un teléfono (`to`, E.164) o
+    // un nombre de usuario de WhatsApp resuelto a su BSUID
+    // (`to_user_id`). Con los dos, manda `to`: es la identidad estable
+    // y es lo que hace Meta si le llegan ambos.
     const to = typeof body.to === 'string' ? body.to.trim() : '';
-    if (!to) {
-      return fail('bad_request', "'to' is required", 400);
+    const toUserId =
+      typeof body.to_user_id === 'string' ? body.to_user_id.trim() : '';
+    if (!to && !toUserId) {
+      return fail('bad_request', "'to' or 'to_user_id' is required", 400);
     }
 
     const type = typeof body.type === 'string' ? body.type : 'text';
@@ -117,10 +125,10 @@ export async function POST(request: Request) {
     // Find-or-create the conversation for this phone, then send. Both
     // steps share `SendMessageError`, so one catch maps the whole
     // pipeline to the envelope.
-    const resolved = await resolveConversationByPhone(
+    const resolved = await resolveConversationForTarget(
       ctx.supabase,
       ctx.accountId,
-      to,
+      { phone: to || null, waUserId: toUserId || null },
       typeof body.name === 'string' ? body.name : null,
       whatsAppConfigId
     );

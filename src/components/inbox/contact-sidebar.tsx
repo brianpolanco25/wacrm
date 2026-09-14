@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
+import { contactDisplayName, contactHandle } from "@/lib/contacts/display";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -127,7 +128,11 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     );
   }
 
-  const displayName = contact.name || contact.phone;
+  // Fase 6 §5: el contacto puede no tener teléfono. El identificador
+  // visible es el teléfono, si no «@usuario», y si no el hueco
+  // traducido — nunca el BSUID, que no le dice nada a nadie.
+  const handle = contactHandle(contact);
+  const displayName = contactDisplayName(contact, tSidebar("noPhone"));
   const initials = displayName.charAt(0).toUpperCase();
 
   return (
@@ -162,7 +167,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
             >
               <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="flex-1 text-left">{contact.phone}</span>
+              <span className="flex-1 text-left">{handle ?? tSidebar("noPhone")}</span>
               {copied ? (
                 <Check className="h-3 w-3 text-primary" />
               ) : (

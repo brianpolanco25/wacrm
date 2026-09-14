@@ -171,6 +171,34 @@ A `from` that is not one of your connected numbers is refused with
 it is a real number belonging to somebody else. Nothing is sent and no
 contact or conversation is created.
 
+#### Writing to somebody whose number you do not have
+
+Since April 2026 a customer can message you with a WhatsApp **username**
+instead of a phone number. When that happens Meta identifies them with a
+**BSUID** (business-scoped user id, `CC.<alphanumerics>` — e.g.
+`US.1349700000000001`) and sends no phone number at all, so the contact
+this CRM stores has `phone: null`.
+
+To write to such a contact, pass `to_user_id` instead of `to`:
+
+```jsonc
+{
+  "to_user_id": "US.1349700000000001",
+  "type": "text",
+  "text": "Hi 👋"
+}
+```
+
+- Exactly one of `to` / `to_user_id` is required. Passing both is allowed
+  and **`to` wins** — a phone number is the more stable identity, and it
+  is what Meta itself picks when a send carries the two.
+- The BSUID comes from the CRM itself: `GET /api/v1/contacts` returns it
+  as `wa_user_id`. It is scoped to your business — a BSUID issued to
+  another company means nothing here.
+- A malformed value is refused with `bad_request` (400,
+  `'to_user_id' must be a WhatsApp user id in the form CC.<alphanumerics>`).
+  Nothing is sent and no contact or conversation is created.
+
 Response (201):
 
 ```json
@@ -195,11 +223,17 @@ List contacts, newest first. Scope: `contacts:read`. Paginated (see
 [Pagination](#pagination)). Optional filters: `?search=` (matches name
 or phone) and `?tag=<tagId>`.
 
+`phone` is **null** for a contact that only ever wrote with a WhatsApp
+username. `wa_username` then carries that username (without the `@`) and
+`wa_user_id` the BSUID — that last one is what you pass as `to_user_id`
+to write to them.
+
 ```json
 {
   "data": [
     {
       "id": "…", "phone": "+14155550123", "name": "Jane Doe",
+      "wa_username": null, "wa_user_id": null,
       "email": null, "company": "Acme", "avatar_url": null,
       "tags": [{ "id": "…", "name": "vip", "color": "#3b82f6" }],
       "created_at": "…", "updated_at": "…"
@@ -261,14 +295,17 @@ curl -X POST https://your-crm.example.com/api/v1/broadcasts \
         "template_language": "en_US",
         "recipients": [
           { "to": "+14155550123", "params": ["Jane"] },
-          { "to": "+14155550124" }
+          { "to": "+14155550124" },
+          { "to_user_id": "US.1349700000000001", "params": ["Ada"] }
         ]
       }'
 ```
 
-Recipients are capped at **1000 per request** — split larger sends.
-Invalid phone numbers are dropped and counted as `rejected`. Response
-(202):
+Recipients are capped at **1000 per request** — split larger sends. Each
+recipient carries a `to` (E.164) or a `to_user_id` (BSUID; see "Writing
+to somebody whose number you do not have" above), and with both, `to`
+wins. Recipients with neither a valid number nor a valid BSUID are
+dropped and counted as `rejected`. Response (202):
 
 ```json
 {

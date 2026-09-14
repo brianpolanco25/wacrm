@@ -160,7 +160,8 @@
       "attentionAi": "AI replying",
       "attentionAssigned": "Assigned",
       "attentionUnattended": "Nobody on it",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "noPhone": "No number"
     },
     "messageThread": {
       "backToConversations": "Back to conversations",
@@ -184,7 +185,8 @@
       "selectConversation": "Select a conversation",
       "selectConversationHint": "Choose a conversation from the left to start messaging",
       "today": "Today",
-      "yesterday": "Yesterday"
+      "yesterday": "Yesterday",
+      "noPhone": "No number"
     },
     "sessionTimer": {
       "expired": "Expired",
@@ -297,7 +299,8 @@
       "deals": "Deals",
       "noTags": "No tags",
       "noDeals": "No deals",
-      "addNotePlaceholder": "Add a note..."
+      "addNotePlaceholder": "Add a note...",
+      "noPhone": "No number"
     },
     "aiBanner": {
       "pausedTitle": "AI assistant is paused here",
@@ -352,7 +355,8 @@
       "toastFailedDelete": "Failed to delete contact",
       "toastDeleted": "Contact deleted",
       "toastBulkFailedDelete": "Failed to delete contacts",
-      "toastBulkDeleted": "{count} contacts deleted"
+      "toastBulkDeleted": "{count} contacts deleted",
+      "noPhone": "No number"
     },
     "form": {
       "addTitle": "Add Contact",
@@ -447,7 +451,8 @@
       "toastCustomFieldsSaved": "Custom fields saved",
       "toastCustomFieldsFailed": "Failed to save custom fields",
       "toastTemplateSent": "Template \"{name}\" sent",
-      "toastTemplateFailed": "Failed to send template: {reason}"
+      "toastTemplateFailed": "Failed to send template: {reason}",
+      "noPhone": "No number"
     },
     "importModal": {
       "title": "Import Contacts",
@@ -701,7 +706,8 @@
       "retryFailed": "Retry failed ({count})",
       "toastResumeStarted": "Sending {count} recipients in the background.",
       "toastResumeStartedCapped": "Sending {count} recipients in the background. {remaining} more will need another run.",
-      "toastResumeFailed": "Could not resume: {error}"
+      "toastResumeFailed": "Could not resume: {error}",
+      "noPhone": "No number"
     },
     "new": {
       "title": "New Broadcast",
