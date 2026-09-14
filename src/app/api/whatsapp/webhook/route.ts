@@ -5,7 +5,12 @@ import { decrypt } from '@/lib/whatsapp/encryption';
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api';
 import { mirrorInboundMedia } from '@/lib/whatsapp/mirror-inbound-media';
 import { normalizePhone } from '@/lib/whatsapp/phone-utils';
-import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
+import {
+  findContactByWaUserId,
+  findExistingContact,
+  isUniqueViolation,
+} from '@/lib/contacts/dedupe';
+import { sanitizeBsuid, sanitizeWaUsername } from '@/lib/whatsapp/bsuid';
 import { reopenClosedConversation } from '@/lib/conversations/reopen';
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature';
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
@@ -38,7 +43,17 @@ function supabaseAdmin() {
 
 interface WhatsAppMessage {
   id: string;
-  from: string;
+  /**
+   * El teléfono de quien escribe. **Opcional desde abril de 2026**:
+   * Meta lo omite cuando el usuario escribe con nombre de usuario y no
+   * hemos hablado con él en 30 días ni está en la libreta del negocio.
+   */
+  from?: string;
+  /**
+   * El BSUID de quien escribe. Llega SIEMPRE (esa es la razón de ser
+   * del cambio de Meta), y es la identidad que se prueba primero.
+   */
+  from_user_id?: string;
   timestamp: string;
   type: string;
   text?: { body: string };
@@ -83,6 +98,32 @@ interface WhatsAppMessage {
   context?: { id: string };
 }
 
+/**
+ * La entrada de `contacts[]` que acompaña a cada mensaje entrante.
+ *
+ * `wa_id` (teléfono) pasó a ser opcional en abril de 2026 por el mismo
+ * motivo que `messages[].from`; `user_id` (BSUID) va siempre, y
+ * `profile.username` aparece cuando el usuario tiene nombre público.
+ */
+interface WhatsAppWebhookContact {
+  profile?: { name?: string; username?: string };
+  wa_id?: string;
+  user_id?: string;
+}
+
+/**
+ * Un evento de estado de entrega. `recipient_user_id` (BSUID) viaja
+ * siempre; `recipient_id` (teléfono) solo si el envío salió al
+ * teléfono.
+ */
+interface WhatsAppStatus {
+  id: string;
+  status: string;
+  timestamp: string;
+  recipient_id?: string;
+  recipient_user_id?: string;
+}
+
 interface WhatsAppWebhookEntry {
   id: string;
   changes: Array<{
@@ -92,17 +133,9 @@ interface WhatsAppWebhookEntry {
         display_phone_number: string;
         phone_number_id: string;
       };
-      contacts?: Array<{
-        profile: { name: string };
-        wa_id: string;
-      }>;
+      contacts?: WhatsAppWebhookContact[];
       messages?: WhatsAppMessage[];
-      statuses?: Array<{
-        id: string;
-        status: string;
-        timestamp: string;
-        recipient_id: string;
-      }>;
+      statuses?: WhatsAppStatus[];
     };
     field: string;
   }>;
@@ -320,63 +353,42 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const value = change.value;
 
+      // La configuración se resuelve UNA vez por `change`, antes de
+      // separar estados de mensajes, porque las dos ramas necesitan
+      // saber de qué cuenta es este número. Los estados se apoyaban
+      // hasta ahora solo en el `wamid`, que Meta NO garantiza único
+      // entre números (ver migración 009): sin la cuenta, un
+      // `wamid` repetido podía mover la fila de otro inquilino (CP3).
+      const phoneNumberId = value.metadata?.phone_number_id;
+      if (!phoneNumberId) {
+        console.error('[webhook] change without phone_number_id; skipped');
+        continue;
+      }
+
+      const config = await resolveInboundConfig(phoneNumberId);
+      if (!config) continue;
+
       // Handle status updates
       if (value.statuses) {
         for (const status of value.statuses) {
-          await handleStatusUpdate(status);
+          await handleStatusUpdate(status, config.account_id);
         }
       }
 
-      // Handle incoming messages
-      if (!value.messages || !value.contacts) continue;
-
-      const phoneNumberId = value.metadata.phone_number_id;
-
-      // Find user's config by phone_number_id. `.single()` returns
-      // PGRST116 for both 0 rows AND ≥2 rows — distinguish them so
-      // operators see the real cause in logs. ≥2 rows shouldn't happen
-      // post-migration 013 (UNIQUE constraint), but a row created
-      // before the constraint, or a race, would still surface here.
-      const { data: configRows, error: configError } = await supabaseAdmin()
-        .from('whatsapp_config')
-        .select('*')
-        .eq('phone_number_id', phoneNumberId);
-
-      if (configError) {
-        console.error(
-          'Error fetching whatsapp_config for phone_number_id:',
-          phoneNumberId,
-          configError
-        );
-        continue;
-      }
-
-      if (!configRows || configRows.length === 0) {
-        console.error('No config found for phone_number_id:', phoneNumberId);
-        continue;
-      }
-
-      if (configRows.length > 1) {
-        console.error(
-          `Multiple configs (${configRows.length}) found for phone_number_id:`,
-          phoneNumberId,
-          '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
-          'Account owners:',
-          configRows.map(
-            (r: { account_id: string; user_id: string }) =>
-              `${r.account_id} (admin ${r.user_id})`
-          )
-        );
-        continue;
-      }
-
-      const config = configRows[0];
+      // Handle incoming messages.
+      //
+      // `contacts` ya no se exige: su única aportación es el nombre de
+      // perfil y el nombre de usuario, y desde abril de 2026 la
+      // identidad que importa (`from_user_id`) viaja en el propio
+      // mensaje. Pedirla como antes descartaba el lote entero cuando
+      // Meta la omitía — justo lo que CP11 prohíbe.
+      if (!value.messages) continue;
 
       const decryptedAccessToken = decrypt(config.access_token);
 
       for (let i = 0; i < value.messages.length; i++) {
         const message = value.messages[i];
-        const contact = value.contacts[i] || value.contacts[0];
+        const contact = value.contacts?.[i] ?? value.contacts?.[0] ?? null;
 
         await processMessage(
           message,
@@ -398,6 +410,56 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
       }
     }
   }
+}
+
+/**
+ * La fila de `whatsapp_config` a la que pertenece este número, o null.
+ *
+ * Extraído del cuerpo de `processWebhook` sin cambiarle una coma a los
+ * mensajes de log: `.single()` devuelve PGRST116 tanto para 0 filas
+ * como para ≥2, y distinguirlos es lo que le enseña al operador cuál de
+ * los dos problemas tiene. ≥2 no debería pasar desde la 013 (UNIQUE),
+ * pero una fila anterior a esa migración, o una carrera, aún lo
+ * produciría.
+ */
+async function resolveInboundConfig(
+  phoneNumberId: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any | null> {
+  const { data: configRows, error: configError } = await supabaseAdmin()
+    .from('whatsapp_config')
+    .select('*')
+    .eq('phone_number_id', phoneNumberId);
+
+  if (configError) {
+    console.error(
+      'Error fetching whatsapp_config for phone_number_id:',
+      phoneNumberId,
+      configError
+    );
+    return null;
+  }
+
+  if (!configRows || configRows.length === 0) {
+    console.error('No config found for phone_number_id:', phoneNumberId);
+    return null;
+  }
+
+  if (configRows.length > 1) {
+    console.error(
+      `Multiple configs (${configRows.length}) found for phone_number_id:`,
+      phoneNumberId,
+      '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
+      'Account owners:',
+      configRows.map(
+        (r: { account_id: string; user_id: string }) =>
+          `${r.account_id} (admin ${r.user_id})`
+      )
+    );
+    return null;
+  }
+
+  return configRows[0];
 }
 
 // The happy-path status ladder — pending → sent → delivered → read →
@@ -442,24 +504,108 @@ function isValidStatusTransition(current: string, incoming: string): boolean {
   return ii > ci;
 }
 
-async function handleStatusUpdate(status: {
-  id: string;
-  status: string;
-  timestamp: string;
-  recipient_id: string;
-}) {
-  // 1) Mirror onto messages (legacy behavior) — Meta's status values
-  //    already match the CHECK constraint on messages.status. No
-  //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
-  //    repeat across numbers), so this updates 0..N rows and must not
-  //    assume a single row.
-  const { error: msgErr } = await supabaseAdmin()
-    .from('messages')
-    .update({ status: status.status })
-    .eq('message_id', status.id);
+/**
+ * ¿De qué contacto habla este evento de estado?
+ *
+ * Meta manda `recipient_user_id` (BSUID) **siempre** y `recipient_id`
+ * (teléfono) solo cuando el envío salió al teléfono. Se prueban en ese
+ * orden por la misma razón que en los entrantes: el BSUID es la
+ * identidad garantizada.
+ *
+ * Devuelve null cuando no se puede resolver (contacto borrado, estado
+ * de un envío anterior a este CRM). Eso NO es un error: el casado
+ * principal sigue siendo el `wamid`, y esta identidad solo se usa para
+ * desempatar cuando ese `wamid` encuentra más de una fila.
+ */
+async function resolveStatusContactId(
+  status: WhatsAppStatus,
+  accountId: string
+): Promise<string | null> {
+  const waUserId = sanitizeBsuid(status.recipient_user_id);
+  if (waUserId) {
+    const byUserId = await findContactByWaUserId(
+      supabaseAdmin(),
+      accountId,
+      waUserId
+    );
+    if (byUserId) return byUserId.id;
+  }
+  const phone = normalizePhone(status.recipient_id ?? '');
+  if (phone) {
+    const byPhone = await findExistingContact(
+      supabaseAdmin(),
+      accountId,
+      phone
+    );
+    if (byPhone) return byPhone.id;
+  }
+  return null;
+}
 
-  if (msgErr) {
-    console.error('Error updating message status:', msgErr);
+/**
+ * Entre varias filas que comparten el mismo `wamid`, la del
+ * destinatario del evento. Si la identidad no se resolvió, o ninguna
+ * fila es suya, se devuelve la primera: **desempatar nunca puede
+ * costar una actualización**, que es la razón de que esto no sea un
+ * filtro en la consulta.
+ */
+function pickByContact<T extends { contact_id?: string | null }>(
+  rows: T[],
+  contactId: string | null
+): T | null {
+  if (rows.length === 0) return null;
+  if (contactId && rows.length > 1) {
+    const mine = rows.find((r) => r.contact_id === contactId);
+    if (mine) return mine;
+  }
+  return rows[0];
+}
+
+async function handleStatusUpdate(status: WhatsAppStatus, accountId: string) {
+  // A quién se le envió, según la identidad que traiga el evento.
+  const recipientContactId = await resolveStatusContactId(status, accountId);
+
+  // 1) Mirror onto messages (legacy behavior) — Meta's status values
+  //    already match the CHECK constraint on messages.status. El
+  //    `message_id` NO es único (migración 009 — los ids de Meta se
+  //    repiten entre números), así que primero se resuelven las filas
+  //    de ESTA cuenta y luego se actualizan por su id: antes el UPDATE
+  //    salía sin acotar y podía tocar la fila de otro inquilino.
+  const { data: msgRows, error: msgFetchErr } = await supabaseAdmin()
+    .from('messages')
+    .select('id, conversation_id, conversations!inner(account_id, contact_id)')
+    .eq('message_id', status.id)
+    .eq('conversations.account_id', accountId);
+
+  if (msgFetchErr) {
+    console.error('Error fetching messages for status:', msgFetchErr);
+  }
+
+  const messageRows = (msgRows ?? []) as {
+    id: string;
+    conversation_id: string;
+    conversations: { account_id: string; contact_id?: string | null } | null;
+  }[];
+
+  if (messageRows.length > 0) {
+    // El segundo `.in()` es redundante para el resultado —los ids ya
+    // salen de la lectura acotada de arriba— y deliberado para la
+    // auditoría: `messages` no tiene `account_id` propio, su tenencia
+    // cuelga de `conversation_id`, y una actualización por id suelto
+    // no diría de quién es (src/lib/security/service-role-audit.ts).
+    const { error: msgErr } = await supabaseAdmin()
+      .from('messages')
+      .update({ status: status.status })
+      .in(
+        'id',
+        messageRows.map((m) => m.id)
+      )
+      .in('conversation_id', [
+        ...new Set(messageRows.map((m) => m.conversation_id)),
+      ]);
+    if (msgErr) {
+      console.error('Error updating message status:', msgErr);
+    }
   }
 
   // Webhook fan-out for this status change happens at the END of this
@@ -472,15 +618,26 @@ async function handleStatusUpdate(status: {
   //    sent/delivered/read/failed counts automatically.
   const tsIso = new Date(parseInt(status.timestamp) * 1000).toISOString();
 
-  const { data: recipient, error: recFetchErr } = await supabaseAdmin()
+  const { data: recipientRows, error: recFetchErr } = await supabaseAdmin()
     .from('broadcast_recipients')
-    .select('id, status')
+    .select('id, status, contact_id, broadcasts!inner(account_id)')
     .eq('whatsapp_message_id', status.id)
-    .maybeSingle();
+    .eq('broadcasts.account_id', accountId);
 
   if (recFetchErr) {
     console.error('Error fetching broadcast recipient:', recFetchErr);
-  } else if (
+  }
+
+  const recipient = pickByContact(
+    (recipientRows ?? []) as {
+      id: string;
+      status: string;
+      contact_id?: string | null;
+    }[],
+    recipientContactId
+  );
+
+  if (
     recipient &&
     // Guard transitions — forward-only on the success ladder, and
     // `failed` only from pre-delivered states.
@@ -504,30 +661,27 @@ async function handleStatusUpdate(status: {
 
   // 3) Webhook fan-out for messages we store (inbox / API sends).
   //    Runs last so a slow subscriber can't delay the mirrors above.
-  //    Bounded to one row (message_id isn't unique) purely to resolve
-  //    the owning account for delivery.
-  const { data: msgRow } = await supabaseAdmin()
-    .from('messages')
-    .select('conversation_id, conversations(account_id)')
-    .eq('message_id', status.id)
-    .limit(1)
-    .maybeSingle();
+  //    Se reutiliza la consulta del paso 1 (misma cuenta, mismo
+  //    `wamid`): una llamada menos por evento de estado.
+  const msgRow = pickByContact(
+    messageRows.map((m) => ({
+      conversation_id: m.conversation_id,
+      contact_id: m.conversations?.contact_id ?? null,
+    })),
+    recipientContactId
+  );
 
   if (msgRow) {
-    const conv = msgRow.conversations as { account_id: string } | null;
-    const accountId = conv?.account_id;
-    if (accountId) {
-      await dispatchWebhookEvent(
-        supabaseAdmin(),
-        accountId,
-        'message.status_updated',
-        {
-          whatsapp_message_id: status.id,
-          conversation_id: msgRow.conversation_id,
-          status: status.status,
-        }
-      );
-    }
+    await dispatchWebhookEvent(
+      supabaseAdmin(),
+      accountId,
+      'message.status_updated',
+      {
+        whatsapp_message_id: status.id,
+        conversation_id: msgRow.conversation_id,
+        status: status.status,
+      }
+    );
   }
 }
 
@@ -653,7 +807,7 @@ async function handleReaction(
 
 async function processMessage(
   message: WhatsAppMessage,
-  contact: { profile: { name: string }; wa_id: string },
+  contact: WhatsAppWebhookContact | null,
   // Tenancy. Resolved from the matched whatsapp_config row; every
   // contact / conversation / message row created downstream is
   // stamped with this so any member of the account can see it.
@@ -671,15 +825,40 @@ async function processMessage(
   // remembers which one so the reply leaves through the same.
   whatsAppConfigId: string
 ) {
-  const senderPhone = normalizePhone(message.from);
-  const contactName = contact.profile.name;
+  // Las dos identidades posibles del remitente, en el orden en el que
+  // Meta las prioriza. El teléfono puede venir en el mensaje o en la
+  // entrada de `contacts[]`; el BSUID, igual. Se acepta cualquiera de
+  // las dos procedencias porque un webhook al que le falta una mitad
+  // sigue siendo un mensaje que hay que guardar.
+  const senderPhone = normalizePhone(message.from ?? contact?.wa_id ?? '');
+  const senderWaUserId =
+    sanitizeBsuid(message.from_user_id) ?? sanitizeBsuid(contact?.user_id);
+  const contactName = contact?.profile?.name ?? null;
+  const contactUsername = sanitizeWaUsername(contact?.profile?.username);
+
+  // Ni teléfono ni BSUID: no hay a quién atribuir el mensaje y la
+  // invariante de la 060 lo prohíbe. Se registra y se descarta ESTE
+  // mensaje — el bucle sigue con el resto del lote, que es lo que pide
+  // CP11: un entrante ilegible no puede tumbar a los que sí son
+  // válidos.
+  if (!senderPhone && !senderWaUserId) {
+    console.warn(
+      '[webhook] inbound without `from` or `from_user_id`; skipped:',
+      message.id
+    );
+    return;
+  }
 
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
     accountId,
     configOwnerUserId,
-    senderPhone,
-    contactName
+    {
+      phone: senderPhone,
+      waUserId: senderWaUserId,
+      username: contactUsername,
+      name: contactName,
+    }
   );
   if (!contactOutcome) return;
   const contactRecord = contactOutcome.contact;
@@ -1240,68 +1419,162 @@ interface ContactOutcome {
   wasCreated: boolean;
 }
 
+/** Lo que el webhook sabe del remitente de un mensaje entrante. */
+interface InboundSender {
+  /** Teléfono normalizado (solo dígitos). '' cuando Meta no lo manda. */
+  phone: string;
+  /** BSUID, o null. Al menos uno de los dos es no vacío. */
+  waUserId: string | null;
+  /** `profile.username`, sin arroba, o null. */
+  username: string | null;
+  /** `profile.name`, o null. */
+  name: string | null;
+}
+
+/**
+ * Resolver el contacto de un entrante, con las DOS identidades.
+ *
+ * El orden importa y es el de la spec (§5):
+ *
+ *   1. **Por BSUID.** Es lo único que Meta manda siempre, así que es lo
+ *      primero que se prueba. Si el contacto ya existe, se le completa
+ *      el teléfono cuando por fin llega, y el nombre de usuario cuando
+ *      cambia.
+ *   2. **Por teléfono.** Cubre a todos los contactos anteriores a este
+ *      cambio (y a los creados a mano o por CSV): la primera vez que
+ *      uno de ellos escribe con BSUID, se le guarda el BSUID en SU fila
+ *      en lugar de abrir una segunda.
+ *   3. **Crear.** Con lo que haya: teléfono, BSUID, o ambos.
+ *
+ * Ninguna de las actualizaciones de los pasos 1 y 2 puede tumbar el
+ * mensaje: si el teléfono o el BSUID que intentamos escribir ya son de
+ * OTRO contacto de la cuenta, el índice único responde 23505, se
+ * registra y se sigue con el contacto que ya teníamos. Un entrante no
+ * se pierde por un conflicto de identidades (CP11).
+ */
 async function findOrCreateContact(
   accountId: string,
   configOwnerUserId: string,
-  phone: string,
-  name: string
+  sender: InboundSender
 ): Promise<ContactOutcome | null> {
-  // Find an existing contact for this account by phone. The shared
-  // helper pre-filters in SQL by the last-8-digit suffix (so we don't
-  // pull every contact on every inbound message) then applies the
-  // strict `phonesMatch` in JS on the small candidate set. The same
-  // helper backs the manual contact form and CSV import, so all three
-  // paths agree on what "same number" means (issue #212).
-  const existingContact = await findExistingContact(
-    supabaseAdmin(),
-    accountId,
-    phone
-  );
+  const { phone, waUserId, username, name } = sender;
 
-  if (existingContact) {
-    // Update name if it changed
-    if (name && name !== existingContact.name) {
-      await supabaseAdmin()
-        .from('contacts')
-        .update({ name, updated_at: new Date().toISOString() })
-        .eq('id', existingContact.id);
+  // ---- 1) por BSUID -------------------------------------------
+  if (waUserId) {
+    const byUserId = await findContactByWaUserId(
+      supabaseAdmin(),
+      accountId,
+      waUserId
+    );
+    if (byUserId) {
+      const patch: Record<string, unknown> = {};
+      // El teléfono llegó más tarde (el cliente lo compartió, o volvió
+      // a entrar en la ventana de 30 días): se completa, nunca se pisa
+      // uno distinto que ya estuviera guardado.
+      if (phone && !byUserId.phone) patch.phone = phone;
+      if (username && username !== byUserId.wa_username)
+        patch.wa_username = username;
+      if (name && name !== byUserId.name) patch.name = name;
+      await patchContact(accountId, byUserId.id, patch);
+      return {
+        contact: { ...byUserId, ...patch },
+        wasCreated: false,
+      };
     }
-    return { contact: existingContact, wasCreated: false };
   }
 
-  // Create new contact. account_id is the tenancy column;
-  // user_id is the NOT NULL FK audit column (no inbound message
-  // has a single "user who created" it — we attribute to the
-  // WhatsApp config owner as a stable default).
+  // ---- 2) por teléfono ----------------------------------------
+  // El helper compartido pre-filtra en SQL por los últimos 8 dígitos
+  // (para no traerse la agenda entera en cada entrante) y aplica el
+  // `phonesMatch` estricto en JS sobre el puñado de candidatos. Lo
+  // usan también el alta manual y la importación CSV, así que las tres
+  // vías coinciden en qué es «el mismo número» (issue #212).
+  const existingContact = phone
+    ? await findExistingContact(supabaseAdmin(), accountId, phone)
+    : null;
+
+  if (existingContact) {
+    const patch: Record<string, unknown> = {};
+    // Primer webhook que trae el BSUID de un contacto de toda la vida:
+    // se le guarda en su fila. Esto es lo que impide el duplicado.
+    if (waUserId && !existingContact.wa_user_id) patch.wa_user_id = waUserId;
+    if (username && username !== existingContact.wa_username)
+      patch.wa_username = username;
+    if (name && name !== existingContact.name) patch.name = name;
+    await patchContact(accountId, existingContact.id, patch);
+    return {
+      contact: { ...existingContact, ...patch },
+      wasCreated: false,
+    };
+  }
+
+  // ---- 3) crear ------------------------------------------------
+  // account_id es la columna de tenencia; user_id es la columna de
+  // auditoría NOT NULL (ningún entrante tiene un «usuario que lo
+  // creó» — se atribuye al dueño de la configuración de WhatsApp).
+  // El nombre visible cae a lo que haya: nombre de perfil, teléfono,
+  // @usuario y, en último extremo, el BSUID.
   const { data: newContact, error: createError } = await supabaseAdmin()
     .from('contacts')
     .insert({
       account_id: accountId,
       user_id: configOwnerUserId,
-      phone,
-      name: name || phone,
+      phone: phone || null,
+      wa_user_id: waUserId,
+      wa_username: username,
+      name: name || phone || (username ? `@${username}` : waUserId),
     })
     .select()
     .single();
 
   if (createError) {
     // Lost a race: a concurrent inbound delivery (or another path)
-    // created this contact between our lookup and insert, and the
-    // unique index (migration 022) rejected the duplicate. Re-resolve
-    // the existing row instead of dropping the message.
+    // created this contact between our lookup and insert, and one of
+    // the unique indexes (022 por teléfono, 060 por BSUID) rejected the
+    // duplicate. Re-resolve the existing row instead of dropping the
+    // message.
     if (isUniqueViolation(createError)) {
-      const raced = await findExistingContact(
-        supabaseAdmin(),
-        accountId,
-        phone
-      );
+      const raced = waUserId
+        ? await findContactByWaUserId(supabaseAdmin(), accountId, waUserId)
+        : null;
       if (raced) return { contact: raced, wasCreated: false };
+      const racedByPhone = phone
+        ? await findExistingContact(supabaseAdmin(), accountId, phone)
+        : null;
+      if (racedByPhone) return { contact: racedByPhone, wasCreated: false };
     }
     console.error('Error creating contact:', createError);
     return null;
   }
 
   return { contact: newContact, wasCreated: true };
+}
+
+/**
+ * Escribir en un contacto lo que el último webhook nos ha enseñado de
+ * él. Best-effort por diseño: el índice único de teléfono o el de BSUID
+ * pueden rechazar el UPDATE si ese valor ya pertenece a otro contacto
+ * de la cuenta (dos filas que resultan ser la misma persona — una
+ * fusión que este webhook no va a decidir a las tres de la mañana). Se
+ * registra y se sigue: el mensaje se guarda igual.
+ *
+ * Filtra por `account_id` además de por `id` porque el cliente de rol
+ * de servicio no pasa por RLS (CP3).
+ */
+async function patchContact(
+  accountId: string,
+  contactId: string,
+  patch: Record<string, unknown>
+): Promise<void> {
+  if (Object.keys(patch).length === 0) return;
+  const { error } = await supabaseAdmin()
+    .from('contacts')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', contactId)
+    .eq('account_id', accountId);
+  if (error) {
+    console.error('[webhook] contact update skipped:', error.message ?? error);
+  }
 }
 
 async function findOrCreateConversation(

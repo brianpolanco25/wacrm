@@ -48,6 +48,12 @@ const USER_B = '22222222-2222-4222-8222-222222222222';
 const TPL_A = 'aaaaaaaa-0000-4000-8000-000000000001';
 const TPL_B = 'bbbbbbbb-0000-4000-8000-000000000002';
 const SHARED_PHONE = '+15551230000';
+// El MISMO BSUID en las dos cuentas. Meta lo emite por par
+// portafolio/usuario, así que en rigor sería distinto para cada
+// negocio; se comparte a propósito para que un fallo de acotación
+// (buscar el contacto por `wa_user_id` sin `account_id`) case con la
+// fila equivocada y el test lo vea. Fase 6 §5.
+const SHARED_WA_USER_ID = 'US.1349700000000001';
 const KEY_A = 'wacrm_live_keyA_keyA_keyA_keyA_keyA_keyA_keyA';
 const KEY_B = 'wacrm_live_keyB_keyB_keyB_keyB_keyB_keyB_keyB';
 
@@ -319,6 +325,8 @@ function seed(): FakeDatabase {
         account_id: acct,
         user_id: user,
         phone: SHARED_PHONE,
+        wa_user_id: SHARED_WA_USER_ID,
+        wa_username: `cliente_${tag}`,
         name: `Customer ${tag}`,
         email: null,
         company: null,
@@ -818,6 +826,47 @@ function inboundWebhookBody(phoneNumberId: string, text = 'hello') {
                 {
                   id: `wamid.${Math.random().toString(36).slice(2)}`,
                   from: '15551230000',
+                  timestamp: '1700000000',
+                  type: 'text',
+                  text: { body: text },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Un entrante como los de abril de 2026: sin `from` ni `wa_id`, con el
+ * BSUID en `from_user_id` / `contacts[].user_id`. Fase 6 §5.
+ */
+function inboundBsuidWebhookBody(phoneNumberId: string, text = 'hola') {
+  return {
+    entry: [
+      {
+        id: 'waba',
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: {
+                display_phone_number: '1',
+                phone_number_id: phoneNumberId,
+              },
+              contacts: [
+                {
+                  user_id: SHARED_WA_USER_ID,
+                  profile: { name: 'Customer', username: 'cliente' },
+                },
+              ],
+              messages: [
+                {
+                  id: `wamid.${Math.random().toString(36).slice(2)}`,
+                  from_user_id: SHARED_WA_USER_ID,
                   timestamp: '1700000000',
                   type: 'text',
                   text: { body: text },
@@ -1457,6 +1506,77 @@ describe('/api/whatsapp/webhook (service role, tenant from phone_number_id)', ()
       .rows('messages')
       .filter((m) => m.id !== 'msg-a' && m.id !== 'msg-b');
     expect(newMessages.map((m) => m.conversation_id)).toEqual(['conv-b']);
+  });
+
+  it('un entrante por BSUID en el número de A casa con el contacto de A, no con el de B (mismo wa_user_id)', async () => {
+    const before = h.db.snapshot(B);
+    const res = await waWebhook.POST(
+      req('POST', '/api/whatsapp/webhook', inboundBsuidWebhookBody('pn-a'), {
+        'x-hub-signature-256': 'sha256=stub',
+      })
+    );
+    expect(res.status).toBe(200);
+    await drainAfter();
+
+    // Ni un contacto nuevo: el de A ya tenía ese BSUID.
+    expect(h.db.rows('contacts')).toHaveLength(2);
+    const newMessages = h.db
+      .rows('messages')
+      .filter((m) => m.id !== 'msg-a' && m.id !== 'msg-b');
+    expect(newMessages).toHaveLength(1);
+    expect(newMessages[0].conversation_id).toBe('conv-a');
+    expectBUnchanged(before);
+  });
+
+  it('un estado de entrega del wamid compartido solo mueve la fila de A', async () => {
+    // Las dos cuentas tienen una fila de difusión con el MISMO wamid:
+    // Meta no garantiza que sea único entre números (migración 009).
+    for (const row of h.db.rows('broadcast_recipients')) {
+      row.whatsapp_message_id = 'wamid.SHARED';
+      row.status = 'sent';
+    }
+    const before = h.db.snapshot(B);
+
+    await waWebhook.POST(
+      req(
+        'POST',
+        '/api/whatsapp/webhook',
+        {
+          entry: [
+            {
+              id: 'waba',
+              changes: [
+                {
+                  field: 'messages',
+                  value: {
+                    messaging_product: 'whatsapp',
+                    metadata: {
+                      display_phone_number: '1',
+                      phone_number_id: 'pn-a',
+                    },
+                    statuses: [
+                      {
+                        id: 'wamid.SHARED',
+                        status: 'delivered',
+                        timestamp: '1700000000',
+                        recipient_user_id: SHARED_WA_USER_ID,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        { 'x-hub-signature-256': 'sha256=stub' }
+      )
+    );
+    await drainAfter();
+
+    expect(
+      h.db.rows('broadcast_recipients').find((r) => r.id === 'rcpt-a')?.status
+    ).toBe('delivered');
+    expectBUnchanged(before);
   });
 
   it('an inbound for an unknown number is dropped without touching either account', async () => {

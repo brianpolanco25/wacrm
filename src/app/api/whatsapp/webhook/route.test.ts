@@ -46,6 +46,35 @@ const h = vi.hoisted(() => ({
     configVerifyTokens: ['tenant-verify-token'] as string[],
     /** Every write against whatsapp_config. The GET must never make one. */
     configWrites: [] as string[],
+    /** Contacto que `findExistingContact` (teléfono) resuelve. */
+    contactByPhone: {
+      id: 'contact-1',
+      name: 'Ada',
+      phone: '15551230000',
+    } as Record<string, unknown> | null,
+    /** Contacto que `findContactByWaUserId` (BSUID) resuelve. */
+    contactByWaUserId: null as Record<string, unknown> | null,
+    /** Filas insertadas en `contacts`. */
+    contactInserts: [] as Record<string, unknown>[],
+    /** Parches escritos en `contacts`, con sus filtros. */
+    contactUpdates: [] as {
+      values: Record<string, unknown>;
+      filters: Record<string, unknown>;
+    }[],
+    /** Filas que el casado de estados encuentra por `wamid`. */
+    statusMessageRows: [] as Record<string, unknown>[],
+    /** Filas de `broadcast_recipients` que encuentra por `wamid`. */
+    statusRecipientRows: [] as Record<string, unknown>[],
+    /** Actualizaciones escritas sobre `broadcast_recipients`. */
+    recipientUpdates: [] as {
+      values: Record<string, unknown>;
+      id: unknown;
+    }[],
+    /** Actualizaciones escritas sobre `messages` (estado de entrega). */
+    messageStatusUpdates: [] as {
+      values: Record<string, unknown>;
+      ids: unknown;
+    }[],
     /** Filters/limits the GET's verify-token query applied. */
     configVerifyQuery: null as {
       notNull: boolean;
@@ -165,21 +194,65 @@ vi.mock('@supabase/supabase-js', () => ({
               };
             },
           };
-        case 'broadcast_recipients':
-          // flagBroadcastReplyIfAny: select().eq().eq().in().order().limit()
+        case 'contacts':
+          // findOrCreateContact: insert().select().single() y el parche
+          // update().eq('id').eq('account_id') de `patchContact`.
           return {
-            select: () => ({
-              eq: () => ({
-                eq: () => ({
-                  in: () => ({
-                    order: () => ({
-                      limit: () => Promise.resolve({ data: [], error: null }),
+            insert: (row: Record<string, unknown>) => {
+              h.state.contactInserts.push(row);
+              return {
+                select: () => ({
+                  single: () =>
+                    Promise.resolve({
+                      data: { id: 'contact-new', ...row },
+                      error: null,
                     }),
-                  }),
                 }),
+              };
+            },
+            update: (values: Record<string, unknown>) => {
+              const filters: Record<string, unknown> = {};
+              const chain = {
+                eq: (column: string, value: unknown) => {
+                  filters[column] = value;
+                  return chain;
+                },
+                then: (resolve: (r: unknown) => unknown) =>
+                  resolve({ error: null }),
+              };
+              h.state.contactUpdates.push({ values, filters });
+              return chain;
+            },
+          };
+        case 'broadcast_recipients': {
+          // Dos cadenas: flagBroadcastReplyIfAny
+          // (select().eq().eq().in().order().limit()) y el casado de
+          // estados (select().eq().eq() sobre el wamid + la cuenta).
+          const statusChain: Record<string, unknown> = {};
+          const eqStatus = () =>
+            Object.assign(
+              Promise.resolve({
+                data: h.state.statusRecipientRows,
+                error: null,
               }),
+              { eq: eqStatus, in: inChain }
+            );
+          const inChain = () => ({
+            order: () => ({
+              limit: () => Promise.resolve({ data: [], error: null }),
+            }),
+          });
+          void statusChain;
+          return {
+            select: () => ({ eq: eqStatus }),
+            update: (values: Record<string, unknown>) => ({
+              eq: (_column: string, id: unknown) => {
+                h.state.recipientUpdates.push({ values, id });
+                return Promise.resolve({ error: null });
+              },
             }),
           };
+        }
         case 'messages':
           return {
             // Two different chains land here, told apart by the count
@@ -197,18 +270,47 @@ vi.mock('@supabase/supabase-js', () => ({
                         }),
                     }),
                   }
-                : // lookupInternalIdByMetaId: select('id').eq().eq().maybeSingle()
+                : // Dos cadenas sin `head`: lookupInternalIdByMetaId
+                  // (…eq().eq().maybeSingle()) y el casado de estados
+                  // (…eq().eq() a secas, awaited).
                   {
                     eq: () => ({
-                      eq: () => ({
-                        maybeSingle: () =>
+                      eq: () =>
+                        Object.assign(
                           Promise.resolve({
-                            data: h.state.replyContextParent,
+                            data: h.state.statusMessageRows,
                             error: null,
                           }),
-                      }),
+                          {
+                            maybeSingle: () =>
+                              Promise.resolve({
+                                data: h.state.replyContextParent,
+                                error: null,
+                              }),
+                          }
+                        ),
                     }),
                   },
+            // Espejo del estado de entrega:
+            // update({status}).in('id', ids).in('conversation_id', convs)
+            update: (values: Record<string, unknown>) => {
+              const captured: {
+                values: Record<string, unknown>;
+                ids: unknown;
+              } = { values, ids: null };
+              const chain = {
+                in: (column: string, ids: unknown) => {
+                  if (column === 'id') {
+                    captured.ids = ids;
+                    h.state.messageStatusUpdates.push(captured);
+                  }
+                  return chain;
+                },
+                then: (resolve: (r: unknown) => unknown) =>
+                  resolve({ error: null }),
+              };
+              return chain;
+            },
             // Idempotent insert: upsert(...).select('id')
             upsert: (row: Record<string, unknown>, options: unknown) => {
               h.state.upsertCalls.push({ row, options });
@@ -262,11 +364,8 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   downloadMedia: vi.fn(),
 }));
 vi.mock('@/lib/contacts/dedupe', () => ({
-  findExistingContact: vi.fn(async () => ({
-    id: 'contact-1',
-    name: 'Ada',
-    phone: '15551230000',
-  })),
+  findExistingContact: vi.fn(async () => h.state.contactByPhone),
+  findContactByWaUserId: vi.fn(async () => h.state.contactByWaUserId),
   isUniqueViolation: () => false,
 }));
 vi.mock('@/lib/whatsapp/webhook-signature', () => ({
@@ -364,6 +463,18 @@ beforeEach(() => {
   h.state.storageUploads = [];
   h.state.storageUploadError = null;
   h.state.fromCalls = [];
+  h.state.contactByPhone = {
+    id: 'contact-1',
+    name: 'Ada',
+    phone: '15551230000',
+  };
+  h.state.contactByWaUserId = null;
+  h.state.contactInserts = [];
+  h.state.contactUpdates = [];
+  h.state.statusMessageRows = [];
+  h.state.statusRecipientRows = [];
+  h.state.recipientUpdates = [];
+  h.state.messageStatusUpdates = [];
   h.state.configVerifyTokens = ['tenant-verify-token'];
   h.state.configWrites = [];
   h.state.configVerifyQuery = null;
@@ -955,5 +1066,370 @@ describe('inbound webhook: several numbers per account (fase 4 §1)', () => {
     expect(
       h.state.conversationUpdates.filter((u) => 'whatsapp_config_id' in u)
     ).toHaveLength(0);
+  });
+});
+
+// ============================================================
+// BSUID — identidad de WhatsApp sin teléfono (fase 6 §5).
+//
+// El payload de los casos «sin teléfono» es el que documenta Meta:
+// `messages[].from` y `contacts[].wa_id` AUSENTES, `from_user_id` y
+// `contacts[].user_id` presentes, y el nombre de usuario en
+// `profile.username`.
+// ============================================================
+
+/** Un entrante tal y como llega de un usuario con nombre de usuario. */
+function bsuidRequest(
+  overrides: {
+    message?: Record<string, unknown>;
+    contact?: Record<string, unknown> | null;
+  } = {}
+) {
+  const body = {
+    entry: [
+      {
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              metadata: { phone_number_id: 'pn-1' },
+              contacts:
+                overrides.contact === null
+                  ? undefined
+                  : [
+                      overrides.contact ?? {
+                        user_id: 'US.1349700000000001',
+                        profile: { name: 'Ada', username: 'ada' },
+                      },
+                    ],
+              messages: [
+                overrides.message ?? {
+                  id: 'wamid.BSUID1',
+                  from_user_id: 'US.1349700000000001',
+                  timestamp: '1700000000',
+                  type: 'text',
+                  text: { body: 'hola' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+  return {
+    text: async () => JSON.stringify(body),
+    headers: { get: () => 'sha256=stub' },
+  } as unknown as Request;
+}
+
+async function runBsuidWebhook(overrides?: {
+  message?: Record<string, unknown>;
+  contact?: Record<string, unknown> | null;
+}) {
+  const res = await POST(bsuidRequest(overrides));
+  for (const cb of h.state.afterCallbacks) await cb();
+  return res;
+}
+
+describe('inbound webhook: BSUID (fase 6 §5)', () => {
+  it('un entrante sin `from` pero con `from_user_id` crea contacto, conversación y mensaje', async () => {
+    // Nadie con ese BSUID ni con ese teléfono: es su primer mensaje.
+    h.state.contactByPhone = null;
+    h.state.contactByWaUserId = null;
+
+    await runBsuidWebhook();
+
+    expect(h.state.contactInserts).toHaveLength(1);
+    expect(h.state.contactInserts[0]).toMatchObject({
+      account_id: 'acc-1',
+      phone: null,
+      wa_user_id: 'US.1349700000000001',
+      wa_username: 'ada',
+      name: 'Ada',
+    });
+    // Y el mensaje se guarda: lo entrante nunca se bloquea (CP11).
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(h.state.upsertCalls[0].row.content_text).toBe('hola');
+  });
+
+  it('sin nombre de perfil, el contacto se llama «@usuario»', async () => {
+    h.state.contactByPhone = null;
+    h.state.contactByWaUserId = null;
+
+    await runBsuidWebhook({
+      contact: {
+        user_id: 'US.1349700000000001',
+        profile: { username: 'ada' },
+      },
+    });
+
+    expect(h.state.contactInserts[0].name).toBe('@ada');
+  });
+
+  it('un contacto que ya existe por teléfono recibe su BSUID sin duplicarse', async () => {
+    // La agenda ya tiene a Ada por teléfono, todavía sin BSUID.
+    h.state.contactByPhone = {
+      id: 'contact-1',
+      name: 'Ada',
+      phone: '15551230000',
+    };
+    h.state.contactByWaUserId = null;
+
+    // El webhook trae las dos identidades (Meta manda el teléfono
+    // porque seguimos dentro de la ventana de 30 días).
+    await runBsuidWebhook({
+      message: {
+        id: 'wamid.BSUID2',
+        from: '15551230000',
+        from_user_id: 'US.1349700000000001',
+        timestamp: '1700000000',
+        type: 'text',
+        text: { body: 'hola' },
+      },
+      contact: {
+        wa_id: '15551230000',
+        user_id: 'US.1349700000000001',
+        profile: { name: 'Ada', username: 'ada' },
+      },
+    });
+
+    // Ni un contacto nuevo…
+    expect(h.state.contactInserts).toHaveLength(0);
+    // …y el BSUID queda escrito en SU fila, acotada por cuenta (CP3).
+    expect(h.state.contactUpdates).toHaveLength(1);
+    expect(h.state.contactUpdates[0].values).toMatchObject({
+      wa_user_id: 'US.1349700000000001',
+      wa_username: 'ada',
+    });
+    expect(h.state.contactUpdates[0].filters).toEqual({
+      id: 'contact-1',
+      account_id: 'acc-1',
+    });
+  });
+
+  it('un contacto nacido por BSUID recibe el teléfono cuando Meta lo incluye', async () => {
+    h.state.contactByWaUserId = {
+      id: 'contact-1',
+      name: 'Ada',
+      phone: null,
+      wa_user_id: 'US.1349700000000001',
+      wa_username: 'ada',
+    };
+
+    await runBsuidWebhook({
+      message: {
+        id: 'wamid.BSUID3',
+        from: '15551230000',
+        from_user_id: 'US.1349700000000001',
+        timestamp: '1700000000',
+        type: 'text',
+        text: { body: 'ya te paso mi número' },
+      },
+      contact: {
+        wa_id: '15551230000',
+        user_id: 'US.1349700000000001',
+        profile: { name: 'Ada', username: 'ada' },
+      },
+    });
+
+    expect(h.state.contactInserts).toHaveLength(0);
+    expect(h.state.contactUpdates).toHaveLength(1);
+    expect(h.state.contactUpdates[0].values).toMatchObject({
+      phone: '15551230000',
+    });
+  });
+
+  it('no pisa un teléfono ya guardado con el que trae el webhook', async () => {
+    h.state.contactByWaUserId = {
+      id: 'contact-1',
+      name: 'Ada',
+      phone: '15551230000',
+      wa_user_id: 'US.1349700000000001',
+      wa_username: 'ada',
+    };
+
+    await runBsuidWebhook({
+      message: {
+        id: 'wamid.BSUID4',
+        from: '15559999999',
+        from_user_id: 'US.1349700000000001',
+        timestamp: '1700000000',
+        type: 'text',
+        text: { body: 'hola' },
+      },
+      contact: {
+        wa_id: '15559999999',
+        user_id: 'US.1349700000000001',
+        profile: { name: 'Ada', username: 'ada' },
+      },
+    });
+
+    expect(h.state.contactUpdates).toHaveLength(0);
+  });
+
+  it('el BSUID llega solo en `contacts[].user_id` y basta', async () => {
+    h.state.contactByPhone = null;
+    h.state.contactByWaUserId = null;
+
+    await runBsuidWebhook({
+      message: {
+        id: 'wamid.BSUID5',
+        timestamp: '1700000000',
+        type: 'text',
+        text: { body: 'hola' },
+      },
+    });
+
+    expect(h.state.contactInserts).toHaveLength(1);
+    expect(h.state.contactInserts[0].wa_user_id).toBe('US.1349700000000001');
+  });
+
+  it('un mensaje sin ninguna identidad se descarta sin tumbar el resto del lote', async () => {
+    h.state.contactByPhone = null;
+    h.state.contactByWaUserId = null;
+
+    const body = {
+      entry: [
+        {
+          changes: [
+            {
+              field: 'messages',
+              value: {
+                metadata: { phone_number_id: 'pn-1' },
+                contacts: [
+                  { profile: { name: 'Fantasma' } },
+                  {
+                    user_id: 'US.1349700000000002',
+                    profile: { name: 'Ada', username: 'ada' },
+                  },
+                ],
+                messages: [
+                  {
+                    id: 'wamid.GHOST',
+                    timestamp: '1700000000',
+                    type: 'text',
+                    text: { body: 'sin identidad' },
+                  },
+                  {
+                    id: 'wamid.GOOD',
+                    from_user_id: 'US.1349700000000002',
+                    timestamp: '1700000001',
+                    type: 'text',
+                    text: { body: 'con identidad' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const res = await POST({
+      text: async () => JSON.stringify(body),
+      headers: { get: () => 'sha256=stub' },
+    } as unknown as Request);
+    for (const cb of h.state.afterCallbacks) await cb();
+
+    expect(
+      (res as unknown as { init?: { status?: number } }).init?.status
+    ).toBe(200);
+    // El ilegible no se guarda; el válido sí. Esto es CP11.
+    const stored = h.state.upsertCalls.map((c) => c.row.message_id);
+    expect(stored).toEqual(['wamid.GOOD']);
+  });
+});
+
+describe('estados de entrega: casados por recipient_user_id (fase 6 §5)', () => {
+  function statusRequest(status: Record<string, unknown>) {
+    const body = {
+      entry: [
+        {
+          changes: [
+            {
+              field: 'messages',
+              value: {
+                metadata: { phone_number_id: 'pn-1' },
+                statuses: [status],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    return {
+      text: async () => JSON.stringify(body),
+      headers: { get: () => 'sha256=stub' },
+    } as unknown as Request;
+  }
+
+  async function runStatus(status: Record<string, unknown>) {
+    await POST(statusRequest(status));
+    for (const cb of h.state.afterCallbacks) await cb();
+  }
+
+  it('un estado sin `recipient_id` avanza la fila de difusión igualmente', async () => {
+    h.state.statusRecipientRows = [
+      { id: 'rcpt-1', status: 'sent', contact_id: 'contact-1' },
+    ];
+
+    await runStatus({
+      id: 'wamid.OUT1',
+      status: 'delivered',
+      timestamp: '1700000000',
+      recipient_user_id: 'US.1349700000000001',
+    });
+
+    expect(h.state.recipientUpdates).toHaveLength(1);
+    expect(h.state.recipientUpdates[0].id).toBe('rcpt-1');
+    expect(h.state.recipientUpdates[0].values).toMatchObject({
+      status: 'delivered',
+    });
+  });
+
+  it('con varias filas para el mismo wamid, gana la del destinatario del evento', async () => {
+    // El BSUID del evento resuelve a `contact-2`.
+    h.state.contactByWaUserId = { id: 'contact-2', phone: null };
+    h.state.statusRecipientRows = [
+      { id: 'rcpt-otro', status: 'sent', contact_id: 'contact-1' },
+      { id: 'rcpt-mio', status: 'sent', contact_id: 'contact-2' },
+    ];
+
+    await runStatus({
+      id: 'wamid.OUT2',
+      status: 'read',
+      timestamp: '1700000000',
+      recipient_user_id: 'US.1349700000000002',
+    });
+
+    expect(h.state.recipientUpdates).toHaveLength(1);
+    expect(h.state.recipientUpdates[0].id).toBe('rcpt-mio');
+  });
+
+  it('el espejo sobre `messages` se acota a las filas de la cuenta', async () => {
+    h.state.statusMessageRows = [
+      {
+        id: 'msg-9',
+        conversation_id: 'conv-1',
+        conversations: { account_id: 'acc-1', contact_id: 'contact-1' },
+      },
+    ];
+
+    await runStatus({
+      id: 'wamid.OUT3',
+      status: 'read',
+      timestamp: '1700000000',
+      recipient_user_id: 'US.1349700000000001',
+    });
+
+    expect(h.state.messageStatusUpdates).toHaveLength(1);
+    expect(h.state.messageStatusUpdates[0].ids).toEqual(['msg-9']);
+    // Y el evento público sale con la cuenta correcta.
+    expect(h.dispatchWebhookEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      'acc-1',
+      'message.status_updated',
+      expect.objectContaining({ whatsapp_message_id: 'wamid.OUT3' })
+    );
   });
 });

@@ -1,5 +1,6 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { normalizePhone, phonesMatch } from "@/lib/whatsapp/phone-utils";
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils';
+import { sanitizeBsuid } from '@/lib/whatsapp/bsuid';
 
 /**
  * Contact de-duplication helpers, shared by the WhatsApp webhook, the
@@ -21,8 +22,12 @@ export function normalizeKey(phone: string): string {
 /** Minimal shape we need back from a contacts lookup. */
 export interface ExistingContact {
   id: string;
-  phone: string;
+  /** Nullable desde la migración 060: un contacto puede existir solo
+   *  con su BSUID, porque Meta ya no siempre manda el teléfono. */
+  phone: string | null;
   name?: string | null;
+  wa_user_id?: string | null;
+  wa_username?: string | null;
   [key: string]: unknown;
 }
 
@@ -35,7 +40,7 @@ export interface ExistingContact {
 export async function findExistingContact(
   db: SupabaseClient,
   accountId: string,
-  phone: string,
+  phone: string
 ): Promise<ExistingContact | null> {
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
@@ -43,16 +48,52 @@ export async function findExistingContact(
   const suffix = normalized.length >= 8 ? normalized.slice(-8) : normalized;
 
   const { data, error } = await db
-    .from("contacts")
-    .select("*")
-    .eq("account_id", accountId)
-    .like("phone", `%${suffix}`);
+    .from('contacts')
+    .select('*')
+    .eq('account_id', accountId)
+    .like('phone', `%${suffix}`);
 
   if (error || !data) return null;
 
   return (
-    (data as ExistingContact[]).find((c) => phonesMatch(c.phone, phone)) ?? null
+    (data as ExistingContact[]).find((c) =>
+      phonesMatch(c.phone ?? '', phone)
+    ) ?? null
   );
+}
+
+/**
+ * Find the contact of `accountId` that owns `waUserId` (the BSUID), or
+ * null.
+ *
+ * Exact match, no fuzziness: the BSUID is an opaque identifier issued
+ * by Meta, unique per (business portfolio, user) — which in this schema
+ * is per account — and backed by the partial unique index of migration
+ * 060. It is the FIRST thing the inbound webhook tries, because since
+ * April 2026 it is the only identity Meta always sends.
+ *
+ * Account-scoped on purpose: the same person writing to two different
+ * customers of this CRM gets a different BSUID for each, but nothing
+ * stops Meta from reusing a value across portfolios, and the service
+ * role client used by the webhook has no RLS to fall back on (CP3).
+ */
+export async function findContactByWaUserId(
+  db: SupabaseClient,
+  accountId: string,
+  waUserId: string
+): Promise<ExistingContact | null> {
+  const id = sanitizeBsuid(waUserId);
+  if (!id) return null;
+
+  const { data, error } = await db
+    .from('contacts')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('wa_user_id', id)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return data as ExistingContact;
 }
 
 /**
@@ -60,7 +101,11 @@ export async function findExistingContact(
  * `phone` (vs only a fuzzy trunk-variant match). The form hard-blocks
  * exact matches but only warns on fuzzy ones.
  */
-export function isExactMatch(existing: ExistingContact, phone: string): boolean {
+export function isExactMatch(
+  existing: ExistingContact,
+  phone: string
+): boolean {
+  if (!existing.phone) return false;
   return normalizeKey(existing.phone) === normalizeKey(phone);
 }
 
@@ -70,8 +115,8 @@ export function isExactMatch(existing: ExistingContact, phone: string): boolean 
  * format-equal insert that slipped past the in-app check.
  */
 export function isUniqueViolation(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  return (error as { code?: string }).code === "23505";
+  if (!error || typeof error !== 'object') return false;
+  return (error as { code?: string }).code === '23505';
 }
 
 /**
@@ -81,7 +126,7 @@ export function isUniqueViolation(error: unknown): boolean {
  * count removed as in-file duplicates.
  */
 export function dedupeByPhone<T extends { phone: string }>(
-  rows: T[],
+  rows: T[]
 ): { unique: T[]; duplicates: number } {
   const seen = new Set<string>();
   const unique: T[] = [];
