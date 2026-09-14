@@ -182,7 +182,11 @@ describe('createBroadcast atomicity (#370)', () => {
     expect(calls.usedDirectInsert).toBe(0);
     expect(plan.broadcastId).toBe('b-1');
     expect(plan.planned).toEqual([
-      { recipientRowId: 'r-1', phone: '14155550123', params: [] },
+      {
+        recipientRowId: 'r-1',
+        target: { kind: 'phone', phone: '14155550123' },
+        params: [],
+      },
     ]);
   });
 
@@ -413,7 +417,7 @@ function planOf(accountId: string, phones: string[]) {
     templateRow: null,
     planned: phones.map((phone, i) => ({
       recipientRowId: `r-${i}`,
-      phone,
+      target: { kind: 'phone' as const, phone },
       params: [],
     })),
     rejected: 0,
@@ -470,5 +474,105 @@ describe('deliverBroadcast — broadcast_recipients (fase 3 §4)', () => {
       'broadcast_recipients',
       1
     );
+  });
+});
+
+// ============================================================
+// Difusiones a quien no tiene teléfono (fase 6 §5).
+// ============================================================
+
+describe('createBroadcast — destinatarios por BSUID', () => {
+  it('acepta `to_user_id` y planifica el envío por `recipient`', async () => {
+    const { db } = makeDb({
+      data: [{ broadcast_id: 'b-1', recipient_id: 'r-1', contact_id: 'c1' }],
+      error: null,
+    });
+
+    const plan = await createBroadcast(db, 'acc', 'user', {
+      templateName: 'promo',
+      recipients: [{ to_user_id: 'US.1349700000000001' }],
+    });
+
+    // El contacto se resuelve por BSUID, no por un teléfono inventado.
+    expect(billing.findOrCreateContact).toHaveBeenCalledWith(
+      expect.anything(),
+      'acc',
+      'user',
+      { waUserId: 'US.1349700000000001' }
+    );
+    expect(plan.planned).toEqual([
+      {
+        recipientRowId: 'r-1',
+        target: { kind: 'user_id', userId: 'US.1349700000000001' },
+        params: [],
+      },
+    ]);
+    expect(plan.rejected).toBe(0);
+  });
+
+  it('con teléfono y BSUID en la misma fila, manda el teléfono', async () => {
+    const { db } = makeDb({
+      data: [{ broadcast_id: 'b-1', recipient_id: 'r-1', contact_id: 'c1' }],
+      error: null,
+    });
+
+    const plan = await createBroadcast(db, 'acc', 'user', {
+      templateName: 'promo',
+      recipients: [{ to: '+14155550123', to_user_id: 'US.1349700000000001' }],
+    });
+
+    expect(plan.planned[0].target).toEqual({
+      kind: 'phone',
+      phone: '14155550123',
+    });
+  });
+
+  it('rechaza un BSUID con formato imposible, sin tumbar la campaña', async () => {
+    const { db } = makeDb({
+      data: [{ broadcast_id: 'b-1', recipient_id: 'r-1', contact_id: 'c1' }],
+      error: null,
+    });
+
+    const plan = await createBroadcast(db, 'acc', 'user', {
+      templateName: 'promo',
+      recipients: [
+        { to_user_id: 'no-es-un-bsuid' },
+        { to_user_id: 'US.1349700000000001' },
+      ],
+    });
+
+    expect(plan.rejected).toBe(1);
+    expect(plan.planned).toHaveLength(1);
+  });
+
+  it('envía por `recipient` en la entrega', async () => {
+    const { db } = deliverDb();
+    await deliverBroadcast(db, {
+      broadcastId: 'b-1',
+      accountId: 'acc',
+      templateName: 'promo',
+      templateLanguage: 'en_US',
+      phoneNumberId: 'pn-1',
+      accessToken: 'tok',
+      templateRow: null,
+      planned: [
+        {
+          recipientRowId: 'r-0',
+          target: { kind: 'user_id', userId: 'US.1349700000000001' },
+          params: [],
+        },
+      ],
+      rejected: 0,
+    });
+
+    expect(billing.sendTemplateMessage).toHaveBeenCalledTimes(1);
+    const args = (
+      billing.sendTemplateMessage.mock.calls as unknown as Record<
+        string,
+        unknown
+      >[][]
+    )[0][0];
+    expect(args.recipient).toBe('US.1349700000000001');
+    expect(args.to).toBeUndefined();
   });
 });

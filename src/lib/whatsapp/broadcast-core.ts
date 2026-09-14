@@ -29,9 +29,13 @@ import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 import {
   sanitizePhoneForMeta,
   isValidE164,
-  phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils';
+import { isValidBsuid } from '@/lib/whatsapp/bsuid';
+import {
+  recipientAttempts,
+  type ResolvedRecipient,
+} from '@/lib/whatsapp/recipient';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
@@ -61,8 +65,14 @@ export function toBroadcastError(err: unknown): unknown {
 }
 
 export interface BroadcastRecipientInput {
-  /** E.164 phone. */
-  to: string;
+  /** E.164 phone. Opcional desde fase 6 §5 si va `to_user_id`. */
+  to?: string;
+  /**
+   * BSUID del destinatario (`CC.<alfanum>`), para quien nos escribió
+   * con nombre de usuario y del que no tenemos teléfono. Si van los
+   * dos, manda el teléfono: es la identidad más estable.
+   */
+  to_user_id?: string;
   /** Positional body params for the template ({{1}}, {{2}}…). */
   params?: string[];
 }
@@ -82,7 +92,8 @@ export interface CreateBroadcastParams {
 
 interface PlannedRecipient {
   recipientRowId: string;
-  phone: string;
+  /** Teléfono o BSUID, ya resuelto (fase 6 §5). */
+  target: ResolvedRecipient;
   params: string[];
 }
 
@@ -103,7 +114,7 @@ export interface BroadcastPlan {
   accessToken: string;
   templateRow: MessageTemplate | null;
   planned: PlannedRecipient[];
-  /** Phones rejected up front (invalid E.164) — counted as failed. */
+  /** Destinatarios rechazados de entrada (ni teléfono ni BSUID válidos). */
   rejected: number;
 }
 
@@ -181,21 +192,33 @@ export async function createBroadcast(
   // broadcast) and collapse a number the caller listed twice, keeping
   // the first occurrence so its params aren't overwritten by a later
   // duplicate.
-  const seenPhone = new Set<string>();
-  const candidates: { phone: string; params: string[] }[] = [];
+  const seen = new Set<string>();
+  const candidates: { target: ResolvedRecipient; params: string[] }[] = [];
   let rejected = 0;
   for (const r of recipients) {
+    // El teléfono manda cuando vienen los dos: es la identidad que no
+    // depende de que el usuario mantenga su nombre de usuario.
     const sanitized = sanitizePhoneForMeta(
       typeof r.to === 'string' ? r.to : ''
     );
-    if (!isValidE164(sanitized)) {
+    const userId = typeof r.to_user_id === 'string' ? r.to_user_id.trim() : '';
+    let target: ResolvedRecipient;
+    if (isValidE164(sanitized)) {
+      target = { kind: 'phone', phone: sanitized };
+    } else if (isValidBsuid(userId)) {
+      target = { kind: 'user_id', userId };
+    } else {
       rejected++;
       continue;
     }
-    if (seenPhone.has(sanitized)) continue;
-    seenPhone.add(sanitized);
+    // La clave de deduplicación lleva el tipo delante para que un BSUID
+    // no pueda colisionar con un teléfono que se le parezca.
+    const key =
+      target.kind === 'phone' ? `p:${target.phone}` : `u:${target.userId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     candidates.push({
-      phone: sanitized,
+      target,
       params: Array.isArray(r.params)
         ? r.params.filter((p): p is string => typeof p === 'string')
         : [],
@@ -205,7 +228,7 @@ export async function createBroadcast(
   if (candidates.length === 0) {
     throw new BroadcastError(
       'bad_request',
-      'No recipients had a valid E.164 phone number',
+      "No recipients had a valid E.164 phone number or 'to_user_id'",
       400
     );
   }
@@ -237,11 +260,20 @@ export async function createBroadcast(
   // is messaged once and the row↔params pairing below (keyed by
   // contact_id) stays unambiguous.
   const seenContact = new Set<string>();
-  const deduped: { contactId: string; phone: string; params: string[] }[] = [];
+  const deduped: {
+    contactId: string;
+    target: ResolvedRecipient;
+    params: string[];
+  }[] = [];
   for (const c of candidates) {
-    const { id } = await findOrCreateContact(db, accountId, auditUserId, {
-      phone: c.phone,
-    });
+    const { id } = await findOrCreateContact(
+      db,
+      accountId,
+      auditUserId,
+      c.target.kind === 'phone'
+        ? { phone: c.target.phone }
+        : { waUserId: c.target.userId }
+    );
     if (seenContact.has(id)) continue;
     seenContact.add(id);
     deduped.push({ contactId: id, ...c });
@@ -309,7 +341,7 @@ export async function createBroadcast(
       const r = byContact.get(row.contact_id)!;
       return {
         recipientRowId: row.recipient_id,
-        phone: r.phone,
+        target: r.target,
         params: r.params,
       };
     }
@@ -394,16 +426,18 @@ export async function deliverBroadcast(
 
   let sent = 0;
   for (const recipient of plan.planned) {
-    const variants = phoneVariants(recipient.phone);
+    // Por teléfono, las variantes de prefijo troncal; por BSUID, un
+    // único intento (fase 6 §5).
+    const attempts = recipientAttempts(recipient.target);
     let sentMessageId: string | null = null;
     let lastError: string | null = null;
 
-    for (const variant of variants) {
+    for (const attempt of attempts) {
       try {
         const result = await sendTemplateMessage({
           phoneNumberId: plan.phoneNumberId,
           accessToken: plan.accessToken,
-          to: variant,
+          ...attempt,
           templateName: plan.templateName,
           language: plan.templateLanguage,
           template: plan.templateRow ?? undefined,

@@ -105,7 +105,7 @@ function planFor(accountId: string, howMany: number) {
       templateRow: null,
       planned: Array.from({ length: howMany }, (_, i) => ({
         recipientRowId: `r-${i}`,
-        phone: `1555111000${i}`,
+        target: { kind: 'phone' as const, phone: `1555111000${i}` },
         params: [],
       })),
       rejected: 0,

@@ -234,11 +234,14 @@ interface CapturedWrites {
  */
 function sendPathDb(
   templateRows: unknown[],
-  captured: CapturedWrites
+  captured: CapturedWrites,
+  // Fase 6 §5: el contacto puede no tener teléfono y traer solo su
+  // BSUID. Por defecto, el de siempre.
+  contact: Record<string, unknown> = { id: 'ct-1', phone: '+15551234567' }
 ): SupabaseClient {
   const conversation = {
     id: 'cv-1',
-    contact: { id: 'ct-1', phone: '+15551234567' },
+    contact,
   };
   const config = {
     id: 'cfg-1',
@@ -622,6 +625,74 @@ describe('sendMessageToConversation — several numbers (fase 4 §1)', () => {
 
     expect(err).toBeInstanceOf(SendMessageError);
     expect(err.status).toBe(404);
+    expect(sendTextMessage).not.toHaveBeenCalled();
+    expect(captured.message).toBeUndefined();
+  });
+});
+
+// ============================================================
+// Destinatario por BSUID (fase 6 §5).
+// ============================================================
+
+describe('sendMessageToConversation — contacto sin teléfono', () => {
+  beforeEach(() => {
+    sendTextMessage.mockClear();
+  });
+
+  it('responde con `recipient` cuando el contacto solo tiene BSUID', async () => {
+    const captured: CapturedWrites = {};
+    const db = sendPathDb([], captured, {
+      id: 'ct-1',
+      phone: null,
+      wa_user_id: 'US.1349700000000001',
+      wa_username: 'ada',
+    });
+
+    const result = await sendMessageToConversation(db, 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'text',
+      contentText: 'hola',
+    });
+
+    expect(result.whatsappMessageId).toBe('wamid.text');
+    const args = sendTextMessage.mock.calls[0][0] as Record<string, unknown>;
+    expect(args.recipient).toBe('US.1349700000000001');
+    expect(args.to).toBeUndefined();
+    // Y el mensaje se guarda igual que cualquier otro.
+    expect(captured.message).toMatchObject({ content_text: 'hola' });
+  });
+
+  it('con teléfono y BSUID manda el teléfono: es la identidad estable', async () => {
+    const captured: CapturedWrites = {};
+    const db = sendPathDb([], captured, {
+      id: 'ct-1',
+      phone: '+15551234567',
+      wa_user_id: 'US.1349700000000001',
+    });
+
+    await sendMessageToConversation(db, 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'text',
+      contentText: 'hola',
+    });
+
+    const args = sendTextMessage.mock.calls[0][0] as Record<string, unknown>;
+    expect(args.to).toBe('15551234567');
+    expect(args.recipient).toBeUndefined();
+  });
+
+  it('sin ninguna de las dos identidades es un 400 y no se envía nada', async () => {
+    const captured: CapturedWrites = {};
+    const db = sendPathDb([], captured, { id: 'ct-1', phone: null });
+
+    const err = await sendMessageToConversation(db, 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'text',
+      contentText: 'hola',
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SendMessageError);
+    expect(err.status).toBe(400);
     expect(sendTextMessage).not.toHaveBeenCalled();
     expect(captured.message).toBeUndefined();
   });

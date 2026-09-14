@@ -242,12 +242,12 @@ describe('planBroadcastResume', () => {
     expect(plan.planned).toEqual([
       {
         recipientRowId: 'r1',
-        phone: '15551234567',
+        target: { kind: 'phone', phone: '15551234567' },
         params: ['A123', 'Friday'],
       },
       {
         recipientRowId: 'r2',
-        phone: '15559876543',
+        target: { kind: 'phone', phone: '15559876543' },
         params: ['B456', 'Monday'],
       },
     ]);

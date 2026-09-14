@@ -26,6 +26,9 @@ describe('serializeContact', () => {
     expect(serializeContact(row)).toEqual({
       id: 'c1',
       phone: '+14155550123',
+      // Fase 6 §5: el nombre de usuario viaja en la respuesta pública,
+      // null cuando el contacto no tiene.
+      wa_username: null,
       name: 'Jane',
       email: null,
       company: 'Acme',
@@ -61,5 +64,41 @@ describe('findOrCreateContact', () => {
     await expect(
       findOrCreateContact(noopDb, 'acc', 'user', { phone: 'not-a-number' })
     ).rejects.toBeInstanceOf(ContactError);
+  });
+
+  // Fase 6 §5.
+  it('rechaza un BSUID con formato imposible con un 400 que lo nombra', async () => {
+    await expect(
+      findOrCreateContact(noopDb, 'acc', 'user', { waUserId: 'no-es-un-bsuid' })
+    ).rejects.toMatchObject({ status: 400, message: /to_user_id/ });
+  });
+
+  it('busca por BSUID y no exige teléfono', async () => {
+    const reads: Record<string, unknown>[] = [];
+    const db = {
+      from: () => {
+        const chain: Record<string, unknown> = {
+          select: () => chain,
+          eq: (column: string, value: unknown) => {
+            reads.push({ column, value });
+            return chain;
+          },
+          maybeSingle: async () => ({ data: { id: 'c-9' }, error: null }),
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    await expect(
+      findOrCreateContact(db, 'acc', 'user', {
+        waUserId: 'US.1349700000000001',
+      })
+    ).resolves.toEqual({ id: 'c-9', created: false });
+    // Acotado por cuenta: el cliente de rol de servicio no pasa por RLS.
+    expect(reads).toContainEqual({ column: 'account_id', value: 'acc' });
+    expect(reads).toContainEqual({
+      column: 'wa_user_id',
+      value: 'US.1349700000000001',
+    });
   });
 });

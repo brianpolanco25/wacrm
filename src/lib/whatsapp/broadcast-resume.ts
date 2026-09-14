@@ -29,7 +29,11 @@ import {
   type WhatsAppConfigRow,
 } from '@/lib/whatsapp/resolve-config';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
-import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
+import {
+  resolveRecipient,
+  RecipientError,
+  type ResolvedRecipient,
+} from '@/lib/whatsapp/recipient';
 
 /** Which recipients a resume pass picks up. */
 export type ResumeScope = 'pending' | 'failed' | 'all';
@@ -123,16 +127,34 @@ export interface ResumePlan {
   unsendable: number;
 }
 
+interface ContactIdentityRow {
+  phone?: string | null;
+  wa_user_id?: string | null;
+}
+
 interface RecipientRow {
   id: string;
   template_params: unknown;
-  contact: { phone?: string | null } | { phone?: string | null }[] | null;
+  contact: ContactIdentityRow | ContactIdentityRow[] | null;
 }
 
 /** Supabase renders an embedded to-one join as an object or a 1-array. */
-function contactPhone(row: RecipientRow): string | null {
+function contactIdentity(row: RecipientRow): ContactIdentityRow {
   const c = Array.isArray(row.contact) ? row.contact[0] : row.contact;
-  return c?.phone ?? null;
+  return c ?? {};
+}
+
+/**
+ * El destinatario de una fila, o null si el contacto ya no es
+ * alcanzable — ni teléfono marcable ni BSUID (fase 6 §5).
+ */
+function recipientOf(row: RecipientRow): ResolvedRecipient | null {
+  try {
+    return resolveRecipient(contactIdentity(row));
+  } catch (err) {
+    if (err instanceof RecipientError) return null;
+    throw err;
+  }
 }
 
 /**
@@ -166,7 +188,7 @@ export async function planBroadcastResume(
   const statuses = scopeStatuses(scope);
   const { data: rawRows, error: recError } = await db
     .from('broadcast_recipients')
-    .select('id, template_params, contact:contacts(phone)')
+    .select('id, template_params, contact:contacts(phone, wa_user_id)')
     .eq('broadcast_id', broadcastId)
     .in('status', statuses)
     // Oldest first, so repeated capped passes chew through the backlog
@@ -183,14 +205,15 @@ export async function planBroadcastResume(
 
   const rows = (rawRows ?? []) as RecipientRow[];
 
-  // A recipient whose contact has no usable phone can never send. Stamp
-  // it failed now: leaving it 'pending' would keep the broadcast in
-  // 'sending' forever, which is the very symptom being fixed.
-  const sendable: RecipientRow[] = [];
+  // A recipient whose contact is unreachable — no dialable phone AND no
+  // BSUID — can never send. Stamp it failed now: leaving it 'pending'
+  // would keep the broadcast in 'sending' forever, which is the very
+  // symptom being fixed.
+  const sendable: { row: RecipientRow; target: ResolvedRecipient }[] = [];
   const unsendable: string[] = [];
   for (const row of rows) {
-    const sanitized = sanitizePhoneForMeta(contactPhone(row) ?? '');
-    if (isValidE164(sanitized)) sendable.push(row);
+    const target = recipientOf(row);
+    if (target) sendable.push({ row, target });
     else unsendable.push(row.id);
   }
   if (unsendable.length > 0) {
@@ -198,7 +221,7 @@ export async function planBroadcastResume(
       .from('broadcast_recipients')
       .update({
         status: 'failed',
-        error_message: 'No valid phone number on contact',
+        error_message: 'No valid phone number or WhatsApp user id on contact',
       })
       .in('id', unsendable);
   }
@@ -276,9 +299,9 @@ export async function planBroadcastResume(
     phoneNumberId: config.phone_number_id,
     accessToken,
     templateRow: resolvedTemplate.row,
-    planned: slice.map((row) => ({
+    planned: slice.map(({ row, target }) => ({
       recipientRowId: row.id,
-      phone: sanitizePhoneForMeta(contactPhone(row) ?? ''),
+      target,
       params: Array.isArray(row.template_params)
         ? row.template_params.filter((p): p is string => typeof p === 'string')
         : [],

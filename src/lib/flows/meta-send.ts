@@ -14,12 +14,12 @@ import {
   type WhatsAppConfigRow,
 } from '@/lib/whatsapp/resolve-config';
 import { resolveOutboundMedia } from '@/lib/whatsapp/outbound-media';
+import { isRecipientNotAllowedError } from '@/lib/whatsapp/phone-utils';
 import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
-  isRecipientNotAllowedError,
-} from '@/lib/whatsapp/phone-utils';
+  recipientAttempts,
+  resolveRecipient,
+  type MetaRecipient,
+} from '@/lib/whatsapp/recipient';
 import {
   assertQuota,
   assertWritable,
@@ -92,18 +92,19 @@ export async function engineSendText(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, wa_user_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle();
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account');
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone);
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`);
-  }
+  // Teléfono si lo hay, BSUID si no (fase 6 §5). `resolveRecipient`
+  // lanza `RecipientError` cuando el contacto no es alcanzable por
+  // ninguna de las dos vías; el motor lo registra como paso fallido,
+  // igual que hacía con el teléfono inválido.
+  const recipient = resolveRecipient(contact);
 
   // Fase 4 §1: reply through the number the customer wrote to — the one
   // sealed on the conversation by the inbound webhook — not through
@@ -125,24 +126,26 @@ export async function engineSendText(
       : err;
   }
 
-  const attempt = async (phone: string): Promise<string> => {
+  const attempt = async (target: MetaRecipient): Promise<string> => {
     const r = await sendTextMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...target,
       text: args.text,
     });
     return r.messageId;
   };
 
-  const variants = phoneVariants(sanitized);
-  let workingPhone = sanitized;
+  // Por teléfono, las variantes de prefijo troncal de siempre; por
+  // BSUID, un único intento (el id es exacto).
+  const attempts = recipientAttempts(recipient);
+  let workingTarget: MetaRecipient | null = null;
   let waMessageId = '';
   let lastError: unknown = null;
-  for (const v of variants) {
+  for (const target of attempts) {
     try {
-      waMessageId = await attempt(v);
-      workingPhone = v;
+      waMessageId = await attempt(target);
+      workingTarget = target;
       lastError = null;
       break;
     } catch (err) {
@@ -153,10 +156,16 @@ export async function engineSendText(
   }
   if (lastError) throw lastError;
 
-  if (workingPhone !== sanitized) {
+  // La corrección automática solo aplica al teléfono: si la variante
+  // que Meta aceptó no es la que teníamos guardada, se guarda la buena.
+  if (
+    recipient.kind === 'phone' &&
+    workingTarget?.to &&
+    workingTarget.to !== recipient.phone
+  ) {
     await db
       .from('contacts')
-      .update({ phone: workingPhone })
+      .update({ phone: workingTarget.to })
       .eq('id', contact.id);
   }
 
@@ -220,18 +229,19 @@ export async function engineSendMedia(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, wa_user_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle();
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account');
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone);
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`);
-  }
+  // Teléfono si lo hay, BSUID si no (fase 6 §5). `resolveRecipient`
+  // lanza `RecipientError` cuando el contacto no es alcanzable por
+  // ninguna de las dos vías; el motor lo registra como paso fallido,
+  // igual que hacía con el teléfono inválido.
+  const recipient = resolveRecipient(contact);
 
   // Fase 4 §1: reply through the number the customer wrote to — the one
   // sealed on the conversation by the inbound webhook — not through
@@ -267,11 +277,11 @@ export async function engineSendMedia(
     fileName: args.filename,
   });
 
-  const attempt = async (phone: string): Promise<string> => {
+  const attempt = async (target: MetaRecipient): Promise<string> => {
     const r = await sendMediaMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...target,
       kind: args.kind,
       ...('mediaId' in media
         ? { mediaId: media.mediaId }
@@ -282,14 +292,16 @@ export async function engineSendMedia(
     return r.messageId;
   };
 
-  const variants = phoneVariants(sanitized);
-  let workingPhone = sanitized;
+  // Por teléfono, las variantes de prefijo troncal de siempre; por
+  // BSUID, un único intento (el id es exacto).
+  const attempts = recipientAttempts(recipient);
+  let workingTarget: MetaRecipient | null = null;
   let waMessageId = '';
   let lastError: unknown = null;
-  for (const v of variants) {
+  for (const target of attempts) {
     try {
-      waMessageId = await attempt(v);
-      workingPhone = v;
+      waMessageId = await attempt(target);
+      workingTarget = target;
       lastError = null;
       break;
     } catch (err) {
@@ -300,10 +312,16 @@ export async function engineSendMedia(
   }
   if (lastError) throw lastError;
 
-  if (workingPhone !== sanitized) {
+  // La corrección automática solo aplica al teléfono: si la variante
+  // que Meta aceptó no es la que teníamos guardada, se guarda la buena.
+  if (
+    recipient.kind === 'phone' &&
+    workingTarget?.to &&
+    workingTarget.to !== recipient.phone
+  ) {
     await db
       .from('contacts')
-      .update({ phone: workingPhone })
+      .update({ phone: workingTarget.to })
       .eq('id', contact.id);
   }
 
@@ -409,18 +427,19 @@ async function sendInteractiveViaMeta(
   // Migration 017 moved both tables to account-scoped tenancy.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, wa_user_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle();
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account');
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone);
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`);
-  }
+  // Teléfono si lo hay, BSUID si no (fase 6 §5). `resolveRecipient`
+  // lanza `RecipientError` cuando el contacto no es alcanzable por
+  // ninguna de las dos vías; el motor lo registra como paso fallido,
+  // igual que hacía con el teléfono inválido.
+  const recipient = resolveRecipient(contact);
 
   // Fase 4 §1: reply through the number the customer wrote to — the one
   // sealed on the conversation by the inbound webhook — not through
@@ -442,12 +461,12 @@ async function sendInteractiveViaMeta(
       : err;
   }
 
-  const attempt = async (phone: string): Promise<string> => {
+  const attempt = async (target: MetaRecipient): Promise<string> => {
     if (input.kind === 'buttons') {
       const r = await sendInteractiveButtons({
         phoneNumberId: config.phone_number_id,
         accessToken,
-        to: phone,
+        ...target,
         bodyText: input.bodyText,
         buttons: input.buttons,
         headerText: input.headerText,
@@ -458,7 +477,7 @@ async function sendInteractiveViaMeta(
     const r = await sendInteractiveList({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...target,
       bodyText: input.bodyText,
       buttonLabel: input.buttonLabel,
       sections: input.sections,
@@ -471,14 +490,16 @@ async function sendInteractiveViaMeta(
   // Same phone-variant retry as automations/meta-send.ts. Numbers
   // registered with/without a trunk 0 + Meta's sandbox quirks all
   // need this to reliably land a message.
-  const variants = phoneVariants(sanitized);
-  let workingPhone = sanitized;
+  // Por teléfono, las variantes de prefijo troncal de siempre; por
+  // BSUID, un único intento (el id es exacto).
+  const attempts = recipientAttempts(recipient);
+  let workingTarget: MetaRecipient | null = null;
   let waMessageId = '';
   let lastError: unknown = null;
-  for (const v of variants) {
+  for (const target of attempts) {
     try {
-      waMessageId = await attempt(v);
-      workingPhone = v;
+      waMessageId = await attempt(target);
+      workingTarget = target;
       lastError = null;
       break;
     } catch (err) {
@@ -489,10 +510,16 @@ async function sendInteractiveViaMeta(
   }
   if (lastError) throw lastError;
 
-  if (workingPhone !== sanitized) {
+  // La corrección automática solo aplica al teléfono: si la variante
+  // que Meta aceptó no es la que teníamos guardada, se guarda la buena.
+  if (
+    recipient.kind === 'phone' &&
+    workingTarget?.to &&
+    workingTarget.to !== recipient.phone
+  ) {
     await db
       .from('contacts')
-      .update({ phone: workingPhone })
+      .update({ phone: workingTarget.to })
       .eq('id', contact.id);
   }
 

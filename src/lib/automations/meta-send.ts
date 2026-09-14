@@ -9,12 +9,12 @@ import {
   WhatsAppConfigError,
   type WhatsAppConfigRow,
 } from '@/lib/whatsapp/resolve-config';
+import { isRecipientNotAllowedError } from '@/lib/whatsapp/phone-utils';
 import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
-  isRecipientNotAllowedError,
-} from '@/lib/whatsapp/phone-utils';
+  recipientAttempts,
+  resolveRecipient,
+  type MetaRecipient,
+} from '@/lib/whatsapp/recipient';
 import {
   resolveTemplateRow,
   templateContentText,
@@ -154,18 +154,19 @@ async function sendViaMeta(
   // new tenancy column.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, wa_user_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle();
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account');
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone);
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`);
-  }
+  // Teléfono si lo hay, BSUID si no (fase 6 §5). `resolveRecipient`
+  // lanza `RecipientError` cuando el contacto no es alcanzable por
+  // ninguna de las dos vías; el motor lo registra como paso fallido,
+  // igual que hacía con el teléfono inválido.
+  const recipient = resolveRecipient(contact);
 
   // Fase 4 §1: reply through the number the customer wrote to — the one
   // sealed on the conversation by the inbound webhook — not through
@@ -203,12 +204,12 @@ async function sendViaMeta(
         ).row
       : null;
 
-  const attempt = async (phone: string): Promise<string> => {
+  const attempt = async (target: MetaRecipient): Promise<string> => {
     if (input.kind === 'template') {
       const r = await sendTemplateMessage({
         phoneNumberId: config.phone_number_id,
         accessToken,
-        to: phone,
+        ...target,
         templateName: input.templateName,
         language: input.language,
         params: input.params,
@@ -218,7 +219,7 @@ async function sendViaMeta(
     const r = await sendTextMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...target,
       text: input.text,
     });
     return r.messageId;
@@ -227,14 +228,16 @@ async function sendViaMeta(
   // Same phone-variant retry as /api/whatsapp/send — Meta sandbox and
   // numbers registered with/without a trunk 0 both require this to
   // reliably land a message.
-  const variants = phoneVariants(sanitized);
-  let workingPhone = sanitized;
+  // Por teléfono, las variantes de prefijo troncal de siempre; por
+  // BSUID, un único intento (el id es exacto).
+  const attempts = recipientAttempts(recipient);
+  let workingTarget: MetaRecipient | null = null;
   let waMessageId = '';
   let lastError: unknown = null;
-  for (const v of variants) {
+  for (const target of attempts) {
     try {
-      waMessageId = await attempt(v);
-      workingPhone = v;
+      waMessageId = await attempt(target);
+      workingTarget = target;
       lastError = null;
       break;
     } catch (err) {
@@ -245,10 +248,16 @@ async function sendViaMeta(
   }
   if (lastError) throw lastError;
 
-  if (workingPhone !== sanitized) {
+  // La corrección automática solo aplica al teléfono: si la variante
+  // que Meta aceptó no es la que teníamos guardada, se guarda la buena.
+  if (
+    recipient.kind === 'phone' &&
+    workingTarget?.to &&
+    workingTarget.to !== recipient.phone
+  ) {
     await db
       .from('contacts')
-      .update({ phone: workingPhone })
+      .update({ phone: workingTarget.to })
       .eq('id', contact.id);
   }
 

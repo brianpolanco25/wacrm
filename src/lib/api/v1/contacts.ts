@@ -9,7 +9,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
+import {
+  findContactByWaUserId,
+  findExistingContact,
+  isUniqueViolation,
+} from '@/lib/contacts/dedupe';
+import { isValidBsuid } from '@/lib/whatsapp/bsuid';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
@@ -19,7 +24,10 @@ export const CONTACT_SELECT = '*, contact_tags(tags(*))';
 
 export interface ApiContact {
   id: string;
-  phone: string;
+  /** Null cuando el contacto solo se identifica por su BSUID. */
+  phone: string | null;
+  /** Nombre de usuario de WhatsApp, sin arroba. Null si no tiene. */
+  wa_username: string | null;
   name: string | null;
   email: string | null;
   company: string | null;
@@ -46,7 +54,8 @@ export function serializeContact(row: Record<string, unknown>): ApiContact {
   const joins = (row.contact_tags as RawTagJoin[] | undefined) ?? [];
   return {
     id: row.id as string,
-    phone: row.phone as string,
+    phone: (row.phone as string | null) ?? null,
+    wa_username: (row.wa_username as string | null) ?? null,
     name: (row.name as string | null) ?? null,
     email: (row.email as string | null) ?? null,
     company: (row.company as string | null) ?? null,
@@ -103,17 +112,25 @@ export async function resolveAuditUserId(
 }
 
 export interface ContactInput {
-  phone: string;
+  /** E.164. Obligatorio salvo que venga `waUserId` (fase 6 §5). */
+  phone?: string;
+  /** BSUID, para un contacto del que solo conocemos su nombre de usuario. */
+  waUserId?: string;
   name?: string | null;
   email?: string | null;
   company?: string | null;
 }
 
 /**
- * Find (by fuzzy phone match) or create a contact in `accountId`.
- * Returns the contact id and whether it was created. Reuses the shared
- * `findExistingContact` dedupe + unique-violation race backstop so an
- * API-created contact is indistinguishable from a webhook-created one.
+ * Find (by fuzzy phone match, or by BSUID) or create a contact in
+ * `accountId`. Returns the contact id and whether it was created.
+ * Reuses the shared dedupe helpers + unique-violation race backstop so
+ * an API-created contact is indistinguishable from a webhook-created
+ * one.
+ *
+ * Con las dos identidades, el teléfono decide a quién se busca: es lo
+ * que la agenda lleva usando desde siempre. El BSUID es la vía para
+ * quien escribió con nombre de usuario y nunca nos dio su número.
  */
 export async function findOrCreateContact(
   db: SupabaseClient,
@@ -121,24 +138,43 @@ export async function findOrCreateContact(
   auditUserId: string,
   input: ContactInput
 ): Promise<{ id: string; created: boolean }> {
-  const sanitized = sanitizePhoneForMeta(input.phone);
+  const sanitized = sanitizePhoneForMeta(input.phone ?? '');
+  const waUserId = input.waUserId?.trim() ?? '';
+
   if (!isValidE164(sanitized)) {
-    throw new ContactError(
-      "'phone' must be a valid phone number in E.164 format (e.g. +14155550123)",
-      400
-    );
+    if (!waUserId) {
+      throw new ContactError(
+        "'phone' must be a valid phone number in E.164 format (e.g. +14155550123)",
+        400
+      );
+    }
+    if (!isValidBsuid(waUserId)) {
+      throw new ContactError(
+        "'to_user_id' must be a WhatsApp user id in the form CC.<alphanumerics>",
+        400
+      );
+    }
   }
 
-  const existing = await findExistingContact(db, accountId, sanitized);
-  if (existing) return { id: existing.id, created: false };
+  const byPhone = isValidE164(sanitized)
+    ? await findExistingContact(db, accountId, sanitized)
+    : null;
+  if (byPhone) return { id: byPhone.id, created: false };
 
+  const byUserId = waUserId
+    ? await findContactByWaUserId(db, accountId, waUserId)
+    : null;
+  if (byUserId) return { id: byUserId.id, created: false };
+
+  const phone = isValidE164(sanitized) ? sanitized : null;
   const { data: created, error } = await db
     .from('contacts')
     .insert({
       account_id: accountId,
       user_id: auditUserId,
-      phone: sanitized,
-      name: input.name ?? sanitized,
+      phone,
+      wa_user_id: waUserId || null,
+      name: input.name ?? phone ?? waUserId,
       email: input.email ?? null,
       company: input.company ?? null,
     })
@@ -146,11 +182,18 @@ export async function findOrCreateContact(
     .single();
 
   if (error || !created) {
-    // Lost a race against a concurrent create — the unique index
-    // rejected the duplicate. Re-resolve to the winner.
+    // Lost a race against a concurrent create — one of the unique
+    // indexes (022 por teléfono, 060 por BSUID) rejected the duplicate.
+    // Re-resolve to the winner.
     if (isUniqueViolation(error)) {
-      const raced = await findExistingContact(db, accountId, sanitized);
-      if (raced) return { id: raced.id, created: false };
+      const racedByPhone = phone
+        ? await findExistingContact(db, accountId, phone)
+        : null;
+      if (racedByPhone) return { id: racedByPhone.id, created: false };
+      const racedByUserId = waUserId
+        ? await findContactByWaUserId(db, accountId, waUserId)
+        : null;
+      if (racedByUserId) return { id: racedByUserId.id, created: false };
     }
     console.error('[api/v1/contacts] create error:', error);
     throw new ContactError('Failed to create contact', 500);

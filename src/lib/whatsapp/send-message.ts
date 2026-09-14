@@ -46,12 +46,13 @@ import {
 } from '@/lib/whatsapp/outbound-media';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
+import { isRecipientNotAllowedError } from '@/lib/whatsapp/phone-utils';
 import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
-  isRecipientNotAllowedError,
-} from '@/lib/whatsapp/phone-utils';
+  recipientAttempts,
+  resolveRecipient,
+  RecipientError,
+  type MetaRecipient,
+} from '@/lib/whatsapp/recipient';
 import { assertQuota, recordUsage } from '@/lib/billing/enforce';
 import type { MessageTemplate } from '@/types';
 import {
@@ -278,21 +279,24 @@ export async function sendMessageToConversation(
   }
 
   const contact = conversation.contact;
-  if (!contact?.phone) {
-    throw new SendMessageError(
-      'bad_request',
-      'Contact phone number not found',
-      400
-    );
-  }
-
-  const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
-  if (!isValidE164(sanitizedPhone)) {
-    throw new SendMessageError(
-      'bad_request',
-      'Invalid phone number format',
-      400
-    );
+  // Teléfono si lo hay, BSUID si no (fase 6 §5). El resolutor es el
+  // mismo que usan los motores de flujos y automatizaciones, para que
+  // los cuatro caminos de salida no puedan discrepar sobre a quién se
+  // le está escribiendo.
+  let recipient;
+  try {
+    recipient = resolveRecipient(contact ?? {});
+  } catch (err) {
+    if (err instanceof RecipientError) {
+      throw new SendMessageError(
+        'bad_request',
+        contact?.phone
+          ? 'Invalid phone number format'
+          : 'Contact phone number not found',
+        400
+      );
+    }
+    throw err;
   }
 
   // Which number does this go out through? (fase 4 §1). An explicit
@@ -408,12 +412,14 @@ export async function sendMessageToConversation(
     throw err;
   }
 
-  const attempt = async (phone: string): Promise<string> => {
+  // Cada intento lleva el destinatario en el campo que toque (`to` o
+  // `recipient`); el cuerpo del mensaje no cambia entre intentos.
+  const attempt = async (target: MetaRecipient): Promise<string> => {
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
         phoneNumberId: config.phone_number_id,
         accessToken,
-        to: phone,
+        ...target,
         templateName: templateName!,
         language: sendLanguage,
         template: templateRow ?? undefined,
@@ -427,7 +433,7 @@ export async function sendMessageToConversation(
       const result = await sendMediaMessage({
         phoneNumberId: config.phone_number_id,
         accessToken,
-        to: phone,
+        ...target,
         kind: messageType as MediaKind,
         ...(mediaRef && 'mediaId' in mediaRef
           ? { mediaId: mediaRef.mediaId }
@@ -444,7 +450,7 @@ export async function sendMessageToConversation(
         const result = await sendInteractiveButtons({
           phoneNumberId: config.phone_number_id,
           accessToken,
-          to: phone,
+          ...target,
           bodyText: p.body,
           headerText: p.header || undefined,
           footerText: p.footer || undefined,
@@ -456,7 +462,7 @@ export async function sendMessageToConversation(
       const result = await sendInteractiveList({
         phoneNumberId: config.phone_number_id,
         accessToken,
-        to: phone,
+        ...target,
         bodyText: p.body,
         buttonLabel: p.button_label,
         headerText: p.header || undefined,
@@ -469,7 +475,7 @@ export async function sendMessageToConversation(
     const result = await sendTextMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
-      to: phone,
+      ...target,
       text: contentText!,
       contextMessageId,
     });
@@ -478,17 +484,18 @@ export async function sendMessageToConversation(
 
   // Send via Meta — retry across phone-number variants if Meta rejects
   // with "recipient not in allowed list"; persist a working variant
-  // back to the contact so the next send goes straight through.
+  // back to the contact so the next send goes straight through. Por
+  // BSUID hay un único intento: el id es exacto y no admite variantes.
   let waMessageId = '';
-  let workingPhone = sanitizedPhone;
+  let workingTarget: MetaRecipient | null = null;
   try {
-    const variants = phoneVariants(sanitizedPhone);
+    const attempts = recipientAttempts(recipient);
     let lastError: unknown = null;
 
-    for (const variant of variants) {
+    for (const target of attempts) {
       try {
-        waMessageId = await attempt(variant);
-        workingPhone = variant;
+        waMessageId = await attempt(target);
+        workingTarget = target;
         lastError = null;
         break;
       } catch (err) {
@@ -498,7 +505,7 @@ export async function sendMessageToConversation(
         }
         lastError = err;
         console.warn(
-          `[send-message] variant "${variant}" rejected by Meta, trying next…`
+          `[send-message] variant "${target.to ?? target.recipient}" rejected by Meta, trying next…`
         );
       }
     }
@@ -511,13 +518,17 @@ export async function sendMessageToConversation(
     throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
   }
 
-  if (workingPhone !== sanitizedPhone) {
+  if (
+    recipient.kind === 'phone' &&
+    workingTarget?.to &&
+    workingTarget.to !== recipient.phone
+  ) {
     console.log(
-      `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
+      `[send-message] Auto-corrected contact phone: ${recipient.phone} → ${workingTarget.to}`
     );
     await db
       .from('contacts')
-      .update({ phone: workingPhone })
+      .update({ phone: workingTarget.to })
       .eq('id', contact.id);
   }
 
