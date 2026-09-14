@@ -1,7 +1,8 @@
 # Harness de agentes
 
-Cómo se reparte el trabajo entre el líder y los subagentes en este repo. Los agentes viven en
-`.claude/agents/`; el estado del programa, en `feature_list.json` y `progress/`.
+Como se reparte el trabajo entre el lider y los subagentes en este repo. Los agentes de Claude
+Code viven en `.claude/agents/` y los de OpenCode en `.opencode/agent/`; el estado del programa,
+en `feature_list.json` y `progress/`.
 
 ## Roles y modelos
 

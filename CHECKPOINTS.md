@@ -15,8 +15,9 @@ Es la parte del criterio de aceptación que no cambia de una feature a otra.
   prueba ese criterio (no solo que el archivo existe). Lo que exige base real tiene su SQL en
   `progress/checks_<name>.sql`; lo que depende de Meta o PayPal tiene guion manual.
 - **CP5 Sin dependencias nuevas.** `package.json` no cambia salvo que el humano lo aprobó.
-- **CP6 i18n.** Cada texto de UI nuevo está en `messages/es.json` y `messages/en.json` con la
-  misma clave.
+- **CP6 i18n.** Cada texto de UI nuevo está en `messages/es.json`, `messages/en.json` y
+  `messages/ko.json` (los tres catálogos completos del repo) con la misma clave y los mismos
+  placeholders ICU. `es` es el idioma por defecto; `en` es la fuente de verdad.
 - **CP7 Next 16.** Cualquier API de framework usada se comprobó en `node_modules/next/dist/docs/`.
 - **CP8 Alcance.** El diff no toca archivos que la sección del spec no justifique. Lo que se vio
   roto fuera está anotado como deuda en el informe, no arreglado.

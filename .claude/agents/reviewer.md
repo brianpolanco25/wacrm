@@ -39,7 +39,8 @@ el código y los commits, en tu worktree.
    - Migraciones idempotentes, con aserción en `verify-schema.sql`, sin `CASCADE` que borre datos
      de clientes.
    - Sin dependencias nuevas en `package.json`.
-   - i18n: misma clave en `messages/es.json` y `messages/en.json`.
+   - i18n: misma clave en `messages/es.json`, `messages/en.json` y `messages/ko.json` (los tres
+     catálogos completos del repo; `es` es el idioma por defecto).
    - Convenciones de Next 16 comprobadas contra `node_modules/next/dist/docs/`, no de memoria.
    - Alcance: la feature no toca archivos fuera de lo que su sección del spec justifica.
 6. Recorre `CHECKPOINTS.md` y marca cada punto `[x]`/`[ ]`.

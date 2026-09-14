@@ -7,39 +7,480 @@
     "branch/worktree: dónde vive el código de esa fase. Una fase que depende de otra parte de su rama."
   ],
   "phases": {
-    "0": { "doc": "docs/saas/fase-0-cimientos.md", "branch": "saas/fase-0-cimientos", "worktree": ".claude/worktrees/agent-a85d874ab350adc04", "base": "feat/saas-multiempresa", "blocks": ["1", "3", "4"] },
-    "1": { "doc": "docs/saas/fase-1-bandeja.md", "branch": "saas/fase-1-bandeja", "worktree": ".claude/worktrees/fase-1", "base": "saas/fase-0-cimientos" },
-    "2": { "doc": "docs/saas/fase-2-seguridad.md", "branch": "saas/fase-2-seguridad", "worktree": ".claude/worktrees/agent-a4220e4b5ba8896fd", "base": "feat/saas-multiempresa", "blocks": ["4"] },
-    "3": { "doc": "docs/saas/fase-3-facturacion.md", "branch": "saas/fase-3-facturacion", "worktree": ".claude/worktrees/fase-3", "base": "saas/fase-0-cimientos" },
-    "4": { "doc": "docs/saas/fase-4-plataforma.md", "branch": "saas/fase-4-plataforma", "worktree": ".claude/worktrees/fase-4", "base": "pendiente: rama que integre 0+2+3" },
-    "5": { "doc": "docs/saas/fase-5-escala.md", "note": "No se ejecuta por anticipación (lo dice la spec). Sin features." }
+    "0": {
+      "doc": "docs/saas/fase-0-cimientos.md",
+      "branch": "saas/fase-0-cimientos",
+      "worktree": ".claude/worktrees/agent-a85d874ab350adc04",
+      "base": "feat/saas-multiempresa",
+      "blocks": [
+        "1",
+        "3",
+        "4"
+      ]
+    },
+    "1": {
+      "doc": "docs/saas/fase-1-bandeja.md",
+      "branch": "saas/fase-1-bandeja",
+      "worktree": ".claude/worktrees/fase-1",
+      "base": "saas/fase-0-cimientos",
+      "note": "Merge de fase 0 (1c7ddab) iniciado el 2026-09-11 por el líder; fusionada en 3782fbb por el implementer de f1.4 (conflictos en ai-config.tsx, types.ts, ai/config/route.ts y CHANGELOG resueltos conservando ambos lados)."
+    },
+    "2": {
+      "doc": "docs/saas/fase-2-seguridad.md",
+      "branch": "saas/fase-2-seguridad",
+      "worktree": ".claude/worktrees/agent-a4220e4b5ba8896fd",
+      "base": "feat/saas-multiempresa",
+      "blocks": [
+        "4"
+      ]
+    },
+    "3": {
+      "doc": "docs/saas/fase-3-facturacion.md",
+      "branch": "saas/fase-3-facturacion",
+      "worktree": ".claude/worktrees/fase-3",
+      "base": "saas/fase-0-cimientos",
+      "note": "Fase 0 completa fusionada en 9adc3d5 (2026-09-11); typecheck y 1068 tests verdes tras el merge."
+    },
+    "4": {
+      "doc": "docs/saas/fase-4-plataforma.md",
+      "branch": "saas/fase-4-plataforma",
+      "worktree": ".claude/worktrees/fase-4",
+      "base": "saas/integracion",
+      "note": "Worktree fase-4 creado el 2026-09-11 desde saas/integracion @ 9680b68 (fases 0+1+2). saas/integracion (worktree .claude/worktrees/integracion) nace de saas/fase-1-bandeja @ 96e02fa (fases 0+1); fase 2 fusionada en 9680b68 (compuerta y replay 040-044,047,051 verdes; la suite de aislamiento de fase 2 pasa sobre fase 1 sin waivers nuevos; informe progress/impl_integracion-fase-2.md). Fase 3 fusionada en 63280f2 + fix e6ceba2 (una sola contabilización de ai_replies vía recordUsage; fixtures de plans/subscriptions en la suite de aislamiento; waiver estrecho para plans, tabla global sin account_id). Compuerta y replay 040-052,056 verdes; 1554 tests. saas/integracion @ e6ceba2 = fases 0+1+2+3. Merge de saas/integracion (09f71ba) en saas/fase-4-plataforma iniciado tras aprobar f4.4, con 6 conflictos (dashboard-shell, inbox/page, settings-overview, auth/account.ts, tenant-isolation.test, verify-schema); resuelto en 5ee13d5 por el implementer de f4.3. PROGRAMA COMPLETO: saas/fase-4-plataforma fusionada en saas/integracion @ 2484ada (2026-09-12); compuerta final verde (lint 0 errores, typecheck, 142 archivos / 1945 tests, build) y replay 001–058 + verify-schema OK. Pendiente humano: merge a feat/saas-multiempresa, push, PR. f4.2 corre en rama aparte saas/fase-4-multinumero (worktree .claude/worktrees/fase-4-multinumero) desde e6ceba2."
+    },
+    "5": {
+      "doc": "docs/saas/fase-5-escala.md",
+      "note": "No se ejecuta por anticipación (lo dice la spec). Sin features."
+    },
+    "6": {
+      "doc": "progress/spec_producto.md",
+      "branch": "saas/producto",
+      "worktree": ".claude/worktrees/producto",
+      "base": "feat/saas-multiempresa @ 0e85b2d (programa SaaS completo)",
+      "note": "Ajustes de producto pedidos por el humano el 2026-09-14, fuera de docs/saas/. Spec breve en progress/spec_producto.md; features en serie en la misma rama (comparten messages/*.json)."
+    }
   },
   "features": [
-    { "id": "f0.1", "name": "assignment-integrity", "phase": "0", "status": "review", "spec": "docs/saas/fase-0-cimientos.md#1", "sdd": false, "commits": ["96474fc"] },
-    { "id": "f0.2", "name": "billing-model", "phase": "0", "status": "review", "spec": "docs/saas/fase-0-cimientos.md#2", "sdd": false, "commits": ["62a0742"] },
-    { "id": "f0.3", "name": "entitlements", "phase": "0", "status": "review", "spec": "docs/saas/fase-0-cimientos.md#3", "sdd": false, "commits": ["2645848"] },
-    { "id": "f0.4", "name": "platform-ai-key", "phase": "0", "status": "review", "spec": "docs/saas/fase-0-cimientos.md#4", "sdd": false, "commits": ["afbaecb", "8854c65"], "note": "Informe original en chat, no en progress/. El reviewer parte del diff." },
-
-    { "id": "f1.1", "name": "pick-available-agent", "phase": "1", "status": "review", "spec": "docs/saas/fase-1-bandeja.md#1", "sdd": false, "commits": ["20fbd9c"], "note": "Sin informe en progress/: el agente fue detenido antes de escribirlo." },
-    { "id": "f1.2", "name": "handoff-message", "phase": "1", "status": "review", "spec": "docs/saas/fase-1-bandeja.md#2", "sdd": false, "commits": ["1292984"], "note": "Sin informe en progress/." },
-    { "id": "f1.3", "name": "attention-state-list", "phase": "1", "status": "spec_ready", "spec": "docs/saas/fase-1-bandeja.md#3", "sdd": false },
-    { "id": "f1.4", "name": "per-message-guard", "phase": "1", "status": "spec_ready", "spec": "docs/saas/fase-1-bandeja.md#4", "sdd": false },
-    { "id": "f1.5", "name": "ai-replies-counter", "phase": "1", "status": "spec_ready", "spec": "docs/saas/fase-0-cimientos.md#4", "sdd": false, "acceptance": ["Cada respuesta de IA enviada con éxito llama increment_usage(account_id,'ai_replies',1) después del envío", "El mensaje de transición no cuenta", "No se aplica límite (eso es fase 3)"] },
-
-    { "id": "f2.1", "name": "private-media", "phase": "2", "status": "review", "spec": "docs/saas/fase-2-seguridad.md#1", "sdd": false, "commits": ["526d9d0"], "note": "Sin informe en progress/. Migración 044 solo se aplica en producción tras verificar envíos por media id." },
-    { "id": "f2.2", "name": "tenant-isolation-suite", "phase": "2", "status": "in_progress", "spec": "docs/saas/fase-2-seguridad.md#2", "sdd": false, "note": "Trabajo sin commitear en src/lib/security/ del worktree de la fase 2; retomar desde ahí." },
-    { "id": "f2.3", "name": "versioned-encryption", "phase": "2", "status": "review", "spec": "docs/saas/fase-2-seguridad.md#3", "sdd": false, "commits": ["dd39c90"], "note": "Sin informe en progress/." },
-    { "id": "f2.4", "name": "platform-verify-token", "phase": "2", "status": "review", "spec": "docs/saas/fase-2-seguridad.md#4", "sdd": false, "commits": ["31f10ea"], "note": "Sin informe en progress/." },
-
-    { "id": "f3.1", "name": "paypal-client-catalog", "phase": "3", "status": "in_progress", "spec": "docs/saas/fase-3-facturacion.md#1", "sdd": false, "note": "Sin commitear en el worktree de la fase 3: src/lib/billing/paypal.ts (+test), scripts/, migración 045, cambios en tsconfig.json y verify-schema.sql. Revisar el cambio de tsconfig antes de aceptarlo." },
-    { "id": "f3.2", "name": "checkout-flow", "phase": "3", "status": "spec_ready", "spec": "docs/saas/fase-3-facturacion.md#2", "sdd": false },
-    { "id": "f3.3", "name": "paypal-webhook", "phase": "3", "status": "spec_ready", "spec": "docs/saas/fase-3-facturacion.md#3", "sdd": false },
-    { "id": "f3.4", "name": "enforce-limits", "phase": "3", "status": "spec_ready", "spec": "docs/saas/fase-3-facturacion.md#4", "sdd": false, "note": "Incluye la escalera de vencimiento (#5) en la capa de permisos y la semilla de trials (migración 046)." },
-    { "id": "f3.5", "name": "subscription-settings-ui", "phase": "3", "status": "spec_ready", "spec": "docs/saas/fase-3-facturacion.md#6", "sdd": false },
-
-    { "id": "f4.1", "name": "embedded-signup", "phase": "4", "status": "spec_ready", "spec": "docs/saas/fase-4-plataforma.md#1", "sdd": false, "note": "Diseño abierto: pase previo de Plan (opus) antes del implementer." },
-    { "id": "f4.2", "name": "multi-number", "phase": "4", "status": "spec_ready", "spec": "docs/saas/fase-4-plataforma.md#1", "sdd": false, "note": "Retirar UNIQUE(account_id) de whatsapp_config; selector de número en envío, difusiones y config." },
-    { "id": "f4.3", "name": "platform-admins-panel", "phase": "4", "status": "spec_ready", "spec": "docs/saas/fase-4-plataforma.md#2", "sdd": false },
-    { "id": "f4.4", "name": "impersonation-audit", "phase": "4", "status": "spec_ready", "spec": "docs/saas/fase-4-plataforma.md#2", "sdd": false }
+    {
+      "id": "f0.1",
+      "name": "assignment-integrity",
+      "phase": "0",
+      "status": "done",
+      "spec": "docs/saas/fase-0-cimientos.md#1",
+      "sdd": false,
+      "commits": [
+        "96474fc"
+      ],
+      "review": "progress/review_assignment-integrity.md"
+    },
+    {
+      "id": "f0.2",
+      "name": "billing-model",
+      "phase": "0",
+      "status": "done",
+      "spec": "docs/saas/fase-0-cimientos.md#2",
+      "sdd": false,
+      "commits": [
+        "62a0742",
+        "324f087"
+      ],
+      "review": "progress/review_billing-model.md",
+      "implementation": "progress/impl_billing-model.md",
+      "note": "APPROVED tras 324f087 (RESTRICT, 047_ai_platform_key.sql, checks SQL). Fase 1 y 3 deben fusionar saas/fase-0-cimientos para heredar la 041 corregida y la 047."
+    },
+    {
+      "id": "f0.3",
+      "name": "entitlements",
+      "phase": "0",
+      "status": "done",
+      "spec": "docs/saas/fase-0-cimientos.md#3",
+      "sdd": false,
+      "commits": [
+        "2645848"
+      ],
+      "review": "progress/review_entitlements.md"
+    },
+    {
+      "id": "f0.4",
+      "name": "platform-ai-key",
+      "phase": "0",
+      "status": "done",
+      "spec": "docs/saas/fase-0-cimientos.md#4",
+      "sdd": false,
+      "commits": [
+        "afbaecb",
+        "8854c65",
+        "8909d90",
+        "a0157a7",
+        "1c7ddab"
+      ],
+      "implementation": "progress/impl_platform-ai-key.md",
+      "review": "progress/review_platform-ai-key.md",
+      "note": "Corrección 8909d90 (key_source en ai_usage_log vía 047, guardado sin bloqueo, camino BYO→plataforma). Segunda ronda CHANGES_REQUESTED: enfocar el campo de clave sin escribir ya manda api_key:null y borra la clave propia (pérdida de datos); playground no registra uso; Test key prueba la clave equivocada. Segunda corrección a0157a7 (botón explícito, playground registra uso, /api/ai/test distingue null). 3ª ronda CHANGES_REQUESTED, una cosa: GET /api/ai/usage cae con 500 al aparecer mode=playground (byMode sin casilla) y la UI de consumo no cuadra. APPROVED en la 4ª ronda (1c7ddab). Fase 0 completa en saas/fase-0-cimientos @ 1c7ddab. Deuda: gasto de plataforma sin techo hasta fase 3; 047 por delante de 042-046 al desplegar."
+    },
+    {
+      "id": "f1.1",
+      "name": "pick-available-agent",
+      "phase": "1",
+      "status": "done",
+      "spec": "docs/saas/fase-1-bandeja.md#1",
+      "sdd": false,
+      "commits": [
+        "20fbd9c",
+        "fac4d40"
+      ],
+      "review": "progress/review_pick-available-agent.md",
+      "implementation": "progress/impl_pick-available-agent.md",
+      "note": "APPROVED tras fac4d40 (RPC restringida a service_role, SQL de comprobación) y la decisión CP6 = en + ko."
+    },
+    {
+      "id": "f1.2",
+      "name": "handoff-message",
+      "phase": "1",
+      "status": "done",
+      "spec": "docs/saas/fase-1-bandeja.md#2",
+      "sdd": false,
+      "commits": [
+        "1292984",
+        "a492504"
+      ],
+      "implementation": "progress/impl_handoff-message.md",
+      "review": "progress/review_handoff-message.md",
+      "note": "APPROVED tras a492504. Default sembrado en inglés (decisión del líder); incluye el arreglo de la guarda fixed/destino heredada de f1.1."
+    },
+    {
+      "id": "f1.3",
+      "name": "attention-state-list",
+      "phase": "1",
+      "status": "done",
+      "spec": "docs/saas/fase-1-bandeja.md#3",
+      "sdd": false,
+      "commits": [
+        "de7fb0a",
+        "4c63367"
+      ],
+      "implementation": "progress/impl_attention-state-list.md",
+      "review": "progress/review_attention-state-list.md",
+      "note": "Corrección 4c63367 (fallo de red = desconocido, guarda en el filtro, closed excluido, TTL en caché). APPROVED."
+    },
+    {
+      "id": "f1.4",
+      "name": "per-message-guard",
+      "phase": "1",
+      "status": "done",
+      "spec": "docs/saas/fase-1-bandeja.md#4",
+      "sdd": false,
+      "commits": [
+        "8e126a1",
+        "316441c"
+      ],
+      "implementation": "progress/impl_per-message-guard.md",
+      "review": "progress/review_per-message-guard.md",
+      "note": "CHANGES_REQUESTED: el motor ignora la reserva al reanudar un wait (doble envío); afirmaciones falsas sobre la garantía; IA responde en hilos que una automatización cerró; falta test del orden en processMessage. APPROVED tras 316441c (motor honra la reserva, IA no responde en closed, test de orden)."
+    },
+    {
+      "id": "f1.5",
+      "name": "ai-replies-counter",
+      "phase": "1",
+      "status": "done",
+      "spec": "docs/saas/fase-0-cimientos.md#4",
+      "sdd": false,
+      "commits": [
+        "96e02fa"
+      ],
+      "implementation": "progress/impl_ai-replies-counter.md",
+      "review": "progress/review_ai-replies-counter.md",
+      "note": "APPROVED. Fase 1 completa en saas/fase-1-bandeja @ 96e02fa (incluye fase 0).",
+      "acceptance": [
+        "Cada respuesta de IA enviada con éxito llama increment_usage(account_id,'ai_replies',1) después del envío",
+        "El mensaje de transición no cuenta",
+        "No se aplica límite (eso es fase 3)"
+      ]
+    },
+    {
+      "id": "f2.1",
+      "name": "private-media",
+      "phase": "2",
+      "status": "done",
+      "spec": "docs/saas/fase-2-seguridad.md#1",
+      "sdd": false,
+      "commits": [
+        "526d9d0",
+        "3f105fe"
+      ],
+      "review": "progress/review_private-media.md",
+      "note": "Migración 044 solo se aplica en producción tras verificar envíos por media id."
+    },
+    {
+      "id": "f2.2",
+      "name": "tenant-isolation-suite",
+      "phase": "2",
+      "status": "done",
+      "spec": "docs/saas/fase-2-seguridad.md#2",
+      "sdd": false,
+      "commits": [
+        "2323274",
+        "8413526",
+        "313101b",
+        "2e2cfef"
+      ],
+      "implementation": "progress/impl_tenant-isolation-suite.md",
+      "review": "progress/review_tenant-isolation-suite.md",
+      "note": "Segunda ronda CHANGES_REQUESTED (menor): el waiver de automations/select por id bendice la lectura del motor que 8413526 arregló; falta caso positivo de PATCH en /api/automations/[id]. Tercera ronda CHANGES_REQUESTED: fuga real. El waiver user_id de automations es falso: remove_account_member/redeem_invitation mueven el perfil y un ex-miembro puede borrar (DELETE) o clonar (duplicate) automatizaciones de su cuenta anterior. APPROVED en la 4ª ronda (2323274, 8413526, 313101b, 2e2cfef). Fase 2 completa."
+    },
+    {
+      "id": "f2.3",
+      "name": "versioned-encryption",
+      "phase": "2",
+      "status": "done",
+      "spec": "docs/saas/fase-2-seguridad.md#3",
+      "sdd": false,
+      "commits": [
+        "dd39c90",
+        "0997adf",
+        "66d7733"
+      ],
+      "implementation": "progress/impl_versioned-encryption.md",
+      "review": "progress/review_versioned-encryption.md",
+      "note": "CHANGES_REQUESTED: el anillo de claves en CBC (no autenticado) puede sobrescribir tokens con basura; formato nuevo irreversible sin aviso; paginación del script confunde db-max-rows con fin de tabla; falta ENCRYPTION_KEY_PREVIOUS en docker.md. APPROVED tras tres rondas (dd39c90, 0997adf, 66d7733). Pendiente para el humano: ENCRYPTION_KEY_PREVIOUS en .env.local.example. Deuda anotada: reencrypt descarta columnas hermanas si una falla."
+    },
+    {
+      "id": "f2.4",
+      "name": "platform-verify-token",
+      "phase": "2",
+      "status": "done",
+      "spec": "docs/saas/fase-2-seguridad.md#4",
+      "sdd": false,
+      "commits": [
+        "31f10ea",
+        "74834d7"
+      ],
+      "implementation": "progress/impl_platform-verify-token.md",
+      "review": "progress/review_platform-verify-token.md",
+      "note": "CHANGES_REQUESTED (menor): tests dependen del entorno, falta .trim() y warn en el 403, variable ausente en docker.md, sin informe. APPROVED tras 74834d7. Pendiente para el humano: META_WEBHOOK_VERIFY_TOKEN en .env.local.example (bloqueado a los agentes)."
+    },
+    {
+      "id": "f3.1",
+      "name": "paypal-client-catalog",
+      "phase": "3",
+      "status": "done",
+      "spec": "docs/saas/fase-3-facturacion.md#1",
+      "sdd": false,
+      "commits": [
+        "2028607",
+        "d44d68e"
+      ],
+      "review": "progress/review_paypal-client-catalog.md",
+      "implementation": "progress/impl_paypal-client-catalog.md",
+      "note": "APPROVED tras la corrección d44d68e. El cambio de tsconfig (allowImportingTsExtensions) fue aprobado."
+    },
+    {
+      "id": "f3.2",
+      "name": "checkout-flow",
+      "phase": "3",
+      "status": "done",
+      "spec": "docs/saas/fase-3-facturacion.md#2",
+      "sdd": false,
+      "commits": [
+        "aec16df",
+        "e564f47"
+      ],
+      "implementation": "progress/impl_checkout-flow.md",
+      "review": "progress/review_checkout-flow.md",
+      "note": "CHANGES_REQUESTED: la FK RESTRICT de checkout_intents rompe redeem_invitation() (borra la cuenta personal vacía del invitado); guardián anti doble cobro falla abierto; activated sin intento coincidente; fetch sin catch. APPROVED tras e564f47 (049 redeem_invitation limpia intents pendientes, POST falla cerrado, activated exige intento). El reviewer murió por límite de sesión antes de contrastar el pase de code-review; la revisión manual y los controles SQL sí constan."
+    },
+    {
+      "id": "f3.3",
+      "name": "paypal-webhook",
+      "phase": "3",
+      "status": "done",
+      "spec": "docs/saas/fase-3-facturacion.md#3",
+      "sdd": false,
+      "commits": [
+        "fa29715",
+        "b19f233"
+      ],
+      "implementation": "progress/impl_paypal-webhook.md",
+      "review": "progress/review_paypal-webhook.md",
+      "note": "CHANGES_REQUESTED: re-contratar tras cancelar nunca activa (guarda por provider_subscription_id); reenvío de PayPal choca con UNIQUE y la cola unmatched no se vacía; catch genérico deja la fila sin error ni processed_at; APPROVED tras b19f233 (re-contratar adopta la suscripción nueva, duplicados sin procesar se reprocesan, catch deja rastro). Pendiente humano: PAYPAL_WEBHOOK_ID en .env.local.example."
+    },
+    {
+      "id": "f3.4",
+      "name": "enforce-limits",
+      "phase": "3",
+      "status": "done",
+      "spec": "docs/saas/fase-3-facturacion.md#4",
+      "sdd": false,
+      "commits": [
+        "a6703da",
+        "16ccf85",
+        "1446796",
+        "08bc791"
+      ],
+      "implementation": "progress/impl_enforce-limits.md",
+      "review": "progress/review_enforce-limits.md",
+      "note": "CHANGES_REQUESTED: broadcast_recipients solo en la ruta del panel (v1/broadcasts y resume sin tope ni conteo); comentario del lote falso (el hook manda de 10 en 10); dos GET admin dan 403 a cuentas bloqueadas. 046/052/CP11 aprobados tal cual. Corrección 1446796 APROBADA, pero el reviewer dejó dos defectos reales sin exigir (A: el tope numbers bloquea cambiar el número propio en inicio/pro; B: flows y automations desde after() siguen enviando con la cuenta suspended) y uno menor (C: contactos creados antes del tope). APPROVED en la revisión final (08bc791: numbers no cuenta la fila editada, suspended corta flows/automations, sin contactos en difusión rechazada). Incluye la escalera de vencimiento (#5) en la capa de permisos y la semilla de trials (migración 046). AVISO: 041 (corregida en f0.2) tiene ON DELETE RESTRICT en subscriptions y usage_counters; si la semilla de trials crea una fila por cuenta, redeem_invitation() (019) dejará de poder borrar la cuenta personal vacía del invitado. Hay que tratarlo en la misma feature (ver review_checkout-flow.md, hallazgo 1). Además redeem_invitation() (049) tiene una lista de tablas para declarar vacía la cuenta personal: al empezar a escribir usage_counters/subscriptions por cuenta hay que ampliarla o vuelve el 23503."
+    },
+    {
+      "id": "f3.5",
+      "name": "subscription-settings-ui",
+      "phase": "3",
+      "status": "done",
+      "spec": "docs/saas/fase-3-facturacion.md#6",
+      "sdd": false,
+      "commits": [
+        "4cd94a4",
+        "adf72a0"
+      ],
+      "implementation": "progress/impl_subscription-settings-ui.md",
+      "review": "progress/review_subscription-settings-ui.md",
+      "note": "CHANGES_REQUESTED: re-contratar tras cancelar deja la fila active+cancel_at_period_end y el webhook no adopta la suscripción nueva (paga y no recibe servicio); la 056 prefiere el ciclo de la fila al adoptar; guardián de mismo plan con cycle NULL. Corrección adf72a0 (adopting con cancel_at_period_end, ciclo del intento al adoptar, guardián por provider_plan_id). APPROVED. Fase 3 COMPLETA en saas/fase-3-facturacion @ adf72a0. Sandbox PayPal pasos 6-8 pendientes para el humano."
+    },
+    {
+      "id": "f4.1",
+      "name": "embedded-signup",
+      "phase": "4",
+      "status": "done",
+      "branch": "saas/fase-4-multinumero",
+      "worktree": ".claude/worktrees/fase-4-multinumero",
+      "spec": "docs/saas/fase-4-plataforma.md#1",
+      "plan": "progress/plan_embedded-signup.md",
+      "sdd": false,
+      "commits": [
+        "b77e7f0",
+        "8adcd7a",
+        "ddd6c38",
+        "8fcbb88"
+      ],
+      "implementation": "progress/impl_embedded-signup.md",
+      "review": "progress/review_embedded-signup.md",
+      "note": "Reviewer APPROVED (b77e7f0, 8adcd7a, ddd6c38) pero el líder verificó la doc viva de Meta (progress/meta_embedded-signup-verificacion.md): quitar sessionInfoVersion/featureType (no existen en v4), origen por endsWith(facebook.com), Graph v25.0 por defecto, Allowed Domains en el guion. APPROVED tras la alineación 8fcbb88; fusionada ff en saas/integracion. Pase de Plan hecho el 2026-09-11 (progress/plan_embedded-signup.md). Va DESPUÉS de f4.2 (necesita el índice (account_id, phone_number_id) de la 053). Migración propia: 054 (registration_pin, token_expires_at, provisioned_via). Variables: META_CONFIG_ID, META_GRAPH_VERSION; META_APP_ID y META_WEBHOOK_VERIFY_TOKEN pasan a obligatorias en plataforma."
+    },
+    {
+      "id": "f4.2",
+      "name": "multi-number",
+      "phase": "4",
+      "status": "done",
+      "branch": "saas/fase-4-multinumero",
+      "worktree": ".claude/worktrees/fase-4-multinumero",
+      "spec": "docs/saas/fase-4-plataforma.md#1",
+      "plan": "progress/plan_embedded-signup.md",
+      "sdd": false,
+      "commits": [
+        "ff3dca4",
+        "9b054ef",
+        "09f71ba"
+      ],
+      "implementation": "progress/impl_multi-number.md",
+      "review": "progress/review_multi-number.md",
+      "note": "APPROVED (ff3dca4, 9b054ef, 09f71ba); fusionada ff en saas/integracion. Migración 053: retira UNIQUE(account_id), índice (account_id, phone_number_id), is_default, whatsapp_config_id en conversations y broadcasts (SET NULL). Resolvedor único resolve-config.ts; los 8 .single() deben desaparecer. Plantillas por WABA y partir conversaciones por número quedan fuera."
+    },
+    {
+      "id": "f4.3",
+      "name": "platform-admins-panel",
+      "phase": "4",
+      "status": "done",
+      "spec": "docs/saas/fase-4-plataforma.md#2",
+      "sdd": false,
+      "commits": [
+        "47a091c",
+        "1b989f4",
+        "1ff573c"
+      ],
+      "implementation": "progress/impl_platform-admins-panel.md",
+      "review": "progress/review_platform-admins-panel.md",
+      "note": "APPROVED (47a091c, 1b989f4, 1ff573c; migración 058; manual_hold_* en subscriptions). Tras f4.4 y tras fusionar fase 3 en saas/integracion → saas/fase-4-plataforma (necesita subscriptions/billing_events/enforce de fase 3 para plan, consumo, historial y suspender/reactivar)."
+    },
+    {
+      "id": "f4.4",
+      "name": "impersonation-audit",
+      "phase": "4",
+      "status": "done",
+      "spec": "docs/saas/fase-4-plataforma.md#2",
+      "sdd": false,
+      "commits": [
+        "3c99804",
+        "e45cbf9",
+        "fb95a3e",
+        "7533aae"
+      ],
+      "implementation": "progress/impl_impersonation-audit.md",
+      "review": "progress/review_impersonation-audit.md",
+      "note": "CHANGES_REQUESTED: el panel habla con Supabase desde el navegador con el JWT del operador, así que en soporte ve SUS datos etiquetados como del cliente y puede escribir en su propia cuenta; stop no revoca el token. Corrección e45cbf9 (RLS de lectura por sesión abierta, guarda de mutaciones en cliente, revocación por fila). 2ª ronda CHANGES_REQUESTED: la RLS ampliada hace que el navegador (accountId del operador en use-auth) mezcle listas de dos empresas bajo el cartel del cliente; storage mal descrito. Decisión: la bandera de soporte lleva el account_id impersonado y use-auth lo usa como accountId efectivo; las listas sin filtro pasan a filtrar. Tercera corrección fb95a3e (accountId efectivo en el navegador, listas filtradas, storage bloqueado). 3ª ronda CHANGES_REQUESTED, dos puntos de la misma clase: suscripciones realtime sin filtro de cuenta (use-realtime, inbox, unread) y resumen de cuenta en use-auth resuelto una vez (caducidad/segunda pestaña). Cuarta corrección 7533aae (realtime y resumen de cuenta acotados a la cuenta efectiva; red de regresión ampliada). APPROVED en la 4ª ronda. Va PRIMERO en §2: crea platform_admins, la guarda de rutas de plataforma y la impersonación con bitácora (migración 055; 053/054 reservadas a f4.2/f4.1). f4.3 (panel) se apoya en ella y espera al merge de fase 3."
+    },
+    {
+      "id": "p6.1",
+      "name": "rebrand-cabbity",
+      "phase": "6",
+      "status": "done",
+      "spec": "progress/spec_producto.md#1",
+      "sdd": false,
+      "note": "Nombre visible: Cabbity CRM. No se toca package.json name (CP5) salvo que el humano lo pida.",
+      "commits": [
+        "e76954c"
+      ],
+      "implementation": "progress/impl_rebrand-cabbity.md",
+      "review": "progress/review_rebrand-cabbity.md"
+    },
+    {
+      "id": "p6.2",
+      "name": "trial-banner",
+      "phase": "6",
+      "status": "done",
+      "spec": "progress/spec_producto.md#2",
+      "sdd": false,
+      "commits": [
+        "aed1d3b"
+      ],
+      "implementation": "progress/impl_trial-banner.md",
+      "review": "progress/review_trial-banner.md",
+      "note": "APPROVED (aed1d3b) + ronda de estilo d9eef86 con tokens del tema (primary-soft), verificada por el líder."
+    },
+    {
+      "id": "p6.3",
+      "name": "plan-prices-35",
+      "phase": "6",
+      "status": "done",
+      "spec": "progress/spec_producto.md#3",
+      "sdd": false,
+      "note": "Migración 059; plan inicio a 35 USD/mes; anual con el mismo descuento relativo que hoy.",
+      "commits": [
+        "d6088eb"
+      ],
+      "implementation": "progress/impl_plan-prices-35.md",
+      "review": "progress/review_plan-prices-35.md"
+    },
+    {
+      "id": "p6.4",
+      "name": "spanish-default",
+      "phase": "6",
+      "status": "done",
+      "spec": "progress/spec_producto.md#4",
+      "sdd": false,
+      "note": "Crea messages/es.json completo, NEXT_PUBLIC_APP_LOCALE por defecto es; CP6 pasa a exigir es+en+ko con las mismas claves. Va la última para traducir también las claves nuevas de p6.1 y p6.2.",
+      "commits": [
+        "9d10709"
+      ],
+      "implementation": "progress/impl_spanish-default.md",
+      "review": "progress/review_spanish-default.md"
+    },
+    {
+      "id": "p6.5",
+      "name": "whatsapp-bsuid",
+      "phase": "6",
+      "status": "done",
+      "spec": "progress/spec_producto.md#5",
+      "sdd": false,
+      "note": "Aprobado por el humano el 2026-09-14; va detrás de p6.4 en saas/producto. Migración 060. Spec en progress/spec_producto.md#5 (verificado contra la doc de Meta de BSUID).",
+      "commits": [
+        "a8b2fa6",
+        "2046b89",
+        "dc69b18",
+        "239317b",
+        "50c9758"
+      ],
+      "implementation": "progress/impl_whatsapp-bsuid.md",
+      "review": "progress/review_whatsapp-bsuid.md"
+    }
   ]
 }

@@ -32,8 +32,9 @@ el código y los commits, en tu worktree.
    `node_modules/next/dist/docs/`; léela antes de escribir código de framework.
 2. **Oriéntate con el grafo** antes de grep: `graphify query "..."`, `graphify explain "<símbolo>"`,
    `graphify affected "<símbolo>"`. (Si `graphify-out/` no existe en tu worktree, usa grep.)
-3. **Anota** en `progress/current.md`: `Feature en curso: <id> — <name>` y el plan (los pasos
-   que vas a dar, derivados de la sección del spec o de `tasks.md`).
+3. **Anota** tu plan (los pasos que vas a dar, derivados de la sección del spec o de `tasks.md`)
+   al principio de `progress/impl_<name>.md`, NO en `progress/current.md`: ese archivo lo
+   mantiene el líder y se regenera desde `feature_list.json`; no lo sobrescribas ni lo edites.
 4. **Implementa** siguiendo el estilo del código circundante. Reglas del repo:
    - Sin dependencias nuevas. `fetch` nativo, `crypto` de Node, lo que ya hay en `package.json`.
      Si tu worktree no tiene `node_modules`, enlázalo:
@@ -42,7 +43,8 @@ el código y los commits, en tu worktree.
      objeto nuevo en `supabase/ci/verify-schema.sql`. Nunca supabase contra un proyecto remoto.
    - Toda consulta con el cliente de rol de servicio (`supabaseAdmin()`) filtra por `account_id`
      y lleva test de fuga entre cuentas.
-   - Textos de UI en `messages/es.json` y `messages/en.json`, misma clave.
+   - Textos de UI en `messages/es.json`, `messages/en.json` y `messages/ko.json` (los tres
+     catálogos completos del repo; `es` es el idioma por defecto), misma clave.
    - Prettier en lo tocado: `npx prettier --write <archivos>`.
 5. **Verifica.** Aquí SÍ hay runner: cada criterio de aceptación del spec lleva su test vitest
    junto al código (`*.test.ts`, patrón de mocks encadenados de
@@ -81,7 +83,7 @@ Cuando la compuerta esté en verde, commitea en **tu rama del worktree**:
 - ❌ Si algo del spec no se puede cumplir sin desviarse, paras y reportas `blocked` con la
   razón. No inventes requisitos.
 - ❌ Si una herramienta falla de forma inesperada (permisos, Docker, red), no improvises
-  atajos: anota `blocked` en `progress/current.md` y termina.
+  atajos: anota `blocked` y la causa en `progress/impl_<name>.md` y termina.
 - ✅ El spec de la fase 1 tiene un error conocido: `account_role >= 'agent'` sobre el enum
   (`owner,admin,agent,viewer`) invierte el orden. Usa `IN ('owner','admin','agent')`.
 
