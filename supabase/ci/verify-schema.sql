@@ -921,6 +921,43 @@ BEGIN
       'billing_events_subscription_resource_idx is missing (migration 058)';
   END IF;
 
+  -- ------------------------------------------------------------
+  -- 059: el precio vigente del catálogo.
+  -- ------------------------------------------------------------
+  -- La 041 siembra con INSERT … ON CONFLICT DO UPDATE y la 059 corrige
+  -- Inicio con un UPDATE. El orden importa: si una migración futura
+  -- volviera a sembrar el catálogo sin arrastrar la revisión de precio,
+  -- el UPDATE de la 059 quedaría pisado y `/billing` volvería a ofrecer
+  -- 29 sin que nadie lo notara. Los tres niveles, en una sola consulta,
+  -- para que también falle si alguien toca Pro o Negocio de paso.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.plans
+    WHERE id = 'inicio' AND price_usd_month = 35 AND price_usd_year = 350
+  ) THEN
+    RAISE EXCEPTION
+      'plan ''inicio'' is not priced 35/350 (migrations 041 + 059); found %/%',
+      (SELECT price_usd_month FROM public.plans WHERE id = 'inicio'),
+      (SELECT price_usd_year  FROM public.plans WHERE id = 'inicio');
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.plans
+    WHERE id = 'pro' AND price_usd_month = 79 AND price_usd_year = 790
+  ) THEN
+    RAISE EXCEPTION
+      'plan ''pro'' is not priced 79/790 (migration 041); found %/%',
+      (SELECT price_usd_month FROM public.plans WHERE id = 'pro'),
+      (SELECT price_usd_year  FROM public.plans WHERE id = 'pro');
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.plans
+    WHERE id = 'negocio' AND price_usd_month = 199 AND price_usd_year = 1990
+  ) THEN
+    RAISE EXCEPTION
+      'plan ''negocio'' is not priced 199/1990 (migration 041); found %/%',
+      (SELECT price_usd_month FROM public.plans WHERE id = 'negocio'),
+      (SELECT price_usd_year  FROM public.plans WHERE id = 'negocio');
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

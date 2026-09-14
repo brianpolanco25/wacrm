@@ -202,6 +202,17 @@ Do not edit a stored id to change a price. PayPal plans are effectively
 immutable once they have subscribers; create a versioned replacement plan
 instead, in a later migration.
 
+A price revision in the database (`059_plan_inicio_35.sql` raised Inicio to
+35 USD/month) does **not** reach PayPal on its own, and re-running the script
+will not push it either: the script skips any cycle whose
+`provider_plan_id_*` is already stored. On a deployment that has already
+bootstrapped, the replacement is three steps — a migration that clears the two
+ids of the repriced plan (keeping the old ones on record for the subscribers
+still on them), bumping the `-v1` suffix of the `PayPal-Request-Id` in
+`scripts/paypal-bootstrap-catalog.ts` so PayPal does not return the old plan
+for the same idempotency key, and a run of the script. Existing subscribers
+keep paying the plan they contracted until they are migrated one by one.
+
 ## Checkout (`/billing`)
 
 Contracting a plan runs in the web app and needs the same

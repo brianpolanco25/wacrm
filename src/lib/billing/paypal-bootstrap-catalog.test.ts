@@ -20,13 +20,16 @@ import {
   type PayPalProduct,
 } from './paypal';
 
-/** The three catalogue rows seeded by migration 041, un-bootstrapped. */
+/**
+ * The three catalogue rows a migrated database holds, un-bootstrapped:
+ * seeded by 041, with Inicio repriced to 35/350 by 059.
+ */
 const seededPlans = (): PlanRow[] => [
   {
     id: 'inicio',
     name: 'Inicio',
-    price_usd_month: 29,
-    price_usd_year: 290,
+    price_usd_month: 35,
+    price_usd_year: 350,
     provider_plan_id_month: null,
     provider_plan_id_year: null,
   },
@@ -137,8 +140,8 @@ describe('bootstrapCatalog', () => {
         args.requestId,
       ])
     ).toEqual([
-      ['PROD-wacrm', 'month', '29.00', 'wacrm-sandbox-inicio-month-v1'],
-      ['PROD-wacrm', 'year', '290.00', 'wacrm-sandbox-inicio-year-v1'],
+      ['PROD-wacrm', 'month', '35.00', 'wacrm-sandbox-inicio-month-v1'],
+      ['PROD-wacrm', 'year', '350.00', 'wacrm-sandbox-inicio-year-v1'],
       ['PROD-wacrm', 'month', '79.00', 'wacrm-sandbox-pro-month-v1'],
       ['PROD-wacrm', 'year', '790.00', 'wacrm-sandbox-pro-year-v1'],
       ['PROD-wacrm', 'month', '199.00', 'wacrm-sandbox-negocio-month-v1'],

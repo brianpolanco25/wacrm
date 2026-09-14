@@ -73,6 +73,12 @@ behaviour changes**; nothing is limited by plan yet.
 > nobody can accept a team invitation any more, because the trial row 046
 > creates blocks the deletion of the invitee's empty personal account.
 
+> **Migration required:** apply
+> `supabase/migrations/059_plan_inicio_35.sql` to publish the new Inicio
+> price. It only rewrites two columns of one catalogue row; it does not
+> touch subscriptions, stored PayPal plan ids or what anyone is being
+> charged.
+
 ### Added
 
 - **The header says how long the free trial has left.** While the
@@ -543,6 +549,14 @@ behaviour changes**; nothing is limited by plan yet.
   PayPal catalogue under the old default, set `PAYPAL_PRODUCT_NAME=wacrm`
   to keep reusing the existing product — otherwise the next run creates a
   second one. Plans that already exist are still skipped either way.
+- **The Inicio plan now costs 35 USD/month (350 USD/year)**, up from
+  29/290 (`supabase/migrations/059_plan_inicio_35.sql`). Pro (79/790) and
+  Negocio (199/1990) are unchanged. `/billing` and Settings →
+  Subscription read the price from the catalogue, so they show the new
+  one as soon as the migration is applied. Anyone already subscribed
+  keeps paying what they contracted: the price stored in PayPal is not
+  touched, and moving them would mean new versioned PayPal plans (see
+  `docs/docker.md`, "PayPal catalogue").
 
 ## [0.8.1] — 2026-07-10
 
