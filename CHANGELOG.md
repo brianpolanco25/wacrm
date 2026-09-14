@@ -79,7 +79,37 @@ behaviour changes**; nothing is limited by plan yet.
 > touch subscriptions, stored PayPal plan ids or what anyone is being
 > charged.
 
+> **Migration required:** apply
+> `supabase/migrations/060_whatsapp_bsuid.sql` before customers can write
+> to you with a WhatsApp username. It adds `contacts.wa_user_id` /
+> `contacts.wa_username`, makes `contacts.phone` nullable and replaces the
+> NOT NULL with "a phone number or a WhatsApp user id, at least one". No
+> row is rewritten and no data is lost; every existing contact keeps its
+> number. Note the relaxed column: an integration that assumed
+> `contacts.phone` was always present has to handle null from here on.
+
 ### Added
+
+- **Customers who write with a WhatsApp username now arrive.** Since
+  April 2026 Meta identifies who is writing with a business-scoped user
+  id and stops sending their phone number when they use a username and
+  have not talked to you in 30 days. Those inbound messages used to be
+  dropped on the floor — no contact, no conversation, nothing in the
+  inbox. Now:
+  - The contact is created from the user id, with their `@username`
+    shown wherever the phone number goes ("No number" when they have not
+    published one). Searching by username finds them, with or without
+    the `@`.
+  - Replying works: the inbox composer, flows, automations, reactions
+    and broadcasts all send to the user id when there is no phone
+    number, and keep using the phone number whenever there is one.
+  - Nobody gets duplicated. A contact you already had by phone number
+    receives their user id the first time it arrives, and one created
+    from a user id receives the phone number when Meta finally includes
+    it — the same single row either way.
+  - `POST /api/v1/messages` and `POST /api/v1/broadcasts` accept
+    `to_user_id` next to `to`; `GET /api/v1/contacts` returns
+    `wa_username` and `wa_user_id`. See `docs/public-api.md`.
 
 - **The header says how long the free trial has left.** While the
   account's subscription is on trial, every member — owner, admin, agent
@@ -427,6 +457,14 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Fixed
 
+- **A delivery receipt can no longer land on the wrong company's
+  campaign.** Meta does not guarantee its message ids are unique across
+  numbers, and the `delivered` / `read` webhook was matched by that id
+  alone: two companies whose ids collided could see each other's
+  broadcast counters move. The receipt is now resolved within the
+  account that owns the number it arrived on, and when several rows
+  still share an id, the recipient on the event itself decides which one
+  it is.
 - **One automation no longer silences the AI assistant everywhere.** A
   single active automation with a "new message received" or "keyword
   match" trigger used to mute the assistant across the whole company, in
