@@ -304,6 +304,15 @@ describe('POST /api/billing/checkout', () => {
     });
   });
 
+  it("shows the product's brand on PayPal's approval screen", async () => {
+    // `brand_name` is the only string the subscriber reads on PayPal's
+    // own page, so it carries the visible product name — not the repo
+    // slug the package is published under (fase 6, §1).
+    await post({ planId: 'pro', cycle: 'year' });
+
+    expect(createSubscription.mock.calls[0][0].brandName).toBe('Cabbity CRM');
+  });
+
   it('records the intent so the webhook can match the event to a tenant', async () => {
     await post({ planId: 'pro', cycle: 'month' });
 

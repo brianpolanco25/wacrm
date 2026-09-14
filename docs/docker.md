@@ -100,7 +100,7 @@ verification, the app in live mode, and approval of the
 permissions.
 
 **Allow your domain in the app panel**, under Facebook Login for
-Business → Settings → Client OAuth settings: the domain you serve wacrm
+Business → Settings → Client OAuth settings: the domain you serve Cabbity CRM
 from has to be listed in both **Allowed Domains for the JavaScript SDK**
 and **Valid OAuth redirect URIs**, and only `https://` domains are
 accepted. Without it the dialog opens, the customer finishes it, and
@@ -171,7 +171,7 @@ stable PayPal request ids:
 | `PAYPAL_CLIENT_ID`     | PayPal REST API client credential                                   |
 | `PAYPAL_CLIENT_SECRET` | PayPal REST API client secret                                       |
 | `PAYPAL_ENV`           | `sandbox` (default) or `live`; create and check sandbox plans first |
-| `PAYPAL_PRODUCT_NAME`  | Optional product name; defaults to `wacrm`                          |
+| `PAYPAL_PRODUCT_NAME`  | Optional product name; defaults to `Cabbity CRM`                    |
 
 The script also uses the existing `NEXT_PUBLIC_SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` only to read the global `plans` catalogue and save

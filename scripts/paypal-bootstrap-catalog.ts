@@ -23,7 +23,7 @@
 //
 // Env: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV,
 //      NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-//      PAYPAL_PRODUCT_NAME (optional, default 'wacrm').
+//      PAYPAL_PRODUCT_NAME (optional, default 'Cabbity CRM').
 // ============================================================
 
 import { pathToFileURL } from 'node:url';
@@ -39,6 +39,13 @@ import {
   type CreatePlanArgs,
   type PayPalProduct,
 } from '../src/lib/billing/paypal.ts';
+
+/**
+ * Product name registered in PayPal's catalogue when `PAYPAL_PRODUCT_NAME`
+ * is unset. It shows up on the subscriber's PayPal receipts and agreement
+ * page, so it carries the product's visible brand, not the repo slug.
+ */
+export const DEFAULT_PRODUCT_NAME = 'Cabbity CRM';
 
 export interface PlanRow {
   id: string;
@@ -161,7 +168,7 @@ export async function bootstrapCatalog({
       const created = await paypal.createPlan({
         productId: product.id,
         name: `${plan.name} (${cycle === 'year' ? 'yearly' : 'monthly'})`,
-        description: `wacrm ${plan.name} plan, billed ${cycle === 'year' ? 'yearly' : 'monthly'}`,
+        description: `Cabbity CRM ${plan.name} plan, billed ${cycle === 'year' ? 'yearly' : 'monthly'}`,
         cycle,
         priceUsd: money(price),
         // Stable per env+plan+cycle so a crashed run can be re-run without
@@ -180,7 +187,8 @@ async function main(): Promise<void> {
   requireEnv('PAYPAL_CLIENT_SECRET');
   const supabaseUrl = requireEnv('NEXT_PUBLIC_SUPABASE_URL');
   const serviceKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
-  const productName = process.env.PAYPAL_PRODUCT_NAME?.trim() || 'wacrm';
+  const productName =
+    process.env.PAYPAL_PRODUCT_NAME?.trim() || DEFAULT_PRODUCT_NAME;
   const env = process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox';
 
   console.log(`PayPal env: ${env} (${paypalBaseUrl()})`);

@@ -517,6 +517,23 @@ behaviour changes**; nothing is limited by plan yet.
   All three now filter by the caller's current account, and deleting an
   automation that isn't yours answers `404` instead of a blanket `ok`.
 
+### Changed
+
+- **The product is now called Cabbity CRM.** The browser tab, the name
+  beside the sidebar logo, the brand shown on PayPal's approval screen
+  and receipts, and every sentence in the interface that used to say
+  "wacrm" now say "Cabbity CRM" — in English and in Korean. Technical
+  identifiers keep their current names on purpose, so nothing you have
+  configured breaks: the `wacrm_live_` API-key prefix, the
+  `X-Wacrm-Signature` / `X-Wacrm-Event` webhook headers, the
+  `wacrm_support_*` cookies, the browser storage keys and the package
+  name are unchanged.
+- **`PAYPAL_PRODUCT_NAME` now defaults to `Cabbity CRM`** in
+  `scripts/paypal-bootstrap-catalog.ts`. If you already bootstrapped a
+  PayPal catalogue under the old default, set `PAYPAL_PRODUCT_NAME=wacrm`
+  to keep reusing the existing product — otherwise the next run creates a
+  second one. Plans that already exist are still skipped either way.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

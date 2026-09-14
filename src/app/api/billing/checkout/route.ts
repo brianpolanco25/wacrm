@@ -57,7 +57,7 @@ const SUBSCRIPTION_COLUMNS =
   'plan_id, status, provider_subscription_id, current_period_end, cancel_at_period_end';
 
 /** Brand shown on PayPal's approval screen. */
-const BRAND_NAME = 'wacrm';
+const BRAND_NAME = 'Cabbity CRM';
 
 interface IntentRow {
   id: string;

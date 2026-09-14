@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   bootstrapCatalog,
+  DEFAULT_PRODUCT_NAME,
   type CatalogueStore,
   type PayPalCatalogueClient,
   type PlanRow,
@@ -251,5 +252,56 @@ describe('bootstrapCatalog', () => {
     // must keep the id they subscribed to.
     expect(plans[0].provider_plan_id_month).toBe('P-SANDBOX-LEFTOVER');
     expect(paypal.createPlan).toHaveBeenCalledTimes(5);
+  });
+});
+
+// Fase 6, §1: PayPal is the one place the product name leaves the app and
+// lands on something the subscriber keeps — the agreement page and every
+// receipt. Both strings below are read by a paying customer, so they carry
+// the visible brand. The `requestId` prefix deliberately does not: it is an
+// idempotency key, and changing it would make PayPal mint a second plan for
+// a tier that already has subscribers.
+describe('brand on the PayPal catalogue', () => {
+  it('defaults the product name to the visible brand', () => {
+    expect(DEFAULT_PRODUCT_NAME).toBe('Cabbity CRM');
+  });
+
+  it('names the brand in every plan description', async () => {
+    const store = memoryStore(seededPlans());
+    const paypal = fakePayPal([{ id: 'PROD-1', name: DEFAULT_PRODUCT_NAME }]);
+
+    await bootstrapCatalog({
+      store,
+      paypal,
+      productName: DEFAULT_PRODUCT_NAME,
+      env: 'sandbox',
+      log: vi.fn(),
+    });
+
+    const descriptions = paypal.createPlan.mock.calls.map(
+      ([args]) => args.description
+    );
+    expect(descriptions).toHaveLength(6);
+    for (const description of descriptions) {
+      expect(description).toContain('Cabbity CRM');
+      expect(description).not.toMatch(/wa\s?crm/i);
+    }
+  });
+
+  it('keeps the idempotency keys on their original prefix', async () => {
+    const store = memoryStore(seededPlans());
+    const paypal = fakePayPal([{ id: 'PROD-1', name: DEFAULT_PRODUCT_NAME }]);
+
+    await bootstrapCatalog({
+      store,
+      paypal,
+      productName: DEFAULT_PRODUCT_NAME,
+      env: 'sandbox',
+      log: vi.fn(),
+    });
+
+    expect(paypal.createPlan.mock.calls[0][0].requestId).toBe(
+      'wacrm-sandbox-inicio-month-v1'
+    );
   });
 });
