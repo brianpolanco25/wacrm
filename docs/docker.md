@@ -37,6 +37,12 @@ is included.
   build time**. They are passed as Docker build args by
   `docker-compose.yml`. If you change any of them, rebuild:
   `docker compose --env-file .env.local up --build -d`.
+- `NEXT_PUBLIC_APP_LOCALE` picks the language of every screen. It
+  defaults to **`es`** (Spanish) in the `Dockerfile` and in
+  `docker-compose.yml`; the other two shipped catalogues are `en` and
+  `ko`. There is no per-key fallback: an unknown value loads the English
+  catalogue whole. Being a `NEXT_PUBLIC_*` it is baked in at build time,
+  so changing the language means a rebuild, not a restart.
 - Everything else (`SUPABASE_SERVICE_ROLE_KEY`, `ENCRYPTION_KEY`,
   `ENCRYPTION_KEY_PREVIOUS`, `META_APP_SECRET`,
   `META_WEBHOOK_VERIFY_TOKEN`, …) is read at

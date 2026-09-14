@@ -9,10 +9,10 @@ import { describe, expect, it } from 'vitest';
 //
 // `Sidebar.title` is the brand lockup next to the logo — the name a user
 // reads on every screen — so it is pinned by value rather than by absence.
-// It is a proper noun, so it is deliberately identical in `en` and `ko`.
+// It is a proper noun, so it is deliberately identical in every catalogue.
 
 const MESSAGES_DIR = join(process.cwd(), 'messages');
-const LOCALES = ['en', 'ko'] as const;
+const LOCALES = ['en', 'es', 'ko'] as const;
 const BRAND = 'Cabbity CRM';
 /** Matches `wacrm`, `WaCRM`, `wa crm`… — the names this release retires. */
 const RETIRED = /wa\s?crm/i;

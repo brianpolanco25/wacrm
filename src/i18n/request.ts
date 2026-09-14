@@ -1,8 +1,15 @@
 import { getRequestConfig } from 'next-intl/server';
 
+/**
+ * Locale used when NEXT_PUBLIC_APP_LOCALE is unset. Spanish is the
+ * product's default language; `en` and `ko` stay available by setting
+ * the variable (see docs/docker.md). English remains the source of
+ * truth for the catalogues, hence the fallback below.
+ */
+export const DEFAULT_LOCALE = 'es';
+
 export default getRequestConfig(async () => {
-  // Read the locale from the environment, defaulting to 'en'
-  const locale = process.env.NEXT_PUBLIC_APP_LOCALE || 'en';
+  const locale = process.env.NEXT_PUBLIC_APP_LOCALE || DEFAULT_LOCALE;
 
   let messages;
   try {
@@ -14,6 +21,6 @@ export default getRequestConfig(async () => {
 
   return {
     locale,
-    messages
+    messages,
   };
 });

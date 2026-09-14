@@ -18,16 +18,21 @@ import { createTranslator } from 'next-intl';
 // `t.rich()` (tag handlers). This test fails when one is wired to plain
 // `t()`. Reported by @Arifuzzamanjoy in #421.
 
-const MESSAGES = join(process.cwd(), 'messages', 'en.json');
+const MESSAGES_DIR = join(process.cwd(), 'messages');
+const SOURCE_LOCALE = 'en';
+const TRANSLATED_LOCALES = ['es', 'ko'];
 const SRC = join(process.cwd(), 'src');
 
 /** Leaf keypaths whose value next-intl cannot parse as an ICU message. */
-function icuHostileKeys(): string[] {
-  const catalogue = JSON.parse(readFileSync(MESSAGES, 'utf8'));
+function icuHostileKeys(locale = SOURCE_LOCALE): string[] {
+  const catalogue = JSON.parse(
+    readFileSync(join(MESSAGES_DIR, `${locale}.json`), 'utf8')
+  );
   const leaves: string[] = [];
   const walk = (node: unknown, path: string) => {
     if (node && typeof node === 'object' && !Array.isArray(node)) {
-      for (const [k, v] of Object.entries(node)) walk(v, path ? `${path}.${k}` : k);
+      for (const [k, v] of Object.entries(node))
+        walk(v, path ? `${path}.${k}` : k);
       return;
     }
     if (typeof node === 'string') leaves.push(path);
@@ -37,7 +42,7 @@ function icuHostileKeys(): string[] {
   return leaves.filter((key) => {
     let code = '';
     const t = createTranslator({
-      locale: 'en',
+      locale,
       messages: catalogue,
       onError: (err) => {
         code = err.code;
@@ -84,24 +89,43 @@ describe('ICU-hostile strings are not read with plain t()', () => {
         // consider a file that actually opens this key's namespace. The call
         // may use a trailing sub-path (useTranslations('Settings.templates')
         // + t('config.foo')), so match on any namespace prefix.
-        const opensNamespace = [...text.matchAll(/useTranslations\(\s*['"]([^'"]+)['"]/g)].some(
-          (m) => namespace === m[1] || namespace.startsWith(`${m[1]}.`),
-        );
+        const opensNamespace = [
+          ...text.matchAll(/useTranslations\(\s*['"]([^'"]+)['"]/g),
+        ].some((m) => namespace === m[1] || namespace.startsWith(`${m[1]}.`));
         if (!opensNamespace) continue;
 
         // A plain call: `t('leaf')` or `t("a.leaf")`, but not `.raw(` / `.rich(`.
         const plainCall = new RegExp(
-          String.raw`(?<![.\w])t\(\s*['"](?:[\w.]+\.)?${leaf}['"]`,
+          String.raw`(?<![.\w])t\(\s*['"](?:[\w.]+\.)?${leaf}['"]`
         );
         if (plainCall.test(text)) {
-          offenders.push(`${key} — plain t() in ${path.replace(process.cwd() + '/', '')}`);
+          offenders.push(
+            `${key} — plain t() in ${path.replace(process.cwd() + '/', '')}`
+          );
         }
       }
     }
 
     expect(
       offenders.sort(),
-      'these render as their own keypath at runtime; use t.raw() (or t.rich() with tag handlers)',
+      'these render as their own keypath at runtime; use t.raw() (or t.rich() with tag handlers)'
     ).toEqual([]);
   });
+});
+
+describe('translations keep the ICU-hostile strings hostile', () => {
+  // The `{{1}}` placeholders and the raw-HTML steps are literal: a
+  // translator who "fixes" them into `{1}`, or drops a <strong>, changes
+  // what the user is told to type into Meta. Same key set in every
+  // catalogue is the cheap invariant that catches it — and the reverse
+  // too: a translated string that starts parsing as ICU here would be
+  // read with t.raw() at the call site and lose its interpolation.
+  const source = icuHostileKeys().sort();
+
+  it.each(TRANSLATED_LOCALES)(
+    '%s.json has the same unparseable keys as en.json',
+    (locale) => {
+      expect(icuHostileKeys(locale).sort()).toEqual(source);
+    }
+  );
 });

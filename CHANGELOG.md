@@ -557,6 +557,14 @@ behaviour changes**; nothing is limited by plan yet.
   keeps paying what they contracted: the price stored in PayPal is not
   touched, and moving them would mean new versioned PayPal plans (see
   `docs/docker.md`, "PayPal catalogue").
+- **The interface now speaks Spanish by default.** `messages/es.json` is
+  a full translation of every screen, and `NEXT_PUBLIC_APP_LOCALE`
+  defaults to `es` — including the `Dockerfile` and `docker-compose.yml`
+  build args. English (`en`) and Korean (`ko`) are unchanged and stay one
+  rebuild away; set the variable and rebuild, since it is inlined into
+  the client bundle. Dates in the contact list, the contact notes and
+  the deal cards now follow the reader's locale instead of being pinned
+  to US English.
 
 ## [0.8.1] — 2026-07-10
 
