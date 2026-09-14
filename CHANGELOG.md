@@ -119,7 +119,9 @@ behaviour changes**; nothing is limited by plan yet.
   never shows for an account that is no longer on trial: the read-only
   and past-due notices already cover those. It costs no extra request —
   the billing status behind the existing dunning banner is now read once
-  per account and shared by both.
+  per account and shared by both. The pill is tinted with the accent the
+  account picked in Settings → Appearance instead of a fixed amber, and
+  is legible in light and dark mode.
 
 - **Connect WhatsApp without leaving the app.** On a deployment that runs
   as a platform (one Meta app in front of every company), Settings →

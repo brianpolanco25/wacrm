@@ -136,6 +136,25 @@ describe('TrialBanner', () => {
     expect(html).not.toContain('Billing.');
   });
 
+  it('is painted with the theme tokens, not a hardcoded accent', () => {
+    // Ronda de estilo: the pill has to follow whichever accent the
+    // account picked (five of them) and stay legible in both modes.
+    // `dark:` utilities are the trap this pins down — this app switches
+    // mode with `data-mode` on <html>, so a `dark:` class never
+    // matches and would leave the countdown unreadable on the dark
+    // header.
+    const html = render(
+      subscription({
+        status: 'trialing',
+        trialEndsAt: new Date(NOW + 5 * DAY).toISOString(),
+      })
+    );
+    expect(html).toContain('bg-primary-soft');
+    expect(html).toContain('text-foreground');
+    expect(html).not.toContain('amber');
+    expect(html).not.toContain('dark:');
+  });
+
   it('uses the ICU singular on the exact one-day boundary (en)', () => {
     const html = render(
       subscription({

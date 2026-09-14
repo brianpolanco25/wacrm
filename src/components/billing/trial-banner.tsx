@@ -18,6 +18,28 @@
 // telling them costs nothing: the endpoint behind it exposes status and
 // dates, no money figures and no provider ids.
 //
+// Colours come from the theme tokens of `globals.css`
+// (`--primary-soft` fill, `--primary-soft-2` border and hover,
+// `--primary` for the clock), the same vocabulary as the tinted pills
+// in Settings. The words stay on `--foreground`, not on `--primary`:
+// over a 12%-accent fill the accent text lands between 2.1:1 (amber in
+// light mode) and 3.8:1, under the 4.5:1 that text this small needs,
+// while `--foreground` never drops below 10:1 in either mode. The
+// accent arrives through the fill and the border instead, which is
+// what "matches the theme" has to mean for something that also has to
+// be read at a glance. The clock keeps `--primary` — it is decorative,
+// the countdown beside it says the same thing in words.
+//
+// The first cut copied the fixed ambers of the impersonation strip and
+// got both halves of that wrong: the accent is a per-account choice
+// (five of them, amber among the five), so a hardcoded amber clashed
+// with four themes out of five; and the dark half of the pair,
+// `dark:text-amber-100`, never applied — this app switches mode with
+// `data-mode` on <html>, not with a `.dark` class, so the `dark:`
+// variant of `globals.css` has nothing to match and the countdown
+// stayed near-black on a dark header. Tokens have no such half: they
+// are redefined by the mode block itself.
+//
 // It says nothing unless the subscription is `trialing` — see
 // `trialNotice`. Once the account contracts a plan, or once the trial
 // expires and the account moves down the dunning ladder of fase 3, this
@@ -51,9 +73,9 @@ export function TrialBanner() {
       href="/billing"
       role="status"
       aria-live="polite"
-      className="flex min-w-0 items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-500/25 dark:text-amber-100"
+      className="border-primary-soft-2 bg-primary-soft text-foreground hover:bg-primary-soft-2 flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors"
     >
-      <Clock className="h-3.5 w-3.5 shrink-0" />
+      <Clock className="text-primary h-3.5 w-3.5 shrink-0" />
       <span className="truncate">
         {notice.kind === 'today'
           ? t('trialEndsToday')
