@@ -590,6 +590,12 @@ behaviour changes**; nothing is limited by plan yet.
   browser-tab icon is now the Cabbity rabbit on amber instead of the
   violet chat bubble.
 
+- **The brand reaches the dashboard.** The sidebar shows the Cabbity
+  rabbit next to the product name, and the "Amber" accent theme is now
+  called "Cabbity" and painted in the corporate orange (#F2A81B). Anyone
+  who had picked Amber keeps their choice — it maps to Cabbity
+  automatically.
+
 - **The product is now called Cabbity CRM.** The browser tab, the name
   beside the sidebar logo, the brand shown on PayPal's approval screen
   and receipts, and every sentence in the interface that used to say

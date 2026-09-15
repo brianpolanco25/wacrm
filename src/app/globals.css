@@ -208,18 +208,22 @@ html[data-theme='cobalt'] {
   --sidebar-ring: oklch(0.585 0.2 254);
 }
 
-html[data-theme='amber'] {
-  --primary: oklch(0.745 0.16 65);
-  --primary-foreground: oklch(0.18 0.03 65);
-  --primary-hover: oklch(0.8 0.15 65);
-  --primary-soft: oklch(0.745 0.16 65 / 0.12);
-  --primary-soft-2: oklch(0.745 0.16 65 / 0.22);
-  --ring: oklch(0.745 0.16 65);
-  --chart-1: oklch(0.745 0.16 65);
+/* Cabbity — the corporate amber (#F2A81B) as the app accent. Replaces the
+ * former generic "amber" accent; `normalizeThemeId` maps that saved id
+ * here so nobody's preference silently resets. Tokens come from the
+ * `--cb-token-*` palette declared further down. */
+html[data-theme='cabbity'] {
+  --primary: var(--cb-token-brand);
+  --primary-foreground: var(--cb-token-ink);
+  --primary-hover: #f5b73f;
+  --primary-soft: color-mix(in srgb, var(--cb-token-brand) 12%, transparent);
+  --primary-soft-2: color-mix(in srgb, var(--cb-token-brand) 22%, transparent);
+  --ring: var(--cb-token-brand);
+  --chart-1: var(--cb-token-brand);
   --chart-2: oklch(0.7 0.15 35);
-  --sidebar-primary: oklch(0.745 0.16 65);
-  --sidebar-primary-foreground: oklch(0.18 0.03 65);
-  --sidebar-ring: oklch(0.745 0.16 65);
+  --sidebar-primary: var(--cb-token-brand);
+  --sidebar-primary-foreground: var(--cb-token-ink);
+  --sidebar-ring: var(--cb-token-brand);
 }
 
 html[data-theme='rose'] {

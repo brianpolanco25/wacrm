@@ -17,7 +17,7 @@ export const THEME_IDS = [
   "violet",
   "emerald",
   "cobalt",
-  "amber",
+  "cabbity",
   "rose",
 ] as const;
 
@@ -86,10 +86,10 @@ export const THEMES: ReadonlyArray<ThemeMeta> = [
     swatch: "oklch(0.585 0.2 254)",
   },
   {
-    id: "amber",
-    name: "Amber",
-    tagline: "Warm and friendly — feels good for SMB teams.",
-    swatch: "oklch(0.745 0.16 65)",
+    id: "cabbity",
+    name: "Cabbity",
+    tagline: "The brand orange — warm, friendly, unmistakably ours.",
+    swatch: "#f2a81b",
   },
   {
     id: "rose",
@@ -104,4 +104,22 @@ export function isThemeId(value: unknown): value is ThemeId {
     typeof value === "string" &&
     (THEME_IDS as ReadonlyArray<string>).includes(value)
   );
+}
+
+/**
+ * Ids a previous release shipped under another name. A visitor who picked
+ * one keeps their look instead of falling back to the default. Mirrored
+ * verbatim into the no-flash boot script in `src/app/layout.tsx`.
+ */
+export const LEGACY_THEME_IDS: Readonly<Record<string, ThemeId>> = {
+  amber: "cabbity",
+};
+
+/** Resolves a stored theme id, current or legacy, to a valid one. */
+export function normalizeThemeId(value: unknown): ThemeId | null {
+  if (isThemeId(value)) return value;
+  if (typeof value === "string" && value in LEGACY_THEME_IDS) {
+    return LEGACY_THEME_IDS[value];
+  }
+  return null;
 }

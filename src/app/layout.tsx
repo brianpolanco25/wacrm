@@ -9,6 +9,7 @@ import { ThemedToaster } from "@/components/themed-toaster";
 import {
   DEFAULT_MODE,
   DEFAULT_THEME,
+  LEGACY_THEME_IDS,
   MODE_STORAGE_KEY,
   MODES,
   STORAGE_KEY,
@@ -62,7 +63,9 @@ const THEME_BOOT_SCRIPT = `
     var THEME_KEY = ${JSON.stringify(STORAGE_KEY)};
     var THEME_DEFAULT = ${JSON.stringify(DEFAULT_THEME)};
     var THEMES = ${JSON.stringify(THEME_IDS)};
+    var LEGACY = ${JSON.stringify(LEGACY_THEME_IDS)};
     var savedTheme = localStorage.getItem(THEME_KEY);
+    if (savedTheme && LEGACY[savedTheme]) savedTheme = LEGACY[savedTheme];
     d.dataset.theme = THEMES.indexOf(savedTheme) !== -1 ? savedTheme : THEME_DEFAULT;
 
     var MODE_KEY = ${JSON.stringify(MODE_STORAGE_KEY)};
