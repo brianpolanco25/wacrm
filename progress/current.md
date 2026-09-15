@@ -87,13 +87,16 @@ se versionan con el bootstrap de f3.1.
   `NEXT_PUBLIC_APP_LOCALE` (defecto `es`).
 - Commitear en `feat/saas-multiempresa` el estado del harness que sigue sin commit: `CHECKPOINTS.md`
   (CP6 = es+en+ko), `.claude/agents/*.md`, `docs/harness.md`, `feature_list.json`, `progress/`.
-- Vía de aplicación de migraciones en producción: la 047 va por delante de 042–046.
+- Migraciones remotas: APLICADAS el 2026-09-15 al proyecto Supabase `wacrm` (ref gjrbkxnbgsuzaqfjopof)
+  con `supabase db push` tras reparar el historial (001–039 marcadas como aplicadas); copia previa en
+  `~/Documents/Dev/backups/wacrm-20260915-1146/`. El remoto está en la 060.
 - Sandbox de PayPal: pasos 6–8 de `progress/impl_subscription-settings-ui.md` y el guion de
   `progress/impl_paypal-webhook.md`; bootstrap del catálogo (`progress/impl_paypal-client-catalog.md`).
 - Alta del primer administrador de plataforma: SQL manual en `progress/impl_impersonation-audit.md`.
 - Trámite con Meta para f4.1 (verificación de negocio, app en producción, permisos, configuración
   de Embedded Signup).
-- Merge final de `saas/integracion` a `feat/saas-multiempresa`, push y PR.
+- Ramas: `feat/saas-multiempresa` = `dev` = `main` = 4756a47, pusheadas el 2026-09-15 por orden del
+  humano (ff, sin PR). El push a `main` dispara el build de imagen y el webhook de Dokploy.
 - Deuda de producto: automatizaciones de un miembro expulsado quedan sin dueño; cupo de IA agotado
   no cede ni avisa; adjuntos no visibles durante el soporte (storage.objects fuera de 057);
   plantillas por WABA y conversaciones por número (fuera de f4.2).
