@@ -1,6 +1,6 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -55,6 +55,25 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  /* Cabbity corporate palette (see the CABBITY BRAND block below).
+   * Constant across mode/accent — it is the brand, not a picked theme.
+   * Utilities: bg-brand, text-brand-ink, bg-cream, text-ink, border-line,
+   * text-positive, bg-surface-1… */
+  --color-brand: var(--cb-token-brand);
+  --color-brand-ink: var(--cb-token-brand-ink);
+  --color-cream: var(--cb-token-cream);
+  --color-ink: var(--cb-token-ink);
+  --color-line: var(--cb-token-line);
+  --color-line-strong: var(--cb-token-line-strong);
+  --color-surface-1: var(--cb-token-surface-1);
+  --color-surface-2: var(--cb-token-surface-2);
+  --color-surface-3: var(--cb-token-surface-3);
+  --color-text-2: var(--cb-token-text-2);
+  --color-text-3: var(--cb-token-text-3);
+  --color-text-muted: var(--cb-token-text-muted);
+  --color-positive: var(--cb-token-positive);
+  --color-navy: var(--cb-token-navy);
+  --color-peach: var(--cb-token-peach);
 }
 
 /* ============================================================
@@ -87,7 +106,7 @@
 /* ---- MODE: neutral surfaces ---- */
 
 :root,
-html[data-mode="dark"] {
+html[data-mode='dark'] {
   --background: oklch(0.13 0.01 260);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.18 0.01 260);
@@ -116,7 +135,7 @@ html[data-mode="dark"] {
   --sidebar-border: oklch(0.28 0.01 260);
 }
 
-html[data-mode="light"] {
+html[data-mode='light'] {
   --background: oklch(0.99 0.002 260);
   --foreground: oklch(0.21 0.01 260);
   --card: oklch(1 0 0);
@@ -148,7 +167,7 @@ html[data-mode="light"] {
 /* ---- ACCENT: primary color ---- */
 
 :root,
-html[data-theme="violet"] {
+html[data-theme='violet'] {
   --primary: oklch(0.526 0.247 293);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.6 0.22 293);
@@ -161,7 +180,7 @@ html[data-theme="violet"] {
   --sidebar-ring: oklch(0.526 0.247 293);
 }
 
-html[data-theme="emerald"] {
+html[data-theme='emerald'] {
   --primary: oklch(0.62 0.16 162);
   --primary-foreground: oklch(0.16 0.02 162);
   --primary-hover: oklch(0.68 0.15 162);
@@ -175,7 +194,7 @@ html[data-theme="emerald"] {
   --sidebar-ring: oklch(0.62 0.16 162);
 }
 
-html[data-theme="cobalt"] {
+html[data-theme='cobalt'] {
   --primary: oklch(0.585 0.2 254);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.66 0.18 254);
@@ -189,7 +208,7 @@ html[data-theme="cobalt"] {
   --sidebar-ring: oklch(0.585 0.2 254);
 }
 
-html[data-theme="amber"] {
+html[data-theme='amber'] {
   --primary: oklch(0.745 0.16 65);
   --primary-foreground: oklch(0.18 0.03 65);
   --primary-hover: oklch(0.8 0.15 65);
@@ -203,7 +222,7 @@ html[data-theme="amber"] {
   --sidebar-ring: oklch(0.745 0.16 65);
 }
 
-html[data-theme="rose"] {
+html[data-theme='rose'] {
   --primary: oklch(0.645 0.22 16);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.71 0.2 16);
@@ -226,5 +245,101 @@ html[data-theme="rose"] {
   }
   html {
     @apply font-sans;
+  }
+}
+
+/* ============================================================
+ * CABBITY BRAND + AUTH SHELL
+ *
+ * The login / signup / forgot-password pages are the product's
+ * storefront and follow the design handoff: navy headings and amber
+ * accents on white, light-grey fields, warm greys for secondary text —
+ * no matter which accent or mode the visitor's browser remembers from a
+ * previous session. A first-time visitor has picked neither, and the
+ * dark violet default is not the brand.
+ *
+ * `--cb-token-*` is the corporate palette as handed over by the brand
+ * owner (names included), plus the two handoff-only tones the auth
+ * screens need (navy for headings, peach for soft fills). `.auth-brand`
+ * then re-declares the same custom properties the MODE and ACCENT
+ * blocks above set on <html>, so every shadcn primitive inside (Card,
+ * Input, Button, Label) picks the brand up through the cascade without
+ * a single class change.
+ * ============================================================ */
+
+:root {
+  --cb-token-brand: #f2a81b; /* brand amber — fills */
+  --cb-token-brand-hover: #e39a12;
+  --cb-token-brand-ink: #9d6008; /* same hue for text: accents, labels */
+  --cb-token-cream: #fbf8f3;
+  --cb-token-ink: #1b1815; /* primary text (dashboard-side palette) */
+  --cb-token-line: #efe7da;
+  --cb-token-line-strong: #e3dacb;
+  --cb-token-surface-1: #f6f0e6;
+  --cb-token-surface-2: #fffdf9;
+  --cb-token-surface-3: #ffffff;
+  --cb-token-text-2: #3f3933; /* text hierarchy */
+  --cb-token-text-3: #5b534a;
+  --cb-token-text-muted: #6e655b;
+  --cb-token-positive: #26704b;
+  --cb-token-navy: #1b1b4f; /* auth handoff — headings, wordmark */
+  --cb-token-peach: #fbe1b6; /* auth handoff — soft amber fills */
+}
+
+.auth-brand {
+  color-scheme: light;
+  /* Surfaces sampled from the handoff: cool near-white, not cream. */
+  --background: #f7f8fd;
+  --foreground: var(--cb-token-navy);
+  --card: #ffffff;
+  --card-2: #fafbfe;
+  --card-foreground: var(--cb-token-navy);
+  --popover: #ffffff;
+  --popover-foreground: var(--cb-token-navy);
+  --secondary: oklch(0.967 0.003 260);
+  --secondary-foreground: var(--cb-token-text-2);
+  --muted: #f3f5fb; /* field background */
+  --muted-foreground: var(--cb-token-text-muted);
+  --accent: oklch(0.96 0.004 260);
+  --accent-foreground: var(--cb-token-text-2);
+  --border: #e6e9f2;
+  --input: #dfe3ee;
+  --primary: var(--cb-token-brand);
+  /* White on amber as in the handoff (brand owner's call; it sits under
+   * 3:1 contrast, so the button text is bold and 16px). */
+  --primary-foreground: #ffffff;
+  --primary-hover: var(--cb-token-brand-hover);
+  --primary-soft: color-mix(in srgb, var(--cb-token-brand) 14%, transparent);
+  --primary-soft-2: color-mix(in srgb, var(--cb-token-brand) 24%, transparent);
+  --ring: var(--cb-token-brand);
+}
+
+/* Motion for the auth shell. Every consumer also carries
+ * `motion-reduce:animate-none`, so these never run for visitors who
+ * asked the OS for less movement. */
+@theme {
+  --animate-auth-float: auth-float 7s ease-in-out infinite;
+  --animate-auth-drift: auth-drift 18s ease-in-out infinite;
+
+  @keyframes auth-float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+  @keyframes auth-drift {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(-3%, -4%) scale(1.06);
+    }
+    66% {
+      transform: translate(2%, 3%) scale(0.97);
+    }
   }
 }

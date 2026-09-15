@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
+import { AuthShell } from '@/components/auth/auth-shell';
 
 // Shared metadata for auth pages (login / signup / forgot-password).
 // None of these should be indexed — they'd compete with the marketing
@@ -19,6 +20,8 @@ export const metadata: Metadata = {
   },
 };
 
+// Every page in the group renders inside the same branded two-column
+// shell (hero + card column); pages only return their card.
 export default function AuthLayout({ children }: { children: ReactNode }) {
-  return children;
+  return <AuthShell>{children}</AuthShell>;
 }

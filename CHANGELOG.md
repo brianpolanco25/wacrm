@@ -575,6 +575,21 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Changed
 
+- **The sign-in, sign-up and forgot-password screens wear the Cabbity
+  brand.** They now open on a two-column storefront: a hero panel with
+  the logo, a rotating headline (three value propositions, with dots to
+  jump between them), the feature list and the brand photograph, next to
+  a white card in the handoff palette — navy headings, the corporate
+  amber for accents and warm greys for secondary text — regardless of
+  the accent or light/dark mode the browser remembers from the
+  dashboard. On desktop the frame is exactly the viewport, so the page
+  never scrolls; a tall card scrolls inside its own column. Entrance and floating animations respect
+  `prefers-reduced-motion`. The password field gains a show/hide toggle,
+  the fields carry icons, and the copy is in the catalogue (`es`, `en`,
+  `ko`). On phones the hero steps aside and only the card shows. The
+  browser-tab icon is now the Cabbity rabbit on amber instead of the
+  violet chat bubble.
+
 - **The product is now called Cabbity CRM.** The browser tab, the name
   beside the sidebar logo, the brand shown on PayPal's approval screen
   and receipts, and every sentence in the interface that used to say

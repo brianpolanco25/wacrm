@@ -1,9 +1,9 @@
 {
   "LoginPage": {
     "titleAccept": "Inicia sesión para aceptar",
-    "titleWelcome": "Te damos la bienvenida",
+    "titleWelcome": "¡Bienvenido de nuevo!",
     "descAccept": "Inicia sesión y te llevamos a la invitación.",
-    "descWelcome": "Inicia sesión en tu cuenta",
+    "descWelcome": "Inicia sesión para continuar",
     "emailLabel": "Correo electrónico",
     "emailPlaceholder": "tu@ejemplo.com",
     "passwordLabel": "Contraseña",
@@ -12,7 +12,51 @@
     "signingIn": "Iniciando sesión...",
     "signIn": "Iniciar sesión",
     "noAccount": "¿Todavía no tienes cuenta?",
-    "createAccount": "Crear cuenta"
+    "createAccount": "Crear cuenta",
+    "showPassword": "Mostrar contraseña",
+    "hidePassword": "Ocultar contraseña",
+    "brand": {
+      "tagline": "Tu negocio en orden",
+      "kicker": "CRM para empresas"
+    },
+    "hero": {
+      "imageAlt": "Un profesional sonriente trabaja en su portátil junto a un resumen de ventas con un crecimiento del 32 %",
+      "goToSlide": "Ir a la diapositiva {n}",
+      "slides": {
+        "growth": {
+          "lead": "Haz crecer tu negocio con un",
+          "accent": "CRM inteligente",
+          "body": "Gestiona tus clientes, oportunidades y ventas desde un solo lugar. Más productividad, mejores resultados.",
+          "quote": "Un CRM simple, poderoso y hecho para empresas de hoy."
+        },
+        "clients": {
+          "lead": "Todos tus clientes y operaciones",
+          "accent": "en un solo lugar",
+          "body": "Organiza, da seguimiento y haz crecer tu negocio con un CRM simple y poderoso.",
+          "quote": "Más organización, más clientes, más crecimiento."
+        },
+        "results": {
+          "lead": "Convierte oportunidades",
+          "accent": "en resultados",
+          "body": "Centraliza tus ventas, automatiza tus procesos y haz crecer tu negocio con un CRM diseñado para ti.",
+          "quote": "Menos tareas repetitivas, más tiempo para vender."
+        }
+      },
+      "features": {
+        "clients": {
+          "title": "Clientes centralizados",
+          "desc": "Toda la información en un solo lugar"
+        },
+        "sales": {
+          "title": "Más ventas",
+          "desc": "Convierte oportunidades en resultados"
+        },
+        "productivity": {
+          "title": "Mayor productividad",
+          "desc": "Automatiza y enfócate en lo importante"
+        }
+      }
+    }
   },
   "Sidebar": {
     "title": "Cabbity CRM",

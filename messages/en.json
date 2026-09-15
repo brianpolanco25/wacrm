@@ -1,9 +1,9 @@
 {
   "LoginPage": {
     "titleAccept": "Sign in to accept",
-    "titleWelcome": "Welcome back",
+    "titleWelcome": "Welcome back!",
     "descAccept": "Sign in and we'll take you to the invitation.",
-    "descWelcome": "Sign in to your account",
+    "descWelcome": "Sign in to continue",
     "emailLabel": "Email",
     "emailPlaceholder": "you@example.com",
     "passwordLabel": "Password",
@@ -12,7 +12,51 @@
     "signingIn": "Signing in...",
     "signIn": "Sign in",
     "noAccount": "Don't have an account?",
-    "createAccount": "Create account"
+    "createAccount": "Create account",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "brand": {
+      "tagline": "Your business in order",
+      "kicker": "CRM for companies"
+    },
+    "hero": {
+      "imageAlt": "A smiling professional working on a laptop next to a sales summary showing 32% growth",
+      "goToSlide": "Go to slide {n}",
+      "slides": {
+        "growth": {
+          "lead": "Grow your business with a",
+          "accent": "smart CRM",
+          "body": "Manage your customers, deals and sales from one place. More productivity, better results.",
+          "quote": "A simple, powerful CRM built for the companies of today."
+        },
+        "clients": {
+          "lead": "All your customers and operations",
+          "accent": "in one place",
+          "body": "Organise, follow up and grow your business with a CRM that is simple and powerful.",
+          "quote": "More organisation, more customers, more growth."
+        },
+        "results": {
+          "lead": "Turn opportunities",
+          "accent": "into results",
+          "body": "Centralise your sales, automate your processes and grow with a CRM designed for you.",
+          "quote": "Fewer repetitive tasks, more time to sell."
+        }
+      },
+      "features": {
+        "clients": {
+          "title": "Centralised customers",
+          "desc": "All the information in one place"
+        },
+        "sales": {
+          "title": "More sales",
+          "desc": "Turn opportunities into results"
+        },
+        "productivity": {
+          "title": "Higher productivity",
+          "desc": "Automate and focus on what matters"
+        }
+      }
+    }
   },
   "Sidebar": {
     "title": "Cabbity CRM",

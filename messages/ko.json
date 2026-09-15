@@ -1,9 +1,9 @@
 {
   "LoginPage": {
     "titleAccept": "로그인하여 수락하기",
-    "titleWelcome": "다시 오신 것을 환영합니다",
+    "titleWelcome": "다시 만나서 반가워요!",
     "descAccept": "로그인하시면 초대 페이지로 이동합니다.",
-    "descWelcome": "계정에 로그인하세요",
+    "descWelcome": "계속하려면 로그인하세요",
     "emailLabel": "이메일",
     "emailPlaceholder": "you@example.com",
     "passwordLabel": "비밀번호",
@@ -12,7 +12,51 @@
     "signingIn": "로그인 중...",
     "signIn": "로그인",
     "noAccount": "계정이 없으신가요?",
-    "createAccount": "계정 만들기"
+    "createAccount": "계정 만들기",
+    "showPassword": "비밀번호 표시",
+    "hidePassword": "비밀번호 숨기기",
+    "brand": {
+      "tagline": "정돈된 비즈니스",
+      "kicker": "기업용 CRM"
+    },
+    "hero": {
+      "imageAlt": "32% 성장을 보여주는 매출 요약 옆에서 노트북으로 일하며 웃고 있는 직장인",
+      "goToSlide": "{n}번 슬라이드로 이동",
+      "slides": {
+        "growth": {
+          "lead": "스마트한 CRM으로",
+          "accent": "비즈니스를 키우세요",
+          "body": "고객, 영업 기회, 매출을 한곳에서 관리하세요. 더 높은 생산성, 더 나은 결과.",
+          "quote": "오늘의 기업을 위해 만든 간단하고 강력한 CRM."
+        },
+        "clients": {
+          "lead": "모든 고객과 업무를",
+          "accent": "한곳에서",
+          "body": "간단하고 강력한 CRM으로 정리하고, 후속 조치하고, 비즈니스를 성장시키세요.",
+          "quote": "더 체계적으로, 더 많은 고객, 더 큰 성장."
+        },
+        "results": {
+          "lead": "영업 기회를",
+          "accent": "성과로 바꾸세요",
+          "body": "매출을 중앙화하고 프로세스를 자동화하여, 당신을 위해 설계된 CRM으로 성장하세요.",
+          "quote": "반복 작업은 줄이고, 판매할 시간은 늘리세요."
+        }
+      },
+      "features": {
+        "clients": {
+          "title": "고객 통합 관리",
+          "desc": "모든 정보를 한곳에"
+        },
+        "sales": {
+          "title": "매출 증대",
+          "desc": "영업 기회를 성과로"
+        },
+        "productivity": {
+          "title": "생산성 향상",
+          "desc": "자동화하고 중요한 일에 집중"
+        }
+      }
+    }
   },
   "Sidebar": {
     "title": "Cabbity CRM",
