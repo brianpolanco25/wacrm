@@ -41,15 +41,15 @@ key's next request. Revoked keys stay in the list as an audit trail.
 A key can do only what its scopes allow — independent of who created
 it. Grant the minimum.
 
-| Scope                | Allows                                   |
-| -------------------- | ---------------------------------------- |
-| `messages:send`      | Send WhatsApp messages                   |
-| `messages:read`      | Read messages and delivery status        |
-| `contacts:read`      | List and read contacts                   |
-| `contacts:write`     | Create and update contacts               |
-| `conversations:read` | List and read conversations              |
-| `broadcasts:send`    | Launch broadcast campaigns               |
-| `webhooks:manage`    | Register and manage outbound webhooks    |
+| Scope                | Allows                                |
+| -------------------- | ------------------------------------- |
+| `messages:send`      | Send WhatsApp messages                |
+| `messages:read`      | Read messages and delivery status     |
+| `contacts:read`      | List and read contacts                |
+| `contacts:write`     | Create and update contacts            |
+| `conversations:read` | List and read conversations           |
+| `broadcasts:send`    | Launch broadcast campaigns            |
+| `webhooks:manage`    | Register and manage outbound webhooks |
 
 A key with **no scopes** still authenticates and can call
 `GET /api/v1/me` — useful for verifying a key works.
@@ -69,14 +69,14 @@ Every response uses one of two shapes:
 Branch on `error.code` (stable); `error.message` is for humans and
 may be reworded.
 
-| Status | `code`         | Meaning                                          |
-| ------ | -------------- | ------------------------------------------------ |
+| Status | `code`         | Meaning                                               |
+| ------ | -------------- | ----------------------------------------------------- |
 | 401    | `unauthorized` | Missing / malformed / unknown / revoked / expired key |
-| 403    | `forbidden`    | Valid key, but missing the required scope        |
-| 429    | `rate_limited` | Per-key rate limit exceeded                      |
-| 400    | `bad_request`  | Malformed input                                  |
-| 404    | `not_found`    | No such resource                                 |
-| 500    | `internal`     | Server error                                     |
+| 403    | `forbidden`    | Valid key, but missing the required scope             |
+| 429    | `rate_limited` | Per-key rate limit exceeded                           |
+| 400    | `bad_request`  | Malformed input                                       |
+| 404    | `not_found`    | No such resource                                      |
+| 500    | `internal`     | Server error                                          |
 
 ## Rate limits
 
@@ -140,9 +140,9 @@ curl -X POST https://your-crm.example.com/api/v1/messages \
   "template": {
     "name": "order_update",
     "language": "en_US",
-    "params": ["A123"]        // positional body vars, or a structured object
+    "params": ["A123"], // positional body vars, or a structured object
   },
-  "reply_to_message_id": "<uuid>"   // optional; must be in the same conversation
+  "reply_to_message_id": "<uuid>", // optional; must be in the same conversation
 }
 ```
 
@@ -162,7 +162,7 @@ WhatsApp, not an internal wacrm id:
   "to": "+14155550123",
   "type": "text",
   "text": "Hi 👋",
-  "from": "100234567890123"    // optional; a phone_number_id of YOUR account
+  "from": "100234567890123", // optional; a phone_number_id of YOUR account
 }
 ```
 
@@ -185,7 +185,7 @@ To write to such a contact, pass `to_user_id` instead of `to`:
 {
   "to_user_id": "US.1349700000000001",
   "type": "text",
-  "text": "Hi 👋"
+  "text": "Hi 👋",
 }
 ```
 
@@ -232,11 +232,17 @@ to write to them.
 {
   "data": [
     {
-      "id": "…", "phone": "+14155550123", "name": "Jane Doe",
-      "wa_username": null, "wa_user_id": null,
-      "email": null, "company": "Acme", "avatar_url": null,
+      "id": "…",
+      "phone": "+14155550123",
+      "name": "Jane Doe",
+      "wa_username": null,
+      "wa_user_id": null,
+      "email": null,
+      "company": "Acme",
+      "avatar_url": null,
       "tags": [{ "id": "…", "name": "vip", "color": "#3b82f6" }],
-      "created_at": "…", "updated_at": "…"
+      "created_at": "…",
+      "updated_at": "…"
     }
   ],
   "meta": { "next_cursor": "…" }
@@ -351,11 +357,24 @@ things happen in your account. **Migration required:** apply
 
 ### Events
 
-| Event                    | Fires when                                        |
-| ------------------------ | ------------------------------------------------- |
-| `message.received`       | An inbound message arrives from a contact         |
-| `message.status_updated` | A message you sent changed delivery status        |
-| `conversation.created`   | A new conversation is opened for a contact        |
+| Event                     | Fires when                                                   |
+| ------------------------- | ------------------------------------------------------------ |
+| `message.received`        | An inbound message arrives from a contact                    |
+| `message.status_updated`  | A message you sent changed delivery status                   |
+| `conversation.created`    | A new conversation is opened for a contact                   |
+| `conversation.closed`     | A conversation is closed (dashboard or automation)           |
+| `conversation.assigned`   | A conversation changes hands                                 |
+| `contact.created`         | A contact is created (API, dashboard, or inbound WhatsApp)   |
+| `contact.updated`         | A contact's fields change                                    |
+| `contact.tag_added`       | A tag is attached to a contact                               |
+| `contact.tag_removed`     | A tag is detached from a contact                             |
+| `template.status_updated` | Meta moved a template's review status (surfaced by the sync) |
+| `broadcast.completed`     | A campaign finished fanning out                              |
+
+Events fire from the **domain layer**, not only from `/api/v1`: a tag
+added by an agent in the dashboard, a conversation closed by an
+automation and a contact created by an inbound WhatsApp message all
+reach your endpoint the same way an API-driven change does.
 
 ### Managing endpoints
 
@@ -365,7 +384,18 @@ All under scope `webhooks:manage`.
 - `GET /api/v1/webhooks` — list your endpoints (never returns the secret).
 - `GET /api/v1/webhooks/{id}` — read one.
 - `PATCH /api/v1/webhooks/{id}` — update `url`, `events`, or `is_active` (re-enabling clears the failure counter).
-- `DELETE /api/v1/webhooks/{id}` — remove one.
+- `DELETE /api/v1/webhooks/{id}` — remove one (its delivery log goes with it).
+- `GET /api/v1/webhooks/{id}/deliveries` — the delivery log, newest first
+  (cursor-paginated like every other list; `?status=pending|delivered|failed|dead`).
+  Never includes `payload`.
+- `POST /api/v1/webhooks/{id}/deliveries/{deliveryId}/retry` — try one
+  again right now, from the first rung of the ladder. `409` if it is
+  already queued for another attempt.
+- `POST /api/v1/webhooks/{id}/test` — deliver a signed `ping`. `ping` is
+  not a subscribable event; it only travels when you ask for it.
+- `POST /api/v1/webhooks/{id}/rotate-secret` — new signing secret,
+  returned in plaintext once. Everything after the response is signed
+  with it, so update your verifier before the next delivery.
 
 ```bash
 curl -X POST https://your-crm.example.com/api/v1/webhooks \
@@ -386,7 +416,7 @@ delivery uuid you can dedupe on, and `data` varies by `event`:
   "event": "message.received",
   "occurred_at": "2026-07-01T12:00:00.000Z",
   "account_id": "…",
-  "data": { /* per-event, see below */ }
+  "data": {/* per-event, see below */}
 }
 ```
 
@@ -399,9 +429,24 @@ delivery uuid you can dedupe on, and `data` varies by `event`:
 { "conversation_id": "…", "contact_id": "…" }
 // message.status_updated
 { "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "delivered" }
+// conversation.closed
+{ "conversation_id": "…", "contact_id": "…" }
+// conversation.assigned
+{ "conversation_id": "…", "contact_id": "…", "assigned_agent_id": "…" }   // null = unassigned
+// contact.created
+{ "contact_id": "…", "phone": "14155550123", "wa_user_id": null, "name": "Jane" }
+// contact.updated
+{ "contact_id": "…", "phone": "…", "wa_user_id": null, "name": "Jane", "fields": ["name"] }
+// contact.tag_added / contact.tag_removed
+{ "contact_id": "…", "tag_id": "…" }
+// template.status_updated
+{ "template_id": "…", "name": "order_update", "language": "en_US", "status": "APPROVED", "previous_status": "PENDING" }
+// broadcast.completed
+{ "broadcast_id": "…", "status": "sent", "total": 1000, "sent": 987, "failed": 13 }
 ```
 
-Headers: `X-Wacrm-Event`, `X-Wacrm-Webhook-Id`, and `X-Wacrm-Signature`.
+Headers: `X-Wacrm-Event`, `X-Wacrm-Webhook-Id`, `X-Wacrm-Delivery-Id`,
+`X-Wacrm-Attempt` (1 on the first try) and `X-Wacrm-Signature`.
 
 ### Verifying the signature
 
@@ -412,24 +457,42 @@ a few minutes old (replay protection).
 
 ```js
 const [, t, v1] = header.match(/t=(\d+),v1=([0-9a-f]+)/);
-const expected = crypto.createHmac('sha256', secret)
-  .update(`${t}.${rawBody}`).digest('hex');
+const expected = crypto
+  .createHmac('sha256', secret)
+  .update(`${t}.${rawBody}`)
+  .digest('hex');
 const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1));
 ```
 
 ### Delivery semantics
 
-Delivery is **best-effort**: a single attempt per event with a short
-timeout, and **redirects are not followed**. `message.status_updated`
-covers messages wacrm stores (inbox + API sends), not broadcast-only
-sends, and — because providers re-send and re-order status callbacks —
-the same status may arrive more than once or out of order; **dedupe on
-`id` and don't assume ordering**. Each consecutive failure increments
-`failure_count`; after enough consecutive failures the endpoint is
-auto-disabled (`is_active: false`) — re-enable it with `PATCH` (which
-resets the counter). Durable retry-with-backoff (a delivery queue) is a
-future enhancement; today, treat missed deliveries as possible and
-reconcile with the read endpoints when it matters.
+Delivery is **at-least-once and durable**. Every event is persisted to a
+queue before the first attempt, so a receiver that is down, slow or
+mid-deploy does not lose it. A failed attempt is retried five more times
+— after 1 min, 5 min, 30 min, 2 h and 12 h — and is then marked `dead`
+and left in the log; you can still retry it by hand. Each attempt has a
+short timeout and **redirects are not followed**.
+
+Consequences to design for:
+
+- **Dedupe on the envelope `id`.** It is stable across retries, so a
+  receiver that accepted a delivery and then timed out will see the same
+  `id` again.
+- **Do not assume ordering.** A retried event can arrive after a newer
+  one; `occurred_at` is the authority.
+- **Answer fast.** Anything that is not a 2xx — including a 3xx — counts
+  as a failure and schedules a retry.
+- `message.status_updated` covers messages wacrm stores (inbox + API
+  sends), not broadcast-only sends, and providers re-send and re-order
+  status callbacks of their own.
+
+Each consecutive failure increments `failure_count`; after 15 in a row
+the endpoint is auto-disabled (`is_active: false`) — re-enable it with
+`PATCH`, which resets the counter. Delivery history is kept for 30 days.
+
+Self-hosting note: retries need a scheduler hitting
+`GET /api/webhooks/cron` every minute (see `docs/docker.md`). Without
+it, only the first attempt of each delivery ever runs.
 
 **Target restrictions (SSRF).** The `url` must be `https://` and must
 resolve to a public address — requests to `localhost`, private/RFC1918
@@ -441,5 +504,5 @@ internal targets are refused at delivery time.
 The public API now covers messaging, contacts, conversations,
 broadcasts, and outbound webhooks — the full scope of
 [#245](https://github.com/ArnasDon/wacrm/issues/245). Future ideas
-(deals/pipelines, templates, flows, a delivery queue for webhooks) are
-not yet scheduled.
+(deals/pipelines, templates, flows) are not yet scheduled. The delivery
+queue for webhooks shipped: see [Delivery semantics](#delivery-semantics).

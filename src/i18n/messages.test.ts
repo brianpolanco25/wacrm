@@ -45,6 +45,8 @@ const IDENTICAL_TO_SOURCE_OK: Record<string, string> = {
   'Settings.templates.btnUrl': 'acronym',
   'Settings.templates.phonePlaceholder': 'sample phone number',
   'Settings.sections.whatsapp': 'brand name',
+  'Settings.sections.webhooks': 'technical term, same word in Spanish',
+  'Settings.webhooks.title': 'technical term, same word in Spanish',
   'Billing.subscription.noNextCharge': 'em dash placeholder',
   'Platform.columns.plan': 'same word in Spanish',
 };
