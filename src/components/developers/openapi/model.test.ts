@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+  WEBHOOK_EVENTS,
+  WEBHOOK_EVENT_DATA_FIELDS,
+  type WebhookEvent,
+} from '@/lib/webhooks/events';
+
 import { OPENAPI_FIXTURE } from './fixture';
 import {
   buildReference,
@@ -72,6 +78,26 @@ describe('buildReference — cobertura', () => {
     );
     expect(received?.fields.map((field) => field.name)).toContain('data');
     expect(received?.example).toContain('"message.received"');
+  });
+
+  it('describe TODOS los eventos de `WEBHOOK_EVENTS`, en su orden', () => {
+    // Mientras a7.6 no se fusione, el fixture ES lo que un cliente lee
+    // en /developers/reference. Si describiera menos eventos que el
+    // catálogo (/developers/webhooks), las dos páginas se contradirían.
+    expect(model.webhooks.map((hook) => hook.event)).toEqual([
+      ...WEBHOOK_EVENTS,
+    ]);
+  });
+
+  it('el `data` de cada evento trae los campos que emite el código', () => {
+    for (const hook of model.webhooks) {
+      const envelope = JSON.parse(hook.example ?? '{}') as {
+        data?: Record<string, unknown>;
+      };
+      expect(Object.keys(envelope.data ?? {}), `data de ${hook.event}`).toEqual(
+        WEBHOOK_EVENT_DATA_FIELDS[hook.event as WebhookEvent]
+      );
+    }
   });
 
   it('lee el servidor y la versión del documento', () => {

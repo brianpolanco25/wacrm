@@ -1580,6 +1580,103 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
       },
     },
+    'conversation.created': {
+      post: {
+        summary: 'Se abre una conversación nueva para un contacto.',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: 'c410…',
+            event: 'conversation.created',
+            occurred_at: '2026-07-01T12:00:01.000Z',
+            account_id: '9f1c…',
+            data: { conversation_id: '77ac…', contact_id: '1d4f…' },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
+    'conversation.closed': {
+      post: {
+        summary: 'Se cierra una conversación (desde el panel o por API).',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: 'd52a…',
+            event: 'conversation.closed',
+            occurred_at: '2026-07-01T12:30:00.000Z',
+            account_id: '9f1c…',
+            data: { conversation_id: '77ac…', contact_id: '1d4f…' },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
+    'conversation.assigned': {
+      post: {
+        summary:
+          'Una conversación cambia de manos. `assigned_agent_id` nulo = queda sin asignar.',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: 'e63b…',
+            event: 'conversation.assigned',
+            occurred_at: '2026-07-01T12:31:00.000Z',
+            account_id: '9f1c…',
+            data: {
+              conversation_id: '77ac…',
+              contact_id: '1d4f…',
+              assigned_agent_id: '4b2e…',
+            },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
+    'contact.created': {
+      post: {
+        summary: 'Se crea un contacto (por API, desde el panel o al escribir).',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: 'f74c…',
+            event: 'contact.created',
+            occurred_at: '2026-07-01T11:59:00.000Z',
+            account_id: '9f1c…',
+            data: {
+              contact_id: '1d4f…',
+              phone: '14155550123',
+              wa_user_id: null,
+              name: 'Ada',
+            },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
+    'contact.updated': {
+      post: {
+        summary:
+          'Cambian los campos de un contacto. `fields` dice cuáles, para no difear el contacto entero.',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: '085d…',
+            event: 'contact.updated',
+            occurred_at: '2026-07-01T12:05:00.000Z',
+            account_id: '9f1c…',
+            data: {
+              contact_id: '1d4f…',
+              phone: '14155550123',
+              wa_user_id: null,
+              name: 'Ada Lovelace',
+              fields: ['name'],
+            },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
     'contact.tag_added': {
       post: {
         summary:
@@ -1590,6 +1687,22 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
             id: 'a0d2…',
             event: 'contact.tag_added',
             occurred_at: '2026-07-01T12:01:00.000Z',
+            account_id: '9f1c…',
+            data: { contact_id: '1d4f…', tag_id: '6f0c…' },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
+    'contact.tag_removed': {
+      post: {
+        summary: 'Se quita una etiqueta de un contacto.',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: 'b1e3…',
+            event: 'contact.tag_removed',
+            occurred_at: '2026-07-01T12:02:00.000Z',
             account_id: '9f1c…',
             data: { contact_id: '1d4f…', tag_id: '6f0c…' },
           }),
