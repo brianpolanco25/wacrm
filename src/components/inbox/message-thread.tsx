@@ -649,11 +649,21 @@ export function MessageThread({
     async (status: ConversationStatus) => {
       if (!conversation) return;
 
-      const supabase = createClient();
-      await supabase
-        .from("conversations")
-        .update({ status })
-        .eq("id", conversation.id);
+      // Por el servidor y no directo contra Supabase: cerrar un chat
+      // desde el panel tiene que emitir `conversation.closed` a los
+      // webhooks del cliente (fase 7 §4). Los permisos no cambian — la
+      // ruta usa la misma sesión y la misma RLS.
+      const res = await fetch(`/api/conversations/${conversation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        console.error("Failed to update status:", payload?.error);
+        toast.error(payload?.error || "Failed to update status");
+        return;
+      }
 
       onStatusChange(conversation.id, status);
     },
@@ -849,15 +859,15 @@ export function MessageThread({
     async (agentId: string | null) => {
       if (!conversation) return;
 
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("conversations")
-        .update({ assigned_agent_id: agentId })
-        .eq("id", conversation.id);
-
-      if (error) {
-        console.error("Failed to update assignment:", error);
-        toast.error("Failed to update assignment");
+      const res = await fetch(`/api/conversations/${conversation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assigned_agent_id: agentId }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        console.error("Failed to update assignment:", payload?.error);
+        toast.error(payload?.error || "Failed to update assignment");
         return;
       }
 

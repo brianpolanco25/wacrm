@@ -11,6 +11,7 @@ import {
 } from '@/lib/auth/account';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize';
+import { emitWebhookEvent } from '@/lib/webhooks/emit';
 import type { TemplateButton, TemplateSampleValues } from '@/types';
 
 /**
@@ -248,9 +249,12 @@ export async function POST() {
         updated_at: new Date().toISOString(),
       };
 
+      // `status` viene en el SELECT para poder comparar: el webhook
+      // `template.status_updated` solo tiene sentido cuando Meta MOVIÓ
+      // la revisión, no en cada sincronización.
       const { data: existing, error: lookupErr } = await supabase
         .from('message_templates')
-        .select('id')
+        .select('id, status')
         .eq('account_id', accountId)
         .eq('name', t.name)
         .eq('language', t.language)
@@ -278,6 +282,15 @@ export async function POST() {
           });
         } else {
           updated++;
+          if (existing.status !== row.status) {
+            await emitWebhookEvent(accountId, 'template.status_updated', {
+              template_id: existing.id,
+              name: t.name,
+              language: t.language,
+              status: row.status,
+              previous_status: existing.status ?? null,
+            });
+          }
         }
       } else {
         const { error: insErr } = await supabase

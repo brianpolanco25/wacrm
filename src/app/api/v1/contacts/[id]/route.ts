@@ -16,6 +16,7 @@ import {
   resolveAuditUserId,
   ContactError,
 } from '@/lib/api/v1/contacts';
+import { emitWebhookEvent } from '@/lib/webhooks/emit';
 
 export async function GET(
   request: Request,
@@ -78,6 +79,17 @@ export async function PATCH(
         console.error('[api/v1/contacts] update error:', error);
         return fail('internal', 'Failed to update contact', 500);
       }
+
+      // Webhook saliente (fase 7 §4). `fields` dice QUÉ cambió para que
+      // el receptor no tenga que difear el contacto entero; `updated_at`
+      // no cuenta como campo de negocio.
+      await emitWebhookEvent(ctx.accountId, 'contact.updated', {
+        contact_id: id,
+        phone: existing.phone ?? null,
+        wa_user_id: existing.wa_user_id ?? null,
+        name: (updates.name as string | null | undefined) ?? existing.name,
+        fields: Object.keys(updates).filter((f) => f !== 'updated_at'),
+      });
     }
 
     if (Array.isArray(body.tags)) {
@@ -95,7 +107,11 @@ export async function PATCH(
     return ok(contact);
   } catch (err) {
     if (err instanceof ContactError) {
-      return fail(err.status === 400 ? 'bad_request' : 'internal', err.message, err.status);
+      return fail(
+        err.status === 400 ? 'bad_request' : 'internal',
+        err.message,
+        err.status
+      );
     }
     return toApiErrorResponse(err);
   }

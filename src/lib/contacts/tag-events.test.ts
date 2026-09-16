@@ -2,11 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   add: vi.fn(),
+  remove: vi.fn(),
   dispatch: vi.fn(),
+  emit: vi.fn(),
 }));
 
 vi.mock('./tag-write', () => ({
   addContactTagIfAbsent: mocks.add,
+  removeContactTag: mocks.remove,
+}));
+
+vi.mock('@/lib/webhooks/emit', () => ({
+  emitWebhookEvent: mocks.emit,
 }));
 
 vi.mock('@/lib/automations/engine', () => ({
@@ -15,6 +22,7 @@ vi.mock('@/lib/automations/engine', () => ({
 
 import {
   addContactTagAndDispatch,
+  removeContactTagAndDispatch,
   getTagChainDepth,
   MAX_TAG_CHAIN_DEPTH,
 } from './tag-events';
@@ -28,8 +36,12 @@ const base = {
 
 beforeEach(() => {
   mocks.add.mockReset();
+  mocks.remove.mockReset();
+  mocks.remove.mockResolvedValue(undefined);
   mocks.dispatch.mockReset();
   mocks.dispatch.mockResolvedValue(undefined);
+  mocks.emit.mockReset();
+  mocks.emit.mockResolvedValue(undefined);
 });
 
 describe('addContactTagAndDispatch', () => {
@@ -104,5 +116,47 @@ describe('getTagChainDepth', () => {
     expect(getTagChainDepth({ vars: { _tag_chain_depth: '3' } })).toBe(0);
     expect(getTagChainDepth({ vars: { _tag_chain_depth: -1 } })).toBe(0);
     expect(getTagChainDepth({ vars: { _tag_chain_depth: 2.8 } })).toBe(2);
+  });
+});
+
+// ============================================================
+// Fase 7 §4 — el webhook sale de aquí y no de la ruta, porque por esta
+// lib pasan el panel, la API pública y las automatizaciones.
+// ============================================================
+
+describe('webhooks de etiquetas', () => {
+  it('emite contact.tag_added solo cuando el alta fue real', async () => {
+    mocks.add.mockResolvedValue(true);
+    await addContactTagAndDispatch(base);
+    expect(mocks.emit).toHaveBeenCalledWith('account-1', 'contact.tag_added', {
+      contact_id: 'contact-1',
+      tag_id: 'tag-1',
+    });
+  });
+
+  it('no emite nada si la etiqueta ya estaba puesta', async () => {
+    mocks.add.mockResolvedValue(false);
+    await addContactTagAndDispatch(base);
+    expect(mocks.emit).not.toHaveBeenCalled();
+  });
+
+  it('emite contact.tag_removed al quitarla', async () => {
+    await removeContactTagAndDispatch(base);
+    expect(mocks.remove).toHaveBeenCalledWith(base.db, {
+      accountId: 'account-1',
+      contactId: 'contact-1',
+      tagId: 'tag-1',
+    });
+    expect(mocks.emit).toHaveBeenCalledWith(
+      'account-1',
+      'contact.tag_removed',
+      { contact_id: 'contact-1', tag_id: 'tag-1' }
+    );
+  });
+
+  it('no emite si el borrado falla', async () => {
+    mocks.remove.mockRejectedValue(new Error('boom'));
+    await expect(removeContactTagAndDispatch(base)).rejects.toThrow('boom');
+    expect(mocks.emit).not.toHaveBeenCalled();
   });
 });

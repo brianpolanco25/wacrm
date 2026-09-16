@@ -17,6 +17,7 @@ import {
 import { isValidBsuid } from '@/lib/whatsapp/bsuid';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
+import { emitWebhookEvent } from '@/lib/webhooks/emit';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
 /** Row select that embeds the contact's tags for serialization. */
@@ -208,6 +209,15 @@ export async function findOrCreateContact(
     throw new ContactError('Failed to create contact', 500);
   }
 
+  // Webhook saliente (fase 7 §4): solo en el alta real. Una
+  // find-or-create que encontró no crea nada, así que no emite.
+  await emitWebhookEvent(accountId, 'contact.created', {
+    contact_id: created.id,
+    phone,
+    wa_user_id: waUserId || null,
+    name: input.name ?? phone ?? waUserId,
+  });
+
   return { id: created.id, created: true };
 }
 
@@ -256,6 +266,14 @@ export async function setContactTags(
       .eq('contact_id', contactId)
       .in('tag_id', toRemove);
     if (error) throw new ContactError('Failed to update contact tags', 500);
+    // Un evento por etiqueta retirada: el receptor no tiene por qué
+    // saber que esto vino de un reemplazo en bloque.
+    for (const tagId of toRemove) {
+      await emitWebhookEvent(accountId, 'contact.tag_removed', {
+        contact_id: contactId,
+        tag_id: tagId,
+      });
+    }
   }
   if (toAdd.length > 0) {
     for (const tagId of toAdd) {

@@ -33,6 +33,15 @@ const billing = vi.hoisted(() => ({
   assertQuota: vi.fn(async () => {}),
   recordUsage: vi.fn(async () => {}),
   sendTemplateMessage: vi.fn(async () => ({ messageId: 'wamid.1' })),
+  emitWebhookEvent: vi.fn(async () => {}),
+}));
+
+// Fase 7 §4: cerrar una campaña emite `broadcast.completed`.
+vi.mock('@/lib/webhooks/emit', () => ({
+  emitWebhookEvent: (...args: unknown[]) =>
+    (billing.emitWebhookEvent as unknown as (...a: unknown[]) => unknown)(
+      ...args
+    ),
 }));
 
 vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
@@ -59,6 +68,8 @@ beforeEach(() => {
   billing.recordUsage.mockResolvedValue(undefined);
   billing.sendTemplateMessage.mockReset();
   billing.sendTemplateMessage.mockResolvedValue({ messageId: 'wamid.1' });
+  billing.emitWebhookEvent.mockReset();
+  billing.emitWebhookEvent.mockResolvedValue(undefined);
 });
 
 // These assertions all fire in the pure validation prologue, before
@@ -150,6 +161,8 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
           },
           update: () => chain,
           eq: () => chain,
+          neq: () => chain,
+          maybeSingle: () => Promise.resolve({ data: null, error: null }),
           then: (resolve: (v: { data: null; error: null }) => void) =>
             resolve({ data: null, error: null }),
         };
@@ -221,7 +234,13 @@ describe('createBroadcast atomicity (#370)', () => {
 function statusDb(
   counts: Record<string, number>,
   total: number,
-  writes: { update?: Record<string, unknown> }
+  writes: { update?: Record<string, unknown> },
+  // `null` simula una campaña que YA estaba en el estado final: el
+  // `.neq('status', …)` no devuelve fila y el webhook no se repite.
+  finalizedRow: { id: string; account_id: string } | null = {
+    id: 'b-1',
+    account_id: 'acc',
+  }
 ) {
   return {
     from(table: string) {
@@ -232,6 +251,8 @@ function statusDb(
           if (col === 'status') status = val as string;
           return b;
         },
+        neq: () => b,
+        maybeSingle: () => Promise.resolve({ data: finalizedRow, error: null }),
         update: (row: Record<string, unknown>) => {
           if (table === 'broadcasts') writes.update = row;
           return b;
@@ -286,6 +307,46 @@ describe('finalizeBroadcastStatus', () => {
       'b-1'
     );
     expect(writes.update?.status).toBe('sent');
+  });
+
+  // ---- fase 7 §4: `broadcast.completed` ----
+
+  it('emite broadcast.completed al cerrar la campaña, con sus cuentas', async () => {
+    const writes: { update?: Record<string, unknown> } = {};
+    await finalizeBroadcastStatus(
+      statusDb({ pending: 0, failed: 2, sent: 8 }, 10, writes),
+      'b-1'
+    );
+
+    expect(billing.emitWebhookEvent).toHaveBeenCalledWith(
+      'acc',
+      'broadcast.completed',
+      {
+        broadcast_id: 'b-1',
+        status: 'sent',
+        total: 10,
+        sent: 8,
+        failed: 2,
+      }
+    );
+  });
+
+  it('no lo emite dos veces si la campaña ya estaba cerrada', async () => {
+    const writes: { update?: Record<string, unknown> } = {};
+    await finalizeBroadcastStatus(
+      statusDb({ pending: 0, failed: 0, sent: 10 }, 10, writes, null),
+      'b-1'
+    );
+    expect(billing.emitWebhookEvent).not.toHaveBeenCalled();
+  });
+
+  it('tampoco lo emite mientras queden destinatarios pendientes', async () => {
+    const writes: { update?: Record<string, unknown> } = {};
+    await finalizeBroadcastStatus(
+      statusDb({ pending: 25 }, 1025, writes),
+      'b-1'
+    );
+    expect(billing.emitWebhookEvent).not.toHaveBeenCalled();
   });
 });
 
@@ -393,6 +454,12 @@ function deliverDb() {
           if (col === 'status') status = val as string;
           return chain;
         },
+        neq: () => chain,
+        maybeSingle: () =>
+          Promise.resolve({
+            data: { id: 'b-1', account_id: 'acc' },
+            error: null,
+          }),
         update: (row: Record<string, unknown>) => {
           if (table === 'broadcast_recipients') updates.push(row);
           return chain;

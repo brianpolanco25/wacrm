@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ emit: vi.fn() }));
+
+vi.mock('@/lib/webhooks/emit', () => ({ emitWebhookEvent: mocks.emit }));
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
@@ -58,6 +62,11 @@ describe('serializeContact', () => {
 describe('findOrCreateContact', () => {
   const noopDb = {} as SupabaseClient;
 
+  beforeEach(() => {
+    mocks.emit.mockReset();
+    mocks.emit.mockResolvedValue(undefined);
+  });
+
   it('rejects a non-E.164 phone with a 400 ContactError', async () => {
     await expect(
       findOrCreateContact(noopDb, 'acc', 'user', { phone: 'not-a-number' })
@@ -100,6 +109,42 @@ describe('findOrCreateContact', () => {
     expect(reads).toContainEqual({
       column: 'wa_user_id',
       value: 'US.1349700000000001',
+    });
+    // Encontrar no es crear: sin webhook (fase 7 §4).
+    expect(mocks.emit).not.toHaveBeenCalled();
+  });
+
+  it('emite contact.created solo en el alta real', async () => {
+    const db = {
+      from: () => {
+        const chain: Record<string, unknown> = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: async () => ({ data: null, error: null }),
+          // `findExistingContact` cierra con `.like()`, no con un
+          // terminal explícito: la cadena tiene que ser «esperable».
+          like: () => Promise.resolve({ data: [], error: null }),
+          insert: () => chain,
+          single: async () => ({ data: { id: 'c-new' }, error: null }),
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    await expect(
+      findOrCreateContact(db, 'acc', 'user', {
+        phone: '+14155550123',
+        name: 'Jane',
+      })
+    ).resolves.toEqual({ id: 'c-new', created: true });
+
+    expect(mocks.emit).toHaveBeenCalledWith('acc', 'contact.created', {
+      contact_id: 'c-new',
+      // El teléfono que viaja es el que se GUARDÓ (saneado para Meta,
+      // sin «+»), no el que mandó el cliente.
+      phone: '14155550123',
+      wa_user_id: null,
+      name: 'Jane',
     });
   });
 });

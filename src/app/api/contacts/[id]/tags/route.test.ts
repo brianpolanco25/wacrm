@@ -15,6 +15,7 @@ vi.mock('@/lib/auth/account', () => ({
 
 vi.mock('@/lib/contacts/tag-events', () => ({
   addContactTagAndDispatch: mocks.add,
+  removeContactTagAndDispatch: mocks.remove,
 }));
 
 vi.mock('@/lib/contacts/tag-write', () => ({
@@ -25,7 +26,6 @@ vi.mock('@/lib/contacts/tag-write', () => ({
       this.status = status;
     }
   },
-  removeContactTag: mocks.remove,
 }));
 
 import { DELETE, POST } from './route';
@@ -86,7 +86,10 @@ describe('/api/contacts/[id]/tags', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.remove).toHaveBeenCalledWith(context.supabase, {
+    // Por el envoltorio que además emite `contact.tag_removed`
+    // (fase 7 §4), no por el escritor pelado.
+    expect(mocks.remove).toHaveBeenCalledWith({
+      db: context.supabase,
       accountId: 'account-1',
       contactId: 'contact-1',
       tagId: 'tag-1',
