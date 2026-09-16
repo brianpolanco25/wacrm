@@ -58,15 +58,17 @@ key's next request. Revoked keys stay in the list as an audit trail.
 A key can do only what its scopes allow — independent of who created
 it. Grant the minimum.
 
-| Scope                | Allows                                |
-| -------------------- | ------------------------------------- |
-| `messages:send`      | Send WhatsApp messages                |
-| `messages:read`      | Read messages and delivery status     |
-| `contacts:read`      | List and read contacts                |
-| `contacts:write`     | Create and update contacts            |
-| `conversations:read` | List and read conversations           |
-| `broadcasts:send`    | Launch broadcast campaigns            |
-| `webhooks:manage`    | Register and manage outbound webhooks |
+| Scope                | Allows                                  |
+| -------------------- | --------------------------------------- |
+| `messages:send`      | Send WhatsApp messages                  |
+| `messages:read`      | Read messages and delivery status       |
+| `contacts:read`      | List and read contacts                  |
+| `contacts:write`     | Create and update contacts              |
+| `conversations:read` | List and read conversations             |
+| `broadcasts:send`    | Launch broadcast campaigns              |
+| `webhooks:manage`    | Register and manage outbound webhooks   |
+| `templates:read`     | List message templates and their status |
+| `templates:write`    | Create, edit, delete and sync templates |
 
 A key with **no scopes** still authenticates and can call
 `GET /api/v1/me` — useful for verifying a key works.
@@ -179,6 +181,14 @@ secret: `POST /api/v1/webhooks/{id}/test`,
 `POST /api/v1/webhooks/{id}/deliveries/{deliveryId}/retry` and
 `POST /api/v1/webhooks/{id}/rotate-secret`. It is per **account**, so two
 keys of the same account share it.
+
+`POST /api/v1/templates/sync` has a budget of its own: **6 requests per
+minute, per account**. One call walks up to 20 pages of Meta's Graph API
+and rewrites your whole template catalogue, so it is the most expensive
+thing this API exposes. Six a minute is plenty for someone who just got a
+template approved and wants to see it; polling it in a loop would spend
+your WhatsApp Business Account's own Meta rate limit, which you need for
+_sending_.
 
 ## Endpoints
 
@@ -418,6 +428,207 @@ Broadcast status + counts. Scope: `broadcasts:send`. `status` moves
 `sending` → `sent`; `delivered_count` / `read_count` keep climbing as
 Meta delivery webhooks arrive. `404` for another account's broadcast.
 
+### `GET /api/v1/templates`
+
+List message templates, newest first. Scope: `templates:read`. Paginated
+(see [Pagination](#pagination)). Optional filters, combinable:
+
+| Query      | Effect                                                                                                                             |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `status`   | One of `DRAFT PENDING APPROVED REJECTED PAUSED DISABLED IN_APPEAL PENDING_DELETION`. An unknown value is `400`, not an empty list. |
+| `language` | Exact match on Meta's locale code (`en_US`, `es_ES`)                                                                               |
+| `category` | `Marketing`, `Utility` or `Authentication` (case-insensitive)                                                                      |
+| `search`   | Substring of the template name or of its body text                                                                                 |
+
+Each item carries `variables` — the ordered list of `{{1}}…{{n}}` its
+body expects. That is the field you need in order to call
+`POST /api/v1/messages` correctly; see
+[Templates and sending](#templates-and-sending) below.
+
+```json
+{
+  "data": [
+    {
+      "id": "…",
+      "name": "order_update",
+      "language": "en_US",
+      "category": "Utility",
+      "status": "APPROVED",
+      "meta_template_id": "1234567890",
+      "quality_score": "GREEN",
+      "rejection_reason": null,
+      "submission_error": null,
+      "components": {
+        "header": {
+          "format": "text",
+          "text": "Order {{1}}",
+          "media_url": null
+        },
+        "body": { "text": "Hi {{1}}, your order {{2}} is on its way." },
+        "footer": { "text": "Reply STOP to opt out" },
+        "buttons": [{ "type": "QUICK_REPLY", "text": "Track" }]
+      },
+      "variables": [
+        { "index": 1, "placeholder": "{{1}}", "example": "Ada" },
+        { "index": 2, "placeholder": "{{2}}", "example": "A-123" }
+      ],
+      "sample_values": { "body": ["Ada", "A-123"] },
+      "last_submitted_at": "2026-09-01T10:00:00Z",
+      "created_at": "2026-08-30T09:00:00Z",
+      "updated_at": "2026-09-01T10:00:00Z"
+    }
+  ],
+  "meta": { "next_cursor": null }
+}
+```
+
+`status` is Meta's own enum, stored verbatim: `PAUSED` is recoverable
+(edit and resubmit), `DISABLED` is terminal.
+
+### `GET /api/v1/templates/{id}`
+
+One template, same shape. Scope: `templates:read`. `404` for another
+account's template.
+
+### `POST /api/v1/templates`
+
+Create a template and submit it to Meta for review. Scope:
+`templates:write`. Supports `Idempotency-Key` (see
+[Idempotency](#idempotency)) — worth using, because Meta caps template
+creation at 100 per hour per WhatsApp Business Account.
+
+```bash
+curl -X POST https://your-crm.example.com/api/v1/templates \
+  -H "Authorization: Bearer wacrm_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "order_update",
+        "language": "en_US",
+        "category": "Utility",
+        "body_text": "Hi {{1}}, your order {{2}} is on its way.",
+        "sample_values": { "body": ["Ada", "A-123"] },
+        "footer_text": "Reply STOP to opt out",
+        "buttons": [{ "type": "QUICK_REPLY", "text": "Track" }]
+      }'
+```
+
+- `name` follows Meta's rule: lowercase letters, digits and underscores.
+- Body variables must be **contiguous from `{{1}}`** and you must supply
+  exactly one `sample_values.body` entry per variable — Meta rejects the
+  template otherwise, and we would rather tell you before the round trip.
+- `header_type` is `text`, `image`, `video` or `document`; an image
+  header needs `header_media_url` (we turn it into the upload handle Meta
+  requires).
+- `category: "Authentication"` is refused (400). Authentication templates
+  need Meta's own one-time-password flow; create them in WhatsApp Manager
+  and pull them in with `POST /api/v1/templates/sync`.
+- With more than one connected number, pick the WhatsApp Business Account
+  with `from` (the Meta `phone_number_id`) or `whatsapp_config_id`, as in
+  `POST /api/v1/messages`. A number that is not yours is a `400`.
+
+Returns `201` with the template, `status: "PENDING"`. A `(name, language)`
+pair that already exists in your account is a `409` before we call Meta.
+If Meta rejects the submission you get `502 meta_error` with its public
+message and `meta_code`, and nothing is stored locally.
+
+### `PATCH /api/v1/templates/{id}`
+
+Edit and resubmit. Scope: `templates:write`.
+
+**Meta replaces components, it does not patch them.** So anything you
+leave out of the body is inherited from the stored template rather than
+dropped: send `"footer_text": null` to actually remove the footer (same
+for `header_type` and `buttons`). `name` and `language` are immutable —
+Meta treats each `(name, language)` pair as its own template, so
+"renaming" means creating a new one.
+
+Only `APPROVED`, `REJECTED` and `PAUSED` templates can be edited
+(`409` otherwise), and only ones that reached Meta (`409` on a local
+draft — create it instead). On success the template goes back to
+`PENDING`: an edit restarts Meta's review. Meta allows 10 edits per
+template per 30 days.
+
+### `DELETE /api/v1/templates/{id}`
+
+Delete on Meta and locally. Scope: `templates:write`. Only this language
+variant is deleted, not every translation sharing the name. Choose the
+number with `?from=<phone_number_id>` when you have several. Returns
+`{ "data": { "id": "…", "deleted": true } }`; `404` for another account's
+template.
+
+### `POST /api/v1/templates/sync`
+
+Pull the catalogue from Meta into the CRM. Scope: `templates:write`.
+**6 requests per minute, per account** (see [Rate limits](#rate-limits)).
+
+The body is optional and only picks the number (`from` /
+`whatsapp_config_id`). What Meta says wins; templates you created locally
+without a Meta counterpart are **not** deleted, so you can spot the drift.
+
+```json
+{
+  "data": {
+    "synced": 12,
+    "created": 2,
+    "updated": 10,
+    "status_changes": [
+      {
+        "template_id": "…",
+        "name": "order_update",
+        "language": "en_US",
+        "status": "APPROVED",
+        "previous_status": "PENDING"
+      }
+    ],
+    "errors": [],
+    "truncated": false
+  }
+}
+```
+
+Every entry in `status_changes` also fires a `template.status_updated`
+webhook (see [Events](#events)) — register one instead of polling this
+endpoint. `errors` lists per-template failures without aborting the rest;
+`truncated: true` means Meta had more than 20 pages of templates.
+
+### Templates and sending
+
+The two halves fit together like this: `GET /api/v1/templates` tells you
+**what you may send**, and `POST /api/v1/messages` with `type: "template"`
+sends it.
+
+1. Only an `APPROVED` template can be sent. A `PENDING` or `REJECTED` one
+   comes back from Meta as a `502 meta_error` on the send.
+2. `name` and `language` are the identity — pass the same pair the
+   template reports, not its `id`.
+3. `variables` says how many positional `params` the body wants, in
+   order. A template whose `variables` is `[{ "index": 1 … }, { "index":
+2 … }]` needs exactly two.
+
+```bash
+# 1. what does this template expect?
+curl -H "Authorization: Bearer wacrm_live_xxx" \
+  "https://your-crm.example.com/api/v1/templates?search=order_update&status=APPROVED"
+# → variables: [{ index: 1, … }, { index: 2, … }]
+
+# 2. send it
+curl -X POST https://your-crm.example.com/api/v1/messages \
+  -H "Authorization: Bearer wacrm_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "to": "+14155550123",
+        "type": "template",
+        "template": {
+          "name": "order_update",
+          "language": "en_US",
+          "params": ["Ada", "A-123"]
+        }
+      }'
+```
+
+`variables[].example` is the sample value the template was approved with
+— useful for a preview, never sent as a default.
+
 ## Pagination
 
 Every list endpoint pages the same way. Request a page size with
@@ -589,7 +800,7 @@ internal targets are refused at delivery time.
 ## Roadmap
 
 The public API now covers messaging, contacts, conversations,
-broadcasts, and outbound webhooks — the full scope of
+broadcasts, message templates, and outbound webhooks — the full scope of
 [#245](https://github.com/ArnasDon/wacrm/issues/245). Future ideas
-(deals/pipelines, templates, flows) are not yet scheduled. The delivery
+(deals/pipelines, flows) are not yet scheduled. The delivery
 queue for webhooks shipped: see [Delivery semantics](#delivery-semantics).
