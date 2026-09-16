@@ -58,19 +58,20 @@ key's next request. Revoked keys stay in the list as an audit trail.
 A key can do only what its scopes allow — independent of who created
 it. Grant the minimum.
 
-| Scope                | Allows                                  |
-| -------------------- | --------------------------------------- |
-| `messages:send`      | Send WhatsApp messages                  |
-| `messages:read`      | Read messages and delivery status       |
-| `contacts:read`      | List and read contacts                  |
-| `contacts:write`     | Create and update contacts              |
-| `conversations:read` | List and read conversations             |
-| `broadcasts:send`    | Launch broadcast campaigns              |
-| `webhooks:manage`    | Register and manage outbound webhooks   |
-| `tags:read`          | List and read tags                      |
-| `tags:write`         | Create, rename, delete and assign tags  |
-| `templates:read`     | List message templates and their status |
-| `templates:write`    | Create, edit, delete and sync templates |
+| Scope                  | Allows                                  |
+| ---------------------- | --------------------------------------- |
+| `messages:send`        | Send WhatsApp messages                  |
+| `messages:read`        | Read messages and delivery status       |
+| `contacts:read`        | List and read contacts                  |
+| `contacts:write`       | Create and update contacts              |
+| `conversations:read`   | List and read conversations             |
+| `conversations:export` | Export conversations and their messages |
+| `broadcasts:send`      | Launch broadcast campaigns              |
+| `webhooks:manage`      | Register and manage outbound webhooks   |
+| `tags:read`            | List and read tags                      |
+| `tags:write`           | Create, rename, delete and assign tags  |
+| `templates:read`       | List message templates and their status |
+| `templates:write`      | Create, edit, delete and sync templates |
 
 A key with **no scopes** still authenticates and can call
 `GET /api/v1/me` — useful for verifying a key works.
@@ -183,6 +184,13 @@ secret: `POST /api/v1/webhooks/{id}/test`,
 `POST /api/v1/webhooks/{id}/deliveries/{deliveryId}/retry` and
 `POST /api/v1/webhooks/{id}/rotate-secret`. It is per **account**, so two
 keys of the same account share it.
+
+Exports have their own per-account budget of **10 per hour**, shared by
+the direct download and the job endpoint. Each call walks up to ten
+thousand messages (or writes a file with everything your filters match),
+which makes it the most expensive operation in this API. If you need
+more volume you don't need more calls: one job with filters takes every
+conversation in a single pass.
 
 ## Endpoints
 
@@ -693,6 +701,110 @@ curl -X POST https://your-crm.example.com/api/v1/messages \
 `variables[].example` is the sample value the template was approved with
 — useful for a preview, never sent as a default.
 
+### `GET /api/v1/conversations/{id}/export`
+
+Download one conversation with **all** of its messages, in chronological
+order. Scope: `conversations:export`.
+
+```
+GET /api/v1/conversations/{id}/export?format=csv
+Authorization: Bearer wacrm_live_…
+→ 200  Content-Type: text/csv
+       Content-Disposition: attachment; filename="conversation-<id>.csv"
+```
+
+`format` is `json` (default) or `csv`. Unlike every other endpoint, the
+body **is the file**, not the `{ "data": … }` envelope — errors still
+come back in the envelope, so a failed call parses like the rest.
+
+Each message carries a stable set of fields: `conversation_id`, `id`,
+`direction`, `sender_type`, `content_type`, `text`, `media_url`,
+`template_name`, `status`, `whatsapp_message_id`, `created_at`. The JSON
+form nests the messages under their conversation; the CSV form is one
+row per message with `conversation_id` first.
+
+Over **10 000 messages** the answer is `409 conflict` telling you to use
+the job endpoint below. Another account's (or an unknown) conversation is
+`404`.
+
+**Two things to know about the file itself:**
+
+- **Attachments are references, not links.** Media lives in private
+  buckets, so `media_url` is exported as `storage://<bucket>/<path>` —
+  a stable pointer to the object, never a public URL and never a signed
+  one. A signed URL is a bearer credential: writing thousands of them
+  into a file that lives for seven days and can be forwarded by email is
+  exactly what we won't do, and a 15-minute signature inside a file you
+  download tomorrow would be a broken link dressed up as data. Resolve
+  the reference from the dashboard, where the browser signs with your
+  own session. Links that were never ours (Meta's CDN, an external URL)
+  are exported verbatim.
+- **CSV cells are protected against formula injection.** A cell whose
+  text starts with `=`, `+`, `-` or `@` is prefixed with a single quote
+  (`'`) so spreadsheets read it as text instead of running it. If you
+  parse the CSV with code rather than opening it in Excel, strip that
+  leading `'` when it is there.
+
+### `POST /api/v1/exports`
+
+Queue an export of **many** conversations. Scope: `conversations:export`.
+
+```
+POST /api/v1/exports
+Content-Type: application/json
+{
+  "kind": "conversations",
+  "format": "csv",
+  "filters": { "status": "closed", "from": "2026-01-01T00:00:00Z" }
+}
+→ 202 { "data": { "id": "…", "kind": "conversations", "format": "csv",
+                  "status": "queued", "filters": { … },
+                  "row_count": null, "error": null,
+                  "created_at": "…", "finished_at": null,
+                  "expires_at": "…" } }
+```
+
+`kind` is `conversations` (the only one today) and `format` is `json` or
+`csv`; both default sensibly, so `{}` is a valid body. `filters` accepts
+`status`, `contact_id`, `from` and `to` (ISO-8601, on the conversation's
+`created_at`). Unknown filter keys are ignored — in particular, nothing
+in `filters` can widen the export beyond your own account.
+
+The `202` means accepted, not finished: the file is built right after the
+response goes out, and if that process dies the scheduled sweep picks the
+job up again. Send an `Idempotency-Key` and a retried POST returns the
+same job instead of queuing a second one.
+
+### `GET /api/v1/exports`
+
+List your export jobs, newest first, paginated like every other list.
+Scope: `conversations:export`.
+
+### `GET /api/v1/exports/{id}`
+
+Status of one job and, once it is `done`, the download link. Scope:
+`conversations:export`. Another account's (or an unknown) job is `404`.
+
+```
+GET /api/v1/exports/{id}
+→ 200 { "data": { "id": "…", "status": "done", "row_count": 18432,
+                  "download_url": "https://…",
+                  "download_expires_at": "2026-09-16T12:15:00.000Z",
+                  … } }
+```
+
+`status` moves `queued` → `running` → `done` | `failed`; on `failed`,
+`error` says why in plain language (for example, an export too large to
+build in one piece — narrow it with `from` / `to` and run it in parts).
+
+`download_url` is **minted on every call and valid for 15 minutes**. It
+is never stored: we keep the object's path, not the link. Ask again
+whenever you need a fresh one — and don't cache it anywhere, because
+anyone holding it can download the file until it expires.
+
+**Files and job rows are deleted 7 days after they are created.** Fetch
+what you need inside that window.
+
 ## Pagination
 
 Every list endpoint pages the same way. Request a page size with
@@ -864,7 +976,8 @@ internal targets are refused at delivery time.
 ## Roadmap
 
 The public API now covers messaging, contacts, tags, conversations,
-broadcasts, message templates, and outbound webhooks — the full scope of
+broadcasts, message templates, exports, and outbound webhooks — the full
+scope of
 [#245](https://github.com/ArnasDon/wacrm/issues/245). Future ideas
 (deals/pipelines, flows) are not yet scheduled. The delivery
 queue for webhooks shipped: see [Delivery semantics](#delivery-semantics).

@@ -100,6 +100,13 @@ behaviour changes**; nothing is limited by plan yet.
 > `webhook_deliveries` queue; no existing data is touched. Deleting a
 > webhook endpoint now also deletes its delivery history.
 
+> **Migration required:** apply
+> `supabase/migrations/063_export_jobs.sql` before using the export
+> endpoints. It adds the `export_jobs` table and the **private** `exports`
+> Storage bucket; no existing data is touched. The bucket has no storage
+> policies on purpose — export files are readable only through the
+> 15-minute signed link the API mints for a member of the owning account.
+
 ### Added
 
 - **Retries on the public API no longer risk sending twice.** `POST
@@ -139,6 +146,18 @@ behaviour changes**; nothing is limited by plan yet.
   last deliveries with their HTTP code, error and next retry — with a
   Retry button for the one that failed. The signing secret is still shown
   exactly once.
+- **Export your chats over the API.** `GET /api/v1/conversations/{id}/export?format=json|csv`
+  downloads one conversation with all of its messages (over 10 000
+  messages it points you at the job endpoint instead), and
+  `POST /api/v1/exports` queues an export of everything matching
+  `status` / `contact_id` / `from` / `to` filters, which
+  `GET /api/v1/exports/{id}` hands back as a 15-minute signed download
+  once it is ready. New scope `conversations:export`, its own budget of
+  10 exports per hour per account, and files kept for 7 days. Attachments
+  are exported as `storage://<bucket>/<path>` references rather than
+  links, and CSV cells starting with `=`, `+`, `-` or `@` are prefixed
+  with a quote so a spreadsheet reads them as text. Requires migration 063. Self-hosters: the same `GET /api/webhooks/cron` sweep that retries
+  webhooks also finishes interrupted exports and deletes expired files.
 - **New API endpoints** under `webhooks:manage`:
   `GET /api/v1/webhooks/{id}/deliveries` (paginated, `?status=`),
   `POST /api/v1/webhooks/{id}/deliveries/{deliveryId}/retry`,

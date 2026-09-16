@@ -365,3 +365,11 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   * * * * * curl -fsS -H "x-cron-secret: $WEBHOOK_CRON_SECRET" \
     https://your-crm.example.com/api/webhooks/cron >/dev/null
   ```
+
+  The same sweep also finishes the export jobs of
+  `POST /api/v1/exports` (migration 063) whose first attempt was cut
+  short, and deletes export files and rows older than 7 days. It runs on
+  a separate budget — at most five exports per sweep, one per account —
+  so a tenant exporting a year of history never delays anybody's webhook
+  retries. No extra variable: without the scheduler an export that was
+  interrupted stays `queued` and expired files are never removed.

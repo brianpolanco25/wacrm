@@ -1152,6 +1152,125 @@ BEGIN
       'webhook_deliveries must not expose write policies (migration 062)';
   END IF;
 
+  -- 063: encargos de exportacion de conversaciones.
+  IF to_regclass('public.export_jobs') IS NULL THEN
+    RAISE EXCEPTION 'public.export_jobs is missing (migration 063)';
+  END IF;
+
+  -- `started_at` es lo que permite al barrido distinguir un job vivo de
+  -- uno huerfano; sin ella la reanudacion duplicaria trabajo.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'export_jobs'
+      AND column_name = 'started_at'
+  ) THEN
+    RAISE EXCEPTION 'export_jobs.started_at is missing (migration 063)';
+  END IF;
+
+  -- `expires_at` NOT NULL: la purga a 7 dias (S-A6) se apoya en ella.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'export_jobs'
+      AND column_name = 'expires_at' AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'export_jobs.expires_at must exist and be NOT NULL (migration 063)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.export_jobs'::regclass
+      AND conname = 'export_jobs_status_check'
+  ) THEN
+    RAISE EXCEPTION 'export_jobs_status_check is missing (migration 063)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.export_jobs'::regclass
+      AND conname = 'export_jobs_format_check'
+  ) THEN
+    RAISE EXCEPTION 'export_jobs_format_check is missing (migration 063)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.export_jobs'::regclass
+      AND conname = 'export_jobs_kind_check'
+  ) THEN
+    RAISE EXCEPTION 'export_jobs_kind_check is missing (migration 063)';
+  END IF;
+
+  IF to_regclass('public.export_jobs_account_created_idx') IS NULL THEN
+    RAISE EXCEPTION
+      'export_jobs_account_created_idx is missing (migration 063)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'export_jobs_pending_idx'
+      AND indexdef ILIKE '%WHERE%'
+  ) THEN
+    RAISE EXCEPTION
+      'export_jobs_pending_idx must exist and be partial (migration 063)';
+  END IF;
+
+  IF to_regclass('public.export_jobs_expires_at_idx') IS NULL THEN
+    RAISE EXCEPTION 'export_jobs_expires_at_idx is missing (migration 063)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE oid = 'public.export_jobs'::regclass AND relrowsecurity
+  ) THEN
+    RAISE EXCEPTION 'export_jobs does not have RLS enabled (migration 063)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'export_jobs'
+      AND policyname = 'export_jobs_select'
+  ) THEN
+    RAISE EXCEPTION 'export_jobs_select policy is missing (migration 063)';
+  END IF;
+
+  -- Escritura reservada al rol de servicio: un INSERT desde un JWT de
+  -- usuario seria un encargo de exportacion que nadie autorizo.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'export_jobs'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'export_jobs must not expose write policies (migration 063)';
+  END IF;
+
+  -- El bucket de exportaciones: existe y es PRIVADO.
+  IF NOT EXISTS (
+    SELECT 1 FROM storage.buckets WHERE id = 'exports'
+  ) THEN
+    RAISE EXCEPTION 'the exports bucket row was not created (migration 063)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM storage.buckets
+    WHERE id = 'exports' AND public IS DISTINCT FROM FALSE
+  ) THEN
+    RAISE EXCEPTION 'the exports bucket must be private (migration 063)';
+  END IF;
+
+  -- Y sigue sin una sola politica de storage: solo el rol de servicio
+  -- lee, escribe y firma esos objetos. Una politica de SELECT aqui
+  -- abriria toda la mensajeria exportada a cualquier sesion.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects'
+      AND (qual ILIKE '%''exports''%' OR with_check ILIKE '%''exports''%')
+  ) THEN
+    RAISE EXCEPTION
+      'no storage.objects policy may mention the exports bucket (migration 063)';
+  END IF;
+
   -- ---- 064: un nombre de etiqueta por cuenta -------------------
   -- Unico Y funcional sobre lower(name): sin la expresion, `Moroso` y
   -- `moroso` volverian a convivir y el find-or-create de la API
