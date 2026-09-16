@@ -9,9 +9,10 @@ and others) drive your CRM in natural language:
 > "Find the contact for +1 415 555 0123 and show the last few messages."
 > "Draft and send an order-update template to Jane."
 
-It's a thin wrapper over wacrm's public [`/api/v1`](../docs/public-api.md)
-REST API. All auth, scoping, and rate limiting are enforced by your
-wacrm instance — this server just exposes the API as MCP tools.
+It's a thin wrapper over wacrm's public `/api/v1` REST API, documented
+at `/developers` on your own instance. All auth, scoping, and rate
+limiting are enforced by your wacrm instance — this server just exposes
+the API as MCP tools.
 
 Your instance also serves the machine-readable contract at
 `GET /api/v1/openapi.json` (OpenAPI 3.1, no key needed). That's the

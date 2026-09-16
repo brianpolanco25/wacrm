@@ -10,9 +10,10 @@ Claude Code, Cursor, and any other MCP client — in natural language:
 
 It lives in [`mcp-server/`](../mcp-server) and is published to npm as
 [`wacrm-mcp`](https://www.npmjs.com/package/wacrm-mcp). Under the hood
-it's a thin wrapper over the [public API](./public-api.md), so every
-request is authenticated and scoped by your instance exactly like any
-other API call.
+it's a thin wrapper over the public API (`/api/v1`), documented at
+`/developers` on your own instance (see [`docs/public-api.md`](./public-api.md)),
+so every request is authenticated and scoped by your instance exactly
+like any other API call.
 
 ## Quick start
 
