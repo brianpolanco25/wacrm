@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NextRequest } from 'next/server';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 // --- Scenario knobs the mock reads -----------------------------------------
 // `mockUser`         — what getUser() resolves to (a refreshed session ⇒ user,
@@ -15,13 +15,13 @@ let refreshedCookies: Array<{
   options: Record<string, unknown>;
 }> = [];
 
-vi.mock('@supabase/ssr', () => ({
+vi.mock("@supabase/ssr", () => ({
   createServerClient: (
     _url: string,
     _key: string,
     opts: {
       cookies: { setAll: (c: typeof refreshedCookies) => void };
-    }
+    },
   ) => ({
     auth: {
       // Mirrors real auth-js: an expired access token is transparently
@@ -36,11 +36,11 @@ vi.mock('@supabase/ssr', () => ({
 }));
 
 // Imported after the mock is registered.
-const { middleware } = await import('./middleware');
+const { middleware } = await import("./middleware");
 
 beforeEach(() => {
-  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co';
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon-key';
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
   mockUser = null;
   refreshedCookies = [];
 });
@@ -48,60 +48,66 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 const ROTATED = {
-  name: 'sb-test-auth-token',
-  value: 'rotated-refresh-token',
-  options: { path: '/', httpOnly: true },
+  name: "sb-test-auth-token",
+  value: "rotated-refresh-token",
+  options: { path: "/", httpOnly: true },
 };
 
-describe('middleware — refreshed auth cookies survive redirects', () => {
-  it('carries the rotated token when redirecting a signed-in user off /login', async () => {
-    mockUser = { id: 'user-1' };
+describe("middleware — refreshed auth cookies survive redirects", () => {
+  it("carries the rotated token when redirecting a signed-in user off /login", async () => {
+    mockUser = { id: "user-1" };
     refreshedCookies = [ROTATED];
 
-    const res = await middleware(new NextRequest('https://app.test/login'));
+    const res = await middleware(
+      new NextRequest("https://app.test/login"),
+    );
 
     // Redirect to /dashboard…
     expect(res.status).toBe(307);
-    expect(res.headers.get('location')).toContain('/dashboard');
+    expect(res.headers.get("location")).toContain("/dashboard");
     // …and the rotated cookie MUST ride along, otherwise the browser keeps
     // replaying the now-consumed refresh token and the session wedges until
     // the user manually clears cookies.
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 
-  it('carries the rotated token when redirecting an unauth user to /login', async () => {
+  it("carries the rotated token when redirecting an unauth user to /login", async () => {
     mockUser = null;
     // Even on the logged-out path getUser() may emit cookie writes (e.g.
     // clearing a dead session); those must not be dropped on the redirect.
-    refreshedCookies = [{ ...ROTATED, value: 'cleared' }];
+    refreshedCookies = [{ ...ROTATED, value: "cleared" }];
 
-    const res = await middleware(new NextRequest('https://app.test/dashboard'));
+    const res = await middleware(
+      new NextRequest("https://app.test/dashboard"),
+    );
 
     expect(res.status).toBe(307);
-    expect(res.headers.get('location')).toContain('/login');
-    expect(res.cookies.get(ROTATED.name)?.value).toBe('cleared');
+    expect(res.headers.get("location")).toContain("/login");
+    expect(res.cookies.get(ROTATED.name)?.value).toBe("cleared");
   });
 
-  it('redirects a signed-in user with an invite token to /join/<token>', async () => {
-    mockUser = { id: 'user-1' };
+  it("redirects a signed-in user with an invite token to /join/<token>", async () => {
+    mockUser = { id: "user-1" };
     refreshedCookies = [ROTATED];
 
     const res = await middleware(
-      new NextRequest('https://app.test/login?invite=abc123')
+      new NextRequest("https://app.test/login?invite=abc123"),
     );
 
-    expect(res.headers.get('location')).toContain('/join/abc123');
+    expect(res.headers.get("location")).toContain("/join/abc123");
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 
-  it('passes through (no redirect) for a signed-in user on a protected page', async () => {
-    mockUser = { id: 'user-1' };
+  it("passes through (no redirect) for a signed-in user on a protected page", async () => {
+    mockUser = { id: "user-1" };
     refreshedCookies = [ROTATED];
 
-    const res = await middleware(new NextRequest('https://app.test/dashboard'));
+    const res = await middleware(
+      new NextRequest("https://app.test/dashboard"),
+    );
 
     // No redirect — the normal NextResponse.next() already carries cookies.
-    expect(res.headers.get('location')).toBeNull();
+    expect(res.headers.get("location")).toBeNull();
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 });
@@ -118,9 +124,9 @@ describe('middleware — refreshed auth cookies survive redirects', () => {
 // on every present and future route remembering.
 // ============================================================
 
-describe('middleware — support sessions cannot write', () => {
-  const SUPPORT = 'wacrm_support_session';
-  const SUPPORT_ACTIVE = 'wacrm_support_active';
+describe("middleware — support sessions cannot write", () => {
+  const SUPPORT = "wacrm_support_session";
+  const SUPPORT_ACTIVE = "wacrm_support_active";
 
   // A real token is `<base64url payload>.<hmac>`. The middleware cannot
   // verify the signature (no node:crypto on Edge) but it does read the
@@ -128,23 +134,23 @@ describe('middleware — support sessions cannot write', () => {
   function token(actorUserId: string) {
     const payload = Buffer.from(
       JSON.stringify({
-        logId: 'log-1',
+        logId: "log-1",
         actorUserId,
-        accountId: 'acct-t',
+        accountId: "acct-t",
         expiresAt: Date.now() + 60_000,
       }),
-      'utf8'
-    ).toString('base64url');
+      "utf8",
+    ).toString("base64url");
     return `${payload}.not-checked-here`;
   }
 
   function request(
     url: string,
     {
-      method = 'POST',
+      method = "POST",
       support = true,
-      actor = 'operator-1',
-    }: { method?: string; support?: boolean; actor?: string } = {}
+      actor = "operator-1",
+    }: { method?: string; support?: boolean; actor?: string } = {},
   ) {
     return new NextRequest(url, {
       method,
@@ -155,63 +161,63 @@ describe('middleware — support sessions cannot write', () => {
   }
 
   beforeEach(() => {
-    mockUser = { id: 'operator-1' };
+    mockUser = { id: "operator-1" };
   });
 
-  it('refuses a mutating API request while the support cookie is present', async () => {
-    const res = await middleware(request('https://app.test/api/quick-replies'));
+  it("refuses a mutating API request while the support cookie is present", async () => {
+    const res = await middleware(request("https://app.test/api/quick-replies"));
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toMatchObject({
-      error: expect.stringContaining('read-only'),
+      error: expect.stringContaining("read-only"),
     });
   });
 
-  it.each(['POST', 'PUT', 'PATCH', 'DELETE'])(
-    'refuses %s, not just POST',
+  it.each(["POST", "PUT", "PATCH", "DELETE"])(
+    "refuses %s, not just POST",
     async (method) => {
       const res = await middleware(
-        request('https://app.test/api/contacts/abc', { method })
+        request("https://app.test/api/contacts/abc", { method }),
       );
       expect(res.status).toBe(403);
-    }
+    },
   );
 
-  it('refuses a mutating page request too, not only /api', async () => {
+  it("refuses a mutating page request too, not only /api", async () => {
     // Server actions POST to the page route; they must not slip through.
-    const res = await middleware(request('https://app.test/contacts'));
+    const res = await middleware(request("https://app.test/contacts"));
     expect(res.status).toBe(403);
   });
 
-  it('leaves reads alone — looking is the entire point of a support session', async () => {
+  it("leaves reads alone — looking is the entire point of a support session", async () => {
     const res = await middleware(
-      request('https://app.test/api/quick-replies', { method: 'GET' })
+      request("https://app.test/api/quick-replies", { method: "GET" }),
     );
     expect(res.status).not.toBe(403);
   });
 
-  it('leaves ordinary users alone when no support cookie is present', async () => {
+  it("leaves ordinary users alone when no support cookie is present", async () => {
     const res = await middleware(
-      request('https://app.test/api/quick-replies', { support: false })
+      request("https://app.test/api/quick-replies", { support: false }),
     );
     expect(res.status).not.toBe(403);
   });
 
-  it('NEVER blocks the WhatsApp webhook', async () => {
+  it("NEVER blocks the WhatsApp webhook", async () => {
     // Nothing about billing, suspension or support may stop an inbound
     // message from being stored. Meta sends no browser cookie, so this is
     // unreachable in practice — asserted anyway so a refactor cannot make
     // it reachable by accident.
     const res = await middleware(
-      request('https://app.test/api/whatsapp/webhook')
+      request("https://app.test/api/whatsapp/webhook"),
     );
     expect(res.status).not.toBe(403);
   });
 
-  it('does not block the public API or the cron sweeps', async () => {
+  it("does not block the public API or the cron sweeps", async () => {
     for (const path of [
-      '/api/v1/messages',
-      '/api/automations/cron',
-      '/api/flows/cron',
+      "/api/v1/messages",
+      "/api/automations/cron",
+      "/api/flows/cron",
     ]) {
       const res = await middleware(request(`https://app.test${path}`));
       expect(res.status, path).not.toBe(403);
@@ -222,14 +228,14 @@ describe('middleware — support sessions cannot write', () => {
     // Blocking /api/platform would trap an operator inside the session
     // they are trying to leave.
     const res = await middleware(
-      request('https://app.test/api/platform/impersonate/stop')
+      request("https://app.test/api/platform/impersonate/stop"),
     );
     expect(res.status).not.toBe(403);
   });
 
-  it('still carries the rotated auth cookies on the 403', async () => {
+  it("still carries the rotated auth cookies on the 403", async () => {
     refreshedCookies = [ROTATED];
-    const res = await middleware(request('https://app.test/api/quick-replies'));
+    const res = await middleware(request("https://app.test/api/quick-replies"));
     expect(res.status).toBe(403);
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
@@ -245,41 +251,41 @@ describe('middleware — support sessions cannot write', () => {
   // "could not save" with nothing on screen explaining why.
   // ----------------------------------------------------------------
 
-  it('does not strand a different user who inherited the cookie', async () => {
-    mockUser = { id: 'someone-else' };
+  it("does not strand a different user who inherited the cookie", async () => {
+    mockUser = { id: "someone-else" };
     const res = await middleware(
-      request('https://app.test/api/quick-replies', { actor: 'operator-1' })
+      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
     );
     expect(res.status).not.toBe(403);
   });
 
-  it('drops the orphan cookies on that same response, both of them', async () => {
-    mockUser = { id: 'someone-else' };
+  it("drops the orphan cookies on that same response, both of them", async () => {
+    mockUser = { id: "someone-else" };
     const res = await middleware(
-      request('https://app.test/api/quick-replies', { actor: 'operator-1' })
+      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
     );
     // `delete` on a response cookie is an immediate expiry.
-    expect(res.cookies.get(SUPPORT)?.value).toBe('');
-    expect(res.cookies.get(SUPPORT_ACTIVE)?.value).toBe('');
+    expect(res.cookies.get(SUPPORT)?.value).toBe("");
+    expect(res.cookies.get(SUPPORT_ACTIVE)?.value).toBe("");
   });
 
-  it('drops them for a signed-out browser too', async () => {
+  it("drops them for a signed-out browser too", async () => {
     mockUser = null;
     const res = await middleware(
-      request('https://app.test/api/quick-replies', { actor: 'operator-1' })
+      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
     );
-    expect(res.cookies.get(SUPPORT)?.value).toBe('');
+    expect(res.cookies.get(SUPPORT)?.value).toBe("");
   });
 
-  it('keeps blocking the operator the cookie actually names', async () => {
+  it("keeps blocking the operator the cookie actually names", async () => {
     // The recovery above must not become the way out of the read-only
     // rule for the person whose session it is.
-    mockUser = { id: 'operator-1' };
+    mockUser = { id: "operator-1" };
     const res = await middleware(
-      request('https://app.test/api/quick-replies', { actor: 'operator-1' })
+      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
     );
     expect(res.status).toBe(403);
-    expect(res.cookies.get(SUPPORT)?.value).not.toBe('');
+    expect(res.cookies.get(SUPPORT)?.value).not.toBe("");
   });
 
   // ----------------------------------------------------------------
@@ -292,32 +298,32 @@ describe('middleware — support sessions cannot write', () => {
   // ----------------------------------------------------------------
 
   it("forbids shared caching of any page carrying the customer's name", async () => {
-    mockUser = { id: 'operator-1' };
+    mockUser = { id: "operator-1" };
     const res = await middleware(
-      request('https://app.test/dashboard', { method: 'GET' })
+      request("https://app.test/dashboard", { method: "GET" }),
     );
-    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
   });
 
-  it('leaves the cache header alone when nobody is impersonating', async () => {
-    mockUser = { id: 'user-1' };
+  it("leaves the cache header alone when nobody is impersonating", async () => {
+    mockUser = { id: "user-1" };
     const res = await middleware(
-      request('https://app.test/dashboard', { method: 'GET', support: false })
+      request("https://app.test/dashboard", { method: "GET", support: false }),
     );
-    expect(res.headers.get('cache-control')).toBeNull();
+    expect(res.headers.get("cache-control")).toBeNull();
   });
 
-  it('drops a cookie whose payload is not even readable', async () => {
-    mockUser = { id: 'operator-1' };
+  it("drops a cookie whose payload is not even readable", async () => {
+    mockUser = { id: "operator-1" };
     const res = await middleware(
-      new NextRequest('https://app.test/api/quick-replies', {
-        method: 'POST',
+      new NextRequest("https://app.test/api/quick-replies", {
+        method: "POST",
         headers: { cookie: `${SUPPORT}=garbage` },
-      })
+      }),
     );
     // Unreadable ⇒ names nobody ⇒ nobody's session ⇒ blocks nobody.
     expect(res.status).not.toBe(403);
-    expect(res.cookies.get(SUPPORT)?.value).toBe('');
+    expect(res.cookies.get(SUPPORT)?.value).toBe("");
   });
 });
 
@@ -327,43 +333,46 @@ describe('middleware — support sessions cannot write', () => {
 // La documentación para clientes vive en el mismo despliegue que el
 // panel, así que lo único que la mantiene abierta es que su prefijo NO
 // esté en `protectedPaths`. Eso no se ve leyendo la lista: se ve cuando
-// alguien añade "/de..." y de paso captura /developers. Estos dos casos
-// lo fijan.
+// alguien añade "/de..." y de paso captura /developers. Estos casos lo
+// fijan.
+//
+// (Este archivo no está formateado con prettier — nunca lo estuvo — así
+// que el bloque sigue su estilo en vez de reformatear 300 líneas ajenas.)
 // ----------------------------------------------------------------
 
-describe('middleware — /developers se sirve sin sesión', () => {
+describe("middleware — /developers se sirve sin sesión", () => {
   const PUBLIC_DOC_PATHS = [
-    '/developers',
-    '/developers/authentication',
-    '/developers/conventions',
-    '/developers/guides/webhooks',
-    '/developers/reference',
-    '/developers/changelog',
+    "/developers",
+    "/developers/authentication",
+    "/developers/conventions",
+    "/developers/guides/webhooks",
+    "/developers/reference",
+    "/developers/changelog",
   ];
 
-  it.each(PUBLIC_DOC_PATHS)('deja pasar %s sin usuario', async (path) => {
+  it.each(PUBLIC_DOC_PATHS)("deja pasar %s sin usuario", async (path) => {
     mockUser = null;
     const res = await middleware(new NextRequest(`https://app.test${path}`));
     // Ni redirección a /login ni 401: la petición sigue su camino.
     expect(res.status).toBe(200);
-    expect(res.headers.get('location')).toBeNull();
+    expect(res.headers.get("location")).toBeNull();
   });
 
-  it('no cambia con sesión iniciada', async () => {
-    mockUser = { id: 'user-1' };
+  it("no cambia con sesión iniciada", async () => {
+    mockUser = { id: "user-1" };
     const res = await middleware(
-      new NextRequest('https://app.test/developers/reference')
+      new NextRequest("https://app.test/developers/reference"),
     );
     expect(res.status).toBe(200);
-    expect(res.headers.get('location')).toBeNull();
+    expect(res.headers.get("location")).toBeNull();
   });
 
-  it('conserva el ?lang= del selector de idioma', async () => {
+  it("conserva el ?lang= del selector de idioma", async () => {
     mockUser = null;
     const res = await middleware(
-      new NextRequest('https://app.test/developers/guides?lang=en')
+      new NextRequest("https://app.test/developers/guides?lang=en"),
     );
     expect(res.status).toBe(200);
-    expect(res.headers.get('location')).toBeNull();
+    expect(res.headers.get("location")).toBeNull();
   });
 });
