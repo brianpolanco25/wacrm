@@ -574,11 +574,20 @@ async function runStep(
       const cfg = step.step_config as TagStepConfig;
       if (!args.contactId || !cfg.tag_id)
         throw new Error('remove_tag needs contact + tag_id');
-      await db
+      // `.select('id')` para saber si de verdad se quitó algo: sin él
+      // PostgREST no devuelve filas y borrar cero es indistinguible de
+      // borrar una. El webhook cuelga de esa diferencia — un paso que
+      // quita una etiqueta que el contacto no tenía no es un cambio, y
+      // anunciarlo haría reaccionar al receptor a nada. Espejo de
+      // `add_tag`, que solo despacha cuando la inserción fue real.
+      const { data: deleted } = await db
         .from('contact_tags')
         .delete()
         .eq('contact_id', args.contactId)
-        .eq('tag_id', cfg.tag_id);
+        .eq('tag_id', cfg.tag_id)
+        .select('id');
+      const removed = Array.isArray(deleted) && deleted.length > 0;
+      if (!removed) return `tag ${cfg.tag_id} was not on the contact`;
       await emitWebhookEvent(
         args.automation.account_id,
         'contact.tag_removed',

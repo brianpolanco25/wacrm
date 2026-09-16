@@ -72,21 +72,37 @@ export async function addContactTagIfAbsent(
   return true;
 }
 
+/**
+ * Remove a tag from a contact. Returns **true only when a join row was
+ * actually deleted** — the mirror of {@link addContactTagIfAbsent},
+ * which returns true only for a join row actually inserted.
+ *
+ * That return value is not decoration: `contact.tag_removed` hangs off
+ * it. A DELETE for a tag the contact never carried matches zero rows
+ * and must not announce a removal that did not happen, exactly as a
+ * duplicate insert must not announce an addition that did not happen.
+ * `.select('id')` is what makes the difference visible — without it
+ * PostgREST returns no rows and a deletion of nothing looks identical
+ * to a deletion of something.
+ */
 export async function removeContactTag(
   db: SupabaseClient,
   input: ContactTagWriteInput
-): Promise<void> {
+): Promise<boolean> {
   await assertContactAndTagOwnership(db, input);
 
-  const { error } = await db
+  const { data, error } = await db
     .from('contact_tags')
     .delete()
     .eq('contact_id', input.contactId)
-    .eq('tag_id', input.tagId);
+    .eq('tag_id', input.tagId)
+    .select('id');
 
   if (error) {
     throw new ContactTagWriteError(
       `Failed to remove contact tag: ${error.message}`
     );
   }
+
+  return Array.isArray(data) && data.length > 0;
 }

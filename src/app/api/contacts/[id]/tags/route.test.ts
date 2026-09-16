@@ -78,7 +78,7 @@ describe('/api/contacts/[id]/tags', () => {
   });
 
   it('removes a tag through the same account-scoped route', async () => {
-    mocks.remove.mockResolvedValue(undefined);
+    mocks.remove.mockResolvedValue({ removed: true });
 
     const response = await DELETE(
       request('DELETE', { tag_id: 'tag-1' }),
@@ -86,6 +86,10 @@ describe('/api/contacts/[id]/tags', () => {
     );
 
     expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      removed: true,
+    });
     // Por el envoltorio que además emite `contact.tag_removed`
     // (fase 7 §4), no por el escritor pelado.
     expect(mocks.remove).toHaveBeenCalledWith({
@@ -93,6 +97,24 @@ describe('/api/contacts/[id]/tags', () => {
       accountId: 'account-1',
       contactId: 'contact-1',
       tagId: 'tag-1',
+    });
+  });
+
+  it('dice que no quitó nada cuando la etiqueta no estaba puesta', async () => {
+    mocks.remove.mockResolvedValue({ removed: false, reason: 'absent' });
+
+    const response = await DELETE(
+      request('DELETE', { tag_id: 'tag-1' }),
+      params
+    );
+
+    // Sigue siendo 200 —un DELETE idempotente— pero el cuerpo no
+    // finge un cambio que no hubo.
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      removed: false,
+      reason: 'absent',
     });
   });
 });

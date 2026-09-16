@@ -60,14 +60,18 @@ export async function DELETE(
       return NextResponse.json({ error: 'tag_id required' }, { status: 400 });
     }
 
-    await removeContactTagAndDispatch({
+    const result = await removeContactTagAndDispatch({
       db: ctx.supabase,
       accountId: ctx.accountId,
       contactId,
       tagId,
     });
 
-    return NextResponse.json({ ok: true });
+    // `removed` viaja al cliente igual que `added` en el POST: quitar
+    // una etiqueta que el contacto no tenía sigue siendo un 200 (la
+    // operación es idempotente), pero deja de mentir sobre si hubo
+    // cambio — y es lo mismo que decide si sale `contact.tag_removed`.
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof ContactTagWriteError) {
       return tagWriteErrorResponse(error);

@@ -37,7 +37,7 @@ const base = {
 beforeEach(() => {
   mocks.add.mockReset();
   mocks.remove.mockReset();
-  mocks.remove.mockResolvedValue(undefined);
+  mocks.remove.mockResolvedValue(true);
   mocks.dispatch.mockReset();
   mocks.dispatch.mockResolvedValue(undefined);
   mocks.emit.mockReset();
@@ -141,7 +141,9 @@ describe('webhooks de etiquetas', () => {
   });
 
   it('emite contact.tag_removed al quitarla', async () => {
-    await removeContactTagAndDispatch(base);
+    await expect(removeContactTagAndDispatch(base)).resolves.toEqual({
+      removed: true,
+    });
     expect(mocks.remove).toHaveBeenCalledWith(base.db, {
       accountId: 'account-1',
       contactId: 'contact-1',
@@ -152,6 +154,31 @@ describe('webhooks de etiquetas', () => {
       'contact.tag_removed',
       { contact_id: 'contact-1', tag_id: 'tag-1' }
     );
+  });
+
+  // Fase 7 §2 — deuda que dejó la revisión de a7.4 (hallazgo 2). Es el
+  // espejo exacto del caso `no emite nada si la etiqueta ya estaba
+  // puesta` de arriba: si el DELETE no alcanzó ninguna fila, no hubo
+  // cambio y no hay evento que anunciar.
+  it('no emite contact.tag_removed si el DELETE no quitó ninguna fila', async () => {
+    mocks.remove.mockResolvedValue(false);
+
+    await expect(removeContactTagAndDispatch(base)).resolves.toEqual({
+      removed: false,
+      reason: 'absent',
+    });
+    expect(mocks.emit).not.toHaveBeenCalled();
+  });
+
+  it('un segundo DELETE seguido solo emite una vez', async () => {
+    mocks.remove.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    await removeContactTagAndDispatch(base);
+    await removeContactTagAndDispatch(base);
+
+    expect(
+      mocks.emit.mock.calls.filter((c) => c[1] === 'contact.tag_removed')
+    ).toHaveLength(1);
   });
 
   it('no emite si el borrado falla', async () => {

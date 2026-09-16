@@ -76,26 +76,43 @@ export async function addContactTagAndDispatch(
   return { added: true, dispatched: true };
 }
 
+export interface RemoveContactTagResult {
+  removed: boolean;
+  reason?: 'absent';
+}
+
 /**
  * Quita una etiqueta y emite `contact.tag_removed`. Espejo de
  * {@link addContactTagAndDispatch}: quitar una etiqueta no dispara
  * automatizaciones (no hay disparador `tag_removed`), pero sí es un
  * cambio que un cliente de la API quiere ver.
+ *
+ * Espejo también en lo que NO emite. `addContactTagAndDispatch` calla
+ * cuando la etiqueta ya estaba; esto calla cuando no estaba. Un DELETE
+ * repetido —o uno de una etiqueta que el contacto nunca tuvo— borraba
+ * cero filas y aun así anunciaba una retirada: el receptor del webhook
+ * veía un cambio que no ocurrió y, si reacciona (des-inscribir, cerrar
+ * un ticket), reaccionaba a nada. Ahora el evento sale solo si el
+ * borrado alcanzó una fila.
  */
 export async function removeContactTagAndDispatch(input: {
   db: SupabaseClient;
   accountId: string;
   contactId: string;
   tagId: string;
-}): Promise<void> {
-  await removeContactTag(input.db, {
+}): Promise<RemoveContactTagResult> {
+  const removed = await removeContactTag(input.db, {
     accountId: input.accountId,
     contactId: input.contactId,
     tagId: input.tagId,
   });
 
+  if (!removed) return { removed: false, reason: 'absent' };
+
   await emitWebhookEvent(input.accountId, 'contact.tag_removed', {
     contact_id: input.contactId,
     tag_id: input.tagId,
   });
+
+  return { removed: true };
 }

@@ -38,6 +38,23 @@ const h = vi.hoisted(() => ({
     claimReads: [] as { messageId: unknown; accountId: unknown }[],
     /** Rows the engine parked in `automation_pending_executions`. */
     pendingInserts: [] as Record<string, unknown>[],
+    /**
+     * Filas que un DELETE sobre `contact_tags` alcanza. `[]` = el
+     * contacto no llevaba esa etiqueta, que es el caso que el paso
+     * `remove_tag` tiene que distinguir (fase 7 §2).
+     */
+    contactTagsDeleted: [] as Record<string, unknown>[],
+    /** Eventos que la capa de dominio mandó a los webhooks salientes. */
+    emitted: [] as { accountId: string; event: string; data: unknown }[],
+  },
+}));
+
+// `emitWebhookEvent` nunca lanza (encola por el rol de servicio y se
+// traga sus errores), así que sin este doble los eventos de este
+// archivo se perderían en silencio y no habría nada que afirmar.
+vi.mock('@/lib/webhooks/emit', () => ({
+  emitWebhookEvent: async (accountId: string, event: string, data: unknown) => {
+    h.state.emitted.push({ accountId, event, data });
   },
 }));
 
@@ -91,6 +108,14 @@ vi.mock('./admin-client', () => {
         };
       }
       return { data: state.automations, error: null };
+    }
+    if (table === 'contact_tags') {
+      // Un DELETE devuelve filas solo si la petición las pidió con
+      // `.select()`; lo demás es `data: null`, igual que PostgREST.
+      if (type === 'delete') {
+        return { data: state.contactTagsDeleted, error: null };
+      }
+      return { data: null, error: null };
     }
     if (table === 'automation_pending_executions') {
       if (type === 'insert') {
@@ -228,6 +253,8 @@ beforeEach(() => {
   h.state.claimUpserts = [];
   h.state.claimReads = [];
   h.state.pendingInserts = [];
+  h.state.contactTagsDeleted = [{ id: 'join-1' }];
+  h.state.emitted = [];
 });
 
 describe('assign_conversation — round_robin picks the available agent (fase 1)', () => {
@@ -1165,3 +1192,71 @@ describe('runAutomationsForTrigger — a read-only account (fase 3 §5)', () => 
     expect(withStatus.at(-1)).toMatchObject({ status: 'failed' });
   });
 });
+
+// ============================================================
+// Fase 7 §2 — el paso `remove_tag` del motor, deuda que dejó la
+// revisión de a7.4 (`review_webhooks-durable.md`, hallazgo 2).
+//
+// El DELETE se lanzaba y `contact.tag_removed` salía siempre, hubiera
+// o no fila que quitar. Una automatización que retira una etiqueta que
+// el contacto no lleva —lo normal en una rama condicional— inundaba al
+// receptor de retiradas inventadas. Espejo de `add_tag`, que solo
+// despacha cuando la inserción fue real.
+// ============================================================
+
+describe('remove_tag — solo avisa de lo que de verdad quitó (fase 7 §2)', () => {
+  it('emite contact.tag_removed cuando el DELETE alcanzó una fila', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [removeTagStep('tag-1')];
+    h.state.contactTagsDeleted = [{ id: 'join-1' }];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: {},
+    });
+
+    expect(h.state.emitted).toEqual([
+      {
+        accountId: ACCOUNT,
+        event: 'contact.tag_removed',
+        data: { contact_id: 'c1', tag_id: 'tag-1' },
+      },
+    ]);
+  });
+
+  it('no emite nada cuando el contacto no llevaba esa etiqueta', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [removeTagStep('tag-1')];
+    h.state.contactTagsDeleted = [];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: {},
+    });
+
+    // El paso corrió (llegó a tocar la tabla) y aun así no hubo evento.
+    expect(h.state.fromCalls).toContain('contact_tags');
+    expect(
+      h.state.emitted.filter((e) => e.event === 'contact.tag_removed')
+    ).toEqual([]);
+    // Y el paso no se da por fallido: el log lo registra como ejecutado.
+    expect(h.state.logUpdates.at(-1)).toMatchObject({ status: 'success' });
+  });
+});
+
+function removeTagStep(tagId: string) {
+  return {
+    id: 's1',
+    automation_id: 'a1',
+    step_type: 'remove_tag',
+    position: 0,
+    parent_step_id: null,
+    step_config: { tag_id: tagId },
+  };
+}
