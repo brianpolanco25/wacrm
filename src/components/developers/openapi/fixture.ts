@@ -13,10 +13,21 @@ import type {
 //
 // Describe las 37 operaciones que `progress/impl_integracion-api-3.md`
 // §6 inventaría en `/api/v1`, con sus scopes, sus cubos y qué escrituras
-// aceptan `Idempotency-Key`. Es lo que sirve `source.ts` mientras a7.6
-// (el generador real) no está fusionado, y es lo que los tests usan para
-// afirmar que el renderizador pinta TODAS las operaciones de un
-// documento, sea cual sea.
+// aceptan `Idempotency-Key`. Ya NO es lo que sirve `source.ts` —desde la
+// integración final de la fase 7 eso es el generador de verdad
+// (`@/lib/api/v1/openapi/document`)—: es el documento con el que se
+// prueba el renderizador, para afirmar que pinta TODAS las operaciones
+// de un documento OpenAPI 3.1 cualquiera, sin heredar las suposiciones
+// del nuestro.
+//
+// Tiene la MISMA FORMA que el documento real, y `real-document.test.ts`
+// lo comprueba operación a operación y evento a evento para que no
+// vuelvan a divergir:
+//
+//   - `servers[0].url` lleva el prefijo (`…/api/v1`).
+//   - las claves de `paths` NO lo llevan (`/me`, no `/api/v1/me`).
+//
+// La URL de una operación es la concatenación de las dos piezas.
 //
 // No se escribe a mano cada operación entera: los ayudantes de abajo
 // montan el sobre `{data}`, la paginación y los errores comunes, que en
@@ -418,7 +429,10 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
       'Contrato de `/api/v1`. Todas las rutas se autentican con una clave de API y responden el mismo sobre.',
   },
   servers: [
-    { url: 'https://tu-dominio.example.com', description: 'Tu instancia' },
+    {
+      url: 'https://tu-dominio.example.com/api/v1',
+      description: 'Tu instancia',
+    },
   ],
   security: [{ bearerAuth: [] }],
   tags: [
@@ -460,7 +474,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
     },
   ],
   paths: {
-    '/api/v1/me': {
+    '/me': {
       get: op({
         summary: 'Comprobar la clave',
         description:
@@ -507,7 +521,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/messages': {
+    '/messages': {
       post: op({
         summary: 'Enviar un mensaje',
         description:
@@ -610,7 +624,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/contacts': {
+    '/contacts': {
       get: op({
         summary: 'Listar contactos',
         description: 'Los más recientes primero.',
@@ -674,7 +688,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/contacts/{id}': {
+    '/contacts/{id}': {
       parameters: [pathId('id', 'Id del contacto.')],
       get: op({
         summary: 'Leer un contacto',
@@ -715,7 +729,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/contacts/{id}/tags': {
+    '/contacts/{id}/tags': {
       parameters: [pathId('id', 'Id del contacto.')],
       post: op({
         summary: 'Añadir etiquetas por id',
@@ -749,7 +763,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/contacts/{id}/tags/{tagId}': {
+    '/contacts/{id}/tags/{tagId}': {
       parameters: [
         pathId('id', 'Id del contacto.'),
         pathId('tagId', 'Id de la etiqueta.'),
@@ -771,7 +785,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/tags': {
+    '/tags': {
       get: op({
         summary: 'Listar etiquetas',
         tags: ['Etiquetas'],
@@ -825,7 +839,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/tags/{id}': {
+    '/tags/{id}': {
       parameters: [pathId('id', 'Id de la etiqueta.')],
       get: op({
         summary: 'Leer una etiqueta',
@@ -886,7 +900,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/conversations': {
+    '/conversations': {
       get: op({
         summary: 'Listar conversaciones',
         tags: ['Conversaciones'],
@@ -912,7 +926,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/conversations/{id}': {
+    '/conversations/{id}': {
       parameters: [pathId('id', 'Id de la conversación.')],
       get: op({
         summary: 'Leer una conversación',
@@ -927,7 +941,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/conversations/{id}/messages': {
+    '/conversations/{id}/messages': {
       parameters: [pathId('id', 'Id de la conversación.')],
       get: op({
         summary: 'Listar los mensajes de una conversación',
@@ -945,7 +959,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/conversations/{id}/export': {
+    '/conversations/{id}/export': {
       parameters: [pathId('id', 'Id de la conversación.')],
       get: op({
         summary: 'Descargar una conversación',
@@ -975,7 +989,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/templates': {
+    '/templates': {
       get: op({
         summary: 'Listar plantillas',
         description:
@@ -1064,7 +1078,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/templates/{id}': {
+    '/templates/{id}': {
       parameters: [pathId('id', 'Id de la plantilla.')],
       get: op({
         summary: 'Leer una plantilla',
@@ -1145,7 +1159,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/templates/sync': {
+    '/templates/sync': {
       post: op({
         summary: 'Sincronizar el catálogo desde Meta',
         description:
@@ -1199,7 +1213,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/broadcasts': {
+    '/broadcasts': {
       post: op({
         summary: 'Lanzar una difusión',
         description:
@@ -1251,7 +1265,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/broadcasts/{id}': {
+    '/broadcasts/{id}': {
       parameters: [pathId('id', 'Id de la difusión.')],
       get: op({
         summary: 'Consultar una difusión',
@@ -1267,7 +1281,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/exports': {
+    '/exports': {
       get: op({
         summary: 'Listar encargos de exportación',
         tags: ['Exportaciones'],
@@ -1329,7 +1343,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/exports/{id}': {
+    '/exports/{id}': {
       parameters: [pathId('id', 'Id del encargo.')],
       get: op({
         summary: 'Consultar un encargo y recoger el archivo',
@@ -1346,7 +1360,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/webhooks': {
+    '/webhooks': {
       get: op({
         summary: 'Listar destinos',
         description: 'Nunca devuelve el secreto.',
@@ -1391,7 +1405,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/webhooks/{id}': {
+    '/webhooks/{id}': {
       parameters: [pathId('id', 'Id del destino.')],
       get: op({
         summary: 'Leer un destino',
@@ -1454,7 +1468,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/webhooks/{id}/deliveries': {
+    '/webhooks/{id}/deliveries': {
       parameters: [pathId('id', 'Id del destino.')],
       get: op({
         summary: 'Registro de entregas',
@@ -1481,7 +1495,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/webhooks/{id}/deliveries/{deliveryId}/retry': {
+    '/webhooks/{id}/deliveries/{deliveryId}/retry': {
       parameters: [
         pathId('id', 'Id del destino.'),
         pathId('deliveryId', 'Id de la entrega.'),
@@ -1502,7 +1516,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/webhooks/{id}/test': {
+    '/webhooks/{id}/test': {
       parameters: [pathId('id', 'Id del destino.')],
       post: op({
         summary: 'Enviar un ping firmado',
@@ -1519,7 +1533,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
         },
       }),
     },
-    '/api/v1/webhooks/{id}/rotate-secret': {
+    '/webhooks/{id}/rotate-secret': {
       parameters: [pathId('id', 'Id del destino.')],
       post: op({
         summary: 'Rotar el secreto de firma',

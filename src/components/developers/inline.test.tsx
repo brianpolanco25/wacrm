@@ -69,6 +69,20 @@ describe('Inline', () => {
     expect(html).toContain('rel="noreferrer noopener"');
   });
 
+  it('enlaza el contrato OpenAPI como archivo, no como página', () => {
+    // `/api/v1/openapi.json` lo sirve un manejador de ruta: con `<Link>`
+    // el prefetch pediría una versión RSC que no existe.
+    const html = renderToStaticMarkup(
+      <Inline
+        text="[GET /api/v1/openapi.json](/api/v1/openapi.json)"
+        locale="en"
+      />
+    );
+    expect(html).toContain('href="/api/v1/openapi.json"');
+    expect(html).toContain('target="_blank"');
+    expect(html).not.toContain('lang=en');
+  });
+
   it('no arrastra el idioma a una ruta de fuera de la sección', () => {
     const html = renderToStaticMarkup(
       <Inline text="[ajustes](/settings)" locale="en" />

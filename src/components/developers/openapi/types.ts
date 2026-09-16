@@ -149,7 +149,12 @@ export interface ComponentsObject {
   parameters?: Record<string, ParameterObject>;
   responses?: Record<string, ResponseObject>;
   requestBodies?: Record<string, RequestBodyObject>;
-  securitySchemes?: Record<string, Record<string, JsonValue>>;
+  /**
+   * La referencia NO pinta los esquemas de seguridad —los scopes salen
+   * de `x-scopes`—, así que aquí solo se declara que existen. Tiparlos
+   * a fondo obligaría a copiar la forma del generador sin ganar nada.
+   */
+  securitySchemes?: Record<string, unknown>;
 }
 
 export interface OpenApiDocument {

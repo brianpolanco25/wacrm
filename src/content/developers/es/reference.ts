@@ -18,7 +18,7 @@ export const reference: DocPage = {
     },
     {
       kind: 'p',
-      text: 'El documento se sirve tal cual en `GET /api/v1/openapi.json`, público y sin autenticación. Con él puedes importar la API en Postman o Insomnia y generar clientes; lo cuenta [Integraciones](/developers/integrations).',
+      text: 'El documento se sirve tal cual en [GET /api/v1/openapi.json](/api/v1/openapi.json), público y sin autenticación. Con él puedes importar la API en Postman o Insomnia y generar clientes; lo cuenta [Integraciones](/developers/integrations).',
     },
     {
       kind: 'ul',
@@ -227,7 +227,7 @@ export const integrations: DocPage = {
     { kind: 'h2', id: 'sdk', text: 'Generar un SDK desde el OpenAPI' },
     {
       kind: 'p',
-      text: 'Tu instancia publica el contrato completo en `GET /api/v1/openapi.json` —público, sin autenticación—. Es un documento **OpenAPI 3.1** estándar: cualquier generador lo entiende.',
+      text: 'Tu instancia publica el contrato completo en [GET /api/v1/openapi.json](/api/v1/openapi.json) —público, sin autenticación—. Es un documento **OpenAPI 3.1** estándar: cualquier generador lo entiende.',
     },
     {
       kind: 'code',

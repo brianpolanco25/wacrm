@@ -19,7 +19,15 @@ import { DOCS_LOCALES, type DocBlock, type DocSlug } from './types';
 
 const APP_DIR = join(process.cwd(), 'src', 'app');
 
-/** Todas las rutas navegables del proyecto, leídas de `src/app/**`. */
+/**
+ * Todas las URL que sirve el proyecto, leídas de `src/app/**`.
+ *
+ * Páginas (`page.tsx`) **y** manejadores de ruta (`route.ts`): la
+ * documentación enlaza `GET /api/v1/openapi.json`, que es una URL de
+ * verdad aunque no sea una página. Un segmento dinámico (`[id]`) entra
+ * con los corchetes puestos, así que nunca casará con un enlace escrito
+ * a mano — que es justo lo que se quiere.
+ */
 function appRoutes(): Set<string> {
   const routes = new Set<string>();
   const walk = (dir: string) => {
@@ -29,7 +37,9 @@ function appRoutes(): Set<string> {
         walk(full);
         continue;
       }
-      if (entry !== 'page.tsx' && entry !== 'page.ts') continue;
+      const isPage = entry === 'page.tsx' || entry === 'page.ts';
+      const isHandler = entry === 'route.ts' || entry === 'route.tsx';
+      if (!isPage && !isHandler) continue;
       const segments = relative(APP_DIR, dir)
         .split(sep)
         .filter((segment) => segment !== '' && !segment.startsWith('('));
@@ -97,6 +107,8 @@ describe('enlaces internos de /developers', () => {
     // todo lo de abajo pasaría por vacío.
     expect(routes.has('/developers')).toBe(true);
     expect(routes.has('/developers/reference')).toBe(true);
+    // El contrato legible por máquinas, que la prosa enlaza.
+    expect(routes.has('/api/v1/openapi.json')).toBe(true);
     expect(routes.size).toBeGreaterThan(20);
   });
 

@@ -57,6 +57,11 @@ export interface ReferenceOperation {
   /** Ancla estable: `post-api-v1-messages`. */
   id: string;
   method: HttpMethod;
+  /**
+   * Ruta COMPLETA que teclea el cliente (`/api/v1/me`): la clave de
+   * `paths` con el prefijo que el documento guarda en `servers[0].url`.
+   * Ver `serverBasePath`.
+   */
   path: string;
   summary: string;
   description?: string;
@@ -304,6 +309,30 @@ export function operationAnchor(method: string, path: string): string {
 }
 
 /**
+ * Trozo de RUTA que el documento mete en `servers[0].url`.
+ *
+ * OpenAPI permite repartir la URL entre el servidor y la clave de
+ * `paths`, y nuestro documento lo hace: el servidor termina en
+ * `/api/v1` y las claves son `/me`, `/contacts/{id}`… (la regla la fija
+ * `resolveServerUrl` en `src/lib/api/v1/openapi/document.ts`). Para
+ * enseñar `GET /api/v1/me` —y no `GET /me`— hay que devolverle a la
+ * ruta el prefijo que vive en el servidor.
+ *
+ * Funciona con las dos formas del servidor: absoluto
+ * (`https://host/api/v1` → `/api/v1`) y relativo (`/api/v1` → tal
+ * cual). Con un servidor sin ruta —o sin `servers`— devuelve cadena
+ * vacía, así que un documento cuyas claves ya traigan el prefijo se
+ * pinta igual que antes.
+ */
+export function serverBasePath(server: string | undefined): string {
+  if (!server) return '';
+  const path = /^[a-z][a-z0-9+.-]*:\/\//i.test(server)
+    ? new URL(server).pathname
+    : server;
+  return path.replace(/\/+$/, '');
+}
+
+/**
  * Scopes que exige una operación. `x-scopes` manda porque es explícito;
  * si no está, se leen de `security` (los de la operación, o los del
  * documento si la operación no declara los suyos).
@@ -323,6 +352,12 @@ export function scopesOf(
   return [...scopes];
 }
 
+/**
+ * El `curl` de ejemplo. `path` es la CLAVE de `paths` (sin prefijo) y
+ * `server` la trae ya (`https://host/api/v1`): concatenarlas da la URL
+ * absoluta con un solo `/api/v1`. Pasarle aquí la ruta completa lo
+ * duplicaría.
+ */
 function buildCurl(
   server: string | undefined,
   method: HttpMethod,
@@ -422,20 +457,26 @@ function buildParameters(
 
 export function buildReference(doc: OpenApiDocument): ReferenceModel {
   const server = doc.servers?.[0]?.url;
+  const basePath = serverBasePath(server);
   const byTag = new Map<string, ReferenceOperation[]>();
   const operations: ReferenceOperation[] = [];
 
   for (const [path, pathItem] of Object.entries(doc.paths ?? {})) {
+    // La clave de `paths` no es la ruta completa: le falta el prefijo
+    // que el documento guarda en `servers[0].url`. Se pinta y se ancla
+    // por la ruta completa —`/api/v1/me`, lo que el cliente teclea— y
+    // se compone el `curl` con el servidor, que ya trae ese prefijo.
+    const fullPath = `${basePath}${path}`;
     for (const method of HTTP_METHODS) {
       const operation = pathItem[method];
       if (!operation) continue;
       const body = buildBody(doc, operation.requestBody);
       const idempotent = operation['x-idempotent'] ?? false;
       const built: ReferenceOperation = {
-        id: operationAnchor(method, path),
+        id: operationAnchor(method, fullPath),
         method,
-        path,
-        summary: operation.summary ?? `${method.toUpperCase()} ${path}`,
+        path: fullPath,
+        summary: operation.summary ?? `${method.toUpperCase()} ${fullPath}`,
         description: operation.description,
         scopes: scopesOf(doc, operation),
         idempotent,

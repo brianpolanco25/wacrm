@@ -18,7 +18,7 @@ export const reference: DocPage = {
     },
     {
       kind: 'p',
-      text: 'The document itself is served at `GET /api/v1/openapi.json`, public and unauthenticated. Use it to import the API into Postman or Insomnia and to generate clients; [Integrations](/developers/integrations) covers that.',
+      text: 'The document itself is served at [GET /api/v1/openapi.json](/api/v1/openapi.json), public and unauthenticated. Use it to import the API into Postman or Insomnia and to generate clients; [Integrations](/developers/integrations) covers that.',
     },
     {
       kind: 'ul',
@@ -224,7 +224,7 @@ export const integrations: DocPage = {
     { kind: 'h2', id: 'sdk', text: 'Generating an SDK from the OpenAPI' },
     {
       kind: 'p',
-      text: 'Your instance publishes the full contract at `GET /api/v1/openapi.json` — public, unauthenticated. It is a standard **OpenAPI 3.1** document: any generator understands it.',
+      text: 'Your instance publishes the full contract at [GET /api/v1/openapi.json](/api/v1/openapi.json) — public, unauthenticated. It is a standard **OpenAPI 3.1** document: any generator understands it.',
     },
     {
       kind: 'code',

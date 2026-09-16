@@ -83,7 +83,15 @@ export function Inline({
               </strong>
             );
           case 'link':
-            return node.href.startsWith('/') ? (
+            // `/api/...` es una URL que sirve un manejador de ruta, no
+            // una página: se enlaza con un `<a>` pelado para que el
+            // navegador la abra (o la descargue) de verdad, sin el
+            // enrutado ni el prefetch de `<Link>`, que pediría la
+            // versión RSC de algo que no la tiene. Se abre en pestaña
+            // nueva, como los enlaces externos: quien pincha el
+            // contrato no quiere perder la página que estaba leyendo.
+            return node.href.startsWith('/') &&
+              !node.href.startsWith('/api/') ? (
               <Link
                 key={i}
                 href={withDocsLang(node.href, locale)}

@@ -13,6 +13,7 @@ import {
   operationAnchor,
   resolveRef,
   scopesOf,
+  serverBasePath,
   typeLabel,
 } from './model';
 import { HTTP_METHODS, type OpenApiDocument } from './types';
@@ -23,12 +24,18 @@ import { HTTP_METHODS, type OpenApiDocument } from './types';
 // y los casos sintéticos de abajo cubren lo que el documento real podría
 // traer y el fixture no (scopes solo en `security`, esquemas recursivos).
 
-/** Recorre el documento por su cuenta, sin pasar por `buildReference`. */
+/**
+ * Recorre el documento por su cuenta, sin pasar por `buildReference`.
+ * Compone la ruta como manda el contrato —prefijo de `servers[0].url`
+ * más clave de `paths`— para que la comparación sea de verdad contra el
+ * documento y no contra el propio renderizador.
+ */
 function walkOperations(doc: OpenApiDocument): string[] {
+  const base = serverBasePath(doc.servers?.[0]?.url);
   const found: string[] = [];
   for (const [path, item] of Object.entries(doc.paths)) {
     for (const method of HTTP_METHODS) {
-      if (item[method]) found.push(`${method.toUpperCase()} ${path}`);
+      if (item[method]) found.push(`${method.toUpperCase()} ${base}${path}`);
     }
   }
   return found.sort();
@@ -81,9 +88,9 @@ describe('buildReference — cobertura', () => {
   });
 
   it('describe TODOS los eventos de `WEBHOOK_EVENTS`, en su orden', () => {
-    // Mientras a7.6 no se fusione, el fixture ES lo que un cliente lee
-    // en /developers/reference. Si describiera menos eventos que el
-    // catálogo (/developers/webhooks), las dos páginas se contradirían.
+    // El fixture tiene que describir los mismos eventos que el
+    // catálogo (/developers/webhooks) y que el documento real; si
+    // describiera menos, las dos páginas se contradirían.
     expect(model.webhooks.map((hook) => hook.event)).toEqual([
       ...WEBHOOK_EVENTS,
     ]);
@@ -101,7 +108,7 @@ describe('buildReference — cobertura', () => {
   });
 
   it('lee el servidor y la versión del documento', () => {
-    expect(model.server).toBe('https://tu-dominio.example.com');
+    expect(model.server).toBe('https://tu-dominio.example.com/api/v1');
     expect(model.version).toBe('1.2.0');
   });
 });
@@ -165,6 +172,27 @@ describe('buildReference — una operación por dentro', () => {
     expect(listContacts.curl).not.toContain('-X GET');
     expect(listContacts.curl).not.toContain('Content-Type');
     expect(listContacts.curl).not.toContain('Idempotency-Key');
+  });
+});
+
+describe('serverBasePath', () => {
+  // La regla de composición de la fase 7: `servers[0].url` lleva el
+  // prefijo, las claves de `paths` no (ver `document.ts`).
+  it('saca la ruta de un servidor absoluto', () => {
+    expect(serverBasePath('https://crm.example.com/api/v1')).toBe('/api/v1');
+  });
+
+  it('acepta un servidor relativo tal cual', () => {
+    expect(serverBasePath('/api/v1')).toBe('/api/v1');
+  });
+
+  it('descarta la barra final', () => {
+    expect(serverBasePath('https://crm.example.com/api/v1/')).toBe('/api/v1');
+  });
+
+  it('no inventa prefijo cuando el servidor es solo un origen', () => {
+    expect(serverBasePath('https://crm.example.com')).toBe('');
+    expect(serverBasePath(undefined)).toBe('');
   });
 });
 
