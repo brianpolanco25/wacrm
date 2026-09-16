@@ -10,10 +10,14 @@ import { Inline } from './inline';
 // (`src/content/developers/changelog/`), así que publicar una versión no
 // toca este componente.
 
+// Mismo criterio que las etiquetas de método de la referencia: el tinte
+// lleva el color y el texto va en `text-foreground`, que sigue al modo.
+// Los tonos de marca no tienen variante oscura y en modo oscuro se
+// quedaban en 3:1.
 const KIND_STYLES: Record<ApiRelease['changes'][number]['kind'], string> = {
-  added: 'bg-positive/15 text-positive',
+  added: 'bg-positive/20 text-foreground',
   changed: 'bg-primary-soft-2 text-foreground',
-  fixed: 'bg-brand/15 text-brand-ink',
+  fixed: 'bg-brand/20 text-foreground',
   deprecated: 'bg-muted text-muted-foreground',
 };
 

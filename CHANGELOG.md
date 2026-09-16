@@ -533,6 +533,9 @@ behaviour changes**; nothing is limited by plan yet.
 - Settings → API and Settings → Webhooks now link into that documentation,
   and `docs/public-api.md` has become a short pointer to it — one contract,
   one place.
+- The documentation announces the language of the prose it is showing, so a
+  screen reader pronounces an English page correctly on a Spanish instance,
+  and its method and change badges keep readable contrast in dark mode.
 
 ### Security
 

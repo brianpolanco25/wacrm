@@ -15,12 +15,18 @@ import type { ParameterLocation } from './types';
 // resuelto de `model.ts` y esto solo elige etiquetas y clases.
 // ============================================================
 
+// El HUE va en el fondo y el CONTRASTE en el texto, como ya hacía
+// `get`. Los tonos de marca (`--cb-token-*`) están tallados para
+// superficies claras y no tienen variante oscura: pintar el texto con
+// ellos deja 2,8:1 sobre el fondo del modo oscuro (medido con
+// Lighthouse, ver `progress/impl_developer-docs.md`). `text-foreground`
+// sigue al modo y la etiqueta se distingue igual por su tinte.
 const METHOD_STYLES: Record<string, string> = {
   get: 'bg-primary-soft-2 text-foreground',
-  post: 'bg-positive/15 text-positive',
-  patch: 'bg-brand/20 text-brand-ink',
-  put: 'bg-brand/20 text-brand-ink',
-  delete: 'bg-destructive/15 text-destructive',
+  post: 'bg-positive/20 text-foreground',
+  patch: 'bg-brand/25 text-foreground',
+  put: 'bg-brand/25 text-foreground',
+  delete: 'bg-destructive/20 text-foreground',
 };
 
 const ANCHOR_WEBHOOKS = 'webhook-events';
@@ -58,7 +64,7 @@ function Chip({
   const styles = {
     neutral: 'bg-card-2 text-muted-foreground',
     brand: 'bg-primary-soft text-foreground',
-    warn: 'bg-destructive/15 text-destructive',
+    warn: 'bg-destructive/20 text-foreground',
   } as const;
   return (
     <span
