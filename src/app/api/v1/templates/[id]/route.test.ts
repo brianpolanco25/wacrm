@@ -50,6 +50,13 @@ vi.mock('@/lib/flows/admin-client', () => ({
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { GET, PATCH, DELETE } from './route';
 
+// Lo justo de `Response` que lee el código bajo prueba. Dar tipo al doble
+// de `fetch` no es ceremonia: es lo que hace que `mock.calls[0]` tenga la
+// URL y el `init` tipados, y por tanto que las aserciones sobre lo que se
+// le mandó a Meta se comprueben en vez de colarse por `any`.
+type MetaResponse = Pick<Response, 'ok' | 'status' | 'json'>;
+type FetchLike = (url: string, init?: RequestInit) => Promise<MetaResponse>;
+
 function seed(): FakeDatabase {
   return new FakeDatabase({
     whatsapp_config: [
@@ -148,7 +155,7 @@ function req(method: string, path: string, body?: unknown): Request {
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
 function metaAccepts() {
-  const fetchMock = vi.fn(async () => ({
+  const fetchMock = vi.fn<FetchLike>(async () => ({
     ok: true,
     status: 200,
     json: async () => ({ success: true }),
@@ -264,7 +271,7 @@ describe('PATCH /api/v1/templates/{id}', () => {
       }),
       params(TPL_A)
     );
-    const sent = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(sent.components.map((c: { type: string }) => c.type)).toEqual([
       'BODY',
     ]);
@@ -328,7 +335,7 @@ describe('PATCH /api/v1/templates/{id}', () => {
   it('un rechazo de Meta sale como meta_error 502 y queda anotado en la fila', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn<FetchLike>(async () => ({
         ok: false,
         status: 400,
         json: async () => ({
@@ -380,7 +387,7 @@ describe('DELETE /api/v1/templates/{id}', () => {
     expect(url.searchParams.get('name')).toBe('promo');
     // Sin `hsm_id`, Meta borraría TODOS los idiomas que comparten nombre.
     expect(url.searchParams.get('hsm_id')).toBe('meta-a');
-    expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('DELETE');
 
     expect(
       (h.db.rows('message_templates') as Row[]).map((r) => r.id)

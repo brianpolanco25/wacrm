@@ -51,6 +51,13 @@ vi.mock('@/lib/flows/admin-client', () => ({
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { GET, POST } from './route';
 
+// Lo justo de `Response` que lee el código bajo prueba. Dar tipo al doble
+// de `fetch` no es ceremonia: es lo que hace que `mock.calls[0]` tenga la
+// URL y el `init` tipados, y por tanto que las aserciones sobre lo que se
+// le mandó a Meta se comprueben en vez de colarse por `any`.
+type MetaResponse = Pick<Response, 'ok' | 'status' | 'json'>;
+type FetchLike = (url: string, init?: RequestInit) => Promise<MetaResponse>;
+
 function seed(): FakeDatabase {
   return new FakeDatabase({
     whatsapp_config: [
@@ -147,7 +154,7 @@ function req(method: string, path: string, body?: unknown): Request {
 
 /** Meta acepta y devuelve el id de la plantilla creada. */
 function metaAccepts() {
-  const fetchMock = vi.fn(async () => ({
+  const fetchMock = vi.fn<FetchLike>(async () => ({
     ok: true,
     status: 200,
     json: async () => ({ id: 'meta-new-1', status: 'PENDING' }),
@@ -378,7 +385,7 @@ describe('POST /api/v1/templates', () => {
   it('un rechazo de Meta sale como meta_error 502 con su código público y no escribe nada', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn<FetchLike>(async () => ({
         ok: false,
         status: 400,
         json: async () => ({

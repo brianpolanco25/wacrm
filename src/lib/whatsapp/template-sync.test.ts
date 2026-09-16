@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { FakeDatabase, type Row } from '@/lib/security/fake-supabase';
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,13 @@ import {
   SYNC_PAGE_CAP,
   TemplateSyncError,
 } from './template-sync';
+
+// Lo justo de `Response` que lee el código bajo prueba. Dar tipo al doble
+// de `fetch` no es ceremonia: es lo que hace que `mock.calls[0]` tenga la
+// URL y el `init` tipados, y por tanto que las aserciones sobre lo que se
+// le mandó a Meta se comprueben en vez de colarse por `any`.
+type MetaResponse = Pick<Response, 'ok' | 'status' | 'json'>;
+type FetchLike = (url: string, init?: RequestInit) => Promise<MetaResponse>;
 
 const A = 'acct-a';
 const B = 'acct-b';
@@ -91,17 +99,20 @@ function metaTemplate(over: Record<string, unknown> = {}) {
 
 /** Encola respuestas de Meta, una por página. */
 function metaPages(...pages: unknown[]) {
-  const fetchMock = vi.fn(async () => {
+  const fetchMock = vi.fn<FetchLike>(async () => {
     const page = pages.shift() ?? { data: [] };
     return {
       ok: true,
       status: 200,
       json: async () => page,
-    } as unknown as Response;
+    };
   });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
+
+/** El cliente de rol de servicio, con el tipo que espera la función. */
+const admin = (d: FakeDatabase) => d.admin as unknown as SupabaseClient;
 
 const ARGS = {
   accountId: A,
@@ -129,7 +140,7 @@ describe('syncTemplatesFromMeta', () => {
       { data: [metaTemplate({ id: 'meta-new', name: 'welcome' })] }
     );
 
-    const result = await syncTemplatesFromMeta(db.admin, ARGS);
+    const result = await syncTemplatesFromMeta(admin(db), ARGS);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     // La segunda llamada usa la URL que dio Meta, no una reconstruida.
@@ -150,7 +161,7 @@ describe('syncTemplatesFromMeta', () => {
     const before = db.snapshot(B);
     metaPages({ data: [metaTemplate()] });
 
-    await syncTemplatesFromMeta(db.admin, ARGS);
+    await syncTemplatesFromMeta(admin(db), ARGS);
 
     const rows = db.rows('message_templates') as Row[];
     expect(rows.find((r) => r.id === 'tpl-a')).toMatchObject({
@@ -169,7 +180,7 @@ describe('syncTemplatesFromMeta', () => {
       data: [metaTemplate(), metaTemplate({ id: 'meta-s', name: 'stable' })],
     });
 
-    const first = await syncTemplatesFromMeta(db.admin, ARGS);
+    const first = await syncTemplatesFromMeta(admin(db), ARGS);
 
     expect(first.statusChanges).toEqual([
       {
@@ -194,7 +205,7 @@ describe('syncTemplatesFromMeta', () => {
     metaPages({
       data: [metaTemplate(), metaTemplate({ id: 'meta-s', name: 'stable' })],
     });
-    const second = await syncTemplatesFromMeta(db.admin, ARGS);
+    const second = await syncTemplatesFromMeta(admin(db), ARGS);
     expect(second.statusChanges).toEqual([]);
     expect(h.emitted).toEqual([]);
     expect(second.updated).toBe(2);
@@ -231,7 +242,7 @@ describe('syncTemplatesFromMeta', () => {
       ],
     });
 
-    await syncTemplatesFromMeta(db.admin, ARGS);
+    await syncTemplatesFromMeta(admin(db), ARGS);
 
     const row = (db.rows('message_templates') as Row[]).find(
       (r) => r.name === 'invoice'
@@ -256,7 +267,7 @@ describe('syncTemplatesFromMeta', () => {
     const db = seed();
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn<FetchLike>(async () => ({
         ok: false,
         status: 400,
         json: async () => ({
@@ -265,10 +276,10 @@ describe('syncTemplatesFromMeta', () => {
       }))
     );
 
-    await expect(syncTemplatesFromMeta(db.admin, ARGS)).rejects.toThrow(
+    await expect(syncTemplatesFromMeta(admin(db), ARGS)).rejects.toThrow(
       TemplateSyncError
     );
-    await expect(syncTemplatesFromMeta(db.admin, ARGS)).rejects.toMatchObject({
+    await expect(syncTemplatesFromMeta(admin(db), ARGS)).rejects.toMatchObject({
       message: 'Invalid OAuth access token',
       status: 502,
     });
@@ -278,7 +289,7 @@ describe('syncTemplatesFromMeta', () => {
 
   it(`marca \`truncated\` cuando Meta sigue teniendo páginas tras ${SYNC_PAGE_CAP}`, async () => {
     const db = seed();
-    const fetchMock = vi.fn(async () => ({
+    const fetchMock = vi.fn<FetchLike>(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
@@ -288,7 +299,7 @@ describe('syncTemplatesFromMeta', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await syncTemplatesFromMeta(db.admin, ARGS);
+    const result = await syncTemplatesFromMeta(admin(db), ARGS);
 
     expect(fetchMock).toHaveBeenCalledTimes(SYNC_PAGE_CAP);
     expect(result.truncated).toBe(true);
@@ -304,10 +315,10 @@ describe('syncTemplatesFromMeta', () => {
     });
 
     // Un INSERT que falla solo para `boom`, envolviendo el cliente real.
-    const admin = db.admin;
+    const real = db.admin;
     const client = {
       from(table: string) {
-        const q = admin.from(table);
+        const q = real.from(table);
         const originalInsert = q.insert.bind(q);
         q.insert = (rows: Row | Row[]) => {
           const first = Array.isArray(rows) ? rows[0] : rows;
@@ -326,7 +337,7 @@ describe('syncTemplatesFromMeta', () => {
     };
 
     const result = await syncTemplatesFromMeta(
-      client as unknown as Parameters<typeof syncTemplatesFromMeta>[0],
+      client as unknown as SupabaseClient,
       ARGS
     );
 
