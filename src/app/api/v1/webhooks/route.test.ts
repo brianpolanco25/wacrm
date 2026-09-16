@@ -29,6 +29,7 @@ vi.mock('@/lib/whatsapp/encryption', () => ({
 }));
 
 import { FeatureNotAvailableError } from '@/lib/billing/enforce';
+import { MAX_BODY_BYTES } from '@/lib/api/v1/body';
 import { GET, POST } from './route';
 
 function supabaseMock() {
@@ -69,6 +70,23 @@ function req(method: string, body?: unknown) {
       'Content-Type': 'application/json',
     },
     body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+/**
+ * Igual que `req('POST', …)` pero sin decidir por el llamante ni el
+ * `Content-Type` ni la serialización: estas dos pruebas van justo sobre
+ * esas dos cosas.
+ */
+function rawPost(body: string, contentType: string | null) {
+  const headers: Record<string, string> = {
+    authorization: 'Bearer wacrm_live_x',
+  };
+  if (contentType) headers['content-type'] = contentType;
+  return new Request('https://crm.example.com/api/v1/webhooks', {
+    method: 'POST',
+    headers,
+    body,
   });
 }
 
@@ -149,5 +167,43 @@ describe('/api/v1/webhooks — the webhooks feature (fase 3 §4)', () => {
       'webhooks'
     );
     expect(mocks.state.inserted).toMatchObject({ account_id: 'acct-other' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fase 7 §1 / integración — la deuda que dejó la 2.ª ronda de a7.1: esta ruta
+// pasó a `readJsonBody` sin test propio para no chocar con a7.4, y el sitio
+// del test era este archivo *después* del merge. Ya estamos después.
+//
+// Lo que se afirma no es el código de estado, que lo daría cualquier guarda
+// mal puesta, sino que la ruta no llega a insertar: un 413 respondido tras
+// bufferizar el cuerpo entero, o un 415 respondido tras escribir, pasarían un
+// test que solo mirase el número.
+// ---------------------------------------------------------------------------
+describe('POST /api/v1/webhooks — guardas de cuerpo compartidas', () => {
+  it('rechaza un cuerpo de 1 MiB + 1 con 413 y no registra nada', async () => {
+    // Bytes de verdad, no un Content-Length falseado: el tope tiene que
+    // aguantar mientras se lee el flujo.
+    const body = JSON.stringify({
+      ...NEW_HOOK,
+      description: 'x'.repeat(MAX_BODY_BYTES),
+    });
+    expect(Buffer.byteLength(body, 'utf8')).toBeGreaterThan(MAX_BODY_BYTES);
+
+    const res = await POST(rawPost(body, 'application/json'));
+    expect(res.status).toBe(413);
+    expect((await res.json()).error.code).toBe('payload_too_large');
+    expect(mocks.state.inserted).toBeNull();
+  });
+
+  it('rechaza text/plain con 415, y la falta de Content-Type también', async () => {
+    const plain = await POST(rawPost(JSON.stringify(NEW_HOOK), 'text/plain'));
+    expect(plain.status).toBe(415);
+    expect((await plain.json()).error.code).toBe('unsupported_media_type');
+    expect(mocks.state.inserted).toBeNull();
+
+    const bare = await POST(rawPost(JSON.stringify(NEW_HOOK), null));
+    expect(bare.status).toBe(415);
+    expect(mocks.state.inserted).toBeNull();
   });
 });
