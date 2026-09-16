@@ -5,6 +5,7 @@ import type { ApiKeyContext } from '@/lib/auth/api-context';
 import { FakeIdempotencyStore } from './fake-idempotency-store';
 import {
   IDEMPOTENCY_TTL_MS,
+  IN_FLIGHT_STALE_MS,
   __resetIdempotencyPurgeCounter,
   withIdempotency,
 } from './idempotency';
@@ -241,6 +242,82 @@ describe('withIdempotency', () => {
     expect(res.status).toBe(201);
     expect(handler).toHaveBeenCalledTimes(2);
     expect(store.rows).toHaveLength(1);
+  });
+
+  it('a request that differs only in the QUERY STRING is a mismatch, not a replay', async () => {
+    // The hash covers the query string on purpose: the first write that
+    // varies by parameter (`?dry_run=1`) must not be answered with the
+    // other variant's stored response.
+    const handler = vi.fn(async () => ok({ message_id: 'm-1' }, 201));
+    const plain = await run(ctxFor(KEY_1), req({ a: 1 }, 'idem-1'), handler);
+    expect(plain.status).toBe(201);
+
+    const res = await run(
+      ctxFor(KEY_1),
+      req({ a: 1 }, 'idem-1', '/api/v1/messages?dry_run=1'),
+      handler
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('idempotency_mismatch');
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('an ABANDONED reservation is taken over after the stale window, not locked for 24 h', async () => {
+    // A process that dies between the INSERT and the response leaves a
+    // row with no `response_status`. Without a bound on it, the key is
+    // a permanent 409 until the 24 h TTL — and the caller is told
+    // something is "in progress" that nobody is running.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stuck = vi.fn(async () => {
+      await gate;
+      return ok({ message_id: 'm-1' }, 201);
+    });
+
+    const inflight = run(ctxFor(KEY_1), req({ a: 1 }, 'idem-1'), stuck);
+    while (store.rows.length === 0) await new Promise((r) => setTimeout(r, 0));
+
+    // While it is genuinely running, the retry is still refused.
+    const tooSoon = await run(
+      ctxFor(KEY_1),
+      req({ a: 1 }, 'idem-1'),
+      vi.fn(async () => ok({ message_id: 'DOUBLE-SEND' }, 201))
+    );
+    expect(tooSoon.status).toBe(409);
+
+    // Age the reservation past the stale window: now it is abandoned.
+    store.rows[0].created_at = new Date(
+      Date.now() - IN_FLIGHT_STALE_MS - 1_000
+    ).toISOString();
+
+    const retry = vi.fn(async () => ok({ message_id: 'm-2' }, 201));
+    const res = await run(ctxFor(KEY_1), req({ a: 1 }, 'idem-1'), retry);
+    expect(res.status).toBe(201);
+    expect(retry).toHaveBeenCalledTimes(1);
+    await expect(res.json()).resolves.toEqual({ data: { message_id: 'm-2' } });
+    // The slot was taken over, not duplicated.
+    expect(store.rows).toHaveLength(1);
+
+    release();
+    await inflight;
+  });
+
+  it('an old but COMPLETED reservation is replayed, never re-run', async () => {
+    // Age alone must not license a takeover: the takeover only applies
+    // to a row with no response recorded.
+    const handler = vi.fn(async () => ok({ message_id: 'm-1' }, 201));
+    await run(ctxFor(KEY_1), req({ a: 1 }, 'idem-1'), handler);
+    store.rows[0].created_at = new Date(
+      Date.now() - IN_FLIGHT_STALE_MS - 60_000
+    ).toISOString();
+
+    const res = await run(ctxFor(KEY_1), req({ a: 1 }, 'idem-1'), handler);
+    expect(res.status).toBe(201);
+    expect(res.headers.get(IDEMPOTENT_REPLAYED_HEADER)).toBe('true');
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it('rejects an empty or over-long Idempotency-Key with 400', async () => {

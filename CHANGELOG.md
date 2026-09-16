@@ -421,7 +421,21 @@ behaviour changes**; nothing is limited by plan yet.
 - **Writes to `/api/v1` require `Content-Type: application/json` and are
   capped at 1 MiB.** A wrong media type is `415 unsupported_media_type`
   and an oversized body is `413 payload_too_large`, refused while it is
-  being read rather than after it has been buffered.
+  being read rather than after it has been buffered. This covers **every**
+  write, `POST`/`PATCH` of contacts and webhooks included: an integration
+  that posted JSON without the header, or relied on an unbounded body, now
+  gets a clear error instead of being buffered whole.
+- **A key rotation that died mid-flight no longer blocks the
+  `Idempotency-Key` for a day.** A reservation with no response recorded
+  after two minutes is treated as abandoned and the retry runs for real,
+  instead of answering `409 conflict` for the full 24 hours while telling
+  you something was "in progress".
+- **Rotation refuses what it cannot do well.** Rotating an **expired** key
+  is `404` (the replacement would inherit the expiry and be dead on
+  arrival), and rotating a key that is **already rotating** is `409` — the
+  first grace deadline cannot be moved, so a second rotation would only
+  leave an extra live credential. Settings → API already only offers
+  Rotate on an active key; the endpoint now says the same.
 - **The webhook verification endpoint no longer writes to the database.**
   Meta's `GET /api/whatsapp/webhook` check used to re-encrypt a legacy
   verify token on its way past — a database write reachable by anyone who

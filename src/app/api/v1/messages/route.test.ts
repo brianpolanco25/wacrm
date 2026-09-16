@@ -97,6 +97,22 @@ describe('POST /api/v1/messages — envelope hardening', () => {
     expect(res.headers.get('X-Request-Id')).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('never reflects a client-supplied X-Request-Id', async () => {
+    // The id is a server-minted correlation handle. Echoing the
+    // caller's value would let them forge log correlations and put
+    // arbitrary bytes in a response header.
+    const forged = 'not-a-uuid-<script>';
+    const res = await post(
+      { to: '+14155550123', type: 'text', text: 'hi' },
+      {
+        'X-Request-Id': forged,
+      }
+    );
+    expect(res.status).toBe(201);
+    expect(res.headers.get('X-Request-Id')).not.toBe(forged);
+    expect(res.headers.get('X-Request-Id')).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   it('refuses a body of 1 MiB + 1 with 413 and never reaches the send core', async () => {
     const envelope = '{"to":"+14155550123","type":"text","text":""}';
     const filler = 'a'.repeat(MAX_BODY_BYTES - envelope.length + 1);

@@ -279,13 +279,41 @@ describe('POST /api/account/api-keys/[id]/rotate', () => {
     expect(h.rows).toHaveLength(1);
   });
 
-  it('rotating twice does not push the old key’s deadline further out', async () => {
+  it('an expired key is a 404: no stillborn replacement is minted', async () => {
+    // The replacement would inherit `expires_at`, so it would be dead on
+    // arrival — and the admin would have copied a one-time plaintext
+    // that never authenticates.
+    const stale = seedKey({
+      expires_at: new Date(Date.now() - HOUR).toISOString(),
+    });
+    const res = await rotate(stale.id as string);
+    expect(res.status).toBe(404);
+    expect(h.rows).toHaveLength(1);
+    expect(h.rows[0].revoked_at).toBeNull();
+  });
+
+  it('an expired key is a 404 even when the caller asks for a new expiry', async () => {
+    const stale = seedKey({
+      expires_at: new Date(Date.now() - HOUR).toISOString(),
+    });
+    const res = await rotate(stale.id as string, { expiresInDays: 90 });
+    expect(res.status).toBe(404);
+    expect(h.rows).toHaveLength(1);
+  });
+
+  it('rotating a key that is already rotating is a 409, and creates nothing', async () => {
     const old = seedKey();
     await rotate(old.id as string);
     const firstDeadline = h.rows.find((r) => r.id === old.id)!.revoked_at;
+    expect(h.rows).toHaveLength(2); // old + first replacement
 
     vi.setSystemTime(Date.now() + HOUR);
-    await rotate(old.id as string);
+    const res = await rotate(old.id as string);
+
+    expect(res.status).toBe(409);
+    // No third row: a second rotation cannot move the old deadline, so
+    // all it could add is a live credential nobody asked for.
+    expect(h.rows).toHaveLength(2);
     expect(h.rows.find((r) => r.id === old.id)!.revoked_at).toBe(firstDeadline);
   });
 });

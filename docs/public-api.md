@@ -43,6 +43,11 @@ The replacement inherits the old key's expiry date unless you set a new
 one. If you are rotating because a key **leaked**, do not wait for the
 grace period — press **Revoke now** on the old key.
 
+Two keys cannot be rotated: an **expired** one (the replacement would
+inherit an expiry already in the past — create a new key instead) and one
+that is **already rotating** (finish the first rotation, or revoke it
+now). Rotate is only offered on an active key for that reason.
+
 ### Revoking a key
 
 **Settings → API keys → Revoke.** Revocation is effective on the
@@ -143,8 +148,14 @@ Notes:
 - Only successful (2xx) responses are stored. A `400`, `429` or `500`
   releases the key, so you can fix the payload and retry with the same
   one.
-- The same key used against a different endpoint is an
+- The same key used against a different endpoint — or against the same
+  endpoint with a different **query string** — is an
   `idempotency_mismatch`, not a wrong replay.
+- If the server dies while your first call is being processed, the key is
+  not stuck: a reservation with no response recorded after **two minutes**
+  is treated as abandoned, and the next retry with that key runs for real.
+  A `409 conflict` therefore means "try again in a moment", never "wait 24
+  hours".
 
 ## Rate limits
 

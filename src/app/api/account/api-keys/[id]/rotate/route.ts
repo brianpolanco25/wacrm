@@ -24,6 +24,19 @@
 // mode we refuse to ship is "two permanently valid keys where the admin
 // believes there is one".
 //
+// What cannot be rotated, and why (fase 7 §1, 2.ª ronda)
+//   • a key already revoked, or one whose `expires_at` is in the past →
+//     404. Rotating a dead credential would mint a replacement that
+//     INHERITS its expiry and therefore never authenticates: the admin
+//     would copy a one-time plaintext that is useless from the first
+//     second. Replace it with a new key instead.
+//   • a key already inside its grace window → 409. The second rotation
+//     cannot move the first deadline (that is the point of the `.is`
+//     guard below), so all it would do is leave a third row with the
+//     same name and a second live credential nobody asked for.
+//   Both match what Ajustes → API already offers: the Rotate button
+//   only appears on a key whose status is `active`.
+//
 // Admin+, cookie session, RLS client — same as the rest of
 // `/api/account/api-keys`. The plaintext is returned exactly ONCE, as
 // on creation.
@@ -93,15 +106,36 @@ export async function POST(
       );
     }
 
-    const alreadyDead =
-      current?.revoked_at != null &&
-      new Date(current.revoked_at as string).getTime() <= now;
-    if (!current || alreadyDead) {
-      // Revoked keys are not rotated, they are replaced: rotating one
-      // would resurrect an integration the admin already switched off.
+    const revokedAtMs =
+      current?.revoked_at == null
+        ? null
+        : new Date(current.revoked_at as string).getTime();
+    const alreadyDead = revokedAtMs !== null && revokedAtMs <= now;
+    const alreadyExpired =
+      current?.expires_at != null &&
+      new Date(current.expires_at as string).getTime() <= now;
+
+    if (!current || alreadyDead || alreadyExpired) {
+      // Dead keys are not rotated, they are replaced: rotating one would
+      // resurrect an integration the admin already switched off, or (for
+      // an expired one) hand out a replacement that inherits an expiry
+      // already in the past.
       return NextResponse.json(
-        { error: 'API key not found or already revoked' },
+        { error: 'API key not found, expired or already revoked' },
         { status: 404 }
+      );
+    }
+
+    if (revokedAtMs !== null) {
+      // `revoked_at` in the future = this key is already rotating. A
+      // second rotation cannot shorten the first deadline and would only
+      // add another live credential.
+      return NextResponse.json(
+        {
+          error:
+            'API key is already rotating; use the key minted by the first rotation, or revoke this one now',
+        },
+        { status: 409 }
       );
     }
 
@@ -149,9 +183,10 @@ export async function POST(
       .update({ revoked_at: revokedAt })
       .eq('id', id)
       .eq('account_id', ctx.accountId)
-      // Only a live key gets stamped. If it entered a grace window
-      // between the read and here, leave that (earlier) deadline alone
-      // — rotating twice must not push the old key's death further out.
+      // Only a live key gets stamped. The 409 above already rejects a
+      // key that was rotating when we read it; this guard covers the
+      // race where it entered a grace window in between, and keeps that
+      // (earlier) deadline instead of pushing it further out.
       .is('revoked_at', null)
       .select('id, revoked_at')
       .maybeSingle();

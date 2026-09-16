@@ -32,10 +32,30 @@
 //   failure in amber. The cost is that an error is not replayed
 //   verbatim; the benefit is that a key never becomes a tombstone.
 //
-// The hash covers method + path + raw body
+// The hash covers method + path + QUERY STRING + raw body
 //   Reusing one key across two different endpoints is a client bug, and
 //   it surfaces as `idempotency_mismatch` rather than as one endpoint
-//   quietly answering with the other's payload.
+//   quietly answering with the other's payload. The query string is in
+//   there on purpose: a future write whose behaviour varies by
+//   parameter (`?dry_run=1`, `?format=csv`) must not replay the other
+//   variant's stored response. Two calls that differ only in the query
+//   get `idempotency_mismatch`, which is the honest answer.
+//
+// A reservation that never finishes
+//   If the process dies between the INSERT and the response, the row
+//   stays with `response_status` NULL and nobody will ever fill it.
+//   Leaving it there would poison the key for the full 24 h TTL while
+//   telling the caller something is "still in progress". So an
+//   unfinished reservation older than `IN_FLIGHT_STALE_MS` is treated
+//   as abandoned: it is deleted (only if it is STILL unfinished) and
+//   the slot re-reserved. The window is deliberately several times the
+//   longest handler we allow (`maxDuration = 60` on broadcasts), so a
+//   genuinely running request is never stolen from. What this trades
+//   away: a crash in the narrow gap between the side effect and the
+//   store leaves a request that DID happen looking abandoned, and a
+//   retry after the window will happen again. That is the same
+//   exposure as any client whose connection drops mid-write, and it is
+//   bounded; a key that is dead for 24 h is not.
 //
 // Reuse: every future v1 write (tags a7.2, templates a7.3, exports
 // a7.5) gets this by wrapping its handler — it is the only place that
@@ -65,6 +85,15 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 /** How long a stored response stays replayable. */
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * After this long with no response recorded, a reservation is assumed
+ * abandoned (the process that made it died) and can be taken over.
+ * Two minutes is twice the longest handler the app allows — the 60 s
+ * `maxDuration` of `POST /api/v1/broadcasts` — so a request that is
+ * really still running is never displaced.
+ */
+export const IN_FLIGHT_STALE_MS = 2 * 60 * 1000;
+
 /** Postgres unique-violation SQLSTATE. */
 const UNIQUE_VIOLATION = '23505';
 
@@ -81,10 +110,15 @@ interface IdempotencyRow {
   request_hash: string;
   response_status: number | null;
   response_body: unknown;
+  created_at: string;
   expires_at: string;
 }
 
-/** Stable digest of "which request is this". */
+/**
+ * Stable digest of "which request is this". `path` must include the
+ * query string: see the header note — a write that varies by parameter
+ * would otherwise replay the other variant's response.
+ */
 function hashRequest(method: string, path: string, rawBody: string): string {
   return createHash('sha256')
     .update(`${method.toUpperCase()}\n${path}\n${rawBody}`)
@@ -142,7 +176,9 @@ async function findRow(
   // their own rows and never see each other's response.
   const { data, error } = await ctx.supabase
     .from('api_idempotency_keys')
-    .select('id, request_hash, response_status, response_body, expires_at')
+    .select(
+      'id, request_hash, response_status, response_body, created_at, expires_at'
+    )
     .eq('account_id', ctx.accountId)
     .eq('api_key_id', ctx.keyId)
     .eq('idempotency_key', key)
@@ -197,9 +233,10 @@ export async function withIdempotency(
     return handler(body.data);
   }
 
+  const url = new URL(request.url);
   const requestHash = hashRequest(
     request.method,
-    new URL(request.url).pathname,
+    `${url.pathname}${url.search}`,
     body.raw
   );
   const now = Date.now();
@@ -233,20 +270,47 @@ export async function withIdempotency(
           `This '${IDEMPOTENCY_KEY_HEADER}' was already used for a different request`
         );
       }
-      if (existing.response_status === null) {
+      if (existing.response_status !== null) {
+        purgeExpired(ctx.supabase, ctx.accountId);
+        return replayed(existing.response_body, existing.response_status);
+      }
+
+      // No response recorded yet: either a sibling request is running
+      // right now, or the one that reserved this slot died. Tell them
+      // apart by age (see the header note on abandoned reservations).
+      const startedAt = new Date(existing.created_at).getTime();
+      const abandoned =
+        Number.isFinite(startedAt) && now - startedAt >= IN_FLIGHT_STALE_MS;
+
+      if (!abandoned) {
+        // Genuinely in flight. "In a moment" is honest here: the
+        // handler either finishes or the row goes stale within
+        // `IN_FLIGHT_STALE_MS`, never the 24 h of the TTL.
         throw conflict(
-          `A request with this '${IDEMPOTENCY_KEY_HEADER}' is still in progress; retry shortly`
+          `A request with this '${IDEMPOTENCY_KEY_HEADER}' is still in progress; retry in a moment`
         );
       }
-      purgeExpired(ctx.supabase, ctx.accountId);
-      return replayed(existing.response_body, existing.response_status);
+
+      // Abandoned. Delete it ONLY while it is still unfinished
+      // (`.is('response_status', null)`): if the original landed
+      // between the read and here, the delete matches nothing, the
+      // re-reservation loses on the unique index and the shared
+      // conflict below answers. Taking the slot falls through to the
+      // handler, which runs the work for real.
+      await ctx.supabase
+        .from('api_idempotency_keys')
+        .delete()
+        .eq('account_id', ctx.accountId)
+        .eq('id', existing.id)
+        .is('response_status', null);
+      ({ error } = await reserve());
     }
 
     if (error) {
       // Lost the race twice (or the row vanished under us). Telling the
       // caller to retry is the only answer that cannot double-send.
       throw conflict(
-        `A request with this '${IDEMPOTENCY_KEY_HEADER}' is still in progress; retry shortly`
+        `A request with this '${IDEMPOTENCY_KEY_HEADER}' is still in progress; retry in a moment`
       );
     }
   } else if (error) {

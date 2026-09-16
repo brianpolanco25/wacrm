@@ -11,13 +11,13 @@
 // So this fake enforces `UNIQUE (api_key_id, idempotency_key)` for real
 // and returns Postgres' `23505` when it is violated, exactly as
 // PostgREST does. Everything else is the minimum query surface the
-// module uses: eq / lt filters, maybeSingle, insert, update, delete.
+// module uses: eq / lt / is filters, maybeSingle, insert, update, delete.
 // ============================================================
 
 type Row = Record<string, unknown>;
 
 interface Filter {
-  op: 'eq' | 'lt';
+  op: 'eq' | 'lt' | 'is';
   column: string;
   value: unknown;
 }
@@ -30,6 +30,13 @@ interface Result {
 function matches(row: Row, filters: Filter[]): boolean {
   return filters.every((f) => {
     if (f.op === 'eq') return row[f.column] === f.value;
+    // PostgREST's `.is(col, null)` is `IS NULL`; a column the fake never
+    // set counts as null too.
+    if (f.op === 'is') {
+      return f.value === null
+        ? row[f.column] === null || row[f.column] === undefined
+        : row[f.column] === f.value;
+    }
     return String(row[f.column]) < String(f.value);
   });
 }
@@ -134,6 +141,10 @@ export class FakeIdempotencyStore {
       },
       lt: (column: string, value: unknown) => {
         filters.push({ op: 'lt', column, value });
+        return chain;
+      },
+      is: (column: string, value: unknown) => {
+        filters.push({ op: 'is', column, value });
         return chain;
       },
       maybeSingle: async (): Promise<Result> => {
