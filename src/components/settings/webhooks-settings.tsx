@@ -60,7 +60,7 @@ import { SettingsPanelHead } from './settings-panel-head';
  * pública, así que el enlace funciona igual para quien no tiene sesión
  * en este navegador (un compañero al que le pasas la URL).
  */
-const WEBHOOK_DOCS_URL = '/developers/webhooks';
+const WEBHOOK_DOCS_URL = '/developers/guides/webhooks';
 
 interface WebhookEndpoint {
   id: string;
