@@ -14,6 +14,7 @@
 // ============================================================
 
 import { API_SCOPES } from '@/lib/api-keys/scopes';
+import type { ApiErrorCode } from '@/lib/api/v1/respond';
 import { WEBHOOK_EVENTS } from '@/lib/webhooks/events';
 import type { SchemaObject } from './types';
 
@@ -36,28 +37,47 @@ const nullableString: SchemaObject = { type: ['string', 'null'] };
 // ------------------------------------------------------------------
 
 /**
- * Los códigos de `ApiErrorCode` (`src/lib/api/v1/respond.ts`) MÁS los
- * de dominio que `fail()` puede emitir con una cadena libre. El enum
- * no se cierra con `enum:` en el esquema del sobre porque el contrato
- * permite códigos nuevos; se publica como lista documentada aparte
- * (`ApiErrorCode`) para que un cliente sepa contra qué ramificar.
+ * Los códigos de `ApiErrorCode` (`src/lib/api/v1/respond.ts`), atados
+ * al compilador: el `satisfies Record<ApiErrorCode, true>` falla en
+ * `tsc` por los dos lados — si `respond.ts` gana un código y nadie lo
+ * añade aquí (propiedad que falta), y si aquí aparece uno inventado
+ * (propiedad de más). Antes era una copia a mano y el test que la
+ * comprobaba iteraba sobre ella misma, así que se medía con su propia
+ * vara; ahora el que avisa es el tipo.
+ *
+ * El orden es el de `respond.ts`, y de él sale `API_ERROR_CODES`.
  */
-export const API_ERROR_CODES = [
-  'unauthorized',
-  'forbidden',
-  'rate_limited',
-  'bad_request',
-  'not_found',
-  'account_read_only',
-  'feature_unavailable',
-  'quota_exceeded',
-  'plan_limit_reached',
-  'conflict',
-  'idempotency_mismatch',
-  'payload_too_large',
-  'unsupported_media_type',
-  'internal',
-] as const;
+const API_ERROR_CODE_COVERAGE = {
+  unauthorized: true,
+  forbidden: true,
+  rate_limited: true,
+  bad_request: true,
+  not_found: true,
+  account_read_only: true,
+  feature_unavailable: true,
+  quota_exceeded: true,
+  plan_limit_reached: true,
+  conflict: true,
+  idempotency_mismatch: true,
+  payload_too_large: true,
+  unsupported_media_type: true,
+  internal: true,
+} satisfies Record<ApiErrorCode, true>;
+
+/**
+ * La lista publicada, derivada de lo anterior. Son los de
+ * `ApiErrorCode` MÁS —donde se usa— los de dominio que `fail()` puede
+ * emitir con una cadena libre. El sobre del error no cierra su `code`
+ * con `enum:` porque el contrato permite códigos nuevos; esta lista se
+ * publica aparte (esquema `ApiErrorCode`) para que un cliente sepa
+ * contra qué ramificar.
+ *
+ * El `as` solo repara la imprecisión de `Object.keys`, que devuelve
+ * `string[]` incluso cuando el objeto tiene claves literales.
+ */
+export const API_ERROR_CODES = Object.keys(
+  API_ERROR_CODE_COVERAGE
+) as readonly ApiErrorCode[];
 
 /** Códigos de dominio fuera de `ApiErrorCode`, con su significado. */
 export const DOMAIN_ERROR_CODES = [

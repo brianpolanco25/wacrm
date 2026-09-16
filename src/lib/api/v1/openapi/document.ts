@@ -37,7 +37,12 @@ import type {
 /** Versión del CONTRATO, no de la aplicación: `/api/v1` es la v1. */
 export const OPENAPI_API_VERSION = '1.0.0';
 
-/** Prefijo bajo el que viven todas las rutas del registro. */
+/**
+ * Prefijo bajo el que viven todas las rutas del registro. Va en
+ * `servers[0].url`, **no** en las claves de `paths`: en OpenAPI la URL
+ * efectiva es *server url* + *path template*, así que ponerlo en los
+ * dos sitios daría `/api/v1/api/v1/contacts`.
+ */
 export const API_BASE_PATH = '/api/v1';
 
 /** El esquema de seguridad, uno solo: `Authorization: Bearer <clave>`. */
@@ -508,11 +513,41 @@ Sin CORS: la API es de servidor a servidor.
 
 export interface BuildOpenApiOptions {
   /**
-   * URL base del servidor. Por defecto `/api/v1`, relativa: un cliente
-   * que importa este documento desde `https://tu-crm/api/v1/openapi.json`
-   * la resuelve contra esa misma instancia, que es siempre la correcta.
+   * ORIGEN de la instancia (`https://crm.example.com`), sin el prefijo
+   * de la API: lo añade `resolveServerUrl`. Por defecto no se pasa
+   * nada y el servidor queda en `/api/v1`, relativo — un cliente que
+   * importa el documento desde `https://tu-crm/api/v1/openapi.json` lo
+   * resuelve contra esa misma instancia, que es siempre la correcta.
    */
   serverUrl?: string;
+}
+
+/**
+ * **La regla de composición, una sola y en un solo sitio.**
+ *
+ * En OpenAPI 3.1 la URL de una operación es `servers[].url` + la clave
+ * de `paths`. Aquí el reparto es:
+ *
+ *   - las claves de `paths` son la ruta **sin** prefijo (`/contacts`),
+ *     que es lo que declara cada `OperationDef`;
+ *   - `servers[0].url` termina **siempre en exactamente un** `/api/v1`.
+ *
+ * De donde: `/api/v1` + `/contacts` = `/api/v1/contacts`, y con
+ * `serverUrl: 'https://crm.example.com'`,
+ * `https://crm.example.com/api/v1/contacts`.
+ *
+ * Que el prefijo sobrante se recorte en vez de duplicarse es a
+ * propósito: pasar ya el `/api/v1` es el error natural de quien
+ * escribe la opción, y duplicarlo genera un documento que se importa
+ * sin quejarse y llama a rutas que no existen.
+ */
+export function resolveServerUrl(serverUrl?: string): string {
+  if (!serverUrl) return API_BASE_PATH;
+  const trimmed = serverUrl.replace(/\/+$/, '');
+  if (!trimmed) return API_BASE_PATH;
+  return trimmed.endsWith(API_BASE_PATH)
+    ? trimmed
+    : `${trimmed}${API_BASE_PATH}`;
 }
 
 /**
@@ -524,15 +559,15 @@ export function buildOpenApiDocument(
 ): OpenApiDocument {
   const paths: Record<string, OpenApiDocument['paths'][string]> = {};
   for (const op of ALL_OPERATIONS) {
-    const fullPath = `${API_BASE_PATH}${op.path}`;
-    const item = paths[fullPath] ?? {};
+    // Sin prefijo: lo pone `servers[0].url` (ver `resolveServerUrl`).
+    const item = paths[op.path] ?? {};
     if (item[op.method]) {
       throw new Error(
-        `Operación duplicada en el registro: ${op.method.toUpperCase()} ${fullPath}`
+        `Operación duplicada en el registro: ${op.method.toUpperCase()} ${op.path}`
       );
     }
     item[op.method] = buildOperation(op);
-    paths[fullPath] = item;
+    paths[op.path] = item;
   }
 
   const usedTags = new Set(ALL_OPERATIONS.map((op) => op.tag));
@@ -550,7 +585,7 @@ export function buildOpenApiDocument(
     },
     servers: [
       {
-        url: options.serverUrl ?? API_BASE_PATH,
+        url: resolveServerUrl(options.serverUrl),
         description: 'Esta instancia.',
       },
     ],

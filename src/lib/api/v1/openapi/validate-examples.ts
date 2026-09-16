@@ -266,7 +266,7 @@ function walk(
 
 /** Un ejemplo del documento, ya localizado, listo para comprobar. */
 export interface DocumentExample {
-  /** Dónde vive: `paths./api/v1/tags.get.responses.200`, etc. */
+  /** Dónde vive: `paths./tags.get.responses.200`, etc. */
   location: string;
   schema: SchemaObject;
   value: unknown;

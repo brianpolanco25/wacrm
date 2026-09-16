@@ -25,6 +25,18 @@ import { HTTP_METHODS, type HttpMethod } from './types';
 const ROUTES_ROOT = join(process.cwd(), 'src', 'app', 'api', 'v1');
 
 /**
+ * `/api/v1`, pero sacado de DÓNDE viven las rutas en el árbol de
+ * archivos, no de `API_BASE_PATH`: así la comprobación de composición
+ * de abajo no se mide con su propia vara.
+ */
+const URL_PREFIX_FROM_DISK = `/${relative(
+  join(process.cwd(), 'src', 'app'),
+  ROUTES_ROOT
+)
+  .split(sep)
+  .join('/')}`;
+
+/**
  * La propia ruta del documento queda fuera: es la que SIRVE el
  * contrato, no una operación del contrato. Documentarse a sí misma no
  * añadiría nada y obligaría a modelar una respuesta que no es el sobre.
@@ -52,7 +64,11 @@ function walkRouteFiles(dir: string, out: string[] = []): string[] {
 
 /**
  * `src/app/api/v1/contacts/[id]/tags/[tagId]/route.ts`
- *   → `/api/v1/contacts/{id}/tags/{tagId}`
+ *   → `/contacts/{id}/tags/{tagId}`
+ *
+ * **Sin** el prefijo `/api/v1`: las claves de `paths` del documento
+ * son relativas a `servers[0].url`, que es quien lo lleva (ver
+ * `resolveServerUrl` en `document.ts`).
  */
 function routePathFromFile(file: string): string {
   const segments = relative(ROUTES_ROOT, file).split(sep);
@@ -64,7 +80,7 @@ function routePathFromFile(file: string): string {
         : segment
     )
     .join('/');
-  return path ? `${API_BASE_PATH}/${path}` : API_BASE_PATH;
+  return path ? `/${path}` : '/';
 }
 
 /**
@@ -132,6 +148,24 @@ describe('cobertura del documento OpenAPI', () => {
       extra,
       `El documento OpenAPI promete estas operaciones y no hay ruta que las sirva:\n  ${extra.join('\n  ')}`
     ).toEqual([]);
+  });
+
+  it('servers[0].url + la clave de paths reconstruye la URL del disco', () => {
+    // El prefijo va en UN solo sitio: el servidor. Si alguien lo
+    // vuelve a meter en las claves de `paths`, aquí sale
+    // `/api/v1/api/v1/contacts` y este test lo caza — que es
+    // exactamente lo que se coló en la primera ronda.
+    const { servers, paths } = buildOpenApiDocument();
+    expect(API_BASE_PATH).toBe(URL_PREFIX_FROM_DISK);
+    expect(servers[0].url).toBe(URL_PREFIX_FROM_DISK);
+
+    const compuestas = Object.keys(paths)
+      .map((path) => `${servers[0].url}${path}`)
+      .sort();
+    const enDisco = [
+      ...new Set(discovered.map((op) => `${URL_PREFIX_FROM_DISK}${op.path}`)),
+    ].sort();
+    expect(compuestas).toEqual(enDisco);
   });
 
   it('no deja fuera la ruta del propio documento por accidente', () => {

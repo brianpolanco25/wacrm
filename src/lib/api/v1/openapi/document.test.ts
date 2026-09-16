@@ -8,6 +8,9 @@
 // export y la sección de webhooks.
 // ============================================================
 
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { API_SCOPES } from '@/lib/api-keys/scopes';
@@ -19,11 +22,76 @@ import {
   API_BASE_PATH,
   SECURITY_SCHEME_NAME,
   buildOpenApiDocument,
+  resolveServerUrl,
 } from './document';
 import { API_ERROR_CODES } from './schemas';
+import { HTTP_METHODS } from './types';
 import type { OperationObject, SchemaObject } from './types';
 
 const document = buildOpenApiDocument();
+
+// ------------------------------------------------------------------
+// Qué escrituras envuelve DE VERDAD `withIdempotency`, leído del
+// disco. Igual que `coverage.test.ts`: una lista escrita a mano se
+// queda quieta cuando alguien envuelve una séptima ruta, y entonces el
+// documento miente sin que nada falle.
+// ------------------------------------------------------------------
+
+const ROUTES_ROOT = join(process.cwd(), 'src', 'app', 'api', 'v1');
+
+function routeFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) routeFiles(full, out);
+    else if (entry === 'route.ts') out.push(full);
+  }
+  return out;
+}
+
+/**
+ * Fuera los comentarios: varias rutas NOMBRAN `withIdempotency` en
+ * prosa —incluida `templates/[id]`, que explica por qué NO lo usa— y
+ * solo cuenta la llamada.
+ */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
+/** `…/contacts/[id]/tags/route.ts` → `/contacts/{id}/tags`. */
+function pathFromFile(file: string): string {
+  const segments = relative(ROUTES_ROOT, file).split(sep);
+  segments.pop();
+  const path = segments
+    .map((s) =>
+      s.startsWith('[') && s.endsWith(']') ? `{${s.slice(1, -1)}}` : s
+    )
+    .join('/');
+  return path ? `/${path}` : '/';
+}
+
+/** `['POST /tags', …]`: un handler por cada llamada a `withIdempotency(`. */
+function idempotentOnDisk(): string[] {
+  const found = new Set<string>();
+  for (const file of routeFiles(ROUTES_ROOT)) {
+    const source = stripComments(readFileSync(file, 'utf8'));
+    // Dónde empieza cada handler exportado, para saber en cuál cae la
+    // llamada: la última apertura que queda por delante de ella.
+    const handlers: { method: string; at: number }[] = [];
+    const handler = new RegExp(
+      `^export\\s+(?:async\\s+)?function\\s+(${HTTP_METHODS.map((m) => m.toUpperCase()).join('|')})\\s*\\(`,
+      'gm'
+    );
+    for (let m = handler.exec(source); m; m = handler.exec(source)) {
+      handlers.push({ method: m[1], at: m.index });
+    }
+    const call = /\bwithIdempotency\s*\(/g;
+    for (let m = call.exec(source); m; m = call.exec(source)) {
+      const owner = handlers.filter((h) => h.at < m!.index).at(-1);
+      if (owner) found.add(`${owner.method} ${pathFromFile(file)}`);
+    }
+  }
+  return [...found].sort();
+}
 
 function operation(method: string, path: string): OperationObject {
   const item = document.paths[path];
@@ -42,11 +110,50 @@ describe('documento OpenAPI: forma general', () => {
     expect(document.servers[0].url).toBe(API_BASE_PATH);
   });
 
-  it('acepta un servidor absoluto cuando se le pasa', () => {
+  // ----------------------------------------------------------------
+  // La regla de composición: en OpenAPI la URL de una operación es
+  // `servers[].url` + la clave de `paths`. Los tests de abajo componen
+  // las DOS piezas, que es justo lo que faltaba cuando el prefijo
+  // estaba puesto en los dos sitios y salía `/api/v1/api/v1/contacts`.
+  // ----------------------------------------------------------------
+
+  it('la URL de una operación es el servidor + la clave de paths', () => {
+    expect(document.paths['/contacts']).toBeDefined();
+    expect(`${document.servers[0].url}/contacts`).toBe('/api/v1/contacts');
+  });
+
+  it('con un origen absoluto compone la URL de esa instancia', () => {
     const doc = buildOpenApiDocument({
-      serverUrl: 'https://crm.example.com/api/v1',
+      serverUrl: 'https://crm.example.com',
     });
-    expect(doc.servers[0].url).toBe('https://crm.example.com/api/v1');
+    expect(`${doc.servers[0].url}/contacts`).toBe(
+      'https://crm.example.com/api/v1/contacts'
+    );
+  });
+
+  it('ninguna clave de paths repite el prefijo /api/v1', () => {
+    const conPrefijo = Object.keys(document.paths).filter((path) =>
+      path.startsWith(API_BASE_PATH)
+    );
+    expect(conPrefijo).toEqual([]);
+  });
+
+  it('el prefijo no se duplica si el origen ya lo trae (ni con barra final)', () => {
+    // La regla, en una frase: `servers[0].url` termina siempre en
+    // exactamente un `/api/v1` (ver `resolveServerUrl`).
+    for (const serverUrl of [
+      'https://crm.example.com',
+      'https://crm.example.com/',
+      'https://crm.example.com/api/v1',
+      'https://crm.example.com/api/v1/',
+    ]) {
+      const doc = buildOpenApiDocument({ serverUrl });
+      expect(doc.servers[0].url, serverUrl).toBe(
+        'https://crm.example.com/api/v1'
+      );
+    }
+    expect(resolveServerUrl(undefined)).toBe(API_BASE_PATH);
+    expect(resolveServerUrl('')).toBe(API_BASE_PATH);
   });
 
   it('define UN esquema de seguridad, http/bearer, y lo exige por defecto', () => {
@@ -66,7 +173,7 @@ describe('documento OpenAPI: forma general', () => {
 describe('documento OpenAPI: scopes por operación', () => {
   it('cada operación lleva en x-scopes lo que exige su ruta', () => {
     for (const op of ALL_OPERATIONS) {
-      const built = operation(op.method, `${API_BASE_PATH}${op.path}`);
+      const built = operation(op.method, op.path);
       expect(built['x-scopes'], op.operationId).toEqual(op.scopes);
     }
   });
@@ -76,7 +183,7 @@ describe('documento OpenAPI: scopes por operación', () => {
     expect(sinScope.map((op) => `${op.method} ${op.path}`)).toEqual([
       'get /me',
     ]);
-    expect(operation('get', `${API_BASE_PATH}/me`)['x-scopes']).toEqual([]);
+    expect(operation('get', '/me')['x-scopes']).toEqual([]);
   });
 
   it('todo scope declarado es uno de los 12 que existen', () => {
@@ -88,16 +195,16 @@ describe('documento OpenAPI: scopes por operación', () => {
   });
 
   it('el scope de /broadcasts es broadcasts:send también en el GET', () => {
-    expect(
-      operation('get', `${API_BASE_PATH}/broadcasts/{id}`)['x-scopes']
-    ).toEqual(['broadcasts:send']);
+    expect(operation('get', '/broadcasts/{id}')['x-scopes']).toEqual([
+      'broadcasts:send',
+    ]);
   });
 
   it('las operaciones con scope documentan el 403 forbidden', () => {
-    const withScope = operation('get', `${API_BASE_PATH}/contacts`);
+    const withScope = operation('get', '/contacts');
     expect(withScope.responses['403'].description).toContain('forbidden');
     // `GET /me` no puede dar 403 por scope: no exige ninguno.
-    const me = operation('get', `${API_BASE_PATH}/me`);
+    const me = operation('get', '/me');
     expect(me.responses['403']).toBeUndefined();
   });
 });
@@ -109,12 +216,12 @@ describe('documento OpenAPI: sobres', () => {
   };
 
   it('una lectura simple envuelve en { data }', () => {
-    const op = operation('get', `${API_BASE_PATH}/contacts/{id}`);
+    const op = operation('get', '/contacts/{id}');
     dataEnvelope(op.responses['200'].content!['application/json'].schema);
   });
 
   it('una lista envuelve en { data, meta.next_cursor }', () => {
-    const op = operation('get', `${API_BASE_PATH}/contacts`);
+    const op = operation('get', '/contacts');
     const schema = op.responses['200'].content!['application/json'].schema;
     expect(schema.required).toEqual(['data', 'meta']);
     expect(schema.properties?.data.type).toBe('array');
@@ -124,7 +231,7 @@ describe('documento OpenAPI: sobres', () => {
   });
 
   it('el export directo NO envuelve: el cuerpo es el archivo', () => {
-    const op = operation('get', `${API_BASE_PATH}/conversations/{id}/export`);
+    const op = operation('get', '/conversations/{id}/export');
     const json = op.responses['200'].content!['application/json'].schema;
     // Sin `data`: la raíz es el documento exportado.
     expect(json.properties?.data).toBeUndefined();
@@ -134,7 +241,7 @@ describe('documento OpenAPI: sobres', () => {
   });
 
   it('pero sus ERRORES sí van en el sobre, como el resto', () => {
-    const op = operation('get', `${API_BASE_PATH}/conversations/{id}/export`);
+    const op = operation('get', '/conversations/{id}/export');
     expect(op.responses['404'].content!['application/json'].schema.$ref).toBe(
       '#/components/schemas/Error'
     );
@@ -143,6 +250,10 @@ describe('documento OpenAPI: sobres', () => {
 
 describe('documento OpenAPI: errores', () => {
   it('el esquema ApiErrorCode enumera TODOS los códigos de respond.ts', () => {
+    // Que `API_ERROR_CODES` sea la unión entera de `ApiErrorCode` —ni
+    // uno menos, ni uno inventado— lo garantiza el
+    // `satisfies Record<ApiErrorCode, true>` de `schemas.ts`, no este
+    // test: aquí solo se comprueba que el esquema publicado los lleva.
     const enumerated = document.components.schemas.ApiErrorCode.enum ?? [];
     for (const code of API_ERROR_CODES) {
       expect(enumerated, `falta ${code}`).toContain(code);
@@ -177,7 +288,7 @@ describe('documento OpenAPI: errores', () => {
     );
     expect(escrituras.length).toBeGreaterThan(0);
     for (const op of escrituras) {
-      const built = operation(op.method, `${API_BASE_PATH}${op.path}`);
+      const built = operation(op.method, op.path);
       for (const status of ['400', '403', '413', '415']) {
         expect(
           built.responses[status],
@@ -189,14 +300,14 @@ describe('documento OpenAPI: errores', () => {
   });
 
   it('una escritura SIN cuerpo no promete 415 (no lee cuerpo alguno)', () => {
-    const test = operation('post', `${API_BASE_PATH}/webhooks/{id}/test`);
+    const test = operation('post', '/webhooks/{id}/test');
     expect(test.responses['415']).toBeUndefined();
     // Pero sigue siendo escritura: la cuenta en solo lectura la corta.
     expect(test.responses['403'].description).toContain('account_read_only');
   });
 
   it('el 429 trae Retry-After y las tres X-RateLimit-*', () => {
-    const op = operation('get', `${API_BASE_PATH}/contacts`);
+    const op = operation('get', '/contacts');
     expect(Object.keys(op.responses['429'].headers ?? {})).toEqual(
       expect.arrayContaining([
         'Retry-After',
@@ -208,7 +319,7 @@ describe('documento OpenAPI: errores', () => {
   });
 
   it('el 402 usa el sobre de facturación, con upgradeUrl', () => {
-    const op = operation('get', `${API_BASE_PATH}/contacts`);
+    const op = operation('get', '/contacts');
     expect(op.responses['402'].content!['application/json'].schema.$ref).toBe(
       '#/components/schemas/BillingError'
     );
@@ -218,7 +329,7 @@ describe('documento OpenAPI: errores', () => {
   });
 
   it('los códigos de dominio del envío están documentados', () => {
-    const send = operation('post', `${API_BASE_PATH}/messages`);
+    const send = operation('post', '/messages');
     expect(send.responses['502'].description).toContain('meta_error');
     expect(send.responses['400'].description).toContain(
       'whatsapp_not_configured'
@@ -246,7 +357,7 @@ describe('documento OpenAPI: paginación', () => {
     const listas = ALL_OPERATIONS.filter((op) => op.paginated);
     expect(listas.length).toBeGreaterThan(5);
     for (const op of listas) {
-      const built = operation(op.method, `${API_BASE_PATH}${op.path}`);
+      const built = operation(op.method, op.path);
       const names = (built.parameters ?? []).map((p) => p.name);
       expect(names, op.operationId).toContain('limit');
       expect(names, op.operationId).toContain('cursor');
@@ -254,7 +365,7 @@ describe('documento OpenAPI: paginación', () => {
   });
 
   it('el limit se documenta con el tope real de pagination.ts', () => {
-    const op = operation('get', `${API_BASE_PATH}/contacts`);
+    const op = operation('get', '/contacts');
     const limit = (op.parameters ?? []).find((p) => p.name === 'limit');
     expect(limit?.schema.maximum).toBe(100);
     expect(limit?.schema.default).toBe(50);
@@ -264,10 +375,11 @@ describe('documento OpenAPI: paginación', () => {
 describe('documento OpenAPI: idempotencia', () => {
   const idempotentes = ALL_OPERATIONS.filter((op) => op.idempotent);
 
-  it('las seis creaciones idempotentes son las que envuelve withIdempotency', () => {
-    expect(
-      idempotentes.map((op) => `${op.method.toUpperCase()} ${op.path}`).sort()
-    ).toEqual([
+  it('las creaciones idempotentes son EXACTAMENTE las que envuelve withIdempotency', () => {
+    const enDisco = idempotentOnDisk();
+    // Guarda contra el verde vacío: si el recorrido se rompiera, las
+    // dos listas serían `[]` y el test pasaría sin comprobar nada.
+    expect(enDisco).toEqual([
       'POST /broadcasts',
       'POST /contacts/{id}/tags',
       'POST /exports',
@@ -275,11 +387,15 @@ describe('documento OpenAPI: idempotencia', () => {
       'POST /tags',
       'POST /templates',
     ]);
+    expect(
+      idempotentes.map((op) => `${op.method.toUpperCase()} ${op.path}`).sort(),
+      'el documento y el código no dicen lo mismo sobre la idempotencia'
+    ).toEqual(enDisco);
   });
 
   it('cada una acepta Idempotency-Key y puede responder Idempotent-Replayed', () => {
     for (const op of idempotentes) {
-      const built = operation(op.method, `${API_BASE_PATH}${op.path}`);
+      const built = operation(op.method, op.path);
       expect(built['x-idempotent'], op.operationId).toBe(true);
       expect(
         (built.parameters ?? []).some(
@@ -304,7 +420,7 @@ describe('documento OpenAPI: idempotencia', () => {
     // La ruta no pasa por `withIdempotency` (ver el comentario de
     // src/app/api/v1/templates/[id]/route.ts): anunciar la cabecera
     // sería prometer una reproducción que no existe.
-    const op = operation('patch', `${API_BASE_PATH}/templates/{id}`);
+    const op = operation('patch', '/templates/{id}');
     expect(op['x-idempotent']).toBeUndefined();
     expect(
       (op.parameters ?? []).some((p) => p.name === 'Idempotency-Key')
@@ -314,7 +430,7 @@ describe('documento OpenAPI: idempotencia', () => {
 
 describe('documento OpenAPI: cubos de rate limit', () => {
   it('todas llevan publicApi por clave, con el límite real', () => {
-    const op = operation('get', `${API_BASE_PATH}/contacts`);
+    const op = operation('get', '/contacts');
     expect(op['x-rate-limits']).toEqual([
       {
         bucket: 'publicApi',
@@ -348,7 +464,7 @@ describe('documento OpenAPI: cubos de rate limit', () => {
       ],
     ];
     for (const [method, path, bucket, limit] of casos) {
-      const op = operation(method, `${API_BASE_PATH}${path}`);
+      const op = operation(method, path);
       const extra = op['x-rate-limits'].find((r) => r.bucket === bucket);
       expect(extra, `${method} ${path}`).toBeDefined();
       expect(extra!.per).toBe('account');
@@ -357,7 +473,7 @@ describe('documento OpenAPI: cubos de rate limit', () => {
   });
 
   it('el cubo de exportaciones se documenta con su ventana de una hora', () => {
-    const op = operation('post', `${API_BASE_PATH}/exports`);
+    const op = operation('post', '/exports');
     const extra = op['x-rate-limits'].find((r) => r.bucket === 'exports');
     expect(extra!.window_seconds).toBe(3600);
   });
@@ -440,16 +556,13 @@ describe('documento OpenAPI: secretos', () => {
         .map(([method]) => `${method.toUpperCase()} ${path}`)
     );
     expect(conSecreto.sort()).toEqual([
-      `POST ${API_BASE_PATH}/webhooks`,
-      `POST ${API_BASE_PATH}/webhooks/{id}/rotate-secret`,
+      'POST /webhooks',
+      'POST /webhooks/{id}/rotate-secret',
     ]);
   });
 
   it('listar y leer receptores usa el esquema SIN secreto', () => {
-    for (const path of [
-      `${API_BASE_PATH}/webhooks`,
-      `${API_BASE_PATH}/webhooks/{id}`,
-    ]) {
+    for (const path of ['/webhooks', '/webhooks/{id}']) {
       const op = operation('get', path);
       expect(JSON.stringify(op.responses['200'])).not.toContain('secret');
     }
