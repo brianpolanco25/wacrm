@@ -19,7 +19,9 @@
 //
 // Cubo propio `exports` (10/hora POR CUENTA, S-A7): la operación más
 // cara de la API, y va por cuenta para que dos claves de la misma
-// empresa no sumen el doble.
+// empresa no sumen el doble. Se cobra DESPUÉS de resolver la
+// conversación —como en el POST—, para que una ristra de 404 no queme
+// el cupo de la hora.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
@@ -54,6 +56,25 @@ export async function GET(
       return fail('bad_request', "'format' must be 'json' or 'csv'", 400);
     }
 
+    // Propiedad primero: un id de otra cuenta no existe (CP3).
+    const { data: conv, error } = await ctx.supabase
+      .from('conversations')
+      .select(CONVERSATION_SELECT)
+      .eq('id', id)
+      .eq('account_id', ctx.accountId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[api/v1/exports] conversation read error:', error);
+      return fail('internal', 'Failed to read conversation', 500);
+    }
+    if (!conv) return fail('not_found', 'Conversation not found', 404);
+
+    // El cubo se cobra DESPUÉS de resolver la conversación, igual que en
+    // `POST /api/v1/exports`: diez 404 seguidos (un id copiado mal, un
+    // chat ya borrado) no deben dejar a la cuenta sin exportaciones esa
+    // hora. Lo que se raciona es el trabajo caro, y el trabajo caro
+    // empieza aquí.
     const limit = checkRateLimit(
       `exports:${ctx.accountId}`,
       RATE_LIMITS.exports
@@ -70,20 +91,6 @@ export async function GET(
         }
       );
     }
-
-    // Propiedad primero: un id de otra cuenta no existe (CP3).
-    const { data: conv, error } = await ctx.supabase
-      .from('conversations')
-      .select(CONVERSATION_SELECT)
-      .eq('id', id)
-      .eq('account_id', ctx.accountId)
-      .maybeSingle();
-
-    if (error) {
-      console.error('[api/v1/exports] conversation read error:', error);
-      return fail('internal', 'Failed to read conversation', 500);
-    }
-    if (!conv) return fail('not_found', 'Conversation not found', 404);
 
     const total = await countConversationMessages(ctx.supabase, id);
     if (total > SYNC_MESSAGE_LIMIT) {
@@ -103,7 +110,16 @@ export async function GET(
       messages
     );
 
-    const filename = `conversation-${id}.${exportExtension(requested)}`;
+    // El nombre viaja entrecomillado dentro de `Content-Disposition`: un
+    // id con comillas, punto y coma o un salto de línea partiría la
+    // cabecera. Se usa el id que devolvió la base (un uuid) y aun así se
+    // filtra a `[A-Za-z0-9-]`, para que la cabecera siga siendo segura el
+    // día que esta ruta acepte otro identificador.
+    const safeId = String((conv as Conversation).id).replace(
+      /[^A-Za-z0-9-]/g,
+      ''
+    );
+    const filename = `conversation-${safeId}.${exportExtension(requested)}`;
     const { headers } = v1Headers({
       'Content-Type': exportContentType(requested),
       'Content-Disposition': `attachment; filename="${filename}"`,

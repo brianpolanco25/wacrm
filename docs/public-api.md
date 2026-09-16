@@ -190,7 +190,9 @@ the direct download and the job endpoint. Each call walks up to ten
 thousand messages (or writes a file with everything your filters match),
 which makes it the most expensive operation in this API. If you need
 more volume you don't need more calls: one job with filters takes every
-conversation in a single pass.
+conversation in a single pass. A request that never gets that far — a
+`404` on a conversation id, a rejected `filters` payload — does **not**
+spend from the budget.
 
 ## Endpoints
 

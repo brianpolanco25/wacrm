@@ -5,6 +5,7 @@ import { FakeDatabase, type Row } from '@/lib/security/fake-supabase';
 
 const h = vi.hoisted(() => ({
   requireApiKey: vi.fn(),
+  checkRateLimit: vi.fn(),
   rateLimitOk: true,
 }));
 
@@ -15,12 +16,15 @@ vi.mock('@/lib/auth/api-context', () => ({
 
 vi.mock('@/lib/rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/rate-limit')>()),
-  checkRateLimit: () => ({
-    success: h.rateLimitOk,
-    limit: 10,
-    remaining: h.rateLimitOk ? 9 : 0,
-    reset: Date.now() + 3_600_000,
-  }),
+  checkRateLimit: (...args: unknown[]) => {
+    (h.checkRateLimit as unknown as (...a: unknown[]) => void)(...args);
+    return {
+      success: h.rateLimitOk,
+      limit: 10,
+      remaining: h.rateLimitOk ? 9 : 0,
+      reset: Date.now() + 3_600_000,
+    };
+  },
 }));
 
 import { SYNC_MESSAGE_LIMIT } from '@/lib/exports/conversations';
@@ -95,6 +99,7 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) });
 beforeEach(() => {
   db = seed();
   h.rateLimitOk = true;
+  h.checkRateLimit.mockReset();
   h.requireApiKey.mockReset();
   h.requireApiKey.mockResolvedValue({
     authType: 'api_key',
@@ -184,6 +189,49 @@ describe('GET /api/v1/conversations/{id}/export', () => {
   it('una conversación inexistente también es 404', async () => {
     const res = await GET(req('conv-x'), params('conv-x'));
     expect(res.status).toBe(404);
+  });
+
+  it('un 404 no consume cupo del cubo de exportaciones', async () => {
+    // El cubo se cobra tras resolver la conversación (igual que en el
+    // POST): ni un id ajeno ni uno inexistente tocan el contador, así que
+    // una ristra de erratas no deja a la cuenta sin exportar esa hora.
+    expect((await GET(req('conv-b'), params('conv-b'))).status).toBe(404);
+    expect((await GET(req('conv-x'), params('conv-x'))).status).toBe(404);
+    expect(h.checkRateLimit).not.toHaveBeenCalled();
+
+    // Y la propia sí lo cobra, una vez.
+    expect((await GET(req('conv-a'), params('conv-a'))).status).toBe(200);
+    expect(h.checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(h.checkRateLimit.mock.calls[0][0]).toBe(`exports:${A}`);
+  });
+
+  it('el nombre del archivo lleva el id saneado y no puede romper la cabecera', async () => {
+    // Hoy el id es siempre un uuid y este caso es inalcanzable, pero el
+    // `filename` va entrecomillado dentro de `Content-Disposition`: si
+    // algún día la ruta acepta otro identificador, una comilla o un salto
+    // de línea partirían la cabecera. El saneo se prueba de verdad,
+    // sembrando una fila con un id hostil.
+    const nasty = 'x"; filename="pwn.sh\r\nX-Evil: 1';
+    db.tables.conversations.push({
+      id: nasty,
+      account_id: A,
+      contact_id: 'contact-a',
+      status: 'open',
+      unread_count: 0,
+      created_at: '2026-01-02T00:00:00.000Z',
+      updated_at: '2026-01-02T00:00:00.000Z',
+    });
+
+    const res = await GET(req(nasty), params(nasty));
+    expect(res.status).toBe(200);
+    const disposition = res.headers.get('content-disposition') ?? '';
+    expect(disposition).toBe(
+      'attachment; filename="conversation-xfilenamepwnshX-Evil1.json"'
+    );
+    // Una sola pareja de comillas y ni un salto de línea: la cabecera
+    // sigue siendo una sola cabecera.
+    expect(disposition.match(/"/g)).toHaveLength(2);
+    expect(disposition).not.toMatch(/[\r\n]/);
   });
 
   it('por encima del tope manda al encargo asíncrono, sin leer los mensajes', async () => {

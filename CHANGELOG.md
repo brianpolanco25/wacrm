@@ -146,7 +146,8 @@ behaviour changes**; nothing is limited by plan yet.
   last deliveries with their HTTP code, error and next retry — with a
   Retry button for the one that failed. The signing secret is still shown
   exactly once.
-- **Export your chats over the API.** `GET /api/v1/conversations/{id}/export?format=json|csv`
+- **Export your chats over the API.**
+  `GET /api/v1/conversations/{id}/export?format=json|csv`
   downloads one conversation with all of its messages (over 10 000
   messages it points you at the job endpoint instead), and
   `POST /api/v1/exports` queues an export of everything matching
@@ -156,7 +157,8 @@ behaviour changes**; nothing is limited by plan yet.
   10 exports per hour per account, and files kept for 7 days. Attachments
   are exported as `storage://<bucket>/<path>` references rather than
   links, and CSV cells starting with `=`, `+`, `-` or `@` are prefixed
-  with a quote so a spreadsheet reads them as text. Requires migration 063. Self-hosters: the same `GET /api/webhooks/cron` sweep that retries
+  with a quote so a spreadsheet reads them as text. Requires migration 063.
+  Self-hosters: the same `GET /api/webhooks/cron` sweep that retries
   webhooks also finishes interrupted exports and deletes expired files.
 - **New API endpoints** under `webhooks:manage`:
   `GET /api/v1/webhooks/{id}/deliveries` (paginated, `?status=`),

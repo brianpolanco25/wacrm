@@ -3,6 +3,28 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { ApiError } from '@/lib/api/v1/respond';
 import { FakeDatabase, type Row } from '@/lib/security/fake-supabase';
+
+// El techo de 250 000 mensajes no se puede alcanzar sembrando filas en
+// un doble. Se simula donde nace: `buildConversationsDocument` lanza
+// `ExportTooLargeError` cuando el interruptor está puesto, y así se
+// prueba de verdad lo que hace `runExportJob` al capturarla.
+const h = vi.hoisted(() => ({ tooLarge: false }));
+
+vi.mock('./conversations', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./conversations')>();
+  return {
+    ...actual,
+    buildConversationsDocument: async (
+      ...args: Parameters<typeof actual.buildConversationsDocument>
+    ) => {
+      if (h.tooLarge) {
+        throw new actual.ExportTooLargeError(actual.ASYNC_MESSAGE_LIMIT);
+      }
+      return actual.buildConversationsDocument(...args);
+    },
+  };
+});
+
 import {
   DOWNLOAD_URL_TTL_SECONDS,
   EXPORTS_BUCKET,
@@ -129,6 +151,7 @@ function job(over: Partial<Row> & { id: string }): Row {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
+  h.tooLarge = false;
 });
 
 describe('parseExportFilters', () => {
@@ -356,6 +379,60 @@ describe('construcción', () => {
     expect(status).toBe('failed');
     expect(db.rows('export_jobs')[0].error).toContain('contacts');
     expect(db.storageObjects).toHaveLength(0);
+  });
+
+  it('pasado el techo de memoria deja failed con el texto que dice cómo partirlo', async () => {
+    h.tooLarge = true;
+    const db = seed([job({ id: 'job-1' })]);
+    const { supabase } = client(db);
+
+    const status = await processExportJob(supabase, {
+      id: 'job-1',
+      account_id: A,
+      status: 'queued',
+      started_at: null,
+    });
+
+    expect(status).toBe('failed');
+    const row = db.rows('export_jobs')[0];
+    expect(row.status).toBe('failed');
+    // El mensaje del cliente sobrevive intacto: es accionable, no genérico.
+    expect(row.error).toContain('250,000 messages');
+    expect(row.error).toContain('`from` / `to`');
+    expect(row.error).not.toBe('The export could not be generated');
+    expect(row.finished_at).toBe(NOW.toISOString());
+    // Y no queda un archivo a medias en el bucket.
+    expect(db.storageObjects).toHaveLength(0);
+    expect(row.file_path).toBeNull();
+  });
+
+  it('un fallo inesperado NO se le cuenta al cliente: frase genérica, sin detalle', async () => {
+    const db = seed([job({ id: 'job-1' })]);
+    const boom = new Error('connection to 10.0.0.7:5432 refused');
+    const supabase = {
+      from: (t: string) => {
+        if (t === 'conversations') throw boom;
+        return db.admin.from(t);
+      },
+      storage: { from: (b: string) => db.admin.storage.from(b) },
+    } as unknown as SupabaseClient;
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const status = await runExportJob(supabase, {
+      id: 'job-1',
+      account_id: A,
+      kind: 'conversations',
+      format: 'json',
+      status: 'running',
+      params: {},
+    });
+
+    expect(status).toBe('failed');
+    expect(db.rows('export_jobs')[0].error).toBe(
+      'The export could not be generated'
+    );
+    expect(String(db.rows('export_jobs')[0].error)).not.toContain('10.0.0.7');
+    spy.mockRestore();
   });
 
   it('la ruta del objeto empieza por la cuenta', () => {
