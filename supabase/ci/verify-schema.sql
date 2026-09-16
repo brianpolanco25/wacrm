@@ -1029,6 +1029,61 @@ BEGIN
       'filter_contacts_by_tags no longer searches wa_username (migration 060)';
   END IF;
 
+  -- ============================================================
+  -- 061: memoria de idempotencia de la API pública.
+  -- ============================================================
+
+  IF to_regclass('public.api_idempotency_keys') IS NULL THEN
+    RAISE EXCEPTION 'api_idempotency_keys is missing (migration 061)';
+  END IF;
+
+  -- El índice único es el mecanismo de reserva: sin él, dos peticiones
+  -- simultáneas con la misma Idempotency-Key ejecutarían las dos.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    WHERE i.indexrelid = 'public.api_idempotency_keys_key_idx'::regclass
+      AND i.indisunique
+  ) THEN
+    RAISE EXCEPTION
+      'api_idempotency_keys_key_idx must exist and be UNIQUE (migration 061)';
+  END IF;
+
+  IF to_regclass('public.api_idempotency_keys_expires_at_idx') IS NULL THEN
+    RAISE EXCEPTION
+      'api_idempotency_keys_expires_at_idx is missing (migration 061)';
+  END IF;
+
+  -- La tabla guarda cuerpos de respuesta ya entregados: no la lee nadie
+  -- salvo el rol de servicio. RLS habilitada Y cero políticas — lo
+  -- segundo es tan importante como lo primero, porque una política
+  -- añadida sin pensar abriría `response_body` a cualquier miembro.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'api_idempotency_keys'
+      AND c.relrowsecurity
+  ) THEN
+    RAISE EXCEPTION
+      'api_idempotency_keys must have RLS enabled (migration 061)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'api_idempotency_keys'
+  ) THEN
+    RAISE EXCEPTION
+      'api_idempotency_keys must have NO RLS policies: service_role only (migration 061)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'api_idempotency_keys'
+      AND column_name = 'account_id' AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION
+      'api_idempotency_keys.account_id must be NOT NULL: every service-role query filters by it (migration 061)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
