@@ -387,6 +387,11 @@ export const guidesExports: DocPage = {
         'A single job with filters walks every conversation in one pass: if you need more volume you do not need more calls.',
       ],
     },
+    {
+      kind: 'note',
+      tone: 'warn',
+      text: 'The job has a ceiling too: **250,000 messages**. Past it the job ends `failed` with an `error` that says so — "This export exceeds 250,000 messages" — and no half-written file: we would rather hand you nothing than an incomplete export that looks complete. The way out is to slice it by date with the `from` and `to` filters (quarters, months) and run one job per slice.',
+    },
     { kind: 'h2', id: 'collect', text: 'Collecting the file' },
     {
       kind: 'code',

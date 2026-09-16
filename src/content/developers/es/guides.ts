@@ -394,6 +394,11 @@ export const guidesExports: DocPage = {
         'Un solo encargo con filtros recorre todas las conversaciones en una pasada: si necesitas más volumen no necesitas más llamadas.',
       ],
     },
+    {
+      kind: 'note',
+      tone: 'warn',
+      text: 'El encargo también tiene techo: **250 000 mensajes**. Al superarlo el encargo termina en `failed` con un `error` que te lo dice —«This export exceeds 250,000 messages»— y ningún archivo a medias: preferimos no darte nada a darte un export incompleto que parezca completo. La salida es partirlo por fechas con los filtros `from` y `to` (por trimestres, por meses) y lanzar un encargo por tramo.',
+    },
     { kind: 'h2', id: 'recoger', text: 'Recoger el archivo' },
     {
       kind: 'code',
