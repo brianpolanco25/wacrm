@@ -1391,6 +1391,7 @@
       "notAuthenticated": "Sin sesión iniciada",
       "tagCreated": "Etiqueta creada",
       "failedToCreateTag": "No se pudo crear la etiqueta",
+      "tagAlreadyExists": "Ya existe una etiqueta con ese nombre",
       "tagDeleted": "Etiqueta eliminada",
       "failedToDeleteTag": "No se pudo eliminar la etiqueta",
       "deleteAria": "Eliminar {name}",

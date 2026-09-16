@@ -38,6 +38,21 @@ const PRESET_COLORS = [
 ];
 
 /**
+ * True when Postgres refused the insert because the account already has
+ * a tag with that name (unique index `tags_account_lower_name_idx`,
+ * migración 064 — one name per account, case-insensitively).
+ *
+ * Exported because it is the only branch of `handleCreate` worth
+ * asserting and this repo has no jsdom to click the button with: the
+ * test pins the code, the component pins the message.
+ */
+export function isDuplicateTagNameError(
+  error: { code?: string } | null | undefined
+): boolean {
+  return error?.code === '23505';
+}
+
+/**
  * Tags card — colour-coded contact labels. Creation is an inline row
  * (name + colour swatch + Add); deletion goes through a confirmation
  * dialog since it detaches the tag from every contact.
@@ -115,6 +130,15 @@ export function TagManager() {
         color: selectedColor,
       });
 
+      // Since migration 064 the account can hold one tag per name,
+      // case-insensitively. The clash is not always visible in this
+      // card — the list is filtered by `user_id`, so the colliding tag
+      // may be a colleague's — which is exactly why the message has to
+      // say what happened instead of the generic "could not create".
+      if (isDuplicateTagNameError(error)) {
+        toast.error(t('tagAlreadyExists'));
+        return;
+      }
       if (error) throw error;
 
       toast.success(t('tagCreated'));

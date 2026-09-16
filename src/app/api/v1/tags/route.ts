@@ -123,11 +123,15 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     if (err instanceof TagError || err instanceof ContactError) {
-      return fail(
-        err.status === 400 ? 'bad_request' : 'internal',
-        err.message,
-        err.status
-      );
+      // 409 is the find-or-create that could not read back the row that
+      // the unique index of migration 064 refused (see findOrCreateTag).
+      const code =
+        err.status === 400
+          ? 'bad_request'
+          : err.status === 409
+            ? 'conflict'
+            : 'internal';
+      return fail(code, err.message, err.status);
     }
     return toApiErrorResponse(err);
   }

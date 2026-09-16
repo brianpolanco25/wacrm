@@ -20,15 +20,39 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   requireApiKey: vi.fn(),
   db: null as unknown as import('@/lib/security/fake-supabase').FakeDatabase,
+  /**
+   * Cuando no es null, `findOrCreateTag` lanza esto en vez de trabajar.
+   * Es la única forma de llegar a la rama del 23505 desde la ruta: el
+   * doble en memoria no simula índices únicos, y lo que se comprueba
+   * aquí no es la carrera (eso vive en `src/lib/api/v1/tags.test.ts`)
+   * sino qué CÓDIGO de error publica la ruta cuando la carrera se
+   * pierde del todo.
+   */
+  findOrCreateThrows: null as unknown,
 }));
 
 vi.mock('@/lib/auth/api-context', () => ({
   requireApiKey: h.requireApiKey,
 }));
 
+vi.mock('@/lib/api/v1/tags', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api/v1/tags')>();
+  return {
+    ...actual,
+    findOrCreateTag: (...args: Parameters<typeof actual.findOrCreateTag>) => {
+      if (h.findOrCreateThrows) throw h.findOrCreateThrows;
+      return actual.findOrCreateTag(...args);
+    },
+  };
+});
+
 import { FakeDatabase } from '@/lib/security/fake-supabase';
 import { MAX_BODY_BYTES } from '@/lib/api/v1/body';
-import { DEFAULT_TAG_COLOR, MAX_TAG_NAME_LENGTH } from '@/lib/api/v1/tags';
+import {
+  DEFAULT_TAG_COLOR,
+  MAX_TAG_NAME_LENGTH,
+  TagError,
+} from '@/lib/api/v1/tags';
 import { GET, POST } from './route';
 import {
   GET as GET_ONE,
@@ -111,6 +135,7 @@ function snapshotB() {
 
 beforeEach(() => {
   h.db = seed();
+  h.findOrCreateThrows = null;
   h.requireApiKey.mockReset();
   h.requireApiKey.mockResolvedValue({
     authType: 'api_key',
@@ -177,6 +202,20 @@ describe('GET /api/v1/tags', () => {
 });
 
 describe('POST /api/v1/tags', () => {
+  it('un choque irrecuperable con el índice único sale como conflict 409, no como internal', async () => {
+    // `findOrCreateTag` solo lanza un TagError 409 cuando perdió la
+    // carrera contra el índice de la migración 064 Y la relectura no
+    // alcanza la fila ganadora. La ruta tiene que publicar eso como
+    // `conflict`: un `internal` invitaría al cliente a reintentar algo
+    // que va a volver a chocar.
+    h.findOrCreateThrows = new TagError('Tag name already in use', 409);
+
+    const res = await POST(req('POST', '/api/v1/tags', { name: 'Moroso' }));
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('conflict');
+  });
+
   it('crea una etiqueta nueva con 201, acotada a la cuenta', async () => {
     const res = await POST(
       req('POST', '/api/v1/tags', { name: 'Fidelizado', color: '#ABC' })

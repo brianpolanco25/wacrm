@@ -107,6 +107,12 @@ export async function PATCH(
       .select(TAG_COLUMNS)
       .maybeSingle();
 
+    if (error?.code === '23505') {
+      // The pre-check above found no clash, but the unique index of
+      // migration 064 did: somebody created that name in between. Same
+      // answer as the pre-check, not a 500.
+      return fail('conflict', 'A tag with that name already exists', 409);
+    }
     if (error) {
       console.error('[api/v1/tags] update error:', error);
       return fail('internal', 'Failed to update tag', 500);

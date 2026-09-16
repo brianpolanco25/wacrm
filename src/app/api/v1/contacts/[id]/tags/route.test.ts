@@ -173,6 +173,62 @@ describe('POST /api/v1/contacts/{id}/tags', () => {
     expect(h.db.snapshot(B)).toEqual(before);
   });
 
+  it('una lista mixta no ata NADA: el 404 llega antes de la primera escritura', async () => {
+    // Hallazgo 1 de `review_tags-v1.md`. Antes, el bucle ataba id por id:
+    // con [propia, ajena] la propia quedaba puesta, su
+    // `contact.tag_added` emitido, y el cliente recibía un 404 que no
+    // decía qué había entrado. Ahora los ids se resuelven de una vez
+    // antes de escribir, así que la respuesta y la base coinciden.
+    const before = h.db.snapshot(B);
+    const { request, ctx } = postTo(CONTACT_A, { tag_ids: [TAG_A1, TAG_B] });
+    const res = await POST(request, ctx);
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.code).toBe('not_found');
+    expect(joins()).toHaveLength(0);
+    expect(h.runAutomationsForTrigger).not.toHaveBeenCalled();
+    expect(h.emitWebhookEvent).not.toHaveBeenCalled();
+    expect(h.db.snapshot(B)).toEqual(before);
+    // Y no hubo ni un INSERT en la unión: no es que se deshiciera, es
+    // que no llegó a pasar.
+    expect(
+      h.db.log.filter((e) => e.table === 'contact_tags' && e.op === 'insert')
+    ).toHaveLength(0);
+  });
+
+  it('un id que no existe en ninguna cuenta tampoco ata las etiquetas buenas que iban delante', async () => {
+    const { request, ctx } = postTo(CONTACT_A, {
+      tag_ids: [TAG_A1, TAG_A2, 'cccccccc-0000-4000-8000-000000000009'],
+    });
+    const res = await POST(request, ctx);
+
+    expect(res.status).toBe(404);
+    expect(joins()).toHaveLength(0);
+    expect(h.emitWebhookEvent).not.toHaveBeenCalled();
+  });
+
+  it('resuelve los ids en UNA consulta acotada por cuenta, no una por id', async () => {
+    const { request, ctx } = postTo(CONTACT_A, { tag_ids: [TAG_A1, TAG_A2] });
+    const res = await POST(request, ctx);
+    expect(res.status).toBe(200);
+
+    // La consulta de resolución: `in` sobre los dos ids y `eq` sobre la
+    // cuenta. Es lo que convierte el lote en todo-o-nada.
+    const resolucion = h.db.log.filter(
+      (e) =>
+        e.table === 'tags' &&
+        e.op === 'select' &&
+        e.filters.some((f) => f.op === 'in')
+    );
+    expect(resolucion).toHaveLength(1);
+    expect(resolucion[0].filters).toEqual(
+      expect.arrayContaining([
+        { column: 'account_id', op: 'eq', value: A },
+        { column: 'id', op: 'in', value: [TAG_A1, TAG_A2] },
+      ])
+    );
+  });
+
   it('con un contacto de otra cuenta responde 404 antes de tocar ninguna etiqueta', async () => {
     const before = h.db.snapshot(B);
     const { request, ctx } = postTo(CONTACT_B, { tag_ids: [TAG_A1] });

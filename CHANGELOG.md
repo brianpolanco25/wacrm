@@ -462,6 +462,24 @@ behaviour changes**; nothing is limited by plan yet.
   (unsubscribing, closing a ticket) were reacting to nothing. The event
   now fires only when a row actually went away, mirroring
   `contact.tag_added`, which has always fired only for a real addition.
+- **One tag per name, enforced by the database.** A new unique index on
+  `tags (account_id, lower(name))` closes the window where two
+  simultaneous creates — two API calls, or the API and the dashboard —
+  could both decide the tag did not exist and write it twice. The public
+  API's find-or-create now treats the collision as what it is (somebody
+  just created exactly the tag you asked for) and answers `200` with that
+  row. `POST /api/v1/contacts/{id}/tags` also resolves every id up front:
+  a list with one foreign or unknown id attaches nothing at all, instead
+  of attaching the ids that came before it and then answering `404`. In
+  Settings → Fields & tags, a name the account already uses (in any
+  casing) now says so instead of "Failed to create tag".
+
+> **Migration:** `supabase/migrations/064_tags_unique_name.sql`. It merges
+> tags that already differ only in casing before creating the index —
+> oldest row wins, its contacts and any automation, step or flow node
+> pointing at the others are moved over, the duplicates are deleted — so
+> there is nothing to clean up by hand.
+
 - **Message templates in the public API.** `GET /api/v1/templates` (filters
   by `status`, `language`, `category` and `search`, paginated),
   `GET /api/v1/templates/{id}`, `POST` (submits to Meta),

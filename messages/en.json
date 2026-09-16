@@ -1391,6 +1391,7 @@
       "notAuthenticated": "Not authenticated",
       "tagCreated": "Tag created",
       "failedToCreateTag": "Failed to create tag",
+      "tagAlreadyExists": "A tag with that name already exists",
       "tagDeleted": "Tag deleted",
       "failedToDeleteTag": "Failed to delete tag",
       "deleteAria": "Delete {name}",

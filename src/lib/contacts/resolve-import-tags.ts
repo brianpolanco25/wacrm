@@ -82,10 +82,37 @@ export async function resolveImportTagIds(
       )
       .select('id, name');
 
-    if (createError) throw createError;
+    if (createError?.code === '23505') {
+      // El índice único de la migración 064 (`tags (account_id,
+      // lower(name))`) rechazó el lote: entre la lectura de arriba y
+      // este INSERT alguien —otra importación, el panel, la API—
+      // creó uno de esos nombres. Postgres aborta el INSERT ENTERO, así
+      // que aquí no se creó ninguna fila.
+      //
+      // Tumbar la importación por eso sería desproporcionado: el nombre
+      // que provocó el choque ya existe, que es lo que se quería. Se
+      // relee el catálogo y se resuelve con lo que haya; lo que siga sin
+      // aparecer se informa como omitido, igual que un nombre que no se
+      // pudo crear por permisos.
+      const { data: after, error: refetchError } = await supabase
+        .from('tags')
+        .select('id, name')
+        .eq('account_id', accountId);
+      if (refetchError) throw refetchError;
 
-    for (const tag of created ?? []) {
-      tagIdByKey.set(tag.name.trim().toLowerCase(), tag.id);
+      for (const tag of after ?? []) {
+        const key = tag.name.trim().toLowerCase();
+        if (!tagIdByKey.has(key)) tagIdByKey.set(key, tag.id);
+      }
+      for (const name of toCreate) {
+        if (!tagIdByKey.has(name.toLowerCase())) skippedNames.push(name);
+      }
+    } else if (createError) {
+      throw createError;
+    } else {
+      for (const tag of created ?? []) {
+        tagIdByKey.set(tag.name.trim().toLowerCase(), tag.id);
+      }
     }
   }
 

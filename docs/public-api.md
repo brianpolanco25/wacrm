@@ -445,7 +445,11 @@ trimmed); `color` is optional and must be a hex colour (`#rgb` or
 already uses returns `200` with the existing tag and leaves its colour
 alone; a new tag returns `201`. That is the same matching the CSV import
 and the `tags` field of `PATCH /api/v1/contacts/{id}` use, so the three
-paths cannot end up with two rows for the same word.
+paths cannot end up with two rows for the same word. The rule is enforced
+by the database (one tag per account per lower-cased name), so two
+simultaneous calls with the same name still produce one tag: the loser of
+the race gets the winner's row with `200`, not a duplicate and not a
+`500`.
 
 ### `GET` / `PATCH` / `DELETE /api/v1/tags/{id}`
 
@@ -469,6 +473,11 @@ safely by a caller that knows every tag the contact already has; this
 one adds without touching the rest. A tag the contact already carries is
 a no-op, not a second event. A contact or a tag in another account is
 `404`.
+
+**All or nothing.** Every id is resolved against the account before the
+first write, so a list that contains one unknown or foreign id attaches
+none of them and fires no events — the `404` and the state of your data
+agree.
 
 Attaching a tag here fires exactly what the dashboard fires: the
 `tag_added` automation trigger and the `contact.tag_added` webhook.

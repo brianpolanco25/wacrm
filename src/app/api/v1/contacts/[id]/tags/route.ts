@@ -14,6 +14,11 @@
 // emitted, so a tag added over the API is indistinguishable from one an
 // agent added by hand — including the duplicate rule: re-attaching a tag
 // the contact already has is a no-op, not a second event.
+//
+// Ownership is resolved up front, never mid-loop: the contact and then
+// all the ids in one scoped query. Only when every id belongs to the
+// account does the first write happen, so a rejected call leaves no
+// half-applied batch behind (hallazgo 1 de `review_tags-v1.md`).
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
@@ -75,6 +80,35 @@ export async function POST(
         contactId
       );
       if (!contact) return fail('not_found', 'Contact not found', 404);
+
+      // …and then ALL the tags, in one query, before the first write.
+      // `addContactTagAndDispatch` also checks ownership, but it checks
+      // it one id at a time: with the loop alone, a list whose third id
+      // belonged to another account answered 404 **after** attaching the
+      // first two and emitting their `contact.tag_added`. The caller got
+      // an error and a half-applied change it could not see. One bounded
+      // `.in()` (at most MAX_TAG_IDS_PER_CALL ids, scoped by
+      // `account_id`) turns that into all-or-nothing: an unknown or
+      // foreign id is a 404 with nothing written and nothing dispatched.
+      const { data: owned, error: ownedError } = await ctx.supabase
+        .from('tags')
+        .select('id')
+        .eq('account_id', ctx.accountId)
+        .in('id', tagIds)
+        .limit(MAX_TAG_IDS_PER_CALL);
+      if (ownedError) {
+        console.error('[api/v1/contacts/tags] tag lookup error:', ownedError);
+        return fail('internal', 'Failed to resolve tags', 500);
+      }
+      const ownedIds = new Set(
+        (owned ?? []).map((row) => (row as { id: string }).id)
+      );
+      if (tagIds.some((tagId) => !ownedIds.has(tagId))) {
+        // Deliberately not naming which id: a 404 that distinguished
+        // "does not exist" from "belongs to somebody else" would confirm
+        // another account's tag id.
+        return fail('not_found', 'Tag not found', 404);
+      }
 
       for (const tagId of tagIds) {
         await addContactTagAndDispatch({

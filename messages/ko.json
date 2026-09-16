@@ -1391,6 +1391,7 @@
       "notAuthenticated": "인증되지 않았습니다",
       "tagCreated": "태그가 생성되었습니다",
       "failedToCreateTag": "태그를 생성하지 못했습니다",
+      "tagAlreadyExists": "같은 이름의 태그가 이미 있습니다",
       "tagDeleted": "태그가 삭제되었습니다",
       "failedToDeleteTag": "태그를 삭제하지 못했습니다",
       "deleteAria": "{name} 삭제",

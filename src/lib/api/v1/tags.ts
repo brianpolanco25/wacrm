@@ -98,6 +98,24 @@ export function normalizeTagColor(value: unknown): string | null {
 }
 
 /**
+ * How many rows {@link findTagByName} is willing to scan.
+ *
+ * The comparison happens in Node (see the header), so the query reads
+ * the account's roster. Explicit rather than implicit on purpose: with
+ * no `.limit()` PostgREST applies its own `db-max-rows` (1000 by
+ * default) and the read would silently stop returning existing tags
+ * past that line — the find half of find-or-create would start missing
+ * and the account would collect near-duplicates. With the limit
+ * written here the ceiling is visible, and since migration 064 the
+ * unique index catches whatever slips past it anyway (the insert comes
+ * back 23505 and is treated as "it already existed").
+ *
+ * A tag roster is settings-class data — a handful of rows per account —
+ * so this is a guard rail, not a paging strategy.
+ */
+export const TAG_ROSTER_SCAN_LIMIT = 1000;
+
+/**
  * The account's tag whose name matches `name` case-insensitively, or
  * null. Reads the account's tags and compares in Node (see the header):
  * the roster is settings-class, a handful of rows per account.
@@ -110,7 +128,8 @@ export async function findTagByName(
   const { data, error } = await db
     .from('tags')
     .select(TAG_COLUMNS)
-    .eq('account_id', accountId);
+    .eq('account_id', accountId)
+    .limit(TAG_ROSTER_SCAN_LIMIT);
   if (error) throw new TagError('Failed to read tags', 500);
 
   const key = tagKey(name);
@@ -141,6 +160,17 @@ export async function getTagById(
  * existing tag answered — the route turns that into `200` instead of
  * `201`, and the existing tag's colour is left alone: a caller that
  * re-posts a name it already has is naming a tag, not repainting it.
+ *
+ * Read-then-insert on its own is not safe under concurrency: two calls
+ * with the same name can both read "no such tag" and both insert. What
+ * closes that window is the unique index on `(account_id, lower(name))`
+ * (migration 064) — the loser of the race gets `23505`, and **that is
+ * not an error here**: somebody else just created exactly the tag this
+ * caller asked for, which is the answer find-or-create promises. So the
+ * row is read back and returned with `created: false`, the same `200`
+ * the caller would have got a millisecond later. The dashboard's tag
+ * manager inserts straight into Supabase, so the race is real between
+ * the API and the panel, not just between two API calls.
  */
 export async function findOrCreateTag(
   db: SupabaseClient,
@@ -162,6 +192,17 @@ export async function findOrCreateTag(
     })
     .select(TAG_COLUMNS)
     .single();
+
+  if (error?.code === '23505') {
+    // Lost the race (or the roster is longer than the scan limit).
+    // Re-read: the winner's row is the answer.
+    const winner = await findTagByName(db, accountId, name);
+    if (winner) return { tag: winner, created: false };
+    // Only reachable if the re-read cannot see the row that just
+    // collided — a roster past TAG_ROSTER_SCAN_LIMIT. Never retry the
+    // insert: it would collide again. Say so instead of looping.
+    throw new TagError('Tag name already in use', 409);
+  }
 
   if (error || !data) {
     console.error('[api/v1/tags] create error:', error);

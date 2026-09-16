@@ -1152,6 +1152,23 @@ BEGIN
       'webhook_deliveries must not expose write policies (migration 062)';
   END IF;
 
+  -- ---- 064: un nombre de etiqueta por cuenta -------------------
+  -- Unico Y funcional sobre lower(name): sin la expresion, `Moroso` y
+  -- `moroso` volverian a convivir y el find-or-create de la API
+  -- seguiria pudiendo duplicar bajo concurrencia.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relname = 'tags_account_lower_name_idx'
+      AND i.indrelid = 'public.tags'::regclass
+      AND i.indisunique
+      AND pg_get_indexdef(i.indexrelid) ILIKE '%lower(name)%'
+  ) THEN
+    RAISE EXCEPTION
+      'tags_account_lower_name_idx must be a unique index on (account_id, lower(name)) (migration 064)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
