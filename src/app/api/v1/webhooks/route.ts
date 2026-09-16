@@ -10,6 +10,7 @@
 import { requireApiKey } from '@/lib/auth/api-context';
 import { assertPlanFeature } from '@/lib/billing/enforce';
 import { ok, okList, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
+import { readJsonBody } from '@/lib/api/v1/body';
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { normalizeEvents } from '@/lib/webhooks/events';
 import {
@@ -55,13 +56,10 @@ export async function POST(request: Request) {
     const ctx = await requireApiKey(request, 'webhooks:manage');
     await assertPlanFeature(ctx.accountId, 'webhooks');
 
-    const body = (await request.json().catch(() => null)) as Record<
-      string,
-      unknown
-    > | null;
-    if (!body || typeof body !== 'object') {
-      return fail('bad_request', 'Request body must be a JSON object', 400);
-    }
+    // Fase 7 §1: every /api/v1 write reads its body through
+    // `readJsonBody` — Content-Type (415), 1 MiB ceiling (413) and
+    // "must be a JSON object" (400) in one place. Never `request.json()`.
+    const { data: body } = await readJsonBody(request);
 
     const url = normalizeWebhookUrl(body.url);
     if (!url) {

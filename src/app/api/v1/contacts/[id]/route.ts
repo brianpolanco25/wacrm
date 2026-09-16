@@ -10,6 +10,7 @@
 
 import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
+import { readJsonBody } from '@/lib/api/v1/body';
 import {
   getContactById,
   setContactTags,
@@ -40,13 +41,10 @@ export async function PATCH(
     const ctx = await requireApiKey(request, 'contacts:write');
     const { id } = await params;
 
-    const body = (await request.json().catch(() => null)) as Record<
-      string,
-      unknown
-    > | null;
-    if (!body || typeof body !== 'object') {
-      return fail('bad_request', 'Request body must be a JSON object', 400);
-    }
+    // Fase 7 §1: every /api/v1 write reads its body through
+    // `readJsonBody` — Content-Type (415), 1 MiB ceiling (413) and
+    // "must be a JSON object" (400) in one place. Never `request.json()`.
+    const { data: body } = await readJsonBody(request);
 
     // Verify the contact is in this account before mutating anything.
     const existing = await getContactById(ctx.supabase, ctx.accountId, id);
@@ -95,7 +93,11 @@ export async function PATCH(
     return ok(contact);
   } catch (err) {
     if (err instanceof ContactError) {
-      return fail(err.status === 400 ? 'bad_request' : 'internal', err.message, err.status);
+      return fail(
+        err.status === 400 ? 'bad_request' : 'internal',
+        err.message,
+        err.status
+      );
     }
     return toApiErrorResponse(err);
   }

@@ -10,6 +10,7 @@
 
 import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, okList, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
+import { readJsonBody } from '@/lib/api/v1/body';
 import {
   parseListParams,
   keysetFilter,
@@ -97,13 +98,10 @@ export async function POST(request: Request) {
   try {
     const ctx = await requireApiKey(request, 'contacts:write');
 
-    const body = (await request.json().catch(() => null)) as Record<
-      string,
-      unknown
-    > | null;
-    if (!body || typeof body !== 'object') {
-      return fail('bad_request', 'Request body must be a JSON object', 400);
-    }
+    // Fase 7 §1: every /api/v1 write reads its body through
+    // `readJsonBody` — Content-Type (415), 1 MiB ceiling (413) and
+    // "must be a JSON object" (400) in one place. Never `request.json()`.
+    const { data: body } = await readJsonBody(request);
 
     const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
     if (!phone) {
