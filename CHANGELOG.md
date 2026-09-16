@@ -95,6 +95,11 @@ behaviour changes**; nothing is limited by plan yet.
 > records). Nothing existing is touched, and the API works without it —
 > only the retry guarantee needs the table.
 
+> **Migration required:** apply
+> `supabase/migrations/062_webhook_deliveries.sql`. It adds the
+> `webhook_deliveries` queue; no existing data is touched. Deleting a
+> webhook endpoint now also deletes its delivery history.
+
 ### Added
 
 - **Retries on the public API no longer risk sending twice.** `POST
@@ -113,6 +118,33 @@ behaviour changes**; nothing is limited by plan yet.
   you are rotating because a key leaked.
 - **API keys can be given an expiry when you create them** — 30, 90 or
   365 days, or never (still the default).
+- **Webhooks no longer lose events.** Every outbound event is now queued
+  before it is attempted, so a receiver that is down, slow or mid-deploy
+  gets it on the next sweep instead of never. A failed delivery is
+  retried after 1 min, 5 min, 30 min, 2 h and 12 h, then given up on and
+  kept in the log for 30 days so you can see what happened and retry it
+  by hand. Endpoints still auto-disable after 15 consecutive failures.
+  Self-hosters: retries need a scheduler calling
+  `GET /api/webhooks/cron` every minute with `WEBHOOK_CRON_SECRET` in the
+  `x-cron-secret` header (see `docs/docker.md`); without it, only the
+  first attempt of each delivery runs.
+- **Eight new webhook events**, fired from the product itself rather than
+  only from the API: `conversation.closed`, `conversation.assigned`,
+  `contact.created`, `contact.updated`, `contact.tag_added`,
+  `contact.tag_removed`, `template.status_updated` and
+  `broadcast.completed`. A tag added by an agent in the dashboard now
+  reaches your server exactly like one added over the API.
+- **Settings → Webhooks.** Register and edit endpoints, turn them on and
+  off, send a signed test `ping`, rotate the signing secret, and read the
+  last deliveries with their HTTP code, error and next retry — with a
+  Retry button for the one that failed. The signing secret is still shown
+  exactly once.
+- **New API endpoints** under `webhooks:manage`:
+  `GET /api/v1/webhooks/{id}/deliveries` (paginated, `?status=`),
+  `POST /api/v1/webhooks/{id}/deliveries/{deliveryId}/retry`,
+  `POST /api/v1/webhooks/{id}/test` and
+  `POST /api/v1/webhooks/{id}/rotate-secret`.
+
 - **Customers who write with a WhatsApp username now arrive.** Since
   April 2026 Meta identifies who is writing with a business-scoped user
   id and stops sending their phone number when they use a username and

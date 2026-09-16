@@ -154,6 +154,42 @@ not part of the token; an empty — or whitespace-only — value counts as
 unset. A subscribe that does not match the platform token logs a
 `console.warn` naming neither the supplied nor the expected value.
 
+## Outbound webhook delivery queue
+
+Every event we push to a customer's server is persisted first
+(`webhook_deliveries`, migration 062) and only then attempted. Three
+things about that queue are security-relevant:
+
+- **`WEBHOOK_CRON_SECRET`** guards `GET /api/webhooks/cron`, the route
+  that drains the queue. It is compared in constant time
+  (`timingSafeEqual`, same shape as `AUTOMATION_CRON_SECRET`) and the
+  route answers 503 — not 200 — while the variable is unset, so a
+  deployment that forgot it fails loudly instead of silently never
+  retrying. Anyone who learns the secret can force delivery attempts;
+  they cannot read or write any tenant data through it.
+- **The SSRF guard runs on every attempt, not just at registration.**
+  A hostname that resolved to a public address when the endpoint was
+  created can point at `10.0.0.5` an hour later, and the retry ladder
+  means an endpoint is contacted for up to twelve hours after the first
+  attempt. `src/lib/webhooks/ssrf.ts` is therefore evaluated inside
+  `attemptDelivery`, with `redirect: 'manual'` so a public URL cannot
+  3xx-bounce to an internal one.
+- **The queue is write-only for the service role.** `webhook_deliveries`
+  has a single RLS policy, for `SELECT`. Nobody with a user JWT can
+  insert a row — a forged delivery would be an arbitrary signed POST,
+  from our servers, to a URL of the attacker's choosing. The `payload`
+  column (which carries end-customer message text) never leaves the
+  server either: the panel and the API both project a secret-free,
+  payload-free view.
+
+The signing secret itself is stored AES-256-GCM-encrypted and shown in
+plaintext exactly once, at creation or after
+`POST /api/v1/webhooks/{id}/rotate-secret`. There is no grace window
+with two valid secrets: from the rotation response onward everything is
+signed with the new one, so a receiver has to be updated before the next
+delivery. That is deliberate — a second valid secret is a second thing
+that can leak.
+
 ## Private attachments
 
 The `chat-media` and `flow-media` Storage buckets hold every attachment

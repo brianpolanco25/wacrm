@@ -245,6 +245,10 @@ import * as v1Broadcasts from '@/app/api/v1/broadcasts/route';
 import * as v1BroadcastById from '@/app/api/v1/broadcasts/[id]/route';
 import * as v1Webhooks from '@/app/api/v1/webhooks/route';
 import * as v1WebhookById from '@/app/api/v1/webhooks/[id]/route';
+import * as v1WebhookDeliveries from '@/app/api/v1/webhooks/[id]/deliveries/route';
+import * as v1WebhookRetry from '@/app/api/v1/webhooks/[id]/deliveries/[deliveryId]/retry/route';
+import * as v1WebhookTest from '@/app/api/v1/webhooks/[id]/test/route';
+import * as v1WebhookRotate from '@/app/api/v1/webhooks/[id]/rotate-secret/route';
 import * as waSend from '@/app/api/whatsapp/send/route';
 import * as waBroadcast from '@/app/api/whatsapp/broadcast/route';
 import * as waBroadcastResume from '@/app/api/whatsapp/broadcast/[id]/resume/route';
@@ -479,6 +483,28 @@ function seed(): FakeDatabase {
         failure_count: 0,
         created_at: created,
       },
+      // Fase 7 §4: la bitácora de entregas es de la cuenta y su
+      // `payload` lleva datos del cliente final.
+      webhookDelivery: {
+        id: `whd-${tag}`,
+        account_id: acct,
+        endpoint_id: `wh-${tag}`,
+        event: 'message.received',
+        payload: {
+          id: `evt-${tag}`,
+          event: 'message.received',
+          occurred_at: created,
+          account_id: acct,
+          data: { text: `secreto de ${tag}` },
+        },
+        attempt: 1,
+        status: 'failed',
+        next_attempt_at: created,
+        last_status_code: 500,
+        last_error: 'endpoint responded 500',
+        created_at: created,
+        delivered_at: null,
+      },
       aiConfig: {
         id: `ai-${tag}`,
         account_id: acct,
@@ -588,6 +614,7 @@ function seed(): FakeDatabase {
       broadcasts: both('broadcast'),
       broadcast_recipients: both('recipient'),
       webhook_endpoints: both('webhook'),
+      webhook_deliveries: both('webhookDelivery'),
       ai_configs: both('aiConfig'),
       ai_knowledge_documents: both('knowledge'),
       ai_usage_log: both('usage'),
@@ -1421,6 +1448,63 @@ describe('/api/v1 (service role via API key)', () => {
       h.db.rows('webhook_endpoints').find((w) => w.id === createdBody.data.id)
         ?.account_id
     ).toBe(A);
+    expectBUnchanged(before);
+  });
+
+  // ---- fase 7 §4: bitácora de entregas ----
+
+  it('deliveries: solo las de A; el endpoint y la entrega de B → 404; el payload no sale', async () => {
+    const before = h.db.snapshot(B);
+
+    const list = await v1WebhookDeliveries.GET(
+      req('GET', '/api/v1/webhooks/wh-a/deliveries', undefined, asKeyA),
+      params({ id: 'wh-a' })
+    );
+    const listBody = await list.json();
+    expect(list.status).toBe(200);
+    expect(listBody.data.map((d: Row) => d.id)).toEqual(['whd-a']);
+    // Ni el payload ni el account_id viajan en la vista pública.
+    expect(listBody.data[0]).not.toHaveProperty('payload');
+    expect(listBody.data[0]).not.toHaveProperty('account_id');
+    expectNoBIds(listBody);
+
+    // El endpoint de B no existe para A.
+    const foreignList = await v1WebhookDeliveries.GET(
+      req('GET', '/api/v1/webhooks/wh-b/deliveries', undefined, asKeyA),
+      params({ id: 'wh-b' })
+    );
+    expect(foreignList.status).toBe(404);
+
+    // Reintentar una entrega de B, nombrando su endpoint o el propio.
+    for (const [endpointId, deliveryId] of [
+      ['wh-b', 'whd-b'],
+      ['wh-a', 'whd-b'],
+    ]) {
+      const res = await v1WebhookRetry.POST(
+        req(
+          'POST',
+          `/api/v1/webhooks/${endpointId}/deliveries/${deliveryId}/retry`,
+          undefined,
+          asKeyA
+        ),
+        params({ id: endpointId, deliveryId })
+      );
+      expect(res.status).toBe(404);
+    }
+
+    // Probar y rotar el secreto del endpoint de B.
+    const foreignTest = await v1WebhookTest.POST(
+      req('POST', '/api/v1/webhooks/wh-b/test', undefined, asKeyA),
+      params({ id: 'wh-b' })
+    );
+    expect(foreignTest.status).toBe(404);
+
+    const foreignRotate = await v1WebhookRotate.POST(
+      req('POST', '/api/v1/webhooks/wh-b/rotate-secret', undefined, asKeyA),
+      params({ id: 'wh-b' })
+    );
+    expect(foreignRotate.status).toBe(404);
+
     expectBUnchanged(before);
   });
 });

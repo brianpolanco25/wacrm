@@ -33,6 +33,8 @@ import {
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
 import { claimInboundAutoReplyForAutomation } from './reply-marker';
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
+import { emitWebhookEvent } from '@/lib/webhooks/emit';
+import { applyConversationChangeByContact } from '@/lib/conversations/status-events';
 
 // ------------------------------------------------------------
 // Public API
@@ -531,6 +533,14 @@ async function runStep(
       });
       if (!added) return `tag ${cfg.tag_id} already present`;
 
+      // El motor no puede pasar por `addContactTagAndDispatch` (esa lib
+      // importa este archivo y el ciclo rompería el arranque), así que
+      // el webhook se emite aquí, justo donde el alta fue real.
+      await emitWebhookEvent(args.automation.account_id, 'contact.tag_added', {
+        contact_id: args.contactId,
+        tag_id: cfg.tag_id,
+      });
+
       const depth = getTagChainDepth(args.context);
       if (depth >= MAX_TAG_CHAIN_DEPTH) {
         console.warn('[automations] tag_added chain depth limit reached', {
@@ -569,6 +579,11 @@ async function runStep(
         .delete()
         .eq('contact_id', args.contactId)
         .eq('tag_id', cfg.tag_id);
+      await emitWebhookEvent(
+        args.automation.account_id,
+        'contact.tag_removed',
+        { contact_id: args.contactId, tag_id: cfg.tag_id }
+      );
       return `tag ${cfg.tag_id} removed`;
     }
 
@@ -593,11 +608,15 @@ async function runStep(
           return 'no agent available (nobody online) — left in queue';
       }
       if (!agentId) return 'no agent resolved';
-      await db
-        .from('conversations')
-        .update({ assigned_agent_id: agentId })
-        .eq('account_id', args.automation.account_id)
-        .eq('contact_id', args.contactId);
+      // Por el helper de dominio: el UPDATE es el mismo, pero además
+      // emite `conversation.assigned` a los webhooks del cliente
+      // (fase 7 §4) y solo cuando el agente cambia de verdad.
+      await applyConversationChangeByContact(
+        db,
+        args.automation.account_id,
+        args.contactId,
+        { assignedAgentId: agentId }
+      );
       return `assigned to ${agentId}`;
     }
 
@@ -630,16 +649,14 @@ async function runStep(
         // Upsert on the table's UNIQUE(contact_id, custom_field_id) so repeated
         // runs overwrite rather than duplicate. Tenancy is enforced above and,
         // for the contact side, by the entry-point ownership guard.
-        await db
-          .from('contact_custom_values')
-          .upsert(
-            {
-              contact_id: args.contactId,
-              custom_field_id: customFieldId,
-              value,
-            },
-            { onConflict: 'contact_id,custom_field_id' }
-          );
+        await db.from('contact_custom_values').upsert(
+          {
+            contact_id: args.contactId,
+            custom_field_id: customFieldId,
+            value,
+          },
+          { onConflict: 'contact_id,custom_field_id' }
+        );
         return `custom field updated`;
       }
 
@@ -717,11 +734,12 @@ async function runStep(
     case 'close_conversation': {
       if (!args.contactId)
         throw new Error('close_conversation needs a contact');
-      await db
-        .from('conversations')
-        .update({ status: 'closed', updated_at: new Date().toISOString() })
-        .eq('account_id', args.automation.account_id)
-        .eq('contact_id', args.contactId);
+      await applyConversationChangeByContact(
+        db,
+        args.automation.account_id,
+        args.contactId,
+        { status: 'closed' }
+      );
       return 'conversation closed';
     }
 

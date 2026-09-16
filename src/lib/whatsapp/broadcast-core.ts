@@ -39,6 +39,7 @@ import {
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import { emitWebhookEvent } from '@/lib/webhooks/emit';
 import { assertQuota, recordUsage } from '@/lib/billing/enforce';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
@@ -522,11 +523,36 @@ export async function finalizeBroadcastStatus(
     .select('id', { count: 'exact', head: true })
     .eq('broadcast_id', broadcastId);
 
-  await db
+  const finalStatus = failed > 0 && failed === (total ?? 0) ? 'failed' : 'sent';
+
+  // `.neq('status', finalStatus)` hace idempotente la finalización: un
+  // segundo `finalizeBroadcastStatus` sobre una campaña ya cerrada no
+  // devuelve fila y, por tanto, no vuelve a emitir el webhook. Sin esa
+  // guarda, la ruta de reanudar (que también llama aquí) mandaría
+  // `broadcast.completed` repetido por cada pasada vacía.
+  const { data: finalized } = await db
     .from('broadcasts')
     .update({
-      status: failed > 0 && failed === (total ?? 0) ? 'failed' : 'sent',
+      status: finalStatus,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', broadcastId);
+    .eq('id', broadcastId)
+    .neq('status', finalStatus)
+    .select('id, account_id')
+    .maybeSingle();
+
+  if (!finalized) return;
+
+  const sent = await countWhere('sent');
+  await emitWebhookEvent(
+    (finalized as { account_id: string }).account_id,
+    'broadcast.completed',
+    {
+      broadcast_id: broadcastId,
+      status: finalStatus,
+      total: total ?? 0,
+      sent,
+      failed,
+    }
+  );
 }

@@ -863,6 +863,18 @@ async function processMessage(
   if (!contactOutcome) return;
   const contactRecord = contactOutcome.contact;
 
+  // `contact.created` (fase 7 §4) en cuanto la fila existe: un contacto
+  // que llega por WhatsApp es un alta igual que la de la API, y el
+  // cliente quiere enterarse aunque nunca toque `/api/v1/contacts`.
+  if (contactOutcome.wasCreated) {
+    await dispatchWebhookEvent(supabaseAdmin(), accountId, 'contact.created', {
+      contact_id: contactRecord.id,
+      phone: contactRecord.phone ?? null,
+      wa_user_id: contactRecord.wa_user_id ?? null,
+      name: contactRecord.name ?? null,
+    });
+  }
+
   // Find or create conversation
   const convResult = await findOrCreateConversation(
     accountId,

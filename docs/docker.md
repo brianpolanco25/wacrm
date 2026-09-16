@@ -343,3 +343,25 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   deployment, sending the shared secret in the `x-cron-secret` header
   (`AUTOMATION_CRON_SECRET`, see `.env.local.example`). Both return
   503 until that variable is set.
+- **Outbound webhooks need their own scheduler.** `GET /api/webhooks/cron`
+  drains the delivery queue (`webhook_deliveries`, migration 062): it
+  retries what failed on the S-A6 ladder — 1 min, 5 min, 30 min, 2 h,
+  12 h — and purges deliveries older than 30 days. Same contract as the
+  two above: the shared secret travels in `x-cron-secret`, this time
+  `WEBHOOK_CRON_SECRET`, and the route answers 503 until the variable is
+  set.
+
+  | Variable              | Required                         | What it is                                                                                                         |
+  | --------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+  | `WEBHOOK_CRON_SECRET` | to retry failed webhook delivery | Random string, compared in constant time. Without it the first attempt still happens, but nothing is ever retried. |
+
+  Run it **every minute**: one minute is the first step of the ladder, so
+  a slower schedule delays every retry. Each sweep is bounded (a cap per
+  account, so one busy tenant cannot starve another) and overlapping runs
+  are safe — the claim is an optimistic `UPDATE` on `attempt`, so two
+  sweeps never deliver the same row twice.
+
+  ```bash
+  * * * * * curl -fsS -H "x-cron-secret: $WEBHOOK_CRON_SECRET" \
+    https://your-crm.example.com/api/webhooks/cron >/dev/null
+  ```

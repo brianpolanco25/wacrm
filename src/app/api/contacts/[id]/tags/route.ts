@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
-import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
 import {
-  ContactTagWriteError,
-  removeContactTag,
-} from '@/lib/contacts/tag-write';
+  addContactTagAndDispatch,
+  removeContactTagAndDispatch,
+} from '@/lib/contacts/tag-events';
+import { ContactTagWriteError } from '@/lib/contacts/tag-write';
 
 function tagWriteErrorResponse(error: ContactTagWriteError): NextResponse {
   return NextResponse.json({ error: error.message }, { status: error.status });
@@ -60,7 +60,8 @@ export async function DELETE(
       return NextResponse.json({ error: 'tag_id required' }, { status: 400 });
     }
 
-    await removeContactTag(ctx.supabase, {
+    await removeContactTagAndDispatch({
+      db: ctx.supabase,
       accountId: ctx.accountId,
       contactId,
       tagId,

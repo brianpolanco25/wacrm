@@ -20,6 +20,15 @@ const h = vi.hoisted(() => ({
     /** What `pick_available_agent` returns (null = nobody online). */
     pick: null as string | null,
     conversationUpdates: [] as Record<string, unknown>[],
+    /** Lo que ve el helper de conversaciones antes de escribir. */
+    conversationsOfContact: [
+      {
+        id: 'conv-1',
+        contact_id: 'c1',
+        status: 'open',
+        assigned_agent_id: null,
+      },
+    ] as Record<string, unknown>[],
     /** `inbound_auto_replies` (migration 051), keyed by message id the
      *  way its primary key is. */
     autoReplyClaims: new Map<string, Record<string, unknown>>(),
@@ -65,8 +74,11 @@ vi.mock('./admin-client', () => {
       if (type === 'update') {
         state.updateCalls.push({ table, filters: ops.filters });
         state.conversationUpdates.push(ops.payload as Record<string, unknown>);
+        return { data: null, error: null };
       }
-      return { data: null, error: null };
+      // Lectura previa de `applyConversationChangeByContact` (fase 7 §4):
+      // necesita el estado ANTERIOR para decidir si hay evento que emitir.
+      return { data: state.conversationsOfContact, error: null };
     }
     if (table === 'automations') {
       // `resumePendingExecution` reads ONE automation by id; the dispatch
@@ -209,6 +221,9 @@ beforeEach(() => {
   h.state.rpcCalls = [];
   h.state.pick = null;
   h.state.conversationUpdates = [];
+  h.state.conversationsOfContact = [
+    { id: 'conv-1', contact_id: 'c1', status: 'open', assigned_agent_id: null },
+  ];
   h.state.autoReplyClaims = new Map();
   h.state.claimUpserts = [];
   h.state.claimReads = [];
