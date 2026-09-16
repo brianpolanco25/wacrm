@@ -10,11 +10,11 @@ import type { ReactNode } from 'react';
 // claro/oscuro; aquí solo se corrige lo que esta sección necesita del
 // revés: el panel pide `noindex` porque es privado, y la documentación
 // es justo lo contrario.
+//
+// El título lo pone cada página con su `generateMetadata` y la plantilla
+// del layout raíz («%s — Cabbity CRM») lo completa, así que aquí no hay
+// ninguna cadena visible que se quedaría sin traducir.
 export const metadata: Metadata = {
-  title: {
-    default: 'Documentación para desarrolladores — Cabbity CRM',
-    template: '%s — Cabbity CRM',
-  },
   robots: { index: true, follow: true },
 };
 

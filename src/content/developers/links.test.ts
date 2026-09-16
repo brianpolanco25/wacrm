@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -114,6 +114,32 @@ describe('enlaces internos de /developers', () => {
       .filter(({ href }) => !href.startsWith('https://'))
       .map(({ href, where }) => `${where} → ${href}`);
     expect(insecure).toEqual([]);
+  });
+});
+
+describe('enlaces del panel hacia la documentación', () => {
+  // Ajustes → API y Ajustes → Webhooks enlazan aquí. El día que una
+  // página se renombre, esto falla antes de que el cliente encuentre un
+  // 404 desde el panel.
+  const PANELS = [
+    'src/components/settings/api-keys-settings.tsx',
+    'src/components/settings/webhooks-settings.tsx',
+  ];
+
+  it.each(PANELS)('%s apunta a una página que existe', (file) => {
+    const source = readFileSync(join(process.cwd(), file), 'utf8');
+    const hrefs = [...source.matchAll(/'(\/developers[^']*)'/g)].map(
+      (m) => m[1]
+    );
+    expect(
+      hrefs.length,
+      `${file} ya no enlaza la documentación`
+    ).toBeGreaterThan(0);
+    for (const href of hrefs) {
+      expect(appRoutes().has(href.split(/[?#]/)[0]), `${file} → ${href}`).toBe(
+        true
+      );
+    }
   });
 });
 

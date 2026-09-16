@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
+  BookOpen,
   Copy,
   Loader2,
   Plus,
@@ -52,6 +53,14 @@ import {
   type WebhookEvent,
 } from '@/lib/webhooks/events';
 import { SettingsPanelHead } from './settings-panel-head';
+
+/**
+ * La guía de webhooks de la sección pública `/developers` (fase 7 §7):
+ * firma, reintentos y receptores de ejemplo en Node, Python y PHP. Es
+ * pública, así que el enlace funciona igual para quien no tiene sesión
+ * en este navegador (un compañero al que le pasas la URL).
+ */
+const WEBHOOK_DOCS_URL = '/developers/webhooks';
 
 interface WebhookEndpoint {
   id: string;
@@ -245,6 +254,14 @@ export function WebhooksSettings() {
           </RequireRole>
         }
       />
+
+      <a
+        href={WEBHOOK_DOCS_URL}
+        className="text-primary inline-flex items-center gap-1.5 text-sm underline underline-offset-2"
+      >
+        <BookOpen className="size-4" aria-hidden="true" />
+        {t('docsLink')}
+      </a>
 
       {hooks.length === 0 ? (
         <Card>

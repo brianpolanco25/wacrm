@@ -516,6 +516,23 @@ behaviour changes**; nothing is limited by plan yet.
   Limited to 6 calls per minute per account: one call walks up to 20 pages
   of Meta's API, and spending your WhatsApp Business Account's Meta quota
   on polling would cost you sends.
+- **Developer documentation at `/developers`**, served by the app itself
+  and public — no session needed, so you can send the link to whoever is
+  writing the integration. Eight sections: getting started, authentication
+  and scopes, conventions, four guides (send a template end to end, sync
+  contacts and tags, export conversations, receive webhooks with signature
+  verification in Node, Python and PHP), the reference, the webhook event
+  catalogue, integrations (MCP server, generating an SDK) and an API
+  changelog. Prose reads in Spanish or English with a selector on every
+  page; the instance's own language picks the default and Korean falls back
+  to English.
+- **The reference is generated from the OpenAPI document**, not written by
+  hand: operations, parameters, request bodies, responses, scopes and
+  webhook events are rendered on the server from
+  `GET /api/v1/openapi.json`, so it cannot drift from the code.
+- Settings → API and Settings → Webhooks now link into that documentation,
+  and `docs/public-api.md` has become a short pointer to it — one contract,
+  one place.
 
 ### Security
 
