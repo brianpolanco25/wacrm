@@ -235,12 +235,20 @@ export async function enqueueSingleDelivery(
  */
 export async function claimDelivery(
   db: SupabaseClient,
-  row: Pick<DeliveryRow, 'id' | 'attempt'>
+  row: Pick<DeliveryRow, 'id' | 'attempt'> & { account_id?: string }
 ): Promise<DeliveryRow | null> {
-  const { data, error } = await db
+  let query = db
     .from('webhook_deliveries')
     .update({ attempt: row.attempt + 1, status: 'pending' })
-    .eq('id', row.id)
+    .eq('id', row.id);
+
+  // El barrido del cron es global por definición (drena todas las
+  // cuentas), pero cuando quien reclama SÍ sabe de qué cuenta habla
+  // —el reintento manual, el primer intento tras encolar— el filtro
+  // viaja: un id adivinado no alcanza la fila de otra empresa.
+  if (row.account_id) query = query.eq('account_id', row.account_id);
+
+  const { data, error } = await query
     .eq('attempt', row.attempt)
     .in('status', ['pending', 'failed'])
     .select(DELIVERY_WORK_COLUMNS)
@@ -266,7 +274,8 @@ async function markDelivered(
       last_status_code: statusCode,
       last_error: null,
     })
-    .eq('id', row.id);
+    .eq('id', row.id)
+    .eq('account_id', row.account_id);
 }
 
 /**
@@ -292,7 +301,8 @@ async function markFailed(
       last_error: error.slice(0, 500),
       next_attempt_at: new Date(Date.now() + (delay ?? 0)).toISOString(),
     })
-    .eq('id', row.id);
+    .eq('id', row.id)
+    .eq('account_id', row.account_id);
 
   const { error: rpcError } = await db.rpc('record_webhook_failure', {
     endpoint_id: row.endpoint_id,
@@ -333,7 +343,8 @@ export async function attemptDelivery(
           status: 'dead',
           last_error: 'endpoint no longer exists',
         })
-        .eq('id', row.id);
+        .eq('id', row.id)
+        .eq('account_id', row.account_id);
       return 'dead';
     }
 
@@ -416,7 +427,7 @@ export async function attemptDelivery(
 /** Reclama e intenta una entrega. `null` si otro barrido se la llevó. */
 export async function claimAndAttempt(
   db: SupabaseClient,
-  row: Pick<DeliveryRow, 'id' | 'attempt'>
+  row: Pick<DeliveryRow, 'id' | 'attempt'> & { account_id?: string }
 ): Promise<DeliveryStatus | null> {
   const claimed = await claimDelivery(db, row);
   if (!claimed) return null;
