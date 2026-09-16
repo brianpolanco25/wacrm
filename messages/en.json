@@ -1708,7 +1708,7 @@
     },
     "apiKeys": {
       "title": "API keys",
-      "description": "Keys authenticate the public REST API (<apiCode>/api/v1</apiCode>) so you can build your own automations. Send them as <headerCode>Authorization: Bearer &lt;key&gt;</headerCode>.",
+      "description": "API keys authenticate the public REST API (<apiCode>/api/v1</apiCode>) so you can build your own automations. Send them as <headerCode>Authorization: Bearer &lt;key&gt;</headerCode>. See the <docs>developer documentation</docs>.",
       "newApiKey": "New API key",
       "noApiKeys": "No API keys yet.",
       "createOneHint": "Click <bold>New API key</bold> to create one.",
@@ -1742,7 +1742,22 @@
       "newKeyTitle": "New API key",
       "newKeyDesc": "Name it after the integration that will use it, and grant only the scopes it needs.",
       "done": "Done",
-      "networkError": "Could not reach the server"
+      "networkError": "Could not reach the server",
+      "rotating": "Rotating",
+      "rotatingHint": "The previous key stops working on {date}.",
+      "rotate": "Rotate",
+      "rotateInProgress": "Rotating…",
+      "revokeNow": "Revoke now",
+      "expiryLabel": "Expiry",
+      "expiryNever": "Never expires",
+      "expiryDays": "{days} days",
+      "expiryHint": "An expiry date limits the damage if a key leaks and forces you to revisit it now and then.",
+      "rotateTitle": "Rotate this key",
+      "rotateDesc": "A new key is created with the same scopes as “{name}”. The old one keeps working for another 24 hours so you can swap it wherever you use it; after that it stops authenticating.",
+      "rotateConfirm": "Rotate key",
+      "rotateFailed": "Could not rotate the API key",
+      "rotateDoneTitle": "Copy your new key",
+      "rotateDoneDesc": "This is the only time it is shown. The previous key stops working on {date}: swap it in every integration before then."
     },
     "deals": {
       "title": "Deals & currency",

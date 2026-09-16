@@ -1708,7 +1708,7 @@
     },
     "apiKeys": {
       "title": "Claves de API",
-      "description": "Las claves autentican la API REST pública (<apiCode>/api/v1</apiCode>) para que construyas tus propias automatizaciones. Envíalas como <headerCode>Authorization: Bearer &lt;clave&gt;</headerCode>.",
+      "description": "Las claves autentican la API REST pública (<apiCode>/api/v1</apiCode>) para que construyas tus propias automatizaciones. Envíalas como <headerCode>Authorization: Bearer &lt;clave&gt;</headerCode>. Consulta la <docs>documentación para desarrolladores</docs>.",
       "newApiKey": "Nueva clave de API",
       "noApiKeys": "Todavía no hay claves de API.",
       "createOneHint": "Pulsa <bold>Nueva clave de API</bold> para crear una.",
@@ -1742,7 +1742,22 @@
       "newKeyTitle": "Nueva clave de API",
       "newKeyDesc": "Ponle el nombre de la integración que la va a usar y dale solo los permisos que necesite.",
       "done": "Listo",
-      "networkError": "No se pudo contactar con el servidor"
+      "networkError": "No se pudo contactar con el servidor",
+      "rotating": "En rotación",
+      "rotatingHint": "La clave anterior deja de funcionar el {date}.",
+      "rotate": "Rotar",
+      "rotateInProgress": "Rotando…",
+      "revokeNow": "Revocar ya",
+      "expiryLabel": "Caducidad",
+      "expiryNever": "Nunca caduca",
+      "expiryDays": "{days} días",
+      "expiryHint": "Una clave con fecha de caducidad limita el daño si se filtra y te obliga a revisarla de vez en cuando.",
+      "rotateTitle": "Rotar la clave",
+      "rotateDesc": "Se crea una clave nueva con los mismos permisos que «{name}». La anterior seguirá funcionando 24 horas más para que te dé tiempo a cambiarla donde la uses; después dejará de autenticar.",
+      "rotateConfirm": "Rotar la clave",
+      "rotateFailed": "No se pudo rotar la clave",
+      "rotateDoneTitle": "Copia tu clave nueva",
+      "rotateDoneDesc": "Esta es la única vez que se muestra. La clave anterior deja de funcionar el {date}: cámbiala antes en todas tus integraciones."
     },
     "deals": {
       "title": "Oportunidades y moneda",

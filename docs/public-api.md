@@ -27,9 +27,21 @@ In the dashboard: **Settings → API keys → New API key**. Only
 
 1. Give the key a name (after the integration that will use it).
 2. Grant the **scopes** it needs — nothing more (see below).
-3. Copy the key. **The full key is shown exactly once.** wacrm
+3. Choose an **expiry**: 30, 90 or 365 days, or never (the default).
+4. Copy the key. **The full key is shown exactly once.** wacrm
    stores only a SHA-256 hash, so it can never be shown again. If you
    lose it, revoke it and create a new one.
+
+### Rotating a key
+
+**Settings → API keys → Rotate.** This mints a replacement with the
+same name and scopes and gives the old key a **24-hour grace period**:
+both authenticate during that window, so you can deploy the new value
+without an outage. The old key shows as _Rotating_ with its deadline.
+
+The replacement inherits the old key's expiry date unless you set a new
+one. If you are rotating because a key **leaked**, do not wait for the
+grace period — press **Revoke now** on the old key.
 
 ### Revoking a key
 
@@ -41,15 +53,15 @@ key's next request. Revoked keys stay in the list as an audit trail.
 A key can do only what its scopes allow — independent of who created
 it. Grant the minimum.
 
-| Scope                | Allows                                   |
-| -------------------- | ---------------------------------------- |
-| `messages:send`      | Send WhatsApp messages                   |
-| `messages:read`      | Read messages and delivery status        |
-| `contacts:read`      | List and read contacts                   |
-| `contacts:write`     | Create and update contacts               |
-| `conversations:read` | List and read conversations              |
-| `broadcasts:send`    | Launch broadcast campaigns               |
-| `webhooks:manage`    | Register and manage outbound webhooks    |
+| Scope                | Allows                                |
+| -------------------- | ------------------------------------- |
+| `messages:send`      | Send WhatsApp messages                |
+| `messages:read`      | Read messages and delivery status     |
+| `contacts:read`      | List and read contacts                |
+| `contacts:write`     | Create and update contacts            |
+| `conversations:read` | List and read conversations           |
+| `broadcasts:send`    | Launch broadcast campaigns            |
+| `webhooks:manage`    | Register and manage outbound webhooks |
 
 A key with **no scopes** still authenticates and can call
 `GET /api/v1/me` — useful for verifying a key works.
@@ -67,16 +79,72 @@ Every response uses one of two shapes:
 ```
 
 Branch on `error.code` (stable); `error.message` is for humans and
-may be reworded.
+may be reworded. Every error body also carries `request_id` — the same
+value as the `X-Request-Id` response header. Quote it in a support
+request.
 
-| Status | `code`         | Meaning                                          |
-| ------ | -------------- | ------------------------------------------------ |
-| 401    | `unauthorized` | Missing / malformed / unknown / revoked / expired key |
-| 403    | `forbidden`    | Valid key, but missing the required scope        |
-| 429    | `rate_limited` | Per-key rate limit exceeded                      |
-| 400    | `bad_request`  | Malformed input                                  |
-| 404    | `not_found`    | No such resource                                 |
-| 500    | `internal`     | Server error                                     |
+| Status | `code`                   | Meaning                                                |
+| ------ | ------------------------ | ------------------------------------------------------ |
+| 401    | `unauthorized`           | Missing / malformed / unknown / revoked / expired key  |
+| 403    | `forbidden`              | Valid key, but missing the required scope              |
+| 429    | `rate_limited`           | Per-key rate limit exceeded                            |
+| 400    | `bad_request`            | Malformed input                                        |
+| 404    | `not_found`              | No such resource                                       |
+| 409    | `conflict`               | A request with the same `Idempotency-Key` is in flight |
+| 409    | `idempotency_mismatch`   | That `Idempotency-Key` was used for a different body   |
+| 413    | `payload_too_large`      | Request body over 1 MiB                                |
+| 415    | `unsupported_media_type` | A write without `Content-Type: application/json`       |
+| 500    | `internal`               | Server error                                           |
+
+### Headers on every response
+
+- `X-Request-Id` — a UUID minted by the server for this call. Log it;
+  it is repeated as `request_id` in every error body. Any value you
+  send under this name is ignored.
+- `Cache-Control: no-store` — API responses are account data behind a
+  bearer credential and must not be cached anywhere.
+
+### Request bodies
+
+Writes must send `Content-Type: application/json` (`415` otherwise) and
+a JSON **object** (`400` otherwise). Bodies are capped at **1 MiB**
+(`413`). Unknown fields are ignored.
+
+## Idempotency
+
+Any `POST` that creates something — today `POST /api/v1/messages` and
+`POST /api/v1/broadcasts` — accepts an `Idempotency-Key` header:
+
+```bash
+curl -X POST https://<your-domain>/api/v1/messages \
+  -H "Authorization: Bearer $WACRM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: order-4711-notify" \
+  -d '{"to":"+14155550123","type":"text","text":"On its way"}'
+```
+
+The key is a string of your choosing, 1–255 characters. Use something
+derived from the thing you are acting on (an order id, a job id), not a
+random value per attempt — the whole point is that a **retry** sends the
+same key.
+
+| What you send                          | What you get                                                               |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| Same key, same body                    | The stored response, plus `Idempotent-Replayed: true`. Nothing runs twice. |
+| Same key, different body               | `409 idempotency_mismatch`                                                 |
+| Same key, first call still in progress | `409 conflict` — retry in a moment                                         |
+| Same key, more than 24 h later         | Treated as a new request                                                   |
+| No key                                 | No replay protection; a retry sends again                                  |
+
+Notes:
+
+- Keys are scoped to the **API key** that used them. Two integrations of
+  the same account never see each other's responses.
+- Only successful (2xx) responses are stored. A `400`, `429` or `500`
+  releases the key, so you can fix the payload and retry with the same
+  one.
+- The same key used against a different endpoint is an
+  `idempotency_mismatch`, not a wrong replay.
 
 ## Rate limits
 
@@ -140,9 +208,9 @@ curl -X POST https://your-crm.example.com/api/v1/messages \
   "template": {
     "name": "order_update",
     "language": "en_US",
-    "params": ["A123"]        // positional body vars, or a structured object
+    "params": ["A123"], // positional body vars, or a structured object
   },
-  "reply_to_message_id": "<uuid>"   // optional; must be in the same conversation
+  "reply_to_message_id": "<uuid>", // optional; must be in the same conversation
 }
 ```
 
@@ -162,7 +230,7 @@ WhatsApp, not an internal wacrm id:
   "to": "+14155550123",
   "type": "text",
   "text": "Hi 👋",
-  "from": "100234567890123"    // optional; a phone_number_id of YOUR account
+  "from": "100234567890123", // optional; a phone_number_id of YOUR account
 }
 ```
 
@@ -185,7 +253,7 @@ To write to such a contact, pass `to_user_id` instead of `to`:
 {
   "to_user_id": "US.1349700000000001",
   "type": "text",
-  "text": "Hi 👋"
+  "text": "Hi 👋",
 }
 ```
 
@@ -232,11 +300,17 @@ to write to them.
 {
   "data": [
     {
-      "id": "…", "phone": "+14155550123", "name": "Jane Doe",
-      "wa_username": null, "wa_user_id": null,
-      "email": null, "company": "Acme", "avatar_url": null,
+      "id": "…",
+      "phone": "+14155550123",
+      "name": "Jane Doe",
+      "wa_username": null,
+      "wa_user_id": null,
+      "email": null,
+      "company": "Acme",
+      "avatar_url": null,
       "tags": [{ "id": "…", "name": "vip", "color": "#3b82f6" }],
-      "created_at": "…", "updated_at": "…"
+      "created_at": "…",
+      "updated_at": "…"
     }
   ],
   "meta": { "next_cursor": "…" }
@@ -351,11 +425,11 @@ things happen in your account. **Migration required:** apply
 
 ### Events
 
-| Event                    | Fires when                                        |
-| ------------------------ | ------------------------------------------------- |
-| `message.received`       | An inbound message arrives from a contact         |
-| `message.status_updated` | A message you sent changed delivery status        |
-| `conversation.created`   | A new conversation is opened for a contact        |
+| Event                    | Fires when                                 |
+| ------------------------ | ------------------------------------------ |
+| `message.received`       | An inbound message arrives from a contact  |
+| `message.status_updated` | A message you sent changed delivery status |
+| `conversation.created`   | A new conversation is opened for a contact |
 
 ### Managing endpoints
 
@@ -386,7 +460,7 @@ delivery uuid you can dedupe on, and `data` varies by `event`:
   "event": "message.received",
   "occurred_at": "2026-07-01T12:00:00.000Z",
   "account_id": "…",
-  "data": { /* per-event, see below */ }
+  "data": {/* per-event, see below */}
 }
 ```
 
@@ -412,8 +486,10 @@ a few minutes old (replay protection).
 
 ```js
 const [, t, v1] = header.match(/t=(\d+),v1=([0-9a-f]+)/);
-const expected = crypto.createHmac('sha256', secret)
-  .update(`${t}.${rawBody}`).digest('hex');
+const expected = crypto
+  .createHmac('sha256', secret)
+  .update(`${t}.${rawBody}`)
+  .digest('hex');
 const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1));
 ```
 

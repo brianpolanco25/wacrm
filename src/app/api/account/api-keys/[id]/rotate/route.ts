@@ -1,0 +1,194 @@
+// ============================================================
+// POST /api/account/api-keys/[id]/rotate — swap a key without an
+// outage (fase 7 §1).
+//
+// Rotation is the operation that makes "change your credentials
+// regularly" survive contact with production. Revoke-then-create has a
+// gap in the middle: between the click and the redeploy, every call the
+// customer's integration makes 401s. So this does the two halves in one
+// step and in the safe order:
+//
+//   1. mint a NEW key with the SAME name and the SAME scopes,
+//   2. stamp the OLD one with `revoked_at = now() + 24 h`.
+//
+// The old key keeps authenticating for those 24 hours
+// (`findActiveKeyByHash` compares `revoked_at` against the clock, not
+// against NULL), which is the whole point: the admin deploys the new
+// value whenever they can, and the old one dies by itself. An admin who
+// is rotating *because the key leaked* does not want to wait — that is
+// what `DELETE /api/account/api-keys/[id]` is for, and it accepts a key
+// already inside its grace window precisely so it can cut it short.
+//
+// Order matters: the new key is inserted FIRST. If the stamp on the old
+// one then fails we delete the new row and 500, because the failure
+// mode we refuse to ship is "two permanently valid keys where the admin
+// believes there is one".
+//
+// Admin+, cookie session, RLS client — same as the rest of
+// `/api/account/api-keys`. The plaintext is returned exactly ONCE, as
+// on creation.
+//
+// Body (all optional):
+//   { "expiresInDays": 90 }   // omitted → inherit the old key's expiry
+//
+// Response (201):
+//   { "key": { …safe columns… },
+//     "plaintext": "wacrm_live_…",
+//     "previous": { "id": "…", "revoked_at": "…" } }
+// ============================================================
+
+import { NextResponse } from 'next/server';
+
+import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import {
+  expiryFromDays,
+  generateApiKey,
+  ROTATION_GRACE_MS,
+} from '@/lib/api-keys/keys';
+import { API_KEY_SAFE_COLUMNS } from '@/lib/api-keys/store';
+import {
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const ctx = await requireRole('admin');
+
+    const limit = checkRateLimit(
+      `admin:apiKeyRotate:${ctx.userId}`,
+      RATE_LIMITS.adminAction
+    );
+    if (!limit.success) return rateLimitResponse(limit);
+
+    const { id } = await params;
+    const body = (await request.json().catch(() => null)) as {
+      expiresInDays?: unknown;
+    } | null;
+
+    const now = Date.now();
+
+    // Scoped by account_id as well as id: an admin can never rotate
+    // another account's key by guessing a UUID (RLS says the same; the
+    // explicit filter makes the 404 path precise).
+    const { data: current, error: readError } = await ctx.supabase
+      .from('api_keys')
+      .select('id, name, scopes, expires_at, revoked_at')
+      .eq('id', id)
+      .eq('account_id', ctx.accountId)
+      .maybeSingle();
+
+    if (readError) {
+      console.error(
+        '[POST /api/account/api-keys/[id]/rotate] read:',
+        readError
+      );
+      return NextResponse.json(
+        { error: 'Failed to rotate API key' },
+        { status: 500 }
+      );
+    }
+
+    const alreadyDead =
+      current?.revoked_at != null &&
+      new Date(current.revoked_at as string).getTime() <= now;
+    if (!current || alreadyDead) {
+      // Revoked keys are not rotated, they are replaced: rotating one
+      // would resurrect an integration the admin already switched off.
+      return NextResponse.json(
+        { error: 'API key not found or already revoked' },
+        { status: 404 }
+      );
+    }
+
+    // Expiry: an explicit `expiresInDays` wins; otherwise the new key
+    // inherits the old one's `expires_at` verbatim. Inheriting rather
+    // than silently restarting the clock keeps rotation from being a
+    // back door that extends a deliberately short-lived credential.
+    const requested = expiryFromDays(body?.expiresInDays);
+    const expiresAt =
+      requested ?? (current.expires_at as string | null) ?? null;
+
+    const { plaintext, hash, prefix } = generateApiKey();
+
+    const { data: created, error: insertError } = await ctx.supabase
+      .from('api_keys')
+      .insert({
+        account_id: ctx.accountId,
+        created_by: ctx.userId,
+        // Same name on purpose: the label describes the integration,
+        // which has not changed. The prefix tells the two apart in the
+        // roster, and the old one is visibly "rotating".
+        name: current.name as string,
+        key_prefix: prefix,
+        key_hash: hash,
+        scopes: (current.scopes as string[]) ?? [],
+        expires_at: expiresAt,
+      })
+      .select(API_KEY_SAFE_COLUMNS)
+      .single();
+
+    if (insertError || !created) {
+      console.error(
+        '[POST /api/account/api-keys/[id]/rotate] insert:',
+        insertError
+      );
+      return NextResponse.json(
+        { error: 'Failed to rotate API key' },
+        { status: 500 }
+      );
+    }
+
+    const revokedAt = new Date(now + ROTATION_GRACE_MS).toISOString();
+    const { data: stamped, error: updateError } = await ctx.supabase
+      .from('api_keys')
+      .update({ revoked_at: revokedAt })
+      .eq('id', id)
+      .eq('account_id', ctx.accountId)
+      // Only a live key gets stamped. If it entered a grace window
+      // between the read and here, leave that (earlier) deadline alone
+      // — rotating twice must not push the old key's death further out.
+      .is('revoked_at', null)
+      .select('id, revoked_at')
+      .maybeSingle();
+
+    if (updateError) {
+      // Undo the new key rather than leave two live credentials.
+      await ctx.supabase
+        .from('api_keys')
+        .delete()
+        .eq('id', created.id)
+        .eq('account_id', ctx.accountId);
+      console.error(
+        '[POST /api/account/api-keys/[id]/rotate] stamp:',
+        updateError
+      );
+      return NextResponse.json(
+        { error: 'Failed to rotate API key' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        key: created,
+        // Plaintext — shown to the admin exactly once.
+        plaintext,
+        previous: {
+          id,
+          revoked_at:
+            (stamped?.revoked_at as string | null) ??
+            (current.revoked_at as string | null) ??
+            revokedAt,
+        },
+      },
+      { status: 201 }
+    );
+  } catch (err) {
+    return toErrorResponse(err);
+  }
+}

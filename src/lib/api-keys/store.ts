@@ -13,6 +13,15 @@
 
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 
+/**
+ * Columns the dashboard is allowed to see. `key_hash` is deliberately
+ * absent — it never leaves the server. Shared by every
+ * `/api/account/api-keys*` route so a new one cannot widen the
+ * projection by accident.
+ */
+export const API_KEY_SAFE_COLUMNS =
+  'id, name, key_prefix, scopes, last_used_at, expires_at, revoked_at, created_at';
+
 /** Shape of an `api_keys` row as the auth path consumes it. */
 export interface ApiKeyRow {
   id: string;
@@ -30,6 +39,14 @@ export interface ApiKeyRow {
  * callers never have to re-check liveness. Uses the service-role
  * client (RLS-bypassing); the hash is the only credential, so this
  * is the moment that establishes the caller's account.
+ *
+ * `revoked_at` in the FUTURE is the rotation grace window (fase 7 §1):
+ * rotating a key stamps the old one with `now() + 24 h` so the
+ * integration that still holds it keeps working while it is swapped
+ * out, instead of breaking the moment an admin clicks the button. An
+ * immediate revoke stamps `now()` and is refused on the next request,
+ * exactly as before — the comparison is against the clock, not against
+ * NULL.
  */
 export async function findActiveKeyByHash(
   hash: string
@@ -48,8 +65,11 @@ export async function findActiveKeyByHash(
 
   // Liveness checks in JS rather than SQL so the failure modes are
   // explicit and the index stays a simple equality lookup.
-  if (data.revoked_at) return null;
-  if (data.expires_at && new Date(data.expires_at).getTime() <= Date.now()) {
+  const now = Date.now();
+  if (data.revoked_at && new Date(data.revoked_at).getTime() <= now) {
+    return null;
+  }
+  if (data.expires_at && new Date(data.expires_at).getTime() <= now) {
     return null;
   }
 

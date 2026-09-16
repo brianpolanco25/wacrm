@@ -91,3 +91,37 @@ export function timingSafeHexEqual(a: string, b: string): boolean {
   if (bufA.length !== bufB.length) return false;
   return timingSafeEqual(bufA, bufB);
 }
+
+// ------------------------------------------------------------
+// Expiry + rotation policy (fase 7 §1)
+// ------------------------------------------------------------
+
+/**
+ * Hard ceiling on a caller-supplied expiry, mirroring the invite-link
+ * clamp. A credential that never expires is a credential nobody ever
+ * revisits; a year is long enough not to be a nuisance and short enough
+ * that a forgotten key eventually stops working.
+ */
+export const MAX_EXPIRY_DAYS = 365;
+
+/**
+ * How long a rotated key keeps working. The point of rotation is to
+ * swap a credential WITHOUT an outage: the admin mints the replacement,
+ * deploys it at their own pace, and the old one dies on its own. Long
+ * enough for a deploy that needs a change-window, short enough that a
+ * rotation prompted by a leak is not an open door for a week.
+ */
+export const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Turn a caller-supplied `expiresInDays` into an absolute timestamp,
+ * clamped to {@link MAX_EXPIRY_DAYS}. Anything absent, non-numeric or
+ * non-positive means "never expires" (null) — the historical default.
+ */
+export function expiryFromDays(input: unknown): string | null {
+  if (typeof input !== 'number' || !Number.isFinite(input) || input <= 0) {
+    return null;
+  }
+  const days = Math.min(Math.floor(input), MAX_EXPIRY_DAYS);
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}

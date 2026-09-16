@@ -1708,7 +1708,7 @@
     },
     "apiKeys": {
       "title": "API 키",
-      "description": "키는 공개 REST API(<apiCode>/api/v1</apiCode>)를 인증해 직접 자동화를 구축할 수 있게 해줍니다. <headerCode>Authorization: Bearer &lt;key&gt;</headerCode> 형식으로 전송하세요.",
+      "description": "API 키는 공개 REST API(<apiCode>/api/v1</apiCode>)를 인증하여 직접 자동화를 만들 수 있게 합니다. <headerCode>Authorization: Bearer &lt;키&gt;</headerCode> 형식으로 보내세요. <docs>개발자 문서</docs>를 참고하세요.",
       "newApiKey": "새 API 키",
       "noApiKeys": "아직 API 키가 없습니다.",
       "createOneHint": "<bold>새 API 키</bold>를 클릭해 만드세요.",
@@ -1742,7 +1742,22 @@
       "newKeyTitle": "새 API 키",
       "newKeyDesc": "이 키를 사용할 연동 서비스의 이름을 붙이고, 필요한 권한 범위만 부여하세요.",
       "done": "완료",
-      "networkError": "서버에 연결할 수 없습니다"
+      "networkError": "서버에 연결할 수 없습니다",
+      "rotating": "교체 중",
+      "rotatingHint": "이전 키는 {date}에 작동을 멈춥니다.",
+      "rotate": "키 교체",
+      "rotateInProgress": "교체하는 중…",
+      "revokeNow": "지금 폐기",
+      "expiryLabel": "만료",
+      "expiryNever": "만료 없음",
+      "expiryDays": "{days}일",
+      "expiryHint": "만료일을 두면 키가 유출됐을 때 피해가 제한되고, 주기적으로 점검하게 됩니다.",
+      "rotateTitle": "키 교체",
+      "rotateDesc": "“{name}”과(와) 동일한 범위를 가진 새 키를 만듭니다. 이전 키는 24시간 동안 계속 작동하므로 사용하는 곳에서 교체할 시간이 있습니다. 그 후에는 인증이 중단됩니다.",
+      "rotateConfirm": "키 교체",
+      "rotateFailed": "API 키를 교체하지 못했습니다",
+      "rotateDoneTitle": "새 키를 복사하세요",
+      "rotateDoneDesc": "이 화면에서만 표시됩니다. 이전 키는 {date}에 작동을 멈추니, 그 전에 모든 연동에서 교체하세요."
     },
     "deals": {
       "title": "딜 & 통화",

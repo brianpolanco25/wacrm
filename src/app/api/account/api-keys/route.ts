@@ -24,7 +24,8 @@ import {
   requireRole,
   toErrorResponse,
 } from '@/lib/auth/account';
-import { generateApiKey } from '@/lib/api-keys/keys';
+import { expiryFromDays, generateApiKey } from '@/lib/api-keys/keys';
+import { API_KEY_SAFE_COLUMNS } from '@/lib/api-keys/store';
 import { normalizeScopes } from '@/lib/api-keys/scopes';
 import {
   checkRateLimit,
@@ -33,14 +34,6 @@ import {
 } from '@/lib/rate-limit';
 
 const MAX_NAME_LEN = 80;
-// Hard ceiling on caller-supplied expiry (1 year), mirroring the
-// invite-link clamp. NULL/absent = never expires.
-const MAX_EXPIRY_DAYS = 365;
-
-// Columns safe to expose. `key_hash` is deliberately excluded — it
-// never leaves the server.
-const SAFE_COLUMNS =
-  'id, name, key_prefix, scopes, last_used_at, expires_at, revoked_at, created_at';
 
 export async function GET() {
   try {
@@ -50,7 +43,7 @@ export async function GET() {
 
     const { data, error } = await ctx.supabase
       .from('api_keys')
-      .select(SAFE_COLUMNS)
+      .select(API_KEY_SAFE_COLUMNS)
       .eq('account_id', ctx.accountId)
       .order('created_at', { ascending: false });
 
@@ -108,18 +101,9 @@ export async function POST(request: Request) {
       );
     }
 
-    let expiresAt: string | null = null;
-    const rawExpiry = body?.expiresInDays;
-    if (
-      typeof rawExpiry === 'number' &&
-      Number.isFinite(rawExpiry) &&
-      rawExpiry > 0
-    ) {
-      const days = Math.min(Math.floor(rawExpiry), MAX_EXPIRY_DAYS);
-      expiresAt = new Date(
-        Date.now() + days * 24 * 60 * 60 * 1000
-      ).toISOString();
-    }
+    // Absent / zero / negative = never expires (the historical default);
+    // anything above a year is clamped to it.
+    const expiresAt = expiryFromDays(body?.expiresInDays);
 
     const { plaintext, hash, prefix } = generateApiKey();
 
@@ -134,7 +118,7 @@ export async function POST(request: Request) {
         scopes,
         expires_at: expiresAt,
       })
-      .select(SAFE_COLUMNS)
+      .select(API_KEY_SAFE_COLUMNS)
       .single();
 
     if (error || !data) {

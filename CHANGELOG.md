@@ -88,8 +88,31 @@ behaviour changes**; nothing is limited by plan yet.
 > number. Note the relaxed column: an integration that assumed
 > `contacts.phone` was always present has to handle null from here on.
 
+> **Migration required:** apply
+> `supabase/migrations/061_api_idempotency.sql` before using
+> `Idempotency-Key` on the public API. It adds the
+> `api_idempotency_keys` table (24-hour, service-role-only replay
+> records). Nothing existing is touched, and the API works without it —
+> only the retry guarantee needs the table.
+
 ### Added
 
+- **Retries on the public API no longer risk sending twice.** `POST
+/api/v1/messages` and `POST /api/v1/broadcasts` accept an
+  `Idempotency-Key` header (1–255 characters, your choice). A repeat with
+  the same key and the same body returns the stored response with
+  `Idempotent-Replayed: true` instead of sending again; the same key with
+  a different body is `409 idempotency_mismatch`; a key still being
+  processed is `409 conflict`. Keys are scoped to the API key that used
+  them and expire after 24 hours. Requires migration 061.
+- **API keys can now be rotated without an outage.** Settings → API keys
+  has a **Rotate** button: it mints a replacement with the same name and
+  scopes and gives the old key a 24-hour grace period, so you can deploy
+  the new value at your own pace. The roster shows the old key as
+  "Rotating" with its deadline, and **Revoke now** cuts the grace short if
+  you are rotating because a key leaked.
+- **API keys can be given an expiry when you create them** — 30, 90 or
+  365 days, or never (still the default).
 - **Customers who write with a WhatsApp username now arrive.** Since
   April 2026 Meta identifies who is writing with a business-scoped user
   id and stops sending their phone number when they use a username and
@@ -390,6 +413,15 @@ behaviour changes**; nothing is limited by plan yet.
 
 ### Security
 
+- **Every `/api/v1` response now carries `X-Request-Id` and
+  `Cache-Control: no-store`,** and error bodies repeat the id as
+  `request_id` — quote it in a support request and we can find the exact
+  call. The id is always minted by the server; a client-supplied one is
+  ignored.
+- **Writes to `/api/v1` require `Content-Type: application/json` and are
+  capped at 1 MiB.** A wrong media type is `415 unsupported_media_type`
+  and an oversized body is `413 payload_too_large`, refused while it is
+  being read rather than after it has been buffered.
 - **The webhook verification endpoint no longer writes to the database.**
   Meta's `GET /api/whatsapp/webhook` check used to re-encrypt a legacy
   verify token on its way past — a database write reachable by anyone who
