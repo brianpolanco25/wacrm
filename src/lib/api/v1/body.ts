@@ -103,6 +103,20 @@ async function readCappedText(request: Request, max: number): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+export interface ReadJsonBodyOptions {
+  /**
+   * Treat an empty payload as `{}` instead of 400. Only for the writes
+   * whose body is genuinely optional — today `POST
+   * /api/v1/templates/sync`, whose body exists solely to pick a number.
+   * `curl -X POST -H 'Content-Type: application/json'` with no `-d` is
+   * the natural way to call one of those, and demanding a literal `{}`
+   * would be a trap with nothing on the other side of it. Every other
+   * check — media type, the 1 MiB ceiling, valid JSON, an object at the
+   * top level — still applies.
+   */
+  allowEmpty?: boolean;
+}
+
 /**
  * The single entry point every `/api/v1` write uses to get its body.
  * Throws `ApiError` (415 / 413 / 400), which `toApiErrorResponse` maps
@@ -111,7 +125,10 @@ async function readCappedText(request: Request, max: number): Promise<string> {
  * Routes should not call `request.json()` directly: doing so skips all
  * three checks and consumes the body the idempotency layer needs.
  */
-export async function readJsonBody(request: Request): Promise<JsonBody> {
+export async function readJsonBody(
+  request: Request,
+  options: ReadJsonBodyOptions = {}
+): Promise<JsonBody> {
   if (!isJsonContentType(request.headers.get('content-type'))) {
     throw unsupportedMediaType(
       "Content-Type must be 'application/json' for this request"
@@ -119,6 +136,8 @@ export async function readJsonBody(request: Request): Promise<JsonBody> {
   }
 
   const raw = await readCappedText(request, MAX_BODY_BYTES);
+
+  if (options.allowEmpty && raw.trim() === '') return { data: {}, raw: '' };
 
   let parsed: unknown;
   try {

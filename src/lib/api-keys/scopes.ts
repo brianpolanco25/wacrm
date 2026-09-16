@@ -23,6 +23,8 @@ export const API_SCOPES = [
   'webhooks:manage',
   'tags:read',
   'tags:write',
+  'templates:read',
+  'templates:write',
 ] as const;
 
 export type ApiScope = (typeof API_SCOPES)[number];
@@ -38,6 +40,9 @@ export const SCOPE_DESCRIPTIONS: Record<ApiScope, string> = {
   'webhooks:manage': 'Register and manage outbound event webhooks',
   'tags:read': 'List and read tags',
   'tags:write': 'Create, rename, delete tags and assign them to contacts',
+  'templates:read': 'List message templates and their review status',
+  'templates:write':
+    'Create, edit, delete and sync message templates with Meta',
 };
 
 /** Type-narrow an unknown value into a valid `ApiScope`. */

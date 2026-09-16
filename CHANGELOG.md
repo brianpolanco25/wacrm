@@ -462,6 +462,21 @@ behaviour changes**; nothing is limited by plan yet.
   (unsubscribing, closing a ticket) were reacting to nothing. The event
   now fires only when a row actually went away, mirroring
   `contact.tag_added`, which has always fired only for a real addition.
+- **Message templates in the public API.** `GET /api/v1/templates` (filters
+  by `status`, `language`, `category` and `search`, paginated),
+  `GET /api/v1/templates/{id}`, `POST` (submits to Meta),
+  `PATCH` (edits and resubmits) and `DELETE`. New scopes `templates:read`
+  and `templates:write`. Every template is served with `variables` — the
+  ordered `{{1}}…{{n}}` its body expects — so you know what `params` to
+  pass to `POST /api/v1/messages` with `type=template` without finding out
+  through Meta's rejections. No migration.
+- **`POST /api/v1/templates/sync`** pulls the catalogue from Meta the same
+  way the dashboard's "Sync from Meta" button does, and returns
+  `{synced, created, updated, status_changes}`. Every status change also
+  fires the `template.status_updated` webhook, so you can stop polling.
+  Limited to 6 calls per minute per account: one call walks up to 20 pages
+  of Meta's API, and spending your WhatsApp Business Account's Meta quota
+  on polling would cost you sends.
 
 ### Security
 
