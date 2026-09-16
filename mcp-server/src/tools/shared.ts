@@ -26,11 +26,32 @@ export function errorResult(message: string): CallToolResult {
 }
 
 /**
+ * The `confirm: true` gate, shared by every tool whose call is either
+ * irreversible (deletes that also delete at Meta) or expensive in a
+ * way the account pays for (the 10/hour export bucket, the 6/min
+ * template sync that walks up to 20 pages of the Graph API).
+ *
+ * Returns an error result to hand straight back when the model did not
+ * opt in, or `null` when it did. The env guards decide whether a tool
+ * exists at all; this decides whether one call goes through.
+ */
+export function requireConfirm(
+  confirm: boolean | undefined,
+  why: string
+): CallToolResult | null {
+  if (confirm === true) return null;
+  return errorResult(
+    `Refusing to run: confirm must be true. ${why} ` +
+      'Check with the user, then call again with confirm=true.'
+  );
+}
+
+/**
  * Wrap a tool handler so any WacrmApiError becomes a clean, model-
  * readable error result and unexpected throws don't crash the server.
  */
 export function handle<A>(
-  fn: (args: A) => Promise<CallToolResult>,
+  fn: (args: A) => Promise<CallToolResult>
 ): (args: A) => Promise<CallToolResult> {
   return async (args: A) => {
     try {

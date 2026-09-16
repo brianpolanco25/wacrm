@@ -39,7 +39,10 @@ export class WacrmClient {
   private async request<T>(
     method: string,
     path: string,
-    options: { query?: Record<string, string | number | undefined>; body?: unknown } = {},
+    options: {
+      query?: Record<string, string | number | undefined>;
+      body?: unknown;
+    } = {}
   ): Promise<{ data: T; meta?: { next_cursor: string | null } }> {
     const url = new URL(`${this.baseUrl}/api/v1${path}`);
     if (options.query) {
@@ -63,13 +66,14 @@ export class WacrmClient {
       res = await fetch(url, {
         method,
         headers,
-        body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+        body:
+          options.body !== undefined ? JSON.stringify(options.body) : undefined,
       });
     } catch (err) {
       throw new WacrmApiError(
         0,
         'network_error',
-        `Could not reach wacrm at ${this.baseUrl}: ${(err as Error).message}`,
+        `Could not reach wacrm at ${this.baseUrl}: ${(err as Error).message}`
       );
     }
 
@@ -88,9 +92,11 @@ export class WacrmClient {
     }
 
     if (!res.ok) {
-      const envelope = payload as { error?: { code?: string; message?: string } } | undefined;
+      const envelope = payload as
+        { error?: { code?: string; message?: string } } | undefined;
       const code = envelope?.error?.code ?? 'internal';
-      let message = envelope?.error?.message ?? `Request failed with status ${res.status}`;
+      let message =
+        envelope?.error?.message ?? `Request failed with status ${res.status}`;
       if (res.status === 429) {
         const retryAfter = res.headers.get('Retry-After');
         if (retryAfter) message += ` (retry after ${retryAfter}s)`;
@@ -98,13 +104,16 @@ export class WacrmClient {
       throw new WacrmApiError(res.status, code, message);
     }
 
-    const envelope = payload as { data: T; meta?: { next_cursor: string | null } };
+    const envelope = payload as {
+      data: T;
+      meta?: { next_cursor: string | null };
+    };
     return { data: envelope.data, meta: envelope.meta };
   }
 
   private async list<T>(
     path: string,
-    query: Record<string, string | number | undefined>,
+    query: Record<string, string | number | undefined>
   ): Promise<Paginated<T>> {
     const res = await this.request<T[]>('GET', path, { query });
     return { data: res.data, next_cursor: res.meta?.next_cursor ?? null };
@@ -142,7 +151,9 @@ export class WacrmClient {
   }
 
   updateContact(id: string, body: unknown): Promise<{ data: unknown }> {
-    return this.request('PATCH', `/contacts/${encodeURIComponent(id)}`, { body });
+    return this.request('PATCH', `/contacts/${encodeURIComponent(id)}`, {
+      body,
+    });
   }
 
   // --- Conversations ------------------------------------------------
@@ -162,9 +173,12 @@ export class WacrmClient {
 
   listConversationMessages(
     id: string,
-    query: { limit?: number; cursor?: string },
+    query: { limit?: number; cursor?: string }
   ): Promise<Paginated<unknown>> {
-    return this.list(`/conversations/${encodeURIComponent(id)}/messages`, query);
+    return this.list(
+      `/conversations/${encodeURIComponent(id)}/messages`,
+      query
+    );
   }
 
   // --- Broadcasts ---------------------------------------------------
@@ -175,5 +189,163 @@ export class WacrmClient {
 
   getBroadcast(id: string): Promise<{ data: unknown }> {
     return this.request('GET', `/broadcasts/${encodeURIComponent(id)}`);
+  }
+
+  // --- Tags ---------------------------------------------------------
+
+  listTags(query: {
+    limit?: number;
+    cursor?: string;
+    search?: string;
+  }): Promise<Paginated<unknown>> {
+    return this.list('/tags', query);
+  }
+
+  getTag(id: string): Promise<{ data: unknown }> {
+    return this.request('GET', `/tags/${encodeURIComponent(id)}`);
+  }
+
+  createTag(body: unknown): Promise<{ data: unknown }> {
+    return this.request('POST', '/tags', { body });
+  }
+
+  updateTag(id: string, body: unknown): Promise<{ data: unknown }> {
+    return this.request('PATCH', `/tags/${encodeURIComponent(id)}`, { body });
+  }
+
+  deleteTag(id: string): Promise<{ data: unknown }> {
+    return this.request('DELETE', `/tags/${encodeURIComponent(id)}`);
+  }
+
+  /** Additive: adds tags by id without touching the ones already on the contact. */
+  addContactTags(id: string, tagIds: string[]): Promise<{ data: unknown }> {
+    return this.request('POST', `/contacts/${encodeURIComponent(id)}/tags`, {
+      body: { tag_ids: tagIds },
+    });
+  }
+
+  removeContactTag(id: string, tagId: string): Promise<{ data: unknown }> {
+    return this.request(
+      'DELETE',
+      `/contacts/${encodeURIComponent(id)}/tags/${encodeURIComponent(tagId)}`
+    );
+  }
+
+  // --- Templates ----------------------------------------------------
+
+  listTemplates(query: {
+    limit?: number;
+    cursor?: string;
+    status?: string;
+    language?: string;
+    category?: string;
+    search?: string;
+  }): Promise<Paginated<unknown>> {
+    return this.list('/templates', query);
+  }
+
+  getTemplate(id: string): Promise<{ data: unknown }> {
+    return this.request('GET', `/templates/${encodeURIComponent(id)}`);
+  }
+
+  createTemplate(body: unknown): Promise<{ data: unknown }> {
+    return this.request('POST', '/templates', { body });
+  }
+
+  updateTemplate(id: string, body: unknown): Promise<{ data: unknown }> {
+    return this.request('PATCH', `/templates/${encodeURIComponent(id)}`, {
+      body,
+    });
+  }
+
+  deleteTemplate(
+    id: string,
+    query: { from?: string }
+  ): Promise<{ data: unknown }> {
+    return this.request('DELETE', `/templates/${encodeURIComponent(id)}`, {
+      query,
+    });
+  }
+
+  syncTemplates(body: unknown): Promise<{ data: unknown }> {
+    return this.request('POST', '/templates/sync', { body });
+  }
+
+  // --- Exports ------------------------------------------------------
+
+  listExports(query: {
+    limit?: number;
+    cursor?: string;
+  }): Promise<Paginated<unknown>> {
+    return this.list('/exports', query);
+  }
+
+  getExport(id: string): Promise<{ data: unknown }> {
+    return this.request('GET', `/exports/${encodeURIComponent(id)}`);
+  }
+
+  createExport(body: unknown): Promise<{ data: unknown }> {
+    return this.request('POST', '/exports', { body });
+  }
+
+  /**
+   * `GET /conversations/{id}/export` is the one endpoint whose success
+   * body is the FILE, not the `{ data }` envelope — so it can't go
+   * through request(). Errors still come back in the envelope, so we
+   * decode those the same way everything else does.
+   */
+  async exportConversation(
+    id: string,
+    format: 'json' | 'csv'
+  ): Promise<{ contentType: string; filename: string | null; body: string }> {
+    const url = new URL(
+      `${this.baseUrl}/api/v1/conversations/${encodeURIComponent(id)}/export`
+    );
+    url.searchParams.set('format', format);
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.apiKey}`, Accept: '*/*' },
+      });
+    } catch (err) {
+      throw new WacrmApiError(
+        0,
+        'network_error',
+        `Could not reach wacrm at ${this.baseUrl}: ${(err as Error).message}`
+      );
+    }
+
+    const text = await res.text();
+
+    if (!res.ok) {
+      let code = 'internal';
+      let message = `Request failed with status ${res.status}`;
+      try {
+        const envelope = JSON.parse(text) as {
+          error?: { code?: string; message?: string };
+        };
+        code = envelope.error?.code ?? code;
+        message = envelope.error?.message ?? message;
+      } catch {
+        if (text) message = text.slice(0, 500);
+      }
+      if (res.status === 429) {
+        const retryAfter = res.headers.get('Retry-After');
+        if (retryAfter) message += ` (retry after ${retryAfter}s)`;
+      }
+      throw new WacrmApiError(res.status, code, message);
+    }
+
+    const disposition = res.headers.get('Content-Disposition');
+    const match = disposition?.match(/filename="([^"]*)"/);
+
+    return {
+      contentType:
+        res.headers.get('Content-Type') ?? 'application/octet-stream',
+      filename: match ? match[1] : null,
+      body: text,
+    };
   }
 }
