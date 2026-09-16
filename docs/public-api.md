@@ -983,3 +983,41 @@ scope of
 [#245](https://github.com/ArnasDon/wacrm/issues/245). Future ideas
 (deals/pipelines, flows) are not yet scheduled. The delivery
 queue for webhooks shipped: see [Delivery semantics](#delivery-semantics).
+
+## OpenAPI
+
+The whole of `/api/v1` is also published as a machine-readable contract:
+
+```bash
+curl https://crm.example.com/api/v1/openapi.json
+```
+
+**OpenAPI 3.1, public, no key required** — it describes the shape of the
+API, not anyone's data, and you need it before you have a key. It is the
+only response under `/api/v1` that is not `no-store`: it is
+`public, max-age=3600, stale-while-revalidate=604800` and carries a
+strong `ETag`, so a conditional request with `If-None-Match` gets a
+`304` with no body.
+
+It covers all 37 operations with the scope each one needs, the response
+envelope, the error codes, pagination, which writes accept
+`Idempotency-Key`, and the rate-limit bucket each call draws on.
+`GET /conversations/{id}/export` is marked as the one exception whose
+success body is the file rather than the `{data}` envelope. A `webhooks`
+section carries one schema per event, so the `data` payload you will
+receive is typed too.
+
+Point a client at it and skip this page:
+
+- **Postman / Insomnia / Bruno** — import the URL directly.
+- **SDK generators** (`openapi-generator`, `openapi-typescript`, …) — a
+  typed client in any language, without transcribing anything by hand.
+- **`mcp-server/`** — if you want an LLM to drive the CRM rather than
+  writing a client, the MCP server already wraps these endpoints; see
+  its README.
+
+The document is generated from a registry that lives next to the routes
+(`src/lib/api/v1/openapi/`) and CI compares the two in both directions:
+an endpoint that exists without being documented fails the build, and so
+does an operation documented without a route to serve it. In practice
+that means the contract cannot drift from the code the way prose does.

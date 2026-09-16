@@ -516,6 +516,29 @@ behaviour changes**; nothing is limited by plan yet.
   Limited to 6 calls per minute per account: one call walks up to 20 pages
   of Meta's API, and spending your WhatsApp Business Account's Meta quota
   on polling would cost you sends.
+- **A machine-readable contract: `GET /api/v1/openapi.json`.** The whole
+  public API as OpenAPI 3.1 — all 37 operations with their scopes,
+  response envelopes, error codes, pagination, idempotency and rate-limit
+  buckets, plus a `webhooks` section with one schema per event. Point
+  Postman, Insomnia, Bruno or an SDK generator at it and you get a typed
+  client without reading a word of prose. Public and unauthenticated (it
+  describes the shape of the API, not anyone's data, and you need it
+  _before_ you have a key), cached for an hour and revalidated against a
+  strong `ETag` — the only response under `/api/v1` that is not
+  `no-store`.
+  It is generated from a registry that lives next to the routes, and CI
+  fails if an endpoint exists without being documented — or is documented
+  without existing. No migration.
+- **The MCP server covers tags, templates and exports.** `wacrm-mcp` gains
+  17 tools: the tag roster and attaching/detaching tags by id, the
+  template catalogue (including `sync_templates`), and both ways to export
+  — one conversation inline, or a bulk job you poll for a download link.
+  Same guard as before: everything that writes stays invisible unless you
+  set `WACRM_ENABLE_WRITES`. On top of that, the tools that cannot be
+  undone (`delete_tag`, `delete_template`) or that spend a budget shared
+  by the whole account (the 10-per-hour export bucket, the 6-per-minute
+  template sync) now refuse to run without an explicit `confirm: true`,
+  the same way broadcasts always have. No new environment variables.
 
 ### Security
 
