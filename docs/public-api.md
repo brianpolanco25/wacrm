@@ -58,17 +58,17 @@ key's next request. Revoked keys stay in the list as an audit trail.
 A key can do only what its scopes allow — independent of who created
 it. Grant the minimum.
 
-| Scope                | Allows                                  |
-| -------------------- | --------------------------------------- |
-| `messages:send`      | Send WhatsApp messages                  |
-| `messages:read`      | Read messages and delivery status       |
-| `contacts:read`      | List and read contacts                  |
-| `contacts:write`     | Create and update contacts              |
-| `conversations:read` | List and read conversations             |
-| `broadcasts:send`    | Launch broadcast campaigns              |
-| `webhooks:manage`    | Register and manage outbound webhooks   |
-| `templates:read`     | List message templates and their status |
-| `templates:write`    | Create, edit, delete and sync templates |
+| Scope                | Allows                                |
+| -------------------- | ------------------------------------- |
+| `messages:send`      | Send WhatsApp messages                |
+| `messages:read`      | Read messages and delivery status     |
+| `contacts:read`      | List and read contacts                |
+| `contacts:write`     | Create and update contacts            |
+| `conversations:read` | List and read conversations           |
+| `broadcasts:send`    | Launch broadcast campaigns            |
+| `webhooks:manage`    | Register and manage outbound webhooks |
+| `templates:read` | List message templates and their status |
+| `templates:write` | Create, edit, delete and sync templates |
 
 A key with **no scopes** still authenticates and can call
 `GET /api/v1/me` — useful for verifying a key works.
@@ -588,8 +588,10 @@ without a Meta counterpart are **not** deleted, so you can spot the drift.
 
 Every entry in `status_changes` also fires a `template.status_updated`
 webhook (see [Events](#events)) — register one instead of polling this
-endpoint. `errors` lists per-template failures without aborting the rest;
-`truncated: true` means Meta had more than 20 pages of templates.
+endpoint. `errors` lists the templates that could not be saved —by `name`
+and `language`, with a fixed `message`— without aborting the rest; the
+reason is logged server-side, never returned. `truncated: true` means Meta
+had more than 20 pages of templates.
 
 ### Templates and sending
 

@@ -26,12 +26,16 @@ const h = vi.hoisted(() => ({
   db: null as unknown as import('@/lib/security/fake-supabase').FakeDatabase,
   accountId: 'acct-a',
   emitted: [] as { accountId: string; event: string; data: unknown }[],
+  // Cliente que sustituye al de la clave cuando una prueba necesita que
+  // una escritura falle (`null` = el de verdad).
+  client: null as unknown as
+    import('@supabase/supabase-js').SupabaseClient | null,
 }));
 
 vi.mock('@/lib/auth/api-context', () => ({
   requireApiKey: async () => ({
     authType: 'api_key',
-    supabase: h.db.admin,
+    supabase: h.client ?? h.db.admin,
     accountId: h.accountId,
     keyId: 'key-a',
     scopes: ['templates:read', 'templates:write'],
@@ -159,11 +163,14 @@ beforeEach(() => {
   h.db = seed();
   h.accountId = A;
   h.emitted = [];
+  h.client = null;
   __resetRateLimitForTests();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  h.client = null;
   __resetRateLimitForTests();
 });
 
@@ -206,6 +213,65 @@ describe('POST /api/v1/templates/sync', () => {
         data: json.data.status_changes[0],
       },
     ]);
+  });
+
+  it('una escritura fallida no devuelve el texto del motor de base de datos', async () => {
+    // El sync no aborta por una plantilla que no se pudo guardar: la
+    // anota y sigue. Lo que NO puede hacer es pasarle al integrador el
+    // `PostgrestError.message` —nombres de constraint y de columna son
+    // esquema interno—. Sale el par (name, language), que es lo único
+    // accionable, y el porqué se queda en el log del servidor.
+    metaCatalog();
+    const pgMessage =
+      'duplicate key value violates unique constraint ' +
+      '"message_templates_account_id_name_language_key"';
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const real = h.db.admin;
+    h.client = {
+      from(table: string) {
+        const q = real.from(table);
+        const originalInsert = q.insert.bind(q);
+        q.insert = (rows: Row | Row[]) => {
+          const first = Array.isArray(rows) ? rows[0] : rows;
+          if (first?.name === 'welcome') {
+            return {
+              then: (resolve: (r: unknown) => unknown) =>
+                Promise.resolve(
+                  resolve({ data: null, error: { message: pgMessage } })
+                ),
+            } as never;
+          }
+          return originalInsert(rows);
+        };
+        return q;
+      },
+    } as unknown as import('@supabase/supabase-js').SupabaseClient;
+
+    const res = await POST(req());
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(text).not.toContain('duplicate key');
+    expect(text).not.toContain(
+      'message_templates_account_id_name_language_key'
+    );
+
+    const json = JSON.parse(text);
+    expect(json.data.errors).toEqual([
+      {
+        name: 'welcome',
+        language: 'en_US',
+        message: 'Template could not be saved',
+      },
+    ]);
+    // Y el resto del catálogo sí se sincronizó.
+    expect(json.data).toMatchObject({ synced: 2, created: 0, updated: 1 });
+
+    // El detalle no se pierde: queda en el servidor, no en la respuesta.
+    expect(logged.mock.calls.map((c) => c.join(' ')).join('\n')).toContain(
+      pgMessage
+    );
   });
 
   it('acepta `Content-Type: application/json` con el cuerpo vacío', async () => {

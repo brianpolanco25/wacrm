@@ -33,6 +33,12 @@ import {
   TemplateSyncError,
 } from '@/lib/whatsapp/template-sync';
 
+/**
+ * Lo único que se le cuenta al integrador cuando una plantilla concreta
+ * no se pudo guardar: el detalle del motor no sale de aquí (ver abajo).
+ */
+const TEMPLATE_SAVE_FAILED = 'Template could not be saved';
+
 export async function POST(request: Request) {
   try {
     const ctx = await requireApiKey(request, 'templates:write');
@@ -81,12 +87,31 @@ export async function POST(request: Request) {
       accessToken: target.accessToken,
     });
 
+    // Los `message` de `result.errors` son el texto del motor de base de
+    // datos tal cual (`PostgrestError.message`: nombres de constraint, de
+    // columna, de tabla). En el panel se lo comía la interfaz de un admin
+    // de la propia cuenta; por `/api/v1` sería esquema interno en manos de
+    // un tercero, y «Seguridad transversal» del spec lo prohíbe. Quien
+    // decide es esta ruta, no `syncTemplatesFromMeta`: el panel sigue
+    // recibiendo el detalle. Al integrador le va lo accionable —QUÉ
+    // plantilla no se guardó— y el porqué queda en el log del servidor.
+    for (const e of result.errors) {
+      console.error(
+        `[api/v1/templates] sync error account=${ctx.accountId} template=${e.name}/${e.language}:`,
+        e.message
+      );
+    }
+
     return ok({
       synced: result.total,
       created: result.inserted,
       updated: result.updated,
       status_changes: result.statusChanges,
-      errors: result.errors,
+      errors: result.errors.map((e) => ({
+        name: e.name,
+        language: e.language,
+        message: TEMPLATE_SAVE_FAILED,
+      })),
       truncated: result.truncated,
     });
   } catch (err) {
