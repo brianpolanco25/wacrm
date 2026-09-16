@@ -1825,7 +1825,8 @@
         "delivered": "전송됨",
         "failed": "실패",
         "dead": "중단됨"
-      }
+      },
+      "docsLink": "서명 검증 및 재시도 처리 방법"
     },
     "deals": {
       "title": "딜 & 통화",
@@ -2066,6 +2067,49 @@
       "usage": "메시지 / AI / 브로드캐스트",
       "createdAt": "가입",
       "lastActivity": "마지막 활동"
+    }
+  },
+  "Developers": {
+    "ui": {
+      "apiDocs": "API 문서",
+      "dashboard": "대시보드로 이동",
+      "nav": "문서 탐색",
+      "menu": "섹션",
+      "language": "문서 언어",
+      "onThisPage": "이 페이지에서",
+      "skipToContent": "본문으로 건너뛰기",
+      "copy": "복사",
+      "copied": "복사됨",
+      "footer": "Cabbity CRM · 공개 API v1"
+    },
+    "reference": {
+      "scopes": "스코프",
+      "noScope": "스코프 불필요",
+      "parameters": "매개변수",
+      "noParameters": "매개변수 없음.",
+      "requestBody": "요청 본문",
+      "responses": "응답",
+      "example": "예시",
+      "required": "필수",
+      "deprecated": "지원 중단",
+      "idempotent": "Idempotency-Key 지원",
+      "webhookEvents": "웹훅 이벤트",
+      "servers": "기본 서버",
+      "version": "계약 버전",
+      "colField": "필드",
+      "colType": "유형",
+      "colDescription": "설명",
+      "colStatus": "상태",
+      "colIn": "위치",
+      "inPath": "경로",
+      "inQuery": "쿼리",
+      "inHeader": "헤더"
+    },
+    "changelog": {
+      "added": "추가",
+      "changed": "변경",
+      "fixed": "수정",
+      "deprecated": "지원 중단"
     }
   }
 }

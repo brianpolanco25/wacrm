@@ -326,3 +326,53 @@ describe("middleware — support sessions cannot write", () => {
     expect(res.cookies.get(SUPPORT)?.value).toBe("");
   });
 });
+
+// ----------------------------------------------------------------
+// /developers es pública (fase 7 §7, S-A5).
+//
+// La documentación para clientes vive en el mismo despliegue que el
+// panel, así que lo único que la mantiene abierta es que su prefijo NO
+// esté en `protectedPaths`. Eso no se ve leyendo la lista: se ve cuando
+// alguien añade "/de..." y de paso captura /developers. Estos casos lo
+// fijan.
+//
+// (Este archivo no está formateado con prettier — nunca lo estuvo — así
+// que el bloque sigue su estilo en vez de reformatear 300 líneas ajenas.)
+// ----------------------------------------------------------------
+
+describe("middleware — /developers se sirve sin sesión", () => {
+  const PUBLIC_DOC_PATHS = [
+    "/developers",
+    "/developers/authentication",
+    "/developers/conventions",
+    "/developers/guides/webhooks",
+    "/developers/reference",
+    "/developers/changelog",
+  ];
+
+  it.each(PUBLIC_DOC_PATHS)("deja pasar %s sin usuario", async (path) => {
+    mockUser = null;
+    const res = await middleware(new NextRequest(`https://app.test${path}`));
+    // Ni redirección a /login ni 401: la petición sigue su camino.
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("no cambia con sesión iniciada", async () => {
+    mockUser = { id: "user-1" };
+    const res = await middleware(
+      new NextRequest("https://app.test/developers/reference"),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("conserva el ?lang= del selector de idioma", async () => {
+    mockUser = null;
+    const res = await middleware(
+      new NextRequest("https://app.test/developers/guides?lang=en"),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+  });
+});

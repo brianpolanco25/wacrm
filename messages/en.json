@@ -1825,7 +1825,8 @@
         "delivered": "Delivered",
         "failed": "Failed",
         "dead": "Given up"
-      }
+      },
+      "docsLink": "How to verify the signature and handle retries"
     },
     "deals": {
       "title": "Deals & currency",
@@ -2066,6 +2067,49 @@
       "usage": "Messages / AI / broadcast",
       "createdAt": "Signed up",
       "lastActivity": "Last activity"
+    }
+  },
+  "Developers": {
+    "ui": {
+      "apiDocs": "API documentation",
+      "dashboard": "Go to the dashboard",
+      "nav": "Documentation navigation",
+      "menu": "Sections",
+      "language": "Documentation language",
+      "onThisPage": "On this page",
+      "skipToContent": "Skip to content",
+      "copy": "Copy",
+      "copied": "Copied",
+      "footer": "Cabbity CRM · public API v1"
+    },
+    "reference": {
+      "scopes": "Scopes",
+      "noScope": "No scope required",
+      "parameters": "Parameters",
+      "noParameters": "No parameters.",
+      "requestBody": "Request body",
+      "responses": "Responses",
+      "example": "Example",
+      "required": "required",
+      "deprecated": "deprecated",
+      "idempotent": "Accepts Idempotency-Key",
+      "webhookEvents": "Webhook events",
+      "servers": "Base server",
+      "version": "Contract version",
+      "colField": "Field",
+      "colType": "Type",
+      "colDescription": "Description",
+      "colStatus": "Status",
+      "colIn": "In",
+      "inPath": "path",
+      "inQuery": "query",
+      "inHeader": "header"
+    },
+    "changelog": {
+      "added": "Added",
+      "changed": "Changed",
+      "fixed": "Fixed",
+      "deprecated": "Deprecated"
     }
   }
 }
