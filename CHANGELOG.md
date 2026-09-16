@@ -457,7 +457,7 @@ behaviour changes**; nothing is limited by plan yet.
   write, `POST`/`PATCH` of contacts and webhooks included: an integration
   that posted JSON without the header, or relied on an unbounded body, now
   gets a clear error instead of being buffered whole.
-- **A key rotation that died mid-flight no longer blocks the
+- **A request that died mid-flight no longer blocks its
   `Idempotency-Key` for a day.** A reservation with no response recorded
   after two minutes is treated as abandoned and the retry runs for real,
   instead of answering `409 conflict` for the full 24 hours while telling

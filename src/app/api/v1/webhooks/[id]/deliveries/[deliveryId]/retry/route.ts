@@ -6,18 +6,15 @@
 // escalera. Una entrega que ya está en cola (`pending`) no se toca:
 // reintentarla a mano sería mandarla dos veces.
 //
-// Lleva cubo propio (ver `WEBHOOK_ACTION_RATE_LIMIT`): cada llamada
+// Lleva cubo propio (ver `RATE_LIMITS.webhookAction`): cada llamada
 // dispara una petición saliente desde nuestros servidores.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
 import { assertPlanFeature } from '@/lib/billing/enforce';
-import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
-import { checkRateLimit } from '@/lib/rate-limit';
-import {
-  WEBHOOK_ACTION_RATE_LIMIT,
-  retryDelivery,
-} from '@/lib/webhooks/manage';
+import { ok, fail, conflict, toApiErrorResponse } from '@/lib/api/v1/respond';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
+import { retryDelivery } from '@/lib/webhooks/manage';
 
 export async function POST(
   request: Request,
@@ -30,7 +27,7 @@ export async function POST(
 
     const limit = checkRateLimit(
       `webhookAction:${ctx.accountId}`,
-      WEBHOOK_ACTION_RATE_LIMIT
+      RATE_LIMITS.webhookAction
     );
     if (!limit.success) {
       return fail(
@@ -56,13 +53,10 @@ export async function POST(
       return fail('not_found', 'Delivery not found', 404);
     }
     if (outcome.kind === 'already_queued') {
-      // `conflict` todavía no está en `ApiErrorCode` (lo añade a7.1 en
-      // la otra rama); el sobre admite cualquier código de texto.
-      return fail(
-        'conflict',
-        'This delivery is already queued for another attempt',
-        409
-      );
+      // Por el constructor tipado, no por `fail('conflict', …, 409)`:
+      // `ApiErrorCode` ya declara `conflict` (fase 7 §1) y así el código
+      // y el 409 salen del mismo sitio que los del resto de la API.
+      throw conflict('This delivery is already queued for another attempt');
     }
 
     return ok({ ...outcome.delivery, result: outcome.status });

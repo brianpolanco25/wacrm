@@ -34,17 +34,6 @@ import {
   type ApiWebhookEndpoint,
 } from '@/lib/webhooks/endpoints';
 
-/**
- * Cubo propio para las operaciones caras de webhooks (probar un
- * endpoint, reintentar a mano, rotar el secreto): cada una dispara una
- * petición saliente o regenera una credencial.
- *
- * Vive aquí y no en `RATE_LIMITS` para no chocar con la rama que está
- * tocando `src/lib/rate-limit.ts` en paralelo; queda anotado en el
- * informe como pendiente de centralizar.
- */
-export const WEBHOOK_ACTION_RATE_LIMIT = { limit: 20, windowMs: 60_000 };
-
 /** Estados que acepta el filtro `?status=` de la lista de entregas. */
 export const DELIVERY_STATUSES: DeliveryStatus[] = [
   'pending',

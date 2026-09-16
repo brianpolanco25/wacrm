@@ -88,9 +88,12 @@ export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 /**
  * After this long with no response recorded, a reservation is assumed
  * abandoned (the process that made it died) and can be taken over.
- * Two minutes is twice the longest handler the app allows — the 60 s
- * `maxDuration` of `POST /api/v1/broadcasts` — so a request that is
- * really still running is never displaced.
+ * Two minutes is twice the longest handler of the ones wrapped in this
+ * helper — the 60 s `maxDuration` of `POST /api/v1/broadcasts` — so a
+ * request that is really still running is never displaced. It is NOT a
+ * ceiling for the app: `POST /api/whatsapp/broadcast/{id}/resume`
+ * declares `maxDuration = 300` and does not go through here. Wrapping a
+ * handler longer than this window means revisiting the number.
  */
 export const IN_FLIGHT_STALE_MS = 2 * 60 * 1000;
 

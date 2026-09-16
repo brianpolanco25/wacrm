@@ -11,11 +11,12 @@
 import { NextResponse } from 'next/server';
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import {
-  WEBHOOK_ACTION_RATE_LIMIT,
-  rotateWebhookSecret,
-} from '@/lib/webhooks/manage';
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
+import { rotateWebhookSecret } from '@/lib/webhooks/manage';
 
 export async function POST(
   _request: Request,
@@ -27,7 +28,7 @@ export async function POST(
 
     const limit = checkRateLimit(
       `webhookAction:${ctx.accountId}`,
-      WEBHOOK_ACTION_RATE_LIMIT
+      RATE_LIMITS.webhookAction
     );
     if (!limit.success) return rateLimitResponse(limit);
 

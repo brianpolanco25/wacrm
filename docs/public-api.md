@@ -172,6 +172,14 @@ Requests are limited **per key**: **120 requests per minute**. On a
 > `src/lib/rate-limit.ts`. The limit is otherwise unenforced across
 > instances.
 
+Three webhook endpoints have a **tighter, per-account** budget of **20
+requests per minute** on top of the per-key one, because each call makes
+us open an outbound connection to a URL you chose or mints a new signing
+secret: `POST /api/v1/webhooks/{id}/test`,
+`POST /api/v1/webhooks/{id}/deliveries/{deliveryId}/retry` and
+`POST /api/v1/webhooks/{id}/rotate-secret`. It is per **account**, so two
+keys of the same account share it.
+
 ## Endpoints
 
 ### `GET /api/v1/me`

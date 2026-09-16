@@ -14,11 +14,8 @@
 import { requireApiKey } from '@/lib/auth/api-context';
 import { assertPlanFeature } from '@/lib/billing/enforce';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
-import { checkRateLimit } from '@/lib/rate-limit';
-import {
-  WEBHOOK_ACTION_RATE_LIMIT,
-  sendTestDelivery,
-} from '@/lib/webhooks/manage';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
+import { sendTestDelivery } from '@/lib/webhooks/manage';
 
 export async function POST(
   request: Request,
@@ -31,7 +28,7 @@ export async function POST(
 
     const limit = checkRateLimit(
       `webhookAction:${ctx.accountId}`,
-      WEBHOOK_ACTION_RATE_LIMIT
+      RATE_LIMITS.webhookAction
     );
     if (!limit.success) {
       return fail(

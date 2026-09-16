@@ -188,6 +188,15 @@ export const RATE_LIMITS = {
    *  capping a stampede; excess inbounds simply don't get an auto-reply
    *  (they still land in the inbox for a human). */
   aiAutoReplyAccount: { limit: 30, windowMs: 60_000 },
+  /** Acciones caras de webhooks (fase 7 §4), por cuenta: probar un
+   *  endpoint, reintentar una entrega a mano, rotar el secreto de
+   *  firma. Cada llamada dispara una petición saliente a una URL que
+   *  elige el cliente o regenera una credencial, así que el cubo es
+   *  mucho más estrecho que el de `publicApi` y va por cuenta, no por
+   *  clave: dos claves de la misma cuenta no pueden sumar el doble de
+   *  peticiones salientes. 20/min es holgado para alguien depurando su
+   *  receptor desde Ajustes. */
+  webhookAction: { limit: 20, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't
