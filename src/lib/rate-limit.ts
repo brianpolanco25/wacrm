@@ -197,6 +197,14 @@ export const RATE_LIMITS = {
    *  peticiones salientes. 20/min es holgado para alguien depurando su
    *  receptor desde Ajustes. */
   webhookAction: { limit: 20, windowMs: 60_000 },
+  /** Sincronización del catálogo de plantillas desde Meta (fase 7 §3),
+   *  por cuenta. Una llamada recorre hasta 20 páginas de la Graph API y
+   *  reescribe la tabla entera, así que es de lo más caro que expone la
+   *  API pública: mucho más estrecho que `publicApi` y por CUENTA, no
+   *  por clave, para que dos claves del mismo cliente no sumen el doble
+   *  de carga contra Meta. 6/min (S-A7) es holgado para alguien que
+   *  acaba de aprobar una plantilla y quiere verla ya. */
+  templatesSync: { limit: 6, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't

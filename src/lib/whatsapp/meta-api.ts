@@ -27,18 +27,51 @@ interface MetaErrorResponse {
   error?: { message?: string; code?: number; type?: string };
 }
 
+/**
+ * Lo que lanza cualquier helper de este archivo cuando Meta responde
+ * con un error.
+ *
+ * Sigue siendo un `Error` con el MISMO `message` que antes —los
+ * llamadores que hacen `e instanceof Error ? e.message : …` no cambian
+ * de comportamiento—, pero además conserva el código numérico público
+ * de Meta (`error.code`) y el estado HTTP. La API pública (fase 7 §3)
+ * los necesita para devolver `meta_error` con el código que el cliente
+ * puede buscar en la documentación de Meta, en lugar de una frase
+ * suelta.
+ */
+export class MetaApiError extends Error {
+  /** Estado HTTP con el que respondió la Graph API. */
+  readonly status: number;
+  /** `error.code` de Meta, cuando vino en el cuerpo. */
+  readonly code?: number;
+  /** `error.type` de Meta (p. ej. `OAuthException`). */
+  readonly type?: string;
+
+  constructor(message: string, status: number, code?: number, type?: string) {
+    super(message);
+    this.name = 'MetaApiError';
+    this.status = status;
+    this.code = code;
+    this.type = type;
+  }
+}
+
 async function throwMetaError(
   response: Response,
   fallback: string
 ): Promise<never> {
   let message = fallback;
+  let code: number | undefined;
+  let type: string | undefined;
   try {
     const data = (await response.json()) as MetaErrorResponse;
     if (data.error?.message) message = data.error.message;
+    if (typeof data.error?.code === 'number') code = data.error.code;
+    if (typeof data.error?.type === 'string') type = data.error.type;
   } catch {
     // response body wasn't JSON — keep the fallback
   }
-  throw new Error(message);
+  throw new MetaApiError(message, response.status, code, type);
 }
 
 // ============================================================
