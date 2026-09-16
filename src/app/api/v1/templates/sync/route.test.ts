@@ -201,6 +201,36 @@ describe('POST /api/v1/templates/sync', () => {
     ]);
   });
 
+  it('acepta `Content-Type: application/json` con el cuerpo vacío', async () => {
+    // `curl -X POST -H 'Content-Type: application/json'` sin `-d`. Exigir
+    // un `{}` literal para poder sincronizar sería una trampa sin nada al
+    // otro lado; el resto de controles del cuerpo siguen valiendo.
+    metaCatalog();
+    const res = await POST(
+      new Request('https://crm.test/api/v1/templates/sync', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer wacrm_live_x',
+          'content-type': 'application/json',
+        },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    __resetRateLimitForTests();
+    const broken = await POST(
+      new Request('https://crm.test/api/v1/templates/sync', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer wacrm_live_x',
+          'content-type': 'application/json',
+        },
+        body: '[]',
+      })
+    );
+    expect(broken.status).toBe(400);
+  });
+
   it('escribe solo dentro de la cuenta de la clave', async () => {
     metaCatalog();
     const before = h.db.snapshot(B);

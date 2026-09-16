@@ -318,10 +318,16 @@ export async function syncTemplatesFromMeta(
     }
 
     if (existing?.id) {
+      // El `account_id` va aunque el id venga de la búsqueda de arriba,
+      // que ya estaba acotada: cuando esto lo ejecuta la API pública el
+      // cliente es el de rol de servicio y no hay RLS detrás que corrija
+      // un descuido. Cuesta nada y quita la única escritura de esta
+      // función que dependía de una lectura anterior para estar a salvo.
       const { error: updErr } = await db
         .from('message_templates')
         .update(row)
-        .eq('id', existing.id);
+        .eq('id', existing.id)
+        .eq('account_id', accountId);
       if (updErr) {
         errors.push({
           name: t.name,

@@ -370,8 +370,14 @@ export async function resolveTemplateWaba(
  * Lee el cuerpo solo si el cliente mandó uno. `POST
  * /api/v1/templates/sync` no necesita ninguno: obligar a mandar `{}`
  * con `Content-Type: application/json` para poder sincronizar sería
- * gratuito. Cuando SÍ viene cuerpo pasa por `readJsonBody` como toda
- * escritura de `/api/v1` (415 / 413 / 400), nunca por `request.json()`.
+ * gratuito.
+ *
+ * Son dos tolerancias, no una. Sin `Content-Type` no hay 415 (nadie
+ * declara el tipo de un cuerpo que no existe), y CON `Content-Type` un
+ * cuerpo vacío vale `{}` en lugar de 400 —`curl -X POST -H
+ * 'Content-Type: application/json'` sin `-d` es la forma natural de
+ * llamar a esto—. Lo demás es `readJsonBody` como en toda escritura de
+ * `/api/v1` (413 / 400 / objeto en la raíz), nunca `request.json()`.
  */
 export async function readOptionalJsonBody(
   request: Request
@@ -382,7 +388,7 @@ export async function readOptionalJsonBody(
     (contentType !== null && contentType.trim() !== '') ||
     (declared !== null && Number(declared) > 0);
   if (!hasBody) return { data: {}, raw: '' };
-  return readJsonBody(request);
+  return readJsonBody(request, { allowEmpty: true });
 }
 
 // ------------------------------------------------------------------

@@ -283,6 +283,11 @@ import * as platformImpersonateStop from '@/app/api/platform/impersonate/stop/ro
 import * as platformAccounts from '@/app/api/platform/accounts/route';
 import * as platformAccountById from '@/app/api/platform/accounts/[id]/route';
 import * as platformAccountHold from '@/app/api/platform/accounts/[id]/hold/route';
+// Fase 7 §3. Van al final de la lista a propósito: la otra mitad de la
+// fase toca este mismo archivo en paralelo y así no chocan los dos.
+import * as v1Templates from '@/app/api/v1/templates/route';
+import * as v1TemplateById from '@/app/api/v1/templates/[id]/route';
+import * as v1TemplatesSync from '@/app/api/v1/templates/sync/route';
 
 // ---- seed ------------------------------------------------------------
 
@@ -2992,5 +2997,146 @@ describe('/api/platform/accounts (the panel, service role)', () => {
     expectBUnchanged(beforeB);
     // Two lines in the trail: suspending and lifting are both acts.
     expect(h.db.rows('impersonation_log')).toHaveLength(2);
+  });
+});
+
+// ============================================================
+// Plantillas por la API pública (fase 7 §3). Bloque al final del archivo
+// a propósito: la otra mitad de la fase edita este mismo test en
+// paralelo y así los dos añadidos no se pisan.
+//
+// Las dos cuentas tienen una plantilla que se llama `promo` en `en_US`,
+// que es justo el par que la tabla hace único POR CUENTA: cualquier
+// consulta a la que se le caiga el `account_id` casa con la de B, que
+// está sembrada primero.
+// ============================================================
+
+describe('/api/v1/templates (service role via API key)', () => {
+  /** El catálogo que devolvería Meta, por `global.fetch`. */
+  function metaCatalog(templates: Record<string, unknown>[]) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            json: async () => ({ data: templates }),
+          }) as unknown as Response
+      )
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("GET /templates lists A's and never B's same-named one", async () => {
+    const res = await v1Templates.GET(
+      req('GET', '/api/v1/templates?search=promo', undefined, asKeyA)
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.data.map((t: Row) => t.id)).toEqual([TPL_A]);
+    expectNoBIds(body);
+    // Ni el cuerpo de B, que lleva su etiqueta dentro del texto.
+    expect(JSON.stringify(body)).not.toContain('from b');
+  });
+
+  it("GET/PATCH/DELETE on B's template id are 404 and touch neither B nor Meta", async () => {
+    const before = h.db.snapshot(B);
+
+    const got = await v1TemplateById.GET(
+      req('GET', `/api/v1/templates/${TPL_B}`, undefined, asKeyA),
+      params({ id: TPL_B })
+    );
+    expect(got.status).toBe(404);
+
+    const patched = await v1TemplateById.PATCH(
+      req(
+        'PATCH',
+        `/api/v1/templates/${TPL_B}`,
+        { body_text: 'pwned {{1}}', sample_values: { body: ['x'] } },
+        asKeyA
+      ),
+      params({ id: TPL_B })
+    );
+    expect(patched.status).toBe(404);
+
+    const deleted = await v1TemplateById.DELETE(
+      req('DELETE', `/api/v1/templates/${TPL_B}`, undefined, asKeyA),
+      params({ id: TPL_B })
+    );
+    expect(deleted.status).toBe(404);
+
+    expect(h.meta.sends).toEqual([]);
+    expectBUnchanged(before);
+
+    // Y la propia sí se lee, para que el 404 anterior no sea un falso
+    // verde de una ruta rota.
+    const own = await v1TemplateById.GET(
+      req('GET', `/api/v1/templates/${TPL_A}`, undefined, asKeyA),
+      params({ id: TPL_A })
+    );
+    expect(own.status).toBe(200);
+  });
+
+  it("POST /templates submits under A's WABA even when B has the same name", async () => {
+    const before = h.db.snapshot(B);
+    const res = await v1Templates.POST(
+      req(
+        'POST',
+        '/api/v1/templates',
+        {
+          name: 'welcome_back',
+          language: 'en_US',
+          category: 'Marketing',
+          body_text: 'Welcome {{1}}',
+          sample_values: { body: ['Ada'] },
+        },
+        asKeyA
+      )
+    );
+    const body = await res.json();
+    expect(res.status).toBe(201);
+    expect(h.meta.sends.map((s) => s.fn)).toEqual(['submitMessageTemplate']);
+    expect(h.meta.sends[0].args.wabaId).toBe('waba-a');
+
+    const row = h.db
+      .rows('message_templates')
+      .find((t) => t.name === 'welcome_back')!;
+    expect(row.account_id).toBe(A);
+    expectNoBIds(body);
+    expectBUnchanged(before);
+  });
+
+  it("POST /templates/sync rewrites A's catalogue only", async () => {
+    const before = h.db.snapshot(B);
+    // Meta devuelve la MISMA (name, language) que las dos cuentas tienen.
+    metaCatalog([
+      {
+        id: 'meta-tpl-a',
+        name: 'promo',
+        language: 'en_US',
+        status: 'PAUSED',
+        category: 'MARKETING',
+        components: [{ type: 'BODY', text: 'Hello {{1}} from meta' }],
+      },
+    ]);
+
+    const res = await v1TemplatesSync.POST(
+      req('POST', '/api/v1/templates/sync', undefined, asKeyA)
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ synced: 1, created: 0, updated: 1 });
+    // El cambio de estado se emitió, y bajo la cuenta de la clave.
+    expect(h.webhookEvents).toEqual([
+      { accountId: A, event: 'template.status_updated' },
+    ]);
+    expect(body.data.status_changes[0].template_id).toBe(TPL_A);
+    expectNoBIds(body);
+    expectBUnchanged(before);
   });
 });
