@@ -1265,6 +1265,46 @@ describe('/api/v1 (service role via API key)', () => {
     expectBUnchanged(before);
   });
 
+  it('la idempotencia de la fase 7 §1 no cruza cuentas: misma Idempotency-Key, dos mensajes', async () => {
+    // Lo que de verdad afirma este test lo afirma la auditoría que corre
+    // en cada `afterEach`: toda consulta que `withIdempotency` lanza por
+    // el rol de servicio sobre `api_idempotency_keys` tiene que llevar su
+    // `account_id`. Si alguien la quita, esto falla aunque las
+    // aserciones de abajo sigan pasando.
+    //
+    // (La reproducción de respuestas la cubre
+    // `src/lib/api/v1/idempotency.test.ts`, que emula el índice único;
+    // esta base falsa no lo hace y aquí solo interesa el aislamiento.)
+    const payload = { to: SHARED_PHONE, type: 'text', text: 'hola' };
+    const header = { 'Idempotency-Key': 'la-misma-clave' };
+
+    const asA = await v1Messages.POST(
+      req('POST', '/api/v1/messages', payload, { ...asKeyA, ...header })
+    );
+    expect(asA.status).toBe(201);
+
+    const asB = await v1Messages.POST(
+      req('POST', '/api/v1/messages', payload, {
+        authorization: `Bearer ${KEY_B}`,
+        ...header,
+      })
+    );
+    expect(asB.status).toBe(201);
+
+    // Cada cuenta guarda su propia fila bajo su propia clave de API:
+    // ninguna de las dos puede alcanzar la de la otra.
+    const stored = h.db.rows('api_idempotency_keys');
+    expect(stored.map((r) => r.account_id).sort()).toEqual([A, B].sort());
+    expect(new Set(stored.map((r) => r.api_key_id)).size).toBe(2);
+
+    // Y el mensaje de cada una cayó en su propia conversación.
+    const bodyA = await asA.json();
+    const bodyB = await asB.json();
+    expect(bodyA.data.conversation_id).toBe('conv-a');
+    expect(bodyB.data.conversation_id).toBe('conv-b');
+    expect(bodyA.data.message_id).not.toBe(bodyB.data.message_id);
+  });
+
   it('POST /messages con `to_user_id` escribe al contacto de A, no al de B (fase 6 §5)', async () => {
     const before = h.db.snapshot(B);
     const res = await v1Messages.POST(
