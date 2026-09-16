@@ -1,135 +1,144 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { FakeDatabase, type Row } from '@/lib/security/fake-supabase';
+
 vi.mock('@/lib/whatsapp/encryption', () => ({
-  decrypt: (s: string) => s,
-  encrypt: (s: string) => s,
+  decrypt: (s: string) => String(s).replace(/^enc:/, ''),
+  encrypt: (s: string) => `enc:${s}`,
 }));
 
-// Control the SSRF guard per-test.
 vi.mock('@/lib/webhooks/ssrf', () => ({
   isDeliverableUrl: vi.fn(async () => true),
 }));
 
-import { dispatchWebhookEvent, MAX_CONSECUTIVE_FAILURES } from './deliver';
-import { isDeliverableUrl } from './ssrf';
+import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
+import { dispatchWebhookEvent } from './deliver';
 
-interface Row {
-  id: string;
-  url: string;
-  secret: string;
-}
-interface Calls {
-  updates: { id: string; payload: Record<string, unknown> }[];
-  rpcs: { name: string; args: Record<string, unknown> }[];
-}
+const A = 'acct-a';
+const B = 'acct-b';
 
-function makeDb(rows: Row[], calls: Calls) {
-  const from = () => {
-    let mode: 'select' | 'update' = 'select';
-    let payload: Record<string, unknown> = {};
-    let id: string | null = null;
-    const b: Record<string, unknown> = {
-      select: () => b,
-      eq: (col: string, val: string) => {
-        if (col === 'id') id = val;
-        return b;
-      },
-      update: (p: Record<string, unknown>) => {
-        mode = 'update';
-        payload = p;
-        return b;
-      },
-      contains: () => Promise.resolve({ data: rows, error: null }),
-      then: (resolve: (v: unknown) => unknown) => {
-        if (mode === 'update' && id) calls.updates.push({ id, payload });
-        return resolve({ data: null, error: null });
-      },
-    };
-    return b;
-  };
-  const rpc = (name: string, args: Record<string, unknown>) => {
-    calls.rpcs.push({ name, args });
-    return Promise.resolve({ data: null, error: null });
-  };
-  return { from, rpc } as unknown as SupabaseClient;
-}
+let fake: FakeDatabase;
+let db: SupabaseClient;
 
-const emptyCalls = (): Calls => ({ updates: [], rpcs: [] });
+function deliveries(): Row[] {
+  return fake.rows('webhook_deliveries');
+}
 
 beforeEach(() => {
+  fake = new FakeDatabase(
+    {
+      webhook_endpoints: [
+        {
+          id: 'wh-b',
+          account_id: B,
+          url: 'https://b.example.com/hook',
+          secret: 'enc:secret-b',
+          events: ['message.received'],
+          is_active: true,
+          failure_count: 0,
+        },
+        {
+          id: 'wh-a1',
+          account_id: A,
+          url: 'https://a1.example.com/hook',
+          secret: 'enc:secret-a1',
+          events: ['message.received', 'conversation.created'],
+          is_active: true,
+          failure_count: 0,
+        },
+        {
+          id: 'wh-a2',
+          account_id: A,
+          url: 'https://a2.example.com/hook',
+          secret: 'enc:secret-a2',
+          events: ['message.received'],
+          is_active: true,
+          failure_count: 0,
+        },
+      ],
+      webhook_deliveries: [],
+    },
+    {
+      record_webhook_failure: (args) => {
+        const row = fake
+          .rows('webhook_endpoints')
+          .find((r) => r.id === args.endpoint_id);
+        if (row) {
+          const next = ((row.failure_count as number) ?? 0) + 1;
+          row.failure_count = next;
+          if (next >= (args.max_failures as number)) row.is_active = false;
+        }
+        return { data: null, error: null };
+      },
+    }
+  );
+  db = fake.admin as unknown as SupabaseClient;
   vi.mocked(isDeliverableUrl).mockResolvedValue(true);
   vi.stubGlobal('fetch', vi.fn());
 });
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('dispatchWebhookEvent', () => {
-  it('signs + POSTs (no redirect follow) and resets failure_count on success', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response);
+  it('persiste una entrega por endpoint suscrito y hace el primer intento', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
-    const calls = emptyCalls();
 
-    await dispatchWebhookEvent(
-      makeDb([{ id: 'a', url: 'https://a.test/hook', secret: 's1' }], calls),
-      'acct-1',
-      'message.received',
-      { x: 1 }
-    );
+    await dispatchWebhookEvent(db, A, 'message.received', { x: 1 });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://a.test/hook');
-    expect(opts.redirect).toBe('manual');
-    expect(opts.headers['X-Wacrm-Event']).toBe('message.received');
-    expect(opts.headers['X-Wacrm-Signature']).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
-    // Payload carries a dedupe id.
-    expect(JSON.parse(opts.body).id).toMatch(/[0-9a-f-]{36}/);
-    expect(calls.updates[0]).toMatchObject({ id: 'a', payload: { failure_count: 0 } });
-    expect(calls.rpcs).toHaveLength(0);
+    expect(deliveries()).toHaveLength(2);
+    expect(deliveries().map((d) => d.status)).toEqual([
+      'delivered',
+      'delivered',
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const urls = fetchMock.mock.calls.map((c) => c[0]).sort();
+    expect(urls).toEqual([
+      'https://a1.example.com/hook',
+      'https://a2.example.com/hook',
+    ]);
   });
 
-  it('records an atomic failure (RPC) when the endpoint errors', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 } as Response));
-    const calls = emptyCalls();
+  it('no entrega a endpoints de otra cuenta (fuga)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
 
-    await dispatchWebhookEvent(
-      makeDb([{ id: 'b', url: 'https://b.test/hook', secret: 's2' }], calls),
-      'acct-1',
-      'message.received',
-      {}
-    );
+    await dispatchWebhookEvent(db, A, 'message.received', {});
 
-    expect(calls.rpcs[0]).toEqual({
-      name: 'record_webhook_failure',
-      args: { endpoint_id: 'b', max_failures: MAX_CONSECUTIVE_FAILURES },
-    });
-    expect(calls.updates).toHaveLength(0);
+    expect(deliveries().every((d) => d.account_id === A)).toBe(true);
+    expect(
+      fetchMock.mock.calls.some((c) => String(c[0]).includes('b.example.com'))
+    ).toBe(false);
   });
 
-  it('blocks a non-public target (SSRF guard) without fetching', async () => {
-    vi.mocked(isDeliverableUrl).mockResolvedValue(false);
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const calls = emptyCalls();
-
-    await dispatchWebhookEvent(
-      makeDb([{ id: 'c', url: 'https://127.0.0.1/hook', secret: 's3' }], calls),
-      'acct-1',
-      'message.received',
-      {}
+  it('un receptor caído deja la entrega en la cola, no la pierde', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new Error('ECONNREFUSED'))
     );
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(calls.rpcs[0].name).toBe('record_webhook_failure');
+    await dispatchWebhookEvent(db, A, 'conversation.created', { c: 1 });
+
+    expect(deliveries()).toHaveLength(1);
+    const row = deliveries()[0];
+    expect(row.status).toBe('failed');
+    expect(row.attempt).toBe(1);
+    expect(row.last_error).toBe('ECONNREFUSED');
+    expect(new Date(row.next_attempt_at as string).getTime()).toBeGreaterThan(
+      Date.now() + 50_000
+    );
   });
 
-  it('does nothing when no endpoints are subscribed', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const calls = emptyCalls();
-    await dispatchWebhookEvent(makeDb([], calls), 'acct-1', 'message.received', {});
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(calls.rpcs).toHaveLength(0);
-    expect(calls.updates).toHaveLength(0);
+  it('nunca lanza aunque la base falle (CP11: lo entrante no se bloquea)', async () => {
+    const broken = {
+      from: () => {
+        throw new Error('db down');
+      },
+    } as unknown as SupabaseClient;
+
+    await expect(
+      dispatchWebhookEvent(broken, A, 'message.received', {})
+    ).resolves.toBeUndefined();
   });
 });

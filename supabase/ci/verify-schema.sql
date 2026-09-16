@@ -1029,6 +1029,74 @@ BEGIN
       'filter_contacts_by_tags no longer searches wa_username (migration 060)';
   END IF;
 
+  -- ------------------------------------------------------------
+  -- 062: cola duradera de entregas de webhook.
+  -- ------------------------------------------------------------
+  IF to_regclass('public.webhook_deliveries') IS NULL THEN
+    RAISE EXCEPTION 'public.webhook_deliveries is missing (migration 062)';
+  END IF;
+
+  -- Sin el CHECK, un estado inventado ('retrying') se colaría y el
+  -- barrido dejaria de verlo: la entrega se perderia en silencio.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.webhook_deliveries'::regclass
+      AND conname = 'webhook_deliveries_status_check'
+      AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION
+      'webhook_deliveries_status_check is missing (migration 062)';
+  END IF;
+
+  -- El indice parcial del barrido: sin el, drenar la cola es un
+  -- seq scan sobre toda la bitacora de 30 dias.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    WHERE i.indexrelid = 'public.webhook_deliveries_due_idx'::regclass
+      AND i.indpred IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION
+      'webhook_deliveries_due_idx must exist and be partial (migration 062)';
+  END IF;
+
+  IF to_regclass('public.webhook_deliveries_endpoint_idx') IS NULL THEN
+    RAISE EXCEPTION
+      'webhook_deliveries_endpoint_idx is missing (migration 062)';
+  END IF;
+
+  IF to_regclass('public.webhook_deliveries_account_created_idx') IS NULL THEN
+    RAISE EXCEPTION
+      'webhook_deliveries_account_created_idx is missing (migration 062)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE oid = 'public.webhook_deliveries'::regclass AND relrowsecurity
+  ) THEN
+    RAISE EXCEPTION
+      'webhook_deliveries does not have RLS enabled (migration 062)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'webhook_deliveries'
+      AND policyname = 'webhook_deliveries_select'
+  ) THEN
+    RAISE EXCEPTION
+      'webhook_deliveries_select policy is missing (migration 062)';
+  END IF;
+
+  -- Escritura reservada a service_role: cualquier politica de
+  -- INSERT/UPDATE/DELETE dejaria a un usuario fabricar entregas.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'webhook_deliveries'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION
+      'webhook_deliveries must not expose write policies (migration 062)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
