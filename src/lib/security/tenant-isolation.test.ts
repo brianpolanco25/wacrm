@@ -283,6 +283,12 @@ import * as platformImpersonateStop from '@/app/api/platform/impersonate/stop/ro
 import * as platformAccounts from '@/app/api/platform/accounts/route';
 import * as platformAccountById from '@/app/api/platform/accounts/[id]/route';
 import * as platformAccountHold from '@/app/api/platform/accounts/[id]/hold/route';
+// Etiquetas de la API pública (fase 7 §2). Al final de la lista a
+// propósito: `api/templates` crece por el mismo sitio en paralelo.
+import * as v1Tags from '@/app/api/v1/tags/route';
+import * as v1TagById from '@/app/api/v1/tags/[id]/route';
+import * as v1ContactTags from '@/app/api/v1/contacts/[id]/tags/route';
+import * as v1ContactTagById from '@/app/api/v1/contacts/[id]/tags/[tagId]/route';
 
 // ---- seed ------------------------------------------------------------
 
@@ -2992,5 +2998,193 @@ describe('/api/platform/accounts (the panel, service role)', () => {
     expectBUnchanged(beforeB);
     // Two lines in the trail: suspending and lifting are both acts.
     expect(h.db.rows('impersonation_log')).toHaveLength(2);
+  });
+});
+
+// ============================================================
+// Etiquetas de la API pública (fase 7 §2). Al final del archivo a
+// propósito: `api/templates` crece en paralelo por el mismo sitio.
+//
+// La semilla global deja `tags` y `contact_tags` vacías, así que cada
+// prueba pone las suyas — con el MISMO nombre en las dos cuentas, para
+// que una búsqueda o un find-or-create sin acotar caiga sobre la de B.
+// ============================================================
+
+describe('/api/v1/tags (service role via API key)', () => {
+  /** Una etiqueta homónima por cuenta; la de B primero. */
+  function seedTags(): void {
+    h.db.rows('tags').push(
+      {
+        id: 'tag-b',
+        account_id: B,
+        user_id: USER_B,
+        name: 'VIP',
+        color: '#111111',
+        created_at: PAST,
+      },
+      {
+        id: 'tag-a',
+        account_id: A,
+        user_id: USER_A,
+        name: 'VIP',
+        color: '#222222',
+        created_at: PAST,
+      }
+    );
+  }
+
+  it('GET /tags lista la etiqueta de A y nunca la homónima de B, ni con ?search=', async () => {
+    seedTags();
+
+    const all = await v1Tags.GET(req('GET', '/api/v1/tags', undefined, asKeyA));
+    const allBody = await all.json();
+    expect(all.status).toBe(200);
+    expect(allBody.data.map((t: Row) => t.id)).toEqual(['tag-a']);
+    expectNoBIds(allBody);
+
+    const searched = await v1Tags.GET(
+      req('GET', '/api/v1/tags?search=vip', undefined, asKeyA)
+    );
+    const searchedBody = await searched.json();
+    expect(searchedBody.data.map((t: Row) => t.id)).toEqual(['tag-a']);
+    expectNoBIds(searchedBody);
+  });
+
+  it('POST /tags con un nombre que solo tiene B crea la etiqueta de A, no reutiliza la de B', async () => {
+    h.db.rows('tags').push({
+      id: 'tag-b',
+      account_id: B,
+      user_id: USER_B,
+      name: 'VIP',
+      color: '#111111',
+      created_at: PAST,
+    });
+    const before = h.db.snapshot(B);
+
+    const res = await v1Tags.POST(
+      req('POST', '/api/v1/tags', { name: 'VIP' }, asKeyA)
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.data.id).not.toBe('tag-b');
+    expect(
+      h.db.rows('tags').find((t) => t.id === body.data.id)?.account_id
+    ).toBe(A);
+    expectNoBIds(body);
+    expectBUnchanged(before);
+  });
+
+  it('GET/PATCH/DELETE /tags/{id} con el id de B son 404 y no tocan nada suyo', async () => {
+    seedTags();
+    const before = h.db.snapshot(B);
+
+    const got = await v1TagById.GET(
+      req('GET', '/api/v1/tags/tag-b', undefined, asKeyA),
+      params({ id: 'tag-b' })
+    );
+    expect(got.status).toBe(404);
+
+    const patched = await v1TagById.PATCH(
+      req('PATCH', '/api/v1/tags/tag-b', { name: 'pwned' }, asKeyA),
+      params({ id: 'tag-b' })
+    );
+    expect(patched.status).toBe(404);
+
+    const deleted = await v1TagById.DELETE(
+      req('DELETE', '/api/v1/tags/tag-b', undefined, asKeyA),
+      params({ id: 'tag-b' })
+    );
+    expect(deleted.status).toBe(404);
+
+    expectBUnchanged(before);
+
+    // Y la propia sí responde: el 404 es de propiedad, no de ruta rota.
+    const own = await v1TagById.GET(
+      req('GET', '/api/v1/tags/tag-a', undefined, asKeyA),
+      params({ id: 'tag-a' })
+    );
+    expect(own.status).toBe(200);
+  });
+
+  it('POST /contacts/{id}/tags rechaza con 404 la etiqueta de B y el contacto de B', async () => {
+    seedTags();
+    const before = h.db.snapshot(B);
+
+    // Etiqueta ajena sobre contacto propio.
+    const foreignTag = await v1ContactTags.POST(
+      req(
+        'POST',
+        '/api/v1/contacts/contact-a/tags',
+        { tag_ids: ['tag-b'] },
+        asKeyA
+      ),
+      params({ id: 'contact-a' })
+    );
+    expect(foreignTag.status).toBe(404);
+
+    // Etiqueta propia sobre contacto ajeno.
+    const foreignContact = await v1ContactTags.POST(
+      req(
+        'POST',
+        '/api/v1/contacts/contact-b/tags',
+        { tag_ids: ['tag-a'] },
+        asKeyA
+      ),
+      params({ id: 'contact-b' })
+    );
+    expect(foreignContact.status).toBe(404);
+
+    expect(h.db.rows('contact_tags')).toHaveLength(0);
+    expect(h.webhookEvents).toEqual([]);
+    expectBUnchanged(before);
+  });
+
+  it('POST /contacts/{id}/tags ata la etiqueta propia y emite el evento de la cuenta', async () => {
+    seedTags();
+
+    const res = await v1ContactTags.POST(
+      req(
+        'POST',
+        '/api/v1/contacts/contact-a/tags',
+        { tag_ids: ['tag-a'] },
+        asKeyA
+      ),
+      params({ id: 'contact-a' })
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.tags.map((t: Row) => t.id)).toEqual(['tag-a']);
+    expectNoBIds(body);
+    expect(h.webhookEvents).toEqual([
+      { accountId: A, event: 'contact.tag_added' },
+    ]);
+  });
+
+  it('DELETE /contacts/{id}/tags/{tagId} no desetiqueta a un contacto de B', async () => {
+    seedTags();
+    h.db.rows('contact_tags').push({
+      id: 'join-b',
+      contact_id: 'contact-b',
+      tag_id: 'tag-b',
+    });
+    const before = h.db.snapshot(B);
+
+    const foreignBoth = await v1ContactTagById.DELETE(
+      req('DELETE', '/api/v1/contacts/contact-b/tags/tag-b', undefined, asKeyA),
+      params({ id: 'contact-b', tagId: 'tag-b' })
+    );
+    expect(foreignBoth.status).toBe(404);
+
+    const foreignTag = await v1ContactTagById.DELETE(
+      req('DELETE', '/api/v1/contacts/contact-a/tags/tag-b', undefined, asKeyA),
+      params({ id: 'contact-a', tagId: 'tag-b' })
+    );
+    expect(foreignTag.status).toBe(404);
+
+    expect(h.db.rows('contact_tags')).toHaveLength(1);
+    expect(h.webhookEvents).toEqual([]);
+    expectBUnchanged(before);
   });
 });
