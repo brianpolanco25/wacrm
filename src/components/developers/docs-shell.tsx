@@ -129,7 +129,19 @@ export function DocsShell({
       </header>
 
       <div className="mx-auto flex max-w-7xl gap-8 px-4 sm:px-6">
+        {/*
+          `lang` en todo lo que lleva PROSA. El `<html lang>` del layout
+          raíz declara el idioma de la INSTANCIA, pero aquí el idioma lo
+          elige el visitante con `?lang=` (y en una instancia en coreano
+          la prosa siempre cae a inglés). Sin esto un lector de pantalla
+          pronuncia el texto con la fonética equivocada — WCAG 3.1.2.
+          Va en el `<main>`, en el menú lateral y en el `<details>` de
+          móvil, porque las entradas del menú son títulos de página, o
+          sea prosa. El cromo (`t(…)`) sí sigue al idioma de la
+          instancia y por eso queda fuera de estos contenedores.
+        */}
         <nav
+          lang={locale}
           aria-label={t('nav')}
           className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto py-8 lg:block"
         >
@@ -141,12 +153,12 @@ export function DocsShell({
             <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
               {t('menu')}
             </summary>
-            <div className="px-2 pt-1 pb-4">
+            <div lang={locale} className="px-2 pt-1 pb-4">
               <NavList locale={locale} current={current} />
             </div>
           </details>
 
-          <main id="docs-content" className="min-w-0">
+          <main id="docs-content" lang={locale} className="min-w-0">
             {children}
           </main>
 

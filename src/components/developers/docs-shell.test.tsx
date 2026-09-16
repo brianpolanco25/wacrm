@@ -90,6 +90,33 @@ describe('DocsShell', () => {
     );
     expect(html).toContain(en.Developers.ui.skipToContent);
   });
+
+  it('declara el idioma de la prosa en el contenido y en el menú', () => {
+    // Instancia en español (`messages = es`) leyendo la prosa en inglés:
+    // el `<html lang>` del layout raíz dice "es" y el texto está en
+    // inglés, así que los contenedores de prosa tienen que corregirlo.
+    const html = render(
+      <DocsShell locale="en" current="start">
+        <p>contenido</p>
+      </DocsShell>
+    );
+    expect(html).toContain('<main id="docs-content" lang="en"');
+    // Menú lateral y desplegable de móvil: sus entradas son títulos de
+    // página, o sea prosa, y repiten el mismo `NavList`.
+    // El espacio delante evita contar los `hreflang=` del selector.
+    expect(html.match(/ lang="en"/g) ?? []).toHaveLength(3);
+    expect(html).not.toContain(' lang="es"');
+  });
+
+  it('declara español cuando la prosa se lee en español', () => {
+    const html = render(
+      <DocsShell locale="es" current="start">
+        <p>contenido</p>
+      </DocsShell>
+    );
+    expect(html).toContain('<main id="docs-content" lang="es"');
+    expect(html.match(/ lang="es"/g) ?? []).toHaveLength(3);
+  });
 });
 
 describe('DocArticle', () => {
