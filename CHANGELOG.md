@@ -443,6 +443,26 @@ behaviour changes**; nothing is limited by plan yet.
 > confirmed outbound attachments still arrive — see
 > `docs/security.md`, "Private attachments".
 
+- **Tags on the public API.** `GET`/`POST /api/v1/tags` and
+  `GET`/`PATCH`/`DELETE /api/v1/tags/{id}` manage the tag roster, and
+  `POST /api/v1/contacts/{id}/tags` / `DELETE
+/api/v1/contacts/{id}/tags/{tagId}` attach and detach them **by id** —
+  the by-name `tags` field of `PATCH /api/v1/contacts/{id}`, which
+  replaces the whole set, is unchanged. Creating is find-or-create by
+  name (case-insensitive: `201` for a new tag, `200` for one that already
+  existed), so the API, the CSV import and the dashboard can never mint
+  two rows for the same word. Deleting a tag detaches it from every
+  contact. Two new scopes: `tags:read` and `tags:write`. A tag added over
+  the API fires the same `tag_added` automation trigger and the same
+  `contact.tag_added` webhook as one added by an agent.
+- **`contact.tag_removed` is no longer fired for a tag that was not
+  there.** Detaching a tag a contact never carried — a retried `DELETE`,
+  or an automation step whose tag had already been removed — matched zero
+  rows and still announced a removal. Receivers that act on that event
+  (unsubscribing, closing a ticket) were reacting to nothing. The event
+  now fires only when a row actually went away, mirroring
+  `contact.tag_added`, which has always fired only for a real addition.
+
 ### Security
 
 - **Every `/api/v1` response now carries `X-Request-Id` and

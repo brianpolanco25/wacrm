@@ -58,15 +58,17 @@ key's next request. Revoked keys stay in the list as an audit trail.
 A key can do only what its scopes allow — independent of who created
 it. Grant the minimum.
 
-| Scope                | Allows                                |
-| -------------------- | ------------------------------------- |
-| `messages:send`      | Send WhatsApp messages                |
-| `messages:read`      | Read messages and delivery status     |
-| `contacts:read`      | List and read contacts                |
-| `contacts:write`     | Create and update contacts            |
-| `conversations:read` | List and read conversations           |
-| `broadcasts:send`    | Launch broadcast campaigns            |
-| `webhooks:manage`    | Register and manage outbound webhooks |
+| Scope                | Allows                                 |
+| -------------------- | -------------------------------------- |
+| `messages:send`      | Send WhatsApp messages                 |
+| `messages:read`      | Read messages and delivery status      |
+| `contacts:read`      | List and read contacts                 |
+| `contacts:write`     | Create and update contacts             |
+| `conversations:read` | List and read conversations            |
+| `broadcasts:send`    | Launch broadcast campaigns             |
+| `webhooks:manage`    | Register and manage outbound webhooks  |
+| `tags:read`          | List and read tags                     |
+| `tags:write`         | Create, rename, delete and assign tags |
 
 A key with **no scopes** still authenticates and can call
 `GET /api/v1/me` — useful for verifying a key works.
@@ -418,6 +420,65 @@ Broadcast status + counts. Scope: `broadcasts:send`. `status` moves
 `sending` → `sent`; `delivered_count` / `read_count` keep climbing as
 Meta delivery webhooks arrive. `404` for another account's broadcast.
 
+### `GET /api/v1/tags`
+
+List the account's tags, newest first. Scope: `tags:read`. Paginated
+(see [Pagination](#pagination)). Optional filter: `?search=` (matches
+the name, case-insensitively).
+
+```json
+{
+  "data": [{ "id": "…", "name": "vip", "color": "#3b82f6", "created_at": "…" }],
+  "meta": { "next_cursor": null }
+}
+```
+
+### `POST /api/v1/tags`
+
+Create a tag. Scope: `tags:write`. `name` is required (1–64 characters,
+trimmed); `color` is optional and must be a hex colour (`#rgb` or
+`#rrggbb`, stored lower-case; default `#3b82f6`).
+
+**Find-or-create by name, case-insensitively:** a name the account
+already uses returns `200` with the existing tag and leaves its colour
+alone; a new tag returns `201`. That is the same matching the CSV import
+and the `tags` field of `PATCH /api/v1/contacts/{id}` use, so the three
+paths cannot end up with two rows for the same word.
+
+### `GET` / `PATCH` / `DELETE /api/v1/tags/{id}`
+
+Read, update or delete one tag. Scopes: `tags:read` / `tags:write` /
+`tags:write`. `PATCH` takes `name`, `color`, or both; renaming onto a
+name the account already uses is `409 conflict` (changing only the
+casing of the tag's own name is fine). `DELETE` removes the tag **and
+detaches it from every contact that carried it**, and answers
+`{ "data": { "id": "…", "deleted": true } }`. A tag in another account is
+`404`.
+
+### `POST /api/v1/contacts/{id}/tags`
+
+Attach tags to a contact **by id**. Scope: `tags:write`. Body:
+`{ "tag_ids": ["…", "…"] }`, at most 50 per call. Returns the updated
+contact (same shape as the contact list rows).
+
+This is the additive door. `PATCH /api/v1/contacts/{id}` with `tags`
+takes _names_ and **replaces** the whole set, so it can only be used
+safely by a caller that knows every tag the contact already has; this
+one adds without touching the rest. A tag the contact already carries is
+a no-op, not a second event. A contact or a tag in another account is
+`404`.
+
+Attaching a tag here fires exactly what the dashboard fires: the
+`tag_added` automation trigger and the `contact.tag_added` webhook.
+
+### `DELETE /api/v1/contacts/{id}/tags/{tagId}`
+
+Detach one tag from one contact. Scope: `tags:write`. Returns the
+updated contact. Idempotent: detaching a tag the contact does not carry
+is a `200` with the contact unchanged — and **no** `contact.tag_removed`
+webhook, which only fires when a tag really went away. A contact or a
+tag in another account is `404`.
+
 ## Pagination
 
 Every list endpoint pages the same way. Request a page size with
@@ -588,7 +649,7 @@ internal targets are refused at delivery time.
 
 ## Roadmap
 
-The public API now covers messaging, contacts, conversations,
+The public API now covers messaging, contacts, tags, conversations,
 broadcasts, and outbound webhooks — the full scope of
 [#245](https://github.com/ArnasDon/wacrm/issues/245). Future ideas
 (deals/pipelines, templates, flows) are not yet scheduled. The delivery
