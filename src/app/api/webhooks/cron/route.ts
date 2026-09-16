@@ -13,7 +13,13 @@
 //      su única entrega;
 //   2. reclama cada fila con un candado optimista sobre `attempt`, así
 //      que dos barridos solapados no entregan lo mismo dos veces;
-//   3. purga la bitácora de más de 30 días (S-A6).
+//   3. purga la bitácora de más de 30 días (S-A6);
+//   4. retoma los encargos de exportación que se quedaron a medias y
+//      purga los caducados (fase 7 §5). Van con CUPO APARTE: construir
+//      un export cuesta órdenes de magnitud más que un POST a un
+//      receptor, y compartir lote significaría que una cuenta
+//      exportando su historial retrasa las notificaciones de todas las
+//      demás.
 //
 // La frecuencia recomendada es un minuto: es el primer peldaño de la
 // escalera de reintentos.
@@ -24,6 +30,7 @@ import { NextResponse } from 'next/server';
 
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { purgeOldDeliveries, sweepDueDeliveries } from '@/lib/webhooks/queue';
+import { purgeExpiredExports, sweepExportJobs } from '@/lib/exports/jobs';
 
 function secretMatches(supplied: string, expected: string): boolean {
   const suppliedBuf = Buffer.from(supplied);
@@ -52,5 +59,15 @@ export async function GET(request: Request) {
   // intento en curso, y su fallo no invalida el barrido.
   const purged = await purgeOldDeliveries(admin);
 
-  return NextResponse.json({ ...swept, purged });
+  // Fase 7 §5. Ninguno de los dos lanza; el bloque `exports` es
+  // aditivo para que un cliente del cron que solo miraba las entregas
+  // siga leyendo lo mismo que antes.
+  const exportSweep = await sweepExportJobs(admin);
+  const exportsPurged = await purgeExpiredExports(admin);
+
+  return NextResponse.json({
+    ...swept,
+    purged,
+    exports: { ...exportSweep, purged: exportsPurged },
+  });
 }

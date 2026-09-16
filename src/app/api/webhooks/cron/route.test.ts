@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   supabaseAdmin: vi.fn(() => ({}) as unknown),
   sweepDueDeliveries: vi.fn(),
   purgeOldDeliveries: vi.fn(),
+  sweepExportJobs: vi.fn(),
+  purgeExpiredExports: vi.fn(),
 }));
 
 vi.mock('@/lib/flows/admin-client', () => ({
@@ -16,6 +18,14 @@ vi.mock('@/lib/webhooks/queue', async (importOriginal) => ({
   purgeOldDeliveries: mocks.purgeOldDeliveries,
 }));
 
+// Fase 7 §5: el mismo barrido retoma y purga las exportaciones, con su
+// propio cupo.
+vi.mock('@/lib/exports/jobs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/exports/jobs')>()),
+  sweepExportJobs: mocks.sweepExportJobs,
+  purgeExpiredExports: mocks.purgeExpiredExports,
+}));
+
 import { GET } from './route';
 
 const EMPTY_SWEEP = {
@@ -24,6 +34,14 @@ const EMPTY_SWEEP = {
   delivered: 0,
   failed: 0,
   dead: 0,
+  skipped: 0,
+};
+
+const EMPTY_EXPORT_SWEEP = {
+  scanned: 0,
+  processed: 0,
+  done: 0,
+  failed: 0,
   skipped: 0,
 };
 
@@ -42,6 +60,13 @@ beforeEach(() => {
     failed: 1,
   });
   mocks.purgeOldDeliveries.mockReset().mockResolvedValue(7);
+  mocks.sweepExportJobs.mockReset().mockResolvedValue({
+    ...EMPTY_EXPORT_SWEEP,
+    scanned: 1,
+    processed: 1,
+    done: 1,
+  });
+  mocks.purgeExpiredExports.mockReset().mockResolvedValue(2);
   vi.stubEnv('WEBHOOK_CRON_SECRET', 'cron-secret');
 });
 
@@ -82,8 +107,28 @@ describe('GET /api/webhooks/cron', () => {
       delivered: 1,
       failed: 1,
       purged: 7,
+      exports: {
+        ...EMPTY_EXPORT_SWEEP,
+        scanned: 1,
+        processed: 1,
+        done: 1,
+        purged: 2,
+      },
     });
     expect(mocks.sweepDueDeliveries).toHaveBeenCalledTimes(1);
     expect(mocks.purgeOldDeliveries).toHaveBeenCalledTimes(1);
+    expect(mocks.sweepExportJobs).toHaveBeenCalledTimes(1);
+    expect(mocks.purgeExpiredExports).toHaveBeenCalledTimes(1);
+  });
+
+  it('las entregas no dependen de las exportaciones: el bloque exports es aditivo', async () => {
+    // Fase 7 §5. Lo que a7.4 devolvía sigue en la raíz del objeto, de
+    // modo que un programador que solo leía `delivered` no se entera de
+    // que ahora también se barren exportaciones.
+    const res = await GET(req('cron-secret'));
+    const body = await res.json();
+    expect(body.delivered).toBe(1);
+    expect(body.purged).toBe(7);
+    expect(body.exports.purged).toBe(2);
   });
 });
