@@ -1825,7 +1825,8 @@
         "delivered": "Entregado",
         "failed": "Fallido",
         "dead": "Abandonado"
-      }
+      },
+      "docsLink": "Cómo verificar la firma y manejar reintentos"
     },
     "deals": {
       "title": "Oportunidades y moneda",
@@ -2066,6 +2067,49 @@
       "usage": "Mensajes / IA / difusión",
       "createdAt": "Registro",
       "lastActivity": "Última actividad"
+    }
+  },
+  "Developers": {
+    "ui": {
+      "apiDocs": "Documentación de la API",
+      "dashboard": "Ir al panel",
+      "nav": "Navegación de la documentación",
+      "menu": "Secciones",
+      "language": "Idioma de la documentación",
+      "onThisPage": "En esta página",
+      "skipToContent": "Saltar al contenido",
+      "copy": "Copiar",
+      "copied": "Copiado",
+      "footer": "Cabbity CRM · API pública v1"
+    },
+    "reference": {
+      "scopes": "Permisos (scopes)",
+      "noScope": "Sin permiso concreto",
+      "parameters": "Parámetros",
+      "noParameters": "Sin parámetros.",
+      "requestBody": "Cuerpo de la petición",
+      "responses": "Respuestas",
+      "example": "Ejemplo",
+      "required": "obligatorio",
+      "deprecated": "obsoleta",
+      "idempotent": "Acepta Idempotency-Key",
+      "webhookEvents": "Eventos de webhook",
+      "servers": "Servidor base",
+      "version": "Versión del contrato",
+      "colField": "Campo",
+      "colType": "Tipo",
+      "colDescription": "Descripción",
+      "colStatus": "Estado",
+      "colIn": "Dónde va",
+      "inPath": "ruta",
+      "inQuery": "consulta",
+      "inHeader": "cabecera"
+    },
+    "changelog": {
+      "added": "Añadido",
+      "changed": "Cambiado",
+      "fixed": "Corregido",
+      "deprecated": "Obsoleto"
     }
   }
 }
