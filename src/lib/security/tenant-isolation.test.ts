@@ -249,6 +249,9 @@ import * as v1WebhookDeliveries from '@/app/api/v1/webhooks/[id]/deliveries/rout
 import * as v1WebhookRetry from '@/app/api/v1/webhooks/[id]/deliveries/[deliveryId]/retry/route';
 import * as v1WebhookTest from '@/app/api/v1/webhooks/[id]/test/route';
 import * as v1WebhookRotate from '@/app/api/v1/webhooks/[id]/rotate-secret/route';
+import * as v1ConversationExport from '@/app/api/v1/conversations/[id]/export/route';
+import * as v1Exports from '@/app/api/v1/exports/route';
+import * as v1ExportById from '@/app/api/v1/exports/[id]/route';
 import * as waSend from '@/app/api/whatsapp/send/route';
 import * as waBroadcast from '@/app/api/whatsapp/broadcast/route';
 import * as waBroadcastResume from '@/app/api/whatsapp/broadcast/[id]/resume/route';
@@ -505,6 +508,25 @@ function seed(): FakeDatabase {
         created_at: created,
         delivered_at: null,
       },
+      // Fase 7 §5: un encargo de exportación terminado por cuenta. El de
+      // B apunta a un objeto de su propio bucket: si una ruta firmara sin
+      // filtrar, la firma saldría en la respuesta de A.
+      exportJob: {
+        id: `exp-${tag}`,
+        account_id: acct,
+        api_key_id: `key-${tag}`,
+        kind: 'conversations',
+        params: {},
+        format: 'json',
+        status: 'done',
+        row_count: 1,
+        file_path: `${acct}/exp-${tag}.json`,
+        error: null,
+        created_at: created,
+        started_at: created,
+        finished_at: created,
+        expires_at: FUTURE,
+      },
       aiConfig: {
         id: `ai-${tag}`,
         account_id: acct,
@@ -615,6 +637,7 @@ function seed(): FakeDatabase {
       broadcast_recipients: both('recipient'),
       webhook_endpoints: both('webhook'),
       webhook_deliveries: both('webhookDelivery'),
+      export_jobs: both('exportJob'),
       ai_configs: both('aiConfig'),
       ai_knowledge_documents: both('knowledge'),
       ai_usage_log: both('usage'),
@@ -1505,6 +1528,115 @@ describe('/api/v1 (service role via API key)', () => {
     );
     expect(foreignRotate.status).toBe(404);
 
+    expectBUnchanged(before);
+  });
+
+  // ---- fase 7 §5: exportaciones ----
+
+  it('export síncrono: la conversación de B → 404; la propia baja con sus mensajes', async () => {
+    const before = h.db.snapshot(B);
+
+    const foreign = await v1ConversationExport.GET(
+      req('GET', '/api/v1/conversations/conv-b/export', undefined, asKeyA),
+      params({ id: 'conv-b' })
+    );
+    expect(foreign.status).toBe(404);
+    expectNoBIds(await foreign.json());
+
+    const own = await v1ConversationExport.GET(
+      req(
+        'GET',
+        '/api/v1/conversations/conv-a/export?format=csv',
+        undefined,
+        asKeyA
+      ),
+      params({ id: 'conv-a' })
+    );
+    expect(own.status).toBe(200);
+    const csv = await own.text();
+    expect(csv).toContain('msg-a');
+    // El archivo es la respuesta: aquí el aislamiento se mira sobre el
+    // texto, no sobre un JSON.
+    for (const id of idsOfB()) expect(csv).not.toContain(id);
+
+    expectBUnchanged(before);
+  });
+
+  it('encargos: la lista es de A, el de B → 404 y el archivo se construye solo con datos de A', async () => {
+    const before = h.db.snapshot(B);
+
+    const list = await v1Exports.GET(
+      req('GET', '/api/v1/exports', undefined, asKeyA)
+    );
+    const listBody = await list.json();
+    expect(listBody.data.map((e: Row) => e.id)).toEqual(['exp-a']);
+    // Ni la ruta del objeto en el bucket sale en la lista.
+    expect(listBody.data[0]).not.toHaveProperty('file_path');
+    expectNoBIds(listBody);
+
+    const foreign = await v1ExportById.GET(
+      req('GET', '/api/v1/exports/exp-b', undefined, asKeyA),
+      params({ id: 'exp-b' })
+    );
+    expect(foreign.status).toBe(404);
+    // Y nadie firmó nada del bucket de B por el camino.
+    const foreignBody = await foreign.json();
+    expect(JSON.stringify(foreignBody)).not.toContain('exp-b');
+    expectNoBIds(foreignBody);
+
+    const own = await v1ExportById.GET(
+      req('GET', '/api/v1/exports/exp-a', undefined, asKeyA),
+      params({ id: 'exp-a' })
+    );
+    const ownBody = await own.json();
+    expect(own.status).toBe(200);
+    expect(ownBody.data.download_url).toContain('/sign/exports/');
+    expect(ownBody.data.download_url).not.toContain(B);
+
+    // Un encargo nuevo: el 202 va primero y el archivo se construye en
+    // `after()`. Lo que acabe en el bucket no puede tener nada de B.
+    const created = await v1Exports.POST(
+      req('POST', '/api/v1/exports', { format: 'json' }, asKeyA)
+    );
+    expect(created.status).toBe(202);
+    const createdBody = await created.json();
+    await drainAfter();
+
+    const row = h.db
+      .rows('export_jobs')
+      .find((e) => e.id === createdBody.data.id);
+    expect(row?.account_id).toBe(A);
+    expect(row?.status).toBe('done');
+    expect(String(row?.file_path).startsWith(`${A}/`)).toBe(true);
+
+    expectBUnchanged(before);
+  });
+
+  it('el filtro de un encargo no puede ampliar el alcance a otra cuenta', async () => {
+    const before = h.db.snapshot(B);
+
+    const created = await v1Exports.POST(
+      req(
+        'POST',
+        '/api/v1/exports',
+        // `account_id` no es un filtro reconocido y `contact_id` apunta
+        // al contacto de B: ni uno ni otro pueden sacar nada de B.
+        { format: 'json', filters: { account_id: B, contact_id: 'contact-b' } },
+        asKeyA
+      )
+    );
+    expect(created.status).toBe(202);
+    const createdBody = await created.json();
+    expect(createdBody.data.filters).toEqual({ contact_id: 'contact-b' });
+
+    await drainAfter();
+
+    const row = h.db
+      .rows('export_jobs')
+      .find((e) => e.id === createdBody.data.id);
+    expect(row?.status).toBe('done');
+    // Cero conversaciones: el contacto de B no existe dentro de A.
+    expect(row?.row_count).toBe(0);
     expectBUnchanged(before);
   });
 });
