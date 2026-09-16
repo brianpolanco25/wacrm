@@ -197,6 +197,16 @@ export const RATE_LIMITS = {
    *  peticiones salientes. 20/min es holgado para alguien depurando su
    *  receptor desde Ajustes. */
   webhookAction: { limit: 20, windowMs: 60_000 },
+  /** Exportaciones (fase 7 §5), por cuenta: tanto la descarga directa de
+   *  una conversación como el encargo de un job. Cada llamada recorre
+   *  hasta diez mil mensajes y, en el caso del job, escribe un archivo
+   *  con toda la mensajería que casen los filtros — es la operación más
+   *  cara y la más sensible de la API. 10/hora es lo que fija S-A7; va
+   *  por CUENTA, no por clave, para que dos claves de la misma empresa
+   *  no sumen el doble. Quien necesite más volumen no necesita más
+   *  llamadas: un solo job con filtros se lleva todas las
+   *  conversaciones de una vez. */
+  exports: { limit: 10, windowMs: 60 * 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't
