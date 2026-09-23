@@ -11,6 +11,22 @@ and polish.
 
 ## [Unreleased]
 
+### Phase 7 loose ends
+
+- Settings → API keys: creating or rotating a key now caps the request body
+  at 1 MiB (413) and requires `Content-Type: application/json` (415), like
+  `/api/v1`. The dashboard already sends both.
+- Assigning a conversation from the inbox now refuses (400) an assignee who
+  is not a member of the account; no update and no `conversation.assigned`
+  webhook in that case.
+- Template sync from Settings no longer returns database error text: failed
+  templates are reported by name and language with a fixed message, and
+  unexpected failures answer a generic 500. The detail stays in the server
+  log.
+- The MCP server now reports the version from its `package.json` (it said
+  0.1.0 while the package was 0.1.1). `docs/mcp.md` lists the tag, template
+  and export tools.
+
 ### Plan catalogue: Pro at 100 USD, API only on Pro and Negocio
 
 > **Migration required:** apply `supabase/migrations/065_plan_pro_100.sql`.
