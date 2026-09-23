@@ -1300,6 +1300,29 @@ BEGIN
       'tags_account_lower_name_idx must be a unique index on (account_id, lower(name)) (migration 064)';
   END IF;
 
+  -- ---- 066: Gemini como proveedor de IA ------------------------
+  -- Los dos CHECK de proveedor tienen que admitir 'gemini'; si no, guardar
+  -- la configuracion o registrar el gasto de una cuenta en Gemini falla.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.ai_configs'::regclass
+      AND conname = 'ai_configs_provider_check'
+      AND pg_get_constraintdef(oid) ILIKE '%''gemini''%'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_configs_provider_check must allow provider = gemini (migration 066)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.ai_usage_log'::regclass
+      AND conname = 'ai_usage_log_provider_check'
+      AND pg_get_constraintdef(oid) ILIKE '%''gemini''%'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_usage_log_provider_check must allow provider = gemini (migration 066)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
