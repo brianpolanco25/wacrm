@@ -15,7 +15,7 @@ nuevas; informe de cierre `progress/impl_integracion-api-4.md`. Este archivo se 
 Rama desde `main` @ 9c8d5d9 para (1) commitear el estado del harness de la fase 7 que vivía sin commit en el
 checkout raíz (este archivo, `feature_list.json`, `progress/{spec,impl,review,checks}_*` de a7.x), (2) añadir
 `WEBHOOK_CRON_SECRET` a `.env.local.example` y (3) cerrar las deudas baratas de `impl_integracion-api-4.md`
-§«Deudas abiertas» (informe en `progress/impl_cierre-fase-7.md`). Sigue **pendiente del humano**:
+§«Deudas abiertas» como feature a7.8 (spec `progress/spec_cierre-fase-7.md`, informe `progress/impl_cierre-fase-7.md`): **hecha el 2026-09-23**, 7 commits (04c39ca…abe3042), compuerta verde (2 655 tests, build OK). Cierra: tope de cuerpo en `/api/account/api-keys`, guarda de miembro en `PATCH /api/conversations/{id}`, tests 413/415 del PATCH de webhooks, test del sync de plantillas, `stripComments`, versión y catálogo del MCP. Fuera, por diseño o producto: `EXPORT_STALE_MS`, export en streaming, `resolveServerUrl`, deudas de a7.3 (WABA por plantilla, botones OTP/FLOW), barridos sin filtro de cuenta. Sigue **pendiente del humano** (además del merge/PR de esta rama):
 
 - Programar `GET /api/webhooks/cron` cada minuto en Dokploy con la cabecera `x-cron-secret` =
   `WEBHOOK_CRON_SECRET` (receta en `docs/docker.md` §«Outbound webhooks need their own scheduler»). Sin él las
