@@ -27,6 +27,14 @@ checkout raíz (este archivo, `feature_list.json`, `progress/{spec,impl,review,c
 - `.opencode/` y `opencode.jsonc` (config de OpenCode del humano) siguen sin commit en la raíz; `docs/harness.md`
   ya los cita. Si se commitean, `.opencode/node_modules/` va al `.gitignore`.
 
+## Fase 8 — ajustes tras la fase 7 (2026-09-23)
+
+- **p8.1 developers-link** — hecha (`feat/enlazar-developers` @ f76d4eb, worktree
+  `.claude/worktrees/developers-link`, base `main` @ 9c8d5d9). El humano no conocía `/developers`: se enlaza
+  desde el menú lateral, el menú de usuario y el pie del login, con claves es/en/ko. Sin tocar el contenido de
+  la doc. Compuerta verde (2 638 tests). Informe `progress/impl_developers-link.md`. Pendiente del humano:
+  revisar el contenido de `/developers` con el líder; merge/PR de la rama.
+
 ## Ramas
 
 | Fase | Rama | Worktree | Base |
