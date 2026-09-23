@@ -52,9 +52,86 @@ function routeFiles(dir: string, out: string[] = []): string[] {
  * Fuera los comentarios: varias rutas NOMBRAN `withIdempotency` en
  * prosa —incluida `templates/[id]`, que explica por qué NO lo usa— y
  * solo cuenta la llamada.
+ *
+ * Recorre el fuente carácter a carácter sabiendo si está dentro de una
+ * cadena (comillas simples, dobles o backticks, con sus escapes y los
+ * `${…}` de las plantillas), así que un `//` dentro de una cadena
+ * —`'https://…'`— no se come el resto de la línea (a7.8 §5). Los saltos
+ * de línea de un comentario de bloque se conservan para que las anclas
+ * `^` con la bandera `m` sigan cayendo en su línea. No distingue
+ * literales de expresión regular: una regex con `//` o comillas dentro
+ * de una ruta confundiría el recorrido, y ninguna ruta de `/api/v1` la
+ * tiene.
  */
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  let out = '';
+  let i = 0;
+  // Pila de contextos abiertos: 'code' dentro de `${…}` (con su
+  // profundidad de llaves) o '`' dentro de una plantilla.
+  const stack: ({ kind: 'code'; depth: number } | { kind: '`' })[] = [];
+  const top = () => stack.at(-1);
+
+  while (i < source.length) {
+    const c = source[i];
+    const next = source[i + 1];
+    const ctx = top();
+
+    if (ctx?.kind === '`') {
+      if (c === '\\') {
+        out += c + (next ?? '');
+        i += 2;
+      } else if (c === '`') {
+        stack.pop();
+        out += c;
+        i++;
+      } else if (c === '$' && next === '{') {
+        stack.push({ kind: 'code', depth: 0 });
+        out += '${';
+        i += 2;
+      } else {
+        out += c;
+        i++;
+      }
+      continue;
+    }
+
+    if (c === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      const end = source.indexOf('*/', i + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      out += source.slice(i, stop).replace(/[^\n]/g, '');
+      i = stop;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < source.length && source[j] !== c && source[j] !== '\n') {
+        j += source[j] === '\\' ? 2 : 1;
+      }
+      out += source.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    if (c === '`') {
+      stack.push({ kind: '`' });
+      out += c;
+      i++;
+      continue;
+    }
+    if (ctx?.kind === 'code') {
+      if (c === '{') ctx.depth++;
+      if (c === '}') {
+        if (ctx.depth === 0) stack.pop();
+        else ctx.depth--;
+      }
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 /** `…/contacts/[id]/tags/route.ts` → `/contacts/{id}/tags`. */
@@ -103,6 +180,36 @@ function operation(method: string, path: string): OperationObject {
   ).toBeDefined();
   return op;
 }
+
+describe('stripComments (a7.8 §5)', () => {
+  it('no trata como comentario un // dentro de una cadena', () => {
+    const source = [
+      "const a = 'https://x.test'; withIdempotency(a);",
+      'const b = "http://y.test"; withIdempotency(b);',
+      'const c = `https://${host}/p`; withIdempotency(c);',
+    ].join('\n');
+    // Con la versión por regex, las tres llamadas desaparecían con el
+    // resto de su línea.
+    expect(stripComments(source)).toBe(source);
+  });
+
+  it('sigue quitando los comentarios de verdad, también tras una cadena', () => {
+    const source = [
+      "const a = 'it\\'s // not a comment'; // withIdempotency(a)",
+      '/* withIdempotency(',
+      '   en prosa */ const b = 1;',
+      'const c = `${"//"}`; // withIdempotency(c)',
+    ].join('\n');
+    expect(stripComments(source)).toBe(
+      [
+        "const a = 'it\\'s // not a comment'; ",
+        '',
+        ' const b = 1;',
+        'const c = `${"//"}`; ',
+      ].join('\n')
+    );
+  });
+});
 
 describe('documento OpenAPI: forma general', () => {
   it('declara 3.1.0 y un servidor', () => {
