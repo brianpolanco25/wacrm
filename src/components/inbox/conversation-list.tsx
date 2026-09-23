@@ -217,6 +217,12 @@ export function ConversationList({
 
   useEffect(() => {
     if (!accountId) return;
+    // A new account (entering or leaving a support session) makes the
+    // previous head count a lie: back to "unknown" until this account's
+    // profiles land, so the attention rule decides nothing meanwhile.
+    // One reset per account change, not a render loop.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setProfiles(null);
     const supabase = createClient();
     let cancelled = false;
     (async () => {
