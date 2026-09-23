@@ -42,6 +42,14 @@ checkout raíz (este archivo, `feature_list.json`, `progress/{spec,impl,review,c
   verde (2 675 tests). Informe `progress/impl_attention-solo.md`. Pendiente del humano: probar en `/inbox`,
   merge/PR.
 
+- **p8.3 gemini-provider** — hecha (`feat/proveedor-gemini`, worktree `.claude/worktrees/gemini`, base `main`
+  @ 7460351). Google Gemini como tercer proveedor: adaptador REST `generateContent` v1beta con `x-goog-api-key`
+  (sin SDK), default `gemini-3.5-flash-lite`, `AI_PLATFORM_GEMINI_API_KEY`, UI, docs, legal. **Migración 066**
+  (CHECK de `provider` en `ai_configs` y `ai_usage_log`), autorizada por el humano; replay y verify-schema OK.
+  Embeddings siguen en OpenAI. Compuerta verde (2 692 tests). Informe `progress/impl_gemini-provider.md`.
+  Pendiente del humano: merge/PR, `supabase db push` de la 066 al remoto (copia previa), prueba con clave real,
+  `AI_PLATFORM_GEMINI_API_KEY` en `.env.local.example`.
+
 ## Ramas
 
 | Fase | Rama | Worktree | Base |
