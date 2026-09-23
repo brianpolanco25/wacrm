@@ -317,3 +317,12 @@ describe('toErrorResponse — billing errors (fase 3 §4/§5)', () => {
     expect(json.error).not.toMatch(/internals/);
   });
 });
+
+describe("toErrorResponse — body-reading errors (a7.8 §1)", () => {
+  it("maps an ApiError from readJsonBody to its status in the { error } envelope", async () => {
+    const { payloadTooLarge } = await import("@/lib/api/v1/respond");
+    const res = toErrorResponse(payloadTooLarge("too big"));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "too big" });
+  });
+});

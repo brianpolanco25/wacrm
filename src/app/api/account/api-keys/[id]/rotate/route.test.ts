@@ -337,4 +337,52 @@ describe('POST /api/account/api-keys/[id]/rotate', () => {
     expect(h.rows).toHaveLength(2);
     expect(h.rows.find((r) => r.id === old.id)!.revoked_at).toBe(firstDeadline);
   });
+
+  // a7.8 §1: capped body read. `toErrorResponse` is doubled to rethrow here,
+  // so the `ApiError` surfaces with its status; the `{ error }` mapping is
+  // covered in `src/lib/auth/account.test.ts` and in the mint route test.
+  it('refuses a body over 1 MiB with 413 and touches nothing', async () => {
+    const { MAX_BODY_BYTES } = await import('@/lib/api/v1/body');
+    const old = seedKey();
+    await expect(
+      POST(
+        new Request(`https://crm.test/api/account/api-keys/${old.id}/rotate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: 'x'.repeat(MAX_BODY_BYTES + 1),
+        }),
+        { params: Promise.resolve({ id: old.id as string }) }
+      )
+    ).rejects.toMatchObject({ name: 'ApiError', status: 413 });
+    expect(h.rows).toHaveLength(1);
+    expect(h.rows[0].revoked_at).toBeNull();
+  });
+
+  it('refuses a text/plain body with 415 and touches nothing', async () => {
+    const old = seedKey();
+    await expect(
+      POST(
+        new Request(`https://crm.test/api/account/api-keys/${old.id}/rotate`, {
+          method: 'POST',
+          headers: { 'content-type': 'text/plain' },
+          body: '{}',
+        }),
+        { params: Promise.resolve({ id: old.id as string }) }
+      )
+    ).rejects.toMatchObject({ name: 'ApiError', status: 415 });
+    expect(h.rows).toHaveLength(1);
+  });
+
+  it('still accepts an empty body (inherits the old expiry)', async () => {
+    const old = seedKey({ expires_at: '2027-01-01T00:00:00.000Z' });
+    const res = await POST(
+      new Request(`https://crm.test/api/account/api-keys/${old.id}/rotate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      }),
+      { params: Promise.resolve({ id: old.id as string }) }
+    );
+    expect(res.status).toBe(201);
+    expect((await res.json()).key.expires_at).toBe('2027-01-01T00:00:00.000Z');
+  });
 });

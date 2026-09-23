@@ -29,6 +29,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
+import { ApiError } from "@/lib/api/v1/respond";
 import { assertWritable, billingErrorPayload } from "@/lib/billing/enforce";
 import { supabaseAdmin } from "./admin-client";
 import { resolveSupportSession, type SupportSession } from "./impersonation";
@@ -72,6 +73,16 @@ export class ForbiddenError extends Error {
 export function toErrorResponse(err: unknown): NextResponse {
   if (err instanceof UnauthorizedError || err instanceof ForbiddenError) {
     return NextResponse.json({ error: err.message }, { status: err.status });
+  }
+  // Body-reading errors (413 / 415 / 400) from `readJsonBody`, which the
+  // dashboard routes share with `/api/v1` so both enforce the same 1 MiB
+  // ceiling and media type. Here they keep the internal `{ error }`
+  // envelope, not the public one; the message is ours, never Postgres'.
+  if (err instanceof ApiError) {
+    return NextResponse.json(
+      { error: err.message },
+      { status: err.status, headers: err.headers }
+    );
   }
   // Billing (fase 3 §4/§5): quota exhausted, feature not on the plan,
   // or the account locked into read-only. The body keeps the internal

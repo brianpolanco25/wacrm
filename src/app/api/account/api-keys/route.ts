@@ -27,6 +27,7 @@ import {
 } from '@/lib/auth/account';
 import { expiryFromDays, generateApiKey } from '@/lib/api-keys/keys';
 import { API_KEY_SAFE_COLUMNS } from '@/lib/api-keys/store';
+import { readJsonBody } from '@/lib/api/v1/body';
 import { normalizeScopes } from '@/lib/api-keys/scopes';
 import { assertPlanFeature } from '@/lib/billing/enforce';
 import {
@@ -78,11 +79,14 @@ export async function POST(request: Request) {
     );
     if (!limit.success) return rateLimitResponse(limit);
 
-    const body = (await request.json().catch(() => null)) as {
-      name?: unknown;
-      scopes?: unknown;
-      expiresInDays?: unknown;
-    } | null;
+    // Capped read (1 MiB → 413, wrong media type → 415, bad JSON → 400),
+    // mapped to `{ error }` by `toErrorResponse`. An empty body is `{}`,
+    // which then fails the `name` check below, as it always has.
+    const { data: body } = (await readJsonBody(request, {
+      allowEmpty: true,
+    })) as {
+      data: { name?: unknown; scopes?: unknown; expiresInDays?: unknown };
+    };
 
     const rawName = typeof body?.name === 'string' ? body.name.trim() : '';
     if (!rawName) {

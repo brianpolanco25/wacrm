@@ -59,6 +59,7 @@ import {
   ROTATION_GRACE_MS,
 } from '@/lib/api-keys/keys';
 import { API_KEY_SAFE_COLUMNS } from '@/lib/api-keys/store';
+import { readJsonBody } from '@/lib/api/v1/body';
 import { assertPlanFeature } from '@/lib/billing/enforce';
 import {
   checkRateLimit,
@@ -83,9 +84,11 @@ export async function POST(
     if (!limit.success) return rateLimitResponse(limit);
 
     const { id } = await params;
-    const body = (await request.json().catch(() => null)) as {
-      expiresInDays?: unknown;
-    } | null;
+    // Capped read, same contract as minting. The body is optional: an
+    // empty one means "inherit the old expiry".
+    const { data: body } = (await readJsonBody(request, {
+      allowEmpty: true,
+    })) as { data: { expiresInDays?: unknown } };
 
     const now = Date.now();
 

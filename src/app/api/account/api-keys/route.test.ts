@@ -83,4 +83,56 @@ describe('POST /api/account/api-keys', () => {
     expect((await res.json()).code).toBe('feature_unavailable');
     expect(mocks.inserted).toBeNull();
   });
+
+  // a7.8 §1: the dashboard mint reads its body through `readJsonBody`, the
+  // same capped reader `/api/v1` uses, and answers in the `{ error }` shape.
+  it('answers 413 for a body over 1 MiB, without inserting', async () => {
+    const { MAX_BODY_BYTES } = await import('@/lib/api/v1/body');
+    const res = await POST(
+      new Request('https://crm.test/api/account/api-keys', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: 'x'.repeat(MAX_BODY_BYTES + 1),
+      })
+    );
+    expect(res.status).toBe(413);
+    expect(typeof (await res.json()).error).toBe('string');
+    expect(mocks.inserted).toBeNull();
+  });
+
+  it('answers 415 for a text/plain body, without inserting', async () => {
+    const res = await POST(
+      new Request('https://crm.test/api/account/api-keys', {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain' },
+        body: JSON.stringify({ name: 'Zapier' }),
+      })
+    );
+    expect(res.status).toBe(415);
+    expect((await res.json()).error).toMatch(/Content-Type/);
+    expect(mocks.inserted).toBeNull();
+  });
+
+  it('keeps treating an empty body as {} (400 name required)', async () => {
+    const res = await POST(
+      new Request('https://crm.test/api/account/api-keys', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("'name' is required");
+  });
+
+  it('answers 400 for malformed JSON', async () => {
+    const res = await POST(
+      new Request('https://crm.test/api/account/api-keys', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"name":',
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.inserted).toBeNull();
+  });
 });
