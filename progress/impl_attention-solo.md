@@ -100,3 +100,28 @@ Sin SQL, sin migraciones, sin dependencias, sin claves i18n nuevas, sin variable
 - Al cambiar `accountId` (entrar/salir de una sesión de soporte) `profiles` conserva la lista anterior hasta que
   llega la nueva, como ya pasaba con los nombres; el conteo puede ser el de la cuenta previa durante esa carga.
 - `conversation-list.tsx` sin formato prettier (ver arriba).
+
+## Segunda ronda
+
+Correcciones pedidas por el coordinador; la regla no cambia.
+
+**1. Fuera el shim de `useState` → `ba68f58`.** Borré `src/components/inbox/conversation-list.test.tsx` entero.
+Sin efectos, `renderToStaticMarkup` solo ve el primer pintado: `loading` en `true` (spinner, **ninguna fila**, así
+que la ausencia de `attentionUnattended` se cumpliría con cualquier regla) y el menú de Base UI cerrado (el chip no
+se renderiza salvo que se mockee). Además, con perfiles `null` la spec deja el chip **visible** (solo se oculta con
+tamaño conocido ≤ 1; lo cubre `offersUnattendedFilter` en `attention.test.ts`), así que el test de «perfiles null →
+sin chip» contradiría la regla. No quedaba cableado útil que probar sin efectos. La lógica sigue cubierta en
+`src/lib/inbox/attention.test.ts` (29 tests). La tabla criterio ↔ test de arriba pierde las 5 filas de
+`conversation-list.test.tsx`; el cableado de la lista (badge, filtro, chip, vuelta a «Todas») queda para la
+verificación manual.
+
+**2. Conteo viejo al cambiar de cuenta → `b9263d4`**. En el efecto de perfiles,
+`setProfiles(null)` antes de consultar, con `// eslint-disable-next-line react-hooks/set-state-in-effect` y su
+justificación (la regla de lint da error sin él; mismo patrón que `contact-sidebar.tsx`, `contacts/page.tsx`,
+`pipelines/page.tsx`). No hizo falta caso nuevo en `attention.test.ts`: `teamSize === null` → `null` ya está
+cubierto. Añadido al guion manual: 4. Entrar en una sesión de soporte de otra cuenta y comprobar que no hay
+destello ámbar ni chip incorrecto mientras cargan los perfiles. La deuda «conteo viejo al cambiar de cuenta»
+queda resuelta.
+
+Compuerta (segunda ronda): lint 0 errores / 35 warnings preexistentes; typecheck limpio; `TZ=UTC npm test`
+204 archivos, 2675 tests en verde; build con variables dummy, salida 0 (86 páginas).
