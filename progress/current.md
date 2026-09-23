@@ -35,6 +35,13 @@ checkout raíz (este archivo, `feature_list.json`, `progress/{spec,impl,review,c
   la doc. Compuerta verde (2 638 tests). Informe `progress/impl_developers-link.md`. Pendiente del humano:
   revisar el contenido de `/developers` con el líder; merge/PR de la rama.
 
+- **p8.2 attention-solo** — hecha (`feat/atencion-cuenta-solo`, worktree `.claude/worktrees/atencion`, base `main`
+  @ 641c60c). El humano veía «Nadie la atiende» en todas las conversaciones: cuenta de una persona, bot apagado y
+  nadie asigna (regla de f1.3, no un fallo). Decisión: `deriveAttentionState` recibe `teamSize`; con un solo
+  miembro o tamaño desconocido no se pinta la alarma ni el chip «Sin atender»; equipos igual que hoy. Compuerta
+  verde (2 675 tests). Informe `progress/impl_attention-solo.md`. Pendiente del humano: probar en `/inbox`,
+  merge/PR.
+
 ## Ramas
 
 | Fase | Rama | Worktree | Base |
