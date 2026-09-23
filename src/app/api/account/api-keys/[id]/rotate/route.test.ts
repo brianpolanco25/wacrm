@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   accountId: 'acct-a',
   userId: 'user-a',
   seq: 0,
+  assertPlanFeature: vi.fn(),
 }));
 
 /** Minimal `api_keys` table: eq / is filters, insert, update, delete. */
@@ -125,6 +126,11 @@ vi.mock('@/lib/auth/account', () => ({
   },
 }));
 
+vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
+  assertPlanFeature: h.assertPlanFeature,
+}));
+
 vi.mock('@/lib/flows/admin-client', () => ({
   supabaseAdmin: () => fakeClient(),
 }));
@@ -171,6 +177,7 @@ beforeEach(() => {
   h.seq = 0;
   h.accountId = 'acct-a';
   h.userId = 'user-a';
+  h.assertPlanFeature.mockReset().mockResolvedValue({});
   __resetRateLimitForTests();
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-09-15T10:00:00.000Z'));
@@ -181,6 +188,20 @@ afterEach(() => {
 });
 
 describe('POST /api/account/api-keys/[id]/rotate', () => {
+  it('refuses to rotate on a plan without the api feature', async () => {
+    const { FeatureNotAvailableError } = await import('@/lib/billing/enforce');
+    h.assertPlanFeature.mockRejectedValue(new FeatureNotAvailableError('api'));
+    const old = seedKey();
+
+    // `toErrorResponse` is doubled to rethrow, so the typed error surfaces.
+    await expect(rotate(old.id as string)).rejects.toBeInstanceOf(
+      FeatureNotAvailableError
+    );
+    expect(h.assertPlanFeature).toHaveBeenCalledWith('acct-a', 'api');
+    expect(h.rows).toHaveLength(1);
+    expect(h.rows[0].revoked_at).toBeNull();
+  });
+
   it('mints a replacement with the same name and scopes, revealed once', async () => {
     const old = seedKey();
     const res = await rotate(old.id as string);

@@ -9,7 +9,8 @@
 // RLS client. Listing is open to any member (viewer+) — the roster
 // is not secret; the secret (the key itself) is never in it. Minting
 // is admin+ (a key hands out capabilities), enforced by both
-// `requireRole('admin')` here and the `api_keys_insert` RLS policy.
+// `requireRole('admin')` here and the `api_keys_insert` RLS policy, and
+// only on a plan with the `api` feature.
 //
 // IMPORTANT: the plaintext key is returned exactly ONCE, in the POST
 // response. We persist only its SHA-256 hash, so neither GET nor any
@@ -27,6 +28,7 @@ import {
 import { expiryFromDays, generateApiKey } from '@/lib/api-keys/keys';
 import { API_KEY_SAFE_COLUMNS } from '@/lib/api-keys/store';
 import { normalizeScopes } from '@/lib/api-keys/scopes';
+import { assertPlanFeature } from '@/lib/billing/enforce';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -64,6 +66,11 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const ctx = await requireRole('admin');
+    // A key is only useful on a plan with the `api` feature (Pro and
+    // Negocio, migration 065): `/api/v1` refuses it otherwise. Refuse
+    // the mint too, so an Inicio admin learns it here with the upgrade
+    // hint instead of from a 402 in their integration.
+    await assertPlanFeature(ctx.accountId, 'api');
 
     const limit = checkRateLimit(
       `admin:apiKeyCreate:${ctx.userId}`,

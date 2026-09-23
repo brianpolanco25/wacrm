@@ -941,10 +941,10 @@ BEGIN
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM public.plans
-    WHERE id = 'pro' AND price_usd_month = 79 AND price_usd_year = 790
+    WHERE id = 'pro' AND price_usd_month = 100 AND price_usd_year = 1000
   ) THEN
     RAISE EXCEPTION
-      'plan ''pro'' is not priced 79/790 (migration 041); found %/%',
+      'plan ''pro'' is not priced 100/1000 (migrations 041 + 065); found %/%',
       (SELECT price_usd_month FROM public.plans WHERE id = 'pro'),
       (SELECT price_usd_year  FROM public.plans WHERE id = 'pro');
   END IF;
@@ -956,6 +956,18 @@ BEGIN
       'plan ''negocio'' is not priced 199/1990 (migration 041); found %/%',
       (SELECT price_usd_month FROM public.plans WHERE id = 'negocio'),
       (SELECT price_usd_year  FROM public.plans WHERE id = 'negocio');
+  END IF;
+  -- 065: la API pública es de Pro y Negocio; Inicio no la incluye.
+  IF EXISTS (
+    SELECT 1 FROM public.plans WHERE id = 'inicio' AND 'api' = ANY (features)
+  ) THEN
+    RAISE EXCEPTION 'plan ''inicio'' must not include the api feature (065)';
+  END IF;
+  IF (
+    SELECT count(*) FROM public.plans
+    WHERE id IN ('pro', 'negocio') AND 'api' = ANY (features)
+  ) <> 2 THEN
+    RAISE EXCEPTION 'plans ''pro'' and ''negocio'' must include the api feature (065)';
   END IF;
 
 

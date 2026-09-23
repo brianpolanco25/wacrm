@@ -67,11 +67,33 @@ describe('el catálogo de planes que dejan las migraciones', () => {
     });
   });
 
-  it('no mueve Pro ni Negocio de 79/790 y 199/1990', () => {
-    const catalogue = catalogueAfterMigrations();
+  it('cobra el plan Pro a 100 USD/mes y 1000 USD/año (065)', () => {
+    expect(catalogueAfterMigrations().get('pro')).toEqual({
+      month: 100,
+      year: 1000,
+    });
+  });
 
-    expect(catalogue.get('pro')).toEqual({ month: 79, year: 790 });
-    expect(catalogue.get('negocio')).toEqual({ month: 199, year: 1990 });
+  it('no mueve Negocio de 199/1990', () => {
+    expect(catalogueAfterMigrations().get('negocio')).toEqual({
+      month: 199,
+      year: 1990,
+    });
+  });
+
+  it('deja la API en Pro y Negocio, y fuera de Inicio (065)', () => {
+    const revision = fs.readFileSync(
+      path.join(MIGRATIONS, '065_plan_pro_100.sql'),
+      'utf8'
+    );
+
+    expect(revision).toMatch(
+      /SET features = array_remove\(array_remove\(features, 'api'\), 'webhooks'\)\s+WHERE id = 'inicio'/
+    );
+    expect(revision).toMatch(
+      /array_append\(features, 'api'\)\s+WHERE id IN \('pro', 'negocio'\)/
+    );
+    expect(revision).not.toMatch(/provider_plan_id_(month|year)\s*=/);
   });
 
   it('sube el precio con una migración nueva, sin reescribir la 041', () => {

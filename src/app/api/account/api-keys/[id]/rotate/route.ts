@@ -59,6 +59,7 @@ import {
   ROTATION_GRACE_MS,
 } from '@/lib/api-keys/keys';
 import { API_KEY_SAFE_COLUMNS } from '@/lib/api-keys/store';
+import { assertPlanFeature } from '@/lib/billing/enforce';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -71,6 +72,9 @@ export async function POST(
 ) {
   try {
     const ctx = await requireRole('admin');
+    // Same rule as minting: the replacement key would be refused by
+    // `/api/v1` on a plan without the `api` feature.
+    await assertPlanFeature(ctx.accountId, 'api');
 
     const limit = checkRateLimit(
       `admin:apiKeyRotate:${ctx.userId}`,

@@ -11,6 +11,20 @@ and polish.
 
 ## [Unreleased]
 
+### Plan catalogue: Pro at 100 USD, API only on Pro and Negocio
+
+> **Migration required:** apply `supabase/migrations/065_plan_pro_100.sql`.
+
+- **Pro** is now 100 USD/month and 1000 USD/year (was 79/790). Inicio
+  (35/350) and Negocio (199/1990) do not change. PayPal plans already
+  created at 79 are not repriced: run the catalogue bootstrap against a
+  database with no stored Pro ids to create plans at the new price.
+- The **public API** (`api` feature, and `webhooks` with it) is included in
+  Pro and Negocio and not in Inicio; 065 pins that rule explicitly.
+- Minting or rotating an API key from Settings → API keys is now refused on
+  a plan without the `api` feature (402 `feature_unavailable` with the
+  upgrade hint), instead of handing out a key that `/api/v1` rejects.
+
 Fase 0 of the SaaS programme (`docs/saas/fase-0-cimientos.md`): the
 database and server-side groundwork for billing. **No user-visible
 behaviour changes**; nothing is limited by plan yet.
