@@ -10,6 +10,7 @@ import {
 import {
   deriveAttentionState,
   isUnattended,
+  offersUnattendedFilter,
   type AttentionState,
 } from "@/lib/inbox/attention";
 import { AttentionBadge } from "@/components/inbox/attention-badge";
@@ -74,7 +75,7 @@ export function ConversationList({
   // companies' rows (see `useAuth`).
   const { accountId } = useAuth();
   
-  const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
+  const ALL_FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
     { label: t("filterUnread"), value: "unread" },
     // The one that turns the indicator into a tool: the queue nobody
@@ -104,10 +105,34 @@ export function ConversationList({
   // the name from this map rather than from an embedded join is what
   // lets a row flip to "Operator X" the instant the assignment event
   // lands. Same single query the thread pane already makes.
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  //
+  // It doubles as the account's head count (p8.2): the query filters by
+  // `account_id` only — no role filter — and `account_role` lives on
+  // `profiles` (one row per member, no memberships table), so its length
+  // IS the team size. `null` = unknown (in flight, or the read failed):
+  // the attention derivation then decides nothing, same as an unknown
+  // AI flag, instead of flashing amber while it loads.
+  const [profiles, setProfiles] = useState<Profile[] | null>(null);
+  const teamSize = profiles?.length ?? null;
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
+
+  // "Unattended" is a hand-off queue; a one-person account has nobody to
+  // hand off to, so the chip goes (only once the size is KNOWN to be 1).
+  const FILTER_OPTIONS = useMemo(
+    () =>
+      offersUnattendedFilter(teamSize)
+        ? ALL_FILTER_OPTIONS
+        : ALL_FILTER_OPTIONS.filter((o) => o.value !== "unattended"),
+    [ALL_FILTER_OPTIONS, teamSize]
+  );
+  // …and if it was the active filter, fall back to "all". Adjusted during
+  // render (React's "storing information from previous renders" pattern)
+  // rather than in an effect, so no frame renders the stale filter.
+  if (filter === "unattended" && !offersUnattendedFilter(teamSize)) {
+    setFilter("all");
+  }
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
@@ -203,7 +228,8 @@ export function ConversationList({
       if (cancelled) return;
       if (error) {
         // Not fatal: without names the rows fall back to a generic
-        // "Assigned" label, which still beats showing nothing.
+        // "Assigned" label, which still beats showing nothing. The team
+        // size stays unknown (`null`), so no "Unattended" alarm either.
         console.error("Failed to fetch profiles:", error.message);
         return;
       }
@@ -216,7 +242,7 @@ export function ConversationList({
 
   const profilesByUserId = useMemo(() => {
     const m = new Map<string, Profile>();
-    for (const p of profiles) m.set(p.user_id, p);
+    for (const p of profiles ?? []) m.set(p.user_id, p);
     return m;
   }, [profiles]);
 
@@ -248,8 +274,9 @@ export function ConversationList({
       // included, closed ones excluded (this is a work queue). Resolved
       // in memory over the rows already loaded, so it stays correct the
       // moment a realtime UPDATE reassigns one. Same guard as the
-      // badge: with `aiStatus === null` nothing is decided.
-      result = result.filter((c) => isUnattended(c, aiStatus));
+      // badge: with `aiStatus` or `teamSize` unknown nothing is decided,
+      // and a one-person account has no such queue (p8.2).
+      result = result.filter((c) => isUnattended(c, aiStatus, teamSize));
     } else if (filter !== "all") {
       result = result.filter((c) => c.status === filter);
     }
@@ -282,6 +309,7 @@ export function ConversationList({
     selectedTagIds,
     selectedCompany,
     aiStatus,
+    teamSize,
   ]);
 
   const toggleTag = useCallback((id: string) => {
@@ -508,9 +536,11 @@ export function ConversationList({
               const assigneeId = conv.assigned_agent_id ?? null;
               // `null` = nothing to show: the account flag hasn't landed
               // (an assignee is knowable without it, the AI/unattended
-              // split isn't), or the thread is closed and out of the
-              // queue. Same call the Unattended filter makes.
-              const state = deriveAttentionState(conv, aiStatus);
+              // split isn't), the thread is closed and out of the queue,
+              // or the account is one person with nobody to hand off to
+              // (or its size isn't known yet). Same call the Unattended
+              // filter makes.
+              const state = deriveAttentionState(conv, aiStatus, teamSize);
               const presence: PresenceStatus | undefined = assigneeId
                 ? getPresence(assigneeId)
                 : undefined;

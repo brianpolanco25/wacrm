@@ -11,6 +11,14 @@ and polish.
 
 ## [Unreleased]
 
+### Inbox: no "Nobody on it" alarm in one-person accounts
+
+- In an account with a single member, the inbox list no longer paints the
+  amber **Nobody on it** badge on unassigned chats, and the **Unattended**
+  filter is hidden (if it was active, the list goes back to **All**). Teams
+  of two or more see both exactly as before. While the member list is still
+  loading, no alarm is shown.
+
 ### Developer docs are linked from the panel and the login
 
 - The sidebar has a **Developer API** item (below Settings) that opens
