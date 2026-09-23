@@ -9,7 +9,9 @@
 
 export const LEGAL_ENTITY = {
   /** Razón social tal como figura en el registro mercantil. */
-  legalName: '[NOMBRE LEGAL DE LA EMPRESA]',
+  legalName: 'CABBITY SRL',
+  /** Registro Nacional de Contribuyentes (República Dominicana). */
+  rnc: '133-46693-7',
   /** Nombre comercial del servicio. */
   brand: 'Cabbity CRM',
   country: { es: 'República Dominicana', en: 'Dominican Republic' },

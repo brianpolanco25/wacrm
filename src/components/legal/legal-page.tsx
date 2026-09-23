@@ -130,7 +130,8 @@ export async function LegalPage({
             </Link>
           ))}
           <span>
-            © {LEGAL_ENTITY.legalName} · {LEGAL_ENTITY.email}
+            © {LEGAL_ENTITY.legalName} · RNC {LEGAL_ENTITY.rnc} ·{' '}
+            {LEGAL_ENTITY.email}
           </span>
         </div>
       </footer>

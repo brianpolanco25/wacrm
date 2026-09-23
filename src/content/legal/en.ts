@@ -1,7 +1,7 @@
 import { LEGAL_ENTITY as E } from './entity';
 import type { LegalCatalogue } from './types';
 
-const who = `${E.legalName} ("${E.brand}", "we")`;
+const who = `${E.legalName}, RNC ${E.rnc} ("${E.brand}", "we")`;
 
 export const en: LegalCatalogue = {
   privacy: {

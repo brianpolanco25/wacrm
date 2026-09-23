@@ -26,6 +26,8 @@ describe('páginas legales', () => {
     for (const locale of DOCS_LOCALES) {
       const text = JSON.stringify(getLegalDoc(locale, 'privacy'));
       expect(text).toContain(LEGAL_ENTITY.email);
+      expect(text).toContain(LEGAL_ENTITY.legalName);
+      expect(text).toContain(LEGAL_ENTITY.rnc);
     }
   });
 
