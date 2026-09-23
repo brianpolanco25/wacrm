@@ -56,7 +56,8 @@
           "desc": "자동화하고 중요한 일에 집중"
         }
       }
-    }
+    },
+    "developersLink": "개발자 API"
   },
   "Sidebar": {
     "title": "Cabbity CRM",
@@ -83,7 +84,8 @@
     "menuProfile": "프로필",
     "menuSettings": "설정",
     "menuSignOut": "로그아웃",
-    "platform": "플랫폼"
+    "platform": "플랫폼",
+    "developers": "개발자 API"
   },
   "Header": {
     "dashboard": "대시보드",
@@ -100,7 +102,8 @@
     "defaultAvatar": "아바타",
     "menuProfile": "프로필",
     "menuSettings": "설정",
-    "menuSignOut": "로그아웃"
+    "menuSignOut": "로그아웃",
+    "menuApiDocs": "API 문서"
   },
   "ModeToggle": {
     "switchMode": "{mode} 모드로 전환"

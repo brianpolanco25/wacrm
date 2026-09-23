@@ -11,6 +11,7 @@ import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import {
   Bell,
   Bot,
+  Code2,
   Crown,
   GitBranch,
   LayoutDashboard,
@@ -104,8 +105,12 @@ const navItems: NavItem[] = [
   { href: "/agents", labelKey: "aiAgents", icon: Bot },
 ];
 
+// p8.1: /developers is public and lives outside the panel shell, but it
+// opens in the same tab like the other internal link to it (Settings →
+// API keys); the docs header carries its own way back to the panel.
 const bottomNavItems = [
   { href: "/settings", labelKey: "settings", icon: Settings },
+  { href: "/developers", labelKey: "developers", icon: Code2 },
 ];
 
 // Fase 4 §2. NOT part of `bottomNavItems`: it is not a section of the

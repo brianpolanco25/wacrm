@@ -56,7 +56,8 @@
           "desc": "Automate and focus on what matters"
         }
       }
-    }
+    },
+    "developersLink": "Developer API"
   },
   "Sidebar": {
     "title": "Cabbity CRM",
@@ -83,7 +84,8 @@
     "menuProfile": "Profile",
     "menuSettings": "Settings",
     "menuSignOut": "Sign out",
-    "platform": "Platform"
+    "platform": "Platform",
+    "developers": "Developer API"
   },
   "Header": {
     "dashboard": "Dashboard",
@@ -100,7 +102,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
     "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "menuSignOut": "Sign out",
+    "menuApiDocs": "API documentation"
   },
   "ModeToggle": {
     "switchMode": "Switch to {mode} mode"

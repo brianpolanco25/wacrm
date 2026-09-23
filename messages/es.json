@@ -56,7 +56,8 @@
           "desc": "Automatiza y enfócate en lo importante"
         }
       }
-    }
+    },
+    "developersLink": "API para desarrolladores"
   },
   "Sidebar": {
     "title": "Cabbity CRM",
@@ -83,7 +84,8 @@
     "menuProfile": "Perfil",
     "menuSettings": "Ajustes",
     "menuSignOut": "Cerrar sesión",
-    "platform": "Plataforma"
+    "platform": "Plataforma",
+    "developers": "API para desarrolladores"
   },
   "Header": {
     "dashboard": "Panel",
@@ -100,7 +102,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Ajustes",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "menuApiDocs": "Documentación de la API"
   },
   "ModeToggle": {
     "switchMode": "Cambiar al modo {mode}"

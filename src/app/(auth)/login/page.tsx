@@ -193,6 +193,15 @@ function LoginPageInner() {
           {t('createAccount')}
         </Link>
       </p>
+
+      <p className="text-muted-foreground text-center text-xs">
+        <Link
+          href="/developers"
+          className="text-brand-ink hover:text-brand-ink/80 font-semibold transition-colors"
+        >
+          {t('developersLink')}
+        </Link>
+      </p>
     </AuthCard>
   );
 }

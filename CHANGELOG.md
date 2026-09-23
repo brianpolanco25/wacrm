@@ -11,6 +11,14 @@ and polish.
 
 ## [Unreleased]
 
+### Developer docs are linked from the panel and the login
+
+- The sidebar has a **Developer API** item (below Settings) that opens
+  `/developers`.
+- The header's account menu has an **API documentation** entry after
+  Settings.
+- The login page shows a **Developer API** link under the sign-up prompt.
+
 ### Phase 7 loose ends
 
 - Settings → API keys: creating or rotating a key now caps the request body
