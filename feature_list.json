@@ -58,6 +58,13 @@
       "worktree": ".claude/worktrees/producto",
       "base": "feat/saas-multiempresa @ 0e85b2d (programa SaaS completo)",
       "note": "Ajustes de producto pedidos por el humano el 2026-09-14, fuera de docs/saas/. Spec breve en progress/spec_producto.md; features en serie en la misma rama (comparten messages/*.json)."
+    },
+    "7": {
+      "doc": "progress/spec_api-publica.md",
+      "branch": "feat/api-publica",
+      "worktree": ".claude/worktrees/api-publica",
+      "base": "main",
+      "note": "API pública para clientes. Spec escrita por el líder el 2026-09-15; aprobada por el humano el mismo día. Dos ramas hijas: api/recursos (a7.1→a7.2→a7.3→a7.5) y api/webhooks (a7.4); a7.6 y a7.7 sobre la integración. Migraciones 061 (a7.1), 062 (a7.4), 063 (a7.5). Worktrees: api-publica (feat/api-publica), api-recursos (api/recursos), api-webhooks (api/webhooks), todos desde main @ 3b82698. 2026-09-15: a7.1 y a7.4 aprobadas; integración de api/webhooks sobre api/recursos encargada a un implementer (informe progress/impl_integracion-api.md). Integración hecha (06050c6, 305ca1a, 6b0d768; feat/api-publica = 6b0d768). a7.2 en api/recursos y a7.3 en api/templates en paralelo. a7.2 y a7.3 aprobadas el 2026-09-16; segunda integración (api/templates → api/recursos + migración 064 tags) encargada (informe progress/impl_integracion-api-2.md). Segunda integración hecha (0fec43b merge, 4327aa4 migración 064 + deudas de tags); feat/api-publica = 4327aa4, 2 348 tests, replay 001–062+064 verde. a7.5 aprobada el 2026-09-16; tercera integración (api/exports → api/recursos, 063+064 juntas) encargada (informe progress/impl_integracion-api-3.md). Tercera integración hecha (6fd8e6a, a4ce30a; feat/api-publica = a4ce30a, 2 448 tests, replay 001–064). a7.6 en api/openapi y a7.7 en api/docs en paralelo. 7/7 aprobadas el 2026-09-16; integración final (api/openapi + api/docs → feat/api-publica, puente source.ts al generador real) encargada (informe progress/impl_integracion-api-4.md). FASE 7 COMPLETA el 2026-09-16: feat/api-publica @ 0be9815 (47 commits sobre main @ 3b82698), 2 626 tests, replay 001–064 y 5 checks SQL verdes (informe progress/impl_integracion-api-4.md). 2026-09-23: fusionada en main junto con feat/planes-api (main = 9c8d5d9, pusheada ff por orden del humano; producción desplegada); Supabase remoto migrado hasta la 065 (Pro 100/1000 USD, api/webhooks solo en Pro y Negocio). Cierre de deudas baratas del informe en chore/cierre-fase-7 (worktree .claude/worktrees/cabos; informe progress/impl_cierre-fase-7.md). Pendiente del humano: programar GET /api/webhooks/cron cada minuto con WEBHOOK_CRON_SECRET en Dokploy; decisión sobre tag-manager por cuenta."
     }
   },
   "features": [
@@ -481,6 +488,148 @@
       ],
       "implementation": "progress/impl_whatsapp-bsuid.md",
       "review": "progress/review_whatsapp-bsuid.md"
+    },
+    {
+      "id": "a7.1",
+      "name": "api-hardening",
+      "phase": "7",
+      "status": "done",
+      "spec": "progress/spec_api-publica.md#1",
+      "sdd": false,
+      "note": "Aprobado por el humano el 2026-09-15 (spec completa). Rama api/recursos, worktree .claude/worktrees/api-recursos, base feat/api-publica @ 3b82698. Idempotency-Key, X-Request-Id, tope de cuerpo, caducidad y rotación de claves en el panel. Migración 061. Primera de api/recursos. Implementación terminada (compuerta y replay 061 verdes, 2 127 tests); primera revisión lanzada. 1.ª revisión CHANGES_REQUESTED: cuatro escrituras v1 sin readJsonBody (contacts POST/PATCH, webhooks POST/PATCH), reserva en vuelo sin plazo, hash sin query string, rotar clave caducada/doble rotación. Segunda ronda lanzada. 2.ª ronda: readJsonBody en las 4 escrituras, reserva abandonada adoptada a los 2 min, query en el hash, rotar caducada → 404 y en gracia → 409; 2 139 tests. Segunda revisión lanzada. APPROVED en 2.ª ronda (2026-09-15). Antes del merge: corregir CHANGELOG:428 (sujeto) e idempotency.ts:91 (frase). Deuda: release/UPDATE por id de fila (hallazgo 4), dos relojes en la edad de la reserva.",
+      "commits": [
+        "a8118d2",
+        "00ae028",
+        "c6089f2",
+        "617cbe2",
+        "a16e2b0"
+      ],
+      "implementation": "progress/impl_api-hardening.md",
+      "review": "progress/review_api-hardening.md",
+      "branch": "api/recursos",
+      "worktree": ".claude/worktrees/api-recursos"
+    },
+    {
+      "id": "a7.2",
+      "name": "tags-v1",
+      "phase": "7",
+      "status": "done",
+      "spec": "progress/spec_api-publica.md#2",
+      "sdd": false,
+      "note": "Lanzada el 2026-09-16 sobre api/recursos @ 6b0d768 (a7.1+a7.4 integradas). Incluye cerrar el contact.tag_removed espurio detectado en review_webhooks-durable. CRUD de etiquetas y asignación por id. Sin migración. Tras a7.1. 2026-09-16: primer implementer colgado por watchdog (600 s) con WIP sin commitear; relanzado con orden de commitear el WIP como primer hito. Implementación terminada tras el relanzamiento (2 285 tests, compuerta verde). Primera revisión lanzada. APPROVED en primera ronda (2026-09-16), seis hallazgos no bloqueantes anotados en el review.",
+      "commits": [
+        "9530f4f",
+        "9de4cc4",
+        "9b6e6a9"
+      ],
+      "implementation": "progress/impl_tags-v1.md",
+      "review": "progress/review_tags-v1.md",
+      "branch": "api/recursos",
+      "worktree": ".claude/worktrees/api-recursos"
+    },
+    {
+      "id": "a7.3",
+      "name": "templates-v1",
+      "phase": "7",
+      "status": "done",
+      "spec": "progress/spec_api-publica.md#3",
+      "sdd": false,
+      "note": "Lanzada el 2026-09-16 en rama propia api/templates desde feat/api-publica @ 6b0d768, en paralelo con a7.2 (el líder decidió paralelizar; conflictos esperados solo en scopes.ts, CHANGELOG, docs y suite de aislamiento). CRUD y sync de plantillas de Meta vía API. Sin migración. Tras a7.2. 2026-09-16: primer implementer colgado por watchdog (600 s) con WIP sin commitear; relanzado con orden de commitear el WIP como primer hito. Implementación terminada tras el relanzamiento (2 279 tests, compuerta verde; sync extraído a template-sync.ts; readJsonBody gana allowEmpty opt-in). Primera revisión lanzada. 1.ª revisión CHANGES_REQUESTED: /templates/sync filtra mensajes de Postgres en la respuesta pública (campo errors fuera de spec). Segunda ronda lanzada. 2026-09-16: implementer colgado por watchdog con WIP sin commitear; relanzado con rescate del WIP. 2.ª ronda: mensaje fijo por plantilla en /sync, detalle a console.error, tabla de scopes sin realinear. Segunda revisión lanzada. APPROVED en 2.ª ronda (2026-09-16).",
+      "commits": [
+        "8aa9ceb",
+        "b188aab",
+        "8a25e18",
+        "abae331",
+        "8f5ec43",
+        "341fc6d",
+        "80e0e9d"
+      ],
+      "implementation": "progress/impl_templates-v1.md",
+      "review": "progress/review_templates-v1.md",
+      "branch": "api/templates",
+      "worktree": ".claude/worktrees/api-templates"
+    },
+    {
+      "id": "a7.4",
+      "name": "webhooks-durable",
+      "phase": "7",
+      "status": "done",
+      "spec": "progress/spec_api-publica.md#4",
+      "sdd": false,
+      "note": "Aprobado por el humano el 2026-09-15 (spec completa). Rama api/webhooks, worktree .claude/worktrees/api-webhooks, base feat/api-publica @ 3b82698. Cola de entregas con reintentos, eventos nuevos, panel Ajustes → Webhooks. Migración 062. Rama api/webhooks, en paralelo con api/recursos. Implementación terminada (compuerta, replay 062 y checks SQL verdes, 2 170 tests; 6 intentos = S-A6 literal; PATCH /api/conversations/{id} nuevo para emitir eventos desde la bandeja). Primera revisión lanzada. APPROVED en primera ronda (2026-09-15). Deuda anotada por el reviewer: assigned_agent_id sin validar contra la membresía (preexistente), contact.tag_removed emitido aunque el DELETE no quite nada.",
+      "commits": [
+        "e1fe546",
+        "c03241e",
+        "d0c891d",
+        "170d73e"
+      ],
+      "implementation": "progress/impl_webhooks-durable.md",
+      "review": "progress/review_webhooks-durable.md",
+      "branch": "api/webhooks",
+      "worktree": ".claude/worktrees/api-webhooks"
+    },
+    {
+      "id": "a7.5",
+      "name": "exports-v1",
+      "phase": "7",
+      "status": "done",
+      "spec": "progress/spec_api-publica.md#5",
+      "sdd": false,
+      "note": "Lanzada el 2026-09-16 en rama propia api/exports desde feat/api-publica @ 6b0d768, en paralelo con la revisión de a7.3 (no depende de tags ni plantillas). Exportación de conversaciones síncrona y por jobs con Storage privado. Migración 063. Tras a7.3. 2026-09-16: implementer colgado por watchdog con WIP sin commitear; relanzado con rescate del WIP. Implementación terminada tras el relanzamiento (2 328 tests, compuerta verde; media_url como storage://, started_at extra, techo 250k asíncrono). Primera revisión lanzada. APPROVED en primera ronda (2026-09-16).",
+      "commits": [
+        "670a2ec",
+        "67b8bbb",
+        "d821676",
+        "8ed0ecc"
+      ],
+      "implementation": "progress/impl_exports-v1.md",
+      "review": "progress/review_exports-v1.md",
+      "branch": "api/exports",
+      "worktree": ".claude/worktrees/api-exports"
+    },
+    {
+      "id": "a7.6",
+      "name": "openapi-spec",
+      "phase": "7",
+      "status": "done",
+      "spec": "progress/spec_api-publica.md#6",
+      "sdd": false,
+      "note": "Lanzada el 2026-09-16 desde feat/api-publica @ a4ce30a (a7.1–a7.5 integradas, 37 operaciones). OpenAPI 3.1 generado y test de cobertura de rutas. Tras fusionar api/recursos y api/webhooks en feat/api-publica. Implementación terminada tras el relanzamiento (2 518 tests, compuerta verde; scopes en x-scopes; MCP con requireConfirm generalizado; tsc de mcp-server falla igual antes y después por node_modules ausente). Primera revisión lanzada. 1.ª revisión CHANGES_REQUESTED: prefijo /api/v1 duplicado (servers.url + paths) → /api/v1/api/v1/…; falta test que componga ambas piezas; cifra del tsc de mcp-server (10→13, no 13=13). Segunda ronda lanzada. 2.ª ronda: paths sin prefijo, servers[0].url termina en /api/v1 vía resolveServerUrl, test de composición, cifra del tsc corregida, API_ERROR_CODES atado por tipos. Segunda revisión lanzada. APPROVED en 2.ª ronda (2026-09-16).",
+      "commits": [
+        "dc259ac",
+        "4da218e",
+        "68e7da0",
+        "23bccb8",
+        "2fbc159"
+      ],
+      "implementation": "progress/impl_openapi-spec.md",
+      "review": "progress/review_openapi-spec.md",
+      "branch": "api/openapi",
+      "worktree": ".claude/worktrees/api-openapi"
+    },
+    {
+      "id": "a7.7",
+      "name": "developer-docs",
+      "phase": "7",
+      "status": "done",
+      "spec": "progress/spec_api-publica.md#7",
+      "sdd": false,
+      "note": "Lanzada el 2026-09-16 desde feat/api-publica @ a4ce30a en paralelo con a7.6 (el líder decidió paralelizar: la referencia se construye contra OpenAPI 3.1 estándar y se conecta al openapi.json real al integrar). Sección pública /developers en es/en con referencia generada del OpenAPI. Tras a7.6. Implementación terminada (2 531 tests, compuerta verde; prosa por ?lang=, fixture con las 37 operaciones, source.ts como puente a a7.6). Primera revisión lanzada. 1.ª revisión CHANGES_REQUESTED (5 puntos locales: Lighthouse sin ejecutar, lang en main/nav, techo 250k en guía de exports, etiqueta del enlace de webhooks, 6 eventos faltantes en el fixture). Segunda ronda lanzada. 2.ª ronda: 5 cambios hechos; Lighthouse accesibilidad 0,96 / 0,97 / 1,00 (CLI headless con Brave, sin tocar package.json). Segunda revisión lanzada. APPROVED en 2.ª ronda (2026-09-16).",
+      "commits": [
+        "099aa79",
+        "6cb504a",
+        "10bcc14",
+        "5e996e7",
+        "e653dd5",
+        "53dcb4e",
+        "547aae2",
+        "489c261",
+        "073ac07"
+      ],
+      "implementation": "progress/impl_developer-docs.md",
+      "review": "progress/review_developer-docs.md",
+      "branch": "api/docs",
+      "worktree": ".claude/worktrees/api-docs"
     }
   ]
 }

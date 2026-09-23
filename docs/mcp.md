@@ -22,7 +22,7 @@ like any other API call.
    needs the `*:read` scopes).
 2. Add the server to your MCP client config:
 
-   ```jsonc
+   ```json
    {
      "mcpServers": {
        "wacrm": {

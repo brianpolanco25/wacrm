@@ -1,8 +1,31 @@
 # Estado actual
 
-Actualizado: 2026-09-14. 27 de 27 features aprobadas (programa SaaS 22 + fase 6 de producto 5). `feat/saas-multiempresa` @ 50c9758
-integra fases 0–4 y la fase 6 (Cabbity CRM, banner de trial, Inicio a 35 USD, español por defecto, BSUID de WhatsApp); migraciones hasta la 060. Base local Supabase (Docker) al día con las 60. Nada pusheado. Este archivo se regenera desde `feature_list.json`
+Actualizado: 2026-09-23. 34 de 34 features aprobadas (programa SaaS 22 + fase 6 de producto 5 + fase 7 «API
+pública para clientes» 7). **La fase 7 está en `main` y en producción**: `main` = 9c8d5d9 (fase 7 @ 0be9815 +
+`feat/planes-api`: Pro a 100/1000 USD, `api`/`webhooks` solo en Pro y Negocio, migración 065), pusheada ff el
+2026-09-23 por orden del humano; el push a `main` dispara la imagen y el deploy de Dokploy. Supabase remoto
+(`wacrm`, ref gjrbkxnbgsuzaqfjopof) migrado hasta la 065 con copia previa en
+`~/Documents/Dev/backups/wacrm-20260923-0755/`. Inventario de la fase: migraciones 061–065, 26 rutas `/api/v1`
+(37 operaciones, 12 scopes), `GET /api/v1/openapi.json`, `/developers` (12 páginas, es/en), MCP con 17 tools
+nuevas; informe de cierre `progress/impl_integracion-api-4.md`. Este archivo se regenera desde `feature_list.json`
 (fuente de verdad); las notas de trabajo de los agentes van a `progress/impl_*.md`, no aquí.
+
+## Cierre de la fase 7 (2026-09-23, rama `chore/cierre-fase-7`, worktree `.claude/worktrees/cabos`)
+
+Rama desde `main` @ 9c8d5d9 para (1) commitear el estado del harness de la fase 7 que vivía sin commit en el
+checkout raíz (este archivo, `feature_list.json`, `progress/{spec,impl,review,checks}_*` de a7.x), (2) añadir
+`WEBHOOK_CRON_SECRET` a `.env.local.example` y (3) cerrar las deudas baratas de `impl_integracion-api-4.md`
+§«Deudas abiertas» (informe en `progress/impl_cierre-fase-7.md`). Sigue **pendiente del humano**:
+
+- Programar `GET /api/webhooks/cron` cada minuto en Dokploy con la cabecera `x-cron-secret` =
+  `WEBHOOK_CRON_SECRET` (receta en `docs/docker.md` §«Outbound webhooks need their own scheduler»). Sin él las
+  entregas de webhook no se reintentan y los exports a medias no se rematan.
+- Decisión de producto: `src/components/settings/tag-manager.tsx` lista etiquetas por `user_id`; desde la 064
+  el nombre es único por cuenta, así que la etiqueta de un compañero es invisible pero colisiona al crearla.
+  Recomendación del líder: listar por cuenta (quitar el `.eq('user_id')`), es un cambio de una línea más el
+  copy de la tarjeta de colisión; la API `/api/v1/tags` ya es por cuenta.
+- `.opencode/` y `opencode.jsonc` (config de OpenCode del humano) siguen sin commit en la raíz; `docs/harness.md`
+  ya los cita. Si se commitean, `.opencode/node_modules/` va al `.gitignore`.
 
 ## Ramas
 
@@ -14,6 +37,7 @@ integra fases 0–4 y la fase 6 (Cabbity CRM, banner de trial, Inicio a 35 USD, 
 | 3 | `saas/fase-3-facturacion` | `.claude/worktrees/fase-3` | saas/fase-0-cimientos |
 | 4 | `saas/fase-4-plataforma` | `.claude/worktrees/fase-4` | saas/integracion |
 | 4 (f4.2) | `saas/fase-4-multinumero` | `.claude/worktrees/fase-4-multinumero` | saas/integracion @ e6ceba2 |
+| 7 | `feat/api-publica` (+ `api/recursos`, `api/webhooks`) | `.claude/worktrees/api-publica`, `api-recursos`, `api-webhooks` | main @ 3b82698 |
 
 ## Features
 
@@ -145,3 +169,32 @@ satisfacen), typecheck limpio, `TZ=UTC npm test` 109 archivos y 1 329 tests, bui
 contra el contenedor: `NOTICE: checks_impersonation-audit: OK`. Sin claves i18n nuevas
 (CP6: `en.json` y `ko.json` intactos y en paridad). Informe: sección «Tercera ronda» de
 `progress/impl_impersonation-audit.md`. Pendiente de re-revisión.
+
+## Fase 7 — deuda acumulada para la integración (2026-09-15)
+
+De `progress/review_webhooks-durable.md` (a7.4 APPROVED) e `impl_webhooks-durable.md`:
+- Al fusionar `api/webhooks` con `api/recursos`: mover `WEBHOOK_ACTION_RATE_LIMIT` a `RATE_LIMITS`
+  (`src/lib/rate-limit.ts`) y tipar el `fail('conflict', …)` de la ruta de reintento con el
+  `ApiErrorCode.conflict` que añade a7.1.
+- `contact.tag_removed` se emite aunque el `DELETE` no quite nada (`tag-events.ts`, `engine.ts`):
+  cerrarlo en a7.2 (tags-v1), que toca esa capa.
+- `PATCH /api/conversations/{id}` no valida que `assigned_agent_id` sea miembro de la cuenta
+  (preexistente: la bandeja hacía el mismo UPDATE desde el navegador). Fuera de la fase 7.
+- Tests de 413/415 por ruta en `webhooks` pendientes de añadir tras la integración (a7.1, 2.ª ronda).
+- `.env.local.example`: falta `WEBHOOK_CRON_SECRET=` (lo añade el humano).
+- De `review_tags-v1.md` (a7.2 APPROVED): (a) `tags` no tiene índice único por `(account_id, lower(name))`
+  → carrera de doble inserción en el find-or-create; cerrar con migración `064_tags_unique_name.sql`
+  + tratar 23505 como find-or-create, en la integración final de la fase; (b) `POST /contacts/{id}/tags`
+  aplica el lote a medias si un id es ajeno: resolver los ids en una consulta antes de escribir;
+  (c) `findTagByName` sin `.limit()`; (d) `engine.ts` descarta el `error` del DELETE de tag (preexistente).
+- Integración 2 (`impl_integracion-api-2.md`, feat/api-publica @ 4327aa4): cerradas las deudas (a)(b)(c) de tags
+  con la migración 064 (índice único `tags(account_id, lower(name))`, fusión de duplicados previos incl.
+  referencias en jsonb de automatizaciones/flujos). **Decisión de producto pendiente del humano**: el gestor
+  de etiquetas del panel (`tag-manager.tsx`) lista por `user_id`, no por cuenta; una etiqueta de un compañero
+  es invisible y desde la 064 colisiona por nombre. Cambiar ese alcance no es de la fase 7.
+- Para la integración final (a7.6 + a7.7): a7.6 deja `servers[0].url = '/api/v1'` con claves de `paths`
+  SIN prefijo; el fixture de a7.7 asume `servers[0].url = origen` y claves CON prefijo, y su renderizador
+  concatena en crudo (`model.ts` ~L333) y deriva anclas de la ruta (`operationAnchor`). Al cambiar
+  `source.ts` al generador real hay que: pasar el origen (`serverUrl`) al construir la referencia para
+  que el curl de ejemplo sea absoluto, y aceptar que las anclas cambien (o normalizarlas). Detalle en
+  `review_developer-docs.md` §Segunda ronda.
