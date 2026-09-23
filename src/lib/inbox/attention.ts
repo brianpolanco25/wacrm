@@ -57,16 +57,37 @@ export type AttentionInput = Pick<
  * A **closed** thread is out of the work queue: it gets no "nobody on
  * it" alarm. An account with the assistant off and 800 closed chats
  * would otherwise light up its whole history in amber.
+ *
+ * `teamSize` is how many members the account has (its `profiles`
+ * rows). "Nobody on it" only means something where there is someone to
+ * hand the chat to (p8.2): in a one-person account every unassigned
+ * chat is, by definition, that person's, and the amber alarm on all of
+ * them is noise. It only gates the `'unattended'` outcome — `assigned`
+ * and `ai` are knowable without it — and, like `accountAiOn`, `null`
+ * means **unknown** (profiles still in flight, or the read failed), so
+ * nothing is decided rather than flashing amber while it loads.
  */
 export function deriveAttentionState(
   conversation: AttentionInput,
-  accountAiOn: boolean | null
+  accountAiOn: boolean | null,
+  teamSize: number | null
 ): AttentionState | null {
   if (conversation.assigned_agent_id) return 'assigned';
   if (accountAiOn === null) return null;
   if (accountAiOn && !conversation.ai_autoreply_disabled) return 'ai';
   if (conversation.status === 'closed') return null;
+  if (teamSize === null || teamSize <= 1) return null;
   return 'unattended';
+}
+
+/**
+ * Whether the "Unattended" filter chip is offered at all: hidden only
+ * when the account is KNOWN to have a single member. While the team
+ * size is unknown the chip stays (it simply lists nothing, see above)
+ * rather than blinking in and out as profiles land.
+ */
+export function offersUnattendedFilter(teamSize: number | null): boolean {
+  return teamSize === null || teamSize >= 2;
 }
 
 /**
@@ -74,11 +95,15 @@ export function deriveAttentionState(
  * the handed-off threads nobody picked up (`ai_autoreply_disabled` with
  * a null assignee) — those are precisely the ones the filter exists for.
  * Excludes the closed ones (a work queue, not a history listing) and,
- * while the account's AI status is unknown, decides nothing.
+ * while the account's AI status or team size is unknown, decides
+ * nothing. Empty for a one-person account.
  */
 export function isUnattended(
   conversation: AttentionInput,
-  accountAiOn: boolean | null
+  accountAiOn: boolean | null,
+  teamSize: number | null
 ): boolean {
-  return deriveAttentionState(conversation, accountAiOn) === 'unattended';
+  return (
+    deriveAttentionState(conversation, accountAiOn, teamSize) === 'unattended'
+  );
 }
