@@ -44,8 +44,14 @@ data or send messages, add `"WACRM_ENABLE_WRITES": "true"` (and
 ## What it exposes
 
 - **Reads (always on):** `whoami`, contacts (list/get), conversations
-  (list/get), messages (list), broadcast status.
-- **Writes (opt-in):** send a message, create/update a contact.
+  (list/get), messages (list), broadcast status, tags (list/get),
+  templates (list/get) and exports (list jobs, poll a job, download one
+  conversation inline — the download asks for `confirm` because it
+  spends the shared export budget).
+- **Writes (opt-in):** send a message; create/update a contact; create,
+  rename, delete and attach/detach tags; create, edit, delete and sync
+  templates; queue a bulk export. Deleting a tag or a template and
+  syncing or exporting require an explicit `confirm`.
 - **Broadcasts (opt-in):** launch a template broadcast — requires an
   explicit `confirm` and is marked destructive.
 

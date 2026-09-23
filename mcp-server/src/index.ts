@@ -12,14 +12,20 @@
 // — see .env.example / README.md.
 // ============================================================
 
+import { createRequire } from 'node:module';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from './config.js';
 import { WacrmClient } from './client.js';
 import { registerTools } from './tools/index.js';
 
-// package.json version, kept in sync manually with the manifest.
-const VERSION = '0.1.0';
+// Read from the manifest at runtime so the version the server announces
+// is always the one that was published. `createRequire` rather than an
+// `import … with { type: 'json' }`: `package.json` sits outside
+// `rootDir` (./src), and from `dist/index.js` the same relative path
+// still lands on it — npm always ships `package.json` in the tarball.
+const require = createRequire(import.meta.url);
+const { version: VERSION } = require('../package.json') as { version: string };
 
 async function main(): Promise<void> {
   const config = loadConfig();
