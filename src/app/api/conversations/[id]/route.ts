@@ -79,6 +79,36 @@ export async function PATCH(
           { status: 400 }
         );
       }
+      // The assignee must belong to THIS account. The FK (migration 040)
+      // only checks that the user exists somewhere; without this an agent
+      // could park a chat on a stranger's uuid, and the
+      // `conversation.assigned` webhook would announce it. Membership
+      // lives in `profiles.account_id`; `assigned_agent_id` is an
+      // `auth.users` id, i.e. `profiles.user_id` (not `profiles.id`).
+      if (agentId !== null) {
+        const { data: member, error: memberError } = await ctx.supabase
+          .from('profiles')
+          .select('user_id')
+          .eq('user_id', agentId)
+          .eq('account_id', ctx.accountId)
+          .maybeSingle();
+        if (memberError) {
+          console.error(
+            '[PATCH /api/conversations/[id]] member lookup:',
+            memberError
+          );
+          return NextResponse.json(
+            { error: 'Failed to update conversation' },
+            { status: 500 }
+          );
+        }
+        if (!member) {
+          return NextResponse.json(
+            { error: "'assigned_agent_id' is not a member of this account" },
+            { status: 400 }
+          );
+        }
+      }
       if (!(await assignConversation(scope, agentId))) {
         return NextResponse.json(
           { error: 'Conversation not found' },
