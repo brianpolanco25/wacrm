@@ -694,6 +694,20 @@
       "review": null,
       "branch": "feat/atencion-cuenta-solo",
       "worktree": ".claude/worktrees/atencion"
+    },
+    {
+      "id": "p8.3",
+      "name": "gemini-provider",
+      "phase": "8",
+      "status": "in_progress",
+      "spec": "progress/spec_gemini-provider.md",
+      "sdd": false,
+      "note": "Pedida el 2026-09-23: Google Gemini como tercer proveedor de IA. Migración 066 (CHECK de provider en ai_configs y ai_usage_log) autorizada por el humano. REST generateContent v1beta con x-goog-api-key, sin SDK; default gemini-3.5-flash-lite; AI_PLATFORM_GEMINI_API_KEY. Embeddings siguen en OpenAI.",
+      "commits": [],
+      "implementation": "progress/impl_gemini-provider.md",
+      "review": null,
+      "branch": "feat/proveedor-gemini",
+      "worktree": ".claude/worktrees/gemini"
     }
   ]
 }
