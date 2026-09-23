@@ -7,10 +7,11 @@ import type { AiKeySource, AiProvider } from './types';
 // doesn't, the server falls back to a platform key for the account's
 // provider, read from the environment. One variable per provider,
 // because the account picks the provider and a single OpenAI key is
-// useless to an account that chose Anthropic:
+// useless to an account that chose Anthropic or Gemini:
 //
 //   AI_PLATFORM_OPENAI_API_KEY      used when provider = 'openai'
 //   AI_PLATFORM_ANTHROPIC_API_KEY   used when provider = 'anthropic'
+//   AI_PLATFORM_GEMINI_API_KEY      used when provider = 'gemini'
 //
 // Resolution order, everywhere the key is needed (auto-reply, draft,
 // playground, "Test key", save):
@@ -25,6 +26,7 @@ import type { AiKeySource, AiProvider } from './types';
 export const AI_PLATFORM_KEY_ENV: Record<AiProvider, string> = {
   openai: 'AI_PLATFORM_OPENAI_API_KEY',
   anthropic: 'AI_PLATFORM_ANTHROPIC_API_KEY',
+  gemini: 'AI_PLATFORM_GEMINI_API_KEY',
 };
 
 /** The platform key for `provider`, or null when it is not configured. */

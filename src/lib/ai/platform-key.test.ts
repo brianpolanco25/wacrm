@@ -22,6 +22,24 @@ describe('platformApiKey', () => {
     expect(hasPlatformApiKey('anthropic')).toBe(false);
   });
 
+  it('reads AI_PLATFORM_GEMINI_API_KEY for gemini', () => {
+    expect(AI_PLATFORM_KEY_ENV.gemini).toBe('AI_PLATFORM_GEMINI_API_KEY');
+    vi.stubEnv('AI_PLATFORM_GEMINI_API_KEY', ' AIza-platform ');
+    vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', '');
+    expect(platformApiKey('gemini')).toBe('AIza-platform');
+    expect(hasPlatformApiKey('gemini')).toBe(true);
+    expect(resolveAiApiKey('gemini', null)).toEqual({
+      key: 'AIza-platform',
+      source: 'platform',
+    });
+    expect(resolveAiApiKey('gemini', 'AIza-own')).toEqual({
+      key: 'AIza-own',
+      source: 'account',
+    });
+    // The Gemini key never serves another provider.
+    expect(resolveAiApiKey('openai', null)).toBeNull();
+  });
+
   it('treats unset and whitespace-only values as not configured', () => {
     vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', '   ');
     vi.stubEnv('AI_PLATFORM_ANTHROPIC_API_KEY', '');

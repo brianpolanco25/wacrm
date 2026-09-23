@@ -8,7 +8,7 @@ import {
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { validateAiCredentials } from '@/lib/ai/validate';
 import { platformApiKey } from '@/lib/ai/platform-key';
-import { AiError, type AiKeySource, type AiProvider } from '@/lib/ai/types';
+import { AiError, type AiKeySource, isAiProvider } from '@/lib/ai/types';
 
 /**
  * POST /api/ai/test  (admin+)
@@ -37,10 +37,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const provider = body.provider as AiProvider;
-    if (provider !== 'openai' && provider !== 'anthropic') {
+    const provider = body.provider;
+    if (!isAiProvider(provider)) {
       return NextResponse.json(
-        { error: 'provider must be "openai" or "anthropic"' },
+        { error: 'provider must be "openai", "anthropic" or "gemini"' },
         { status: 400 }
       );
     }

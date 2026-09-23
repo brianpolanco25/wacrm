@@ -64,11 +64,13 @@ const HANDOFF_UNSET = '__unset__';
 const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic (Claude)',
+  gemini: 'Google Gemini',
 };
 
 const KEY_PLACEHOLDER: Record<AiProvider, string> = {
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
+  gemini: 'AIza...',
 };
 
 export function AiConfig() {
@@ -98,7 +100,7 @@ export function AiConfig() {
   // keeps the pre-S1 behaviour (key required).
   const [platformKeyAvailable, setPlatformKeyAvailable] = useState<
     Record<AiProvider, boolean>
-  >({ openai: false, anthropic: false });
+  >({ openai: false, anthropic: false, gemini: false });
   const [embeddingsField, setEmbeddingsField] = useState<SecretFieldState>(() =>
     secretFieldLoaded(false)
   );
@@ -146,6 +148,7 @@ export function AiConfig() {
       setPlatformKeyAvailable({
         openai: Boolean(data.platform_key_available?.openai),
         anthropic: Boolean(data.platform_key_available?.anthropic),
+        gemini: Boolean(data.platform_key_available?.gemini),
       });
       if (data.configured) {
         setConfigured(true);
@@ -196,8 +199,7 @@ export function AiConfig() {
   const handleProviderChange = (next: AiProvider) => {
     setProvider(next);
     const isDefaultModel =
-      model === AI_PROVIDER_DEFAULT_MODEL.openai ||
-      model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
+      Object.values(AI_PROVIDER_DEFAULT_MODEL).includes(model) ||
       model.trim() === '';
     if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
   };
@@ -402,6 +404,9 @@ export function AiConfig() {
                     </SelectItem>
                     <SelectItem value="anthropic">
                       {PROVIDER_LABEL.anthropic}
+                    </SelectItem>
+                    <SelectItem value="gemini">
+                      {PROVIDER_LABEL.gemini}
                     </SelectItem>
                   </SelectContent>
                 </Select>

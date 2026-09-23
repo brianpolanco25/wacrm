@@ -18,6 +18,7 @@ import {
   type AiKeySource,
   type AiProvider,
   type HandoffMode,
+  isAiProvider,
 } from '@/lib/ai/types';
 
 /** Upper bound for `ai_configs.handoff_message` (WhatsApp allows 4096; a
@@ -38,6 +39,7 @@ function platformKeyAvailability(): Record<AiProvider, boolean> {
   return {
     openai: hasPlatformApiKey('openai'),
     anthropic: hasPlatformApiKey('anthropic'),
+    gemini: hasPlatformApiKey('gemini'),
   };
 }
 
@@ -112,9 +114,9 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== 'object') return bad('Invalid request body');
 
-    const provider = body.provider as AiProvider;
-    if (provider !== 'openai' && provider !== 'anthropic') {
-      return bad('provider must be "openai" or "anthropic"');
+    const provider = body.provider;
+    if (!isAiProvider(provider)) {
+      return bad('provider must be "openai", "anthropic" or "gemini"');
     }
     const model = typeof body.model === 'string' ? body.model.trim() : '';
     if (!model) return bad('model is required');

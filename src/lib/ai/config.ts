@@ -1,10 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { resolveAiApiKey } from './platform-key';
-import type { AiConfig, HandoffMode } from './types';
+import type { AiConfig, AiProvider, HandoffMode } from './types';
 
 interface AiConfigRow {
-  provider: 'openai' | 'anthropic';
+  provider: AiProvider;
   model: string;
   /** Encrypted BYO key, or null when the account relies on the platform key. */
   api_key: string | null;

@@ -122,6 +122,7 @@ beforeEach(() => {
   mocks.validateAiCredentials.mockResolvedValue(undefined);
   vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', '');
   vi.stubEnv('AI_PLATFORM_ANTHROPIC_API_KEY', '');
+  vi.stubEnv('AI_PLATFORM_GEMINI_API_KEY', '');
 });
 
 afterEach(() => {
@@ -324,6 +325,59 @@ describe('POST /api/ai/config — handing the key back to the platform', () => {
   });
 });
 
+describe('POST /api/ai/config — provider (p8.3)', () => {
+  it('accepts provider gemini: validates with the Gemini key and stores it', async () => {
+    const res = await POST(
+      post({
+        provider: 'gemini',
+        model: 'gemini-3.5-flash-lite',
+        is_active: true,
+        api_key: 'AIza-own',
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.validateAiCredentials.mock.calls[0][0]).toMatchObject({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash-lite',
+      apiKey: 'AIza-own',
+    });
+    expect(mocks.state.inserts[0]).toMatchObject({
+      account_id: 'acct-1',
+      provider: 'gemini',
+      api_key: 'enc:AIza-own',
+    });
+  });
+
+  it('accepts gemini without api_key when the Gemini platform key exists', async () => {
+    vi.stubEnv('AI_PLATFORM_GEMINI_API_KEY', 'AIza-platform');
+    const res = await POST(
+      post({
+        provider: 'gemini',
+        model: 'gemini-3.5-flash-lite',
+        is_active: true,
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.validateAiCredentials.mock.calls[0][0]).toMatchObject({
+      provider: 'gemini',
+      apiKey: 'AIza-platform',
+    });
+    expect(mocks.state.inserts[0]).toMatchObject({ api_key: null });
+  });
+
+  it('rejects an invented provider', async () => {
+    const res = await POST(
+      post({ ...BASE_BODY, provider: 'mistral', api_key: 'x' })
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'provider must be "openai", "anthropic" or "gemini"',
+    });
+    expect(mocks.validateAiCredentials).not.toHaveBeenCalled();
+    expect(mocks.state.inserts).toEqual([]);
+  });
+});
+
 describe('GET /api/ai/config — platform key availability', () => {
   it('reports per-provider availability without exposing the keys (unconfigured)', async () => {
     vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
@@ -331,7 +385,7 @@ describe('GET /api/ai/config — platform key availability', () => {
     const body = await res.json();
     expect(body).toEqual({
       configured: false,
-      platform_key_available: { openai: true, anthropic: false },
+      platform_key_available: { openai: true, anthropic: false, gemini: false },
     });
     expect(JSON.stringify(body)).not.toContain('sk-platform');
   });
@@ -356,6 +410,7 @@ describe('GET /api/ai/config — platform key availability', () => {
     expect(body.platform_key_available).toEqual({
       openai: false,
       anthropic: true,
+      gemini: false,
     });
     expect(body).not.toHaveProperty('api_key');
     expect(JSON.stringify(body)).not.toContain('sk-');

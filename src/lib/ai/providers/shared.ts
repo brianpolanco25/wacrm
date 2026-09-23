@@ -1,7 +1,7 @@
 import { AiError, type AiUsage, type ChatMessage } from '../types'
 
 // ============================================================
-// Bits shared by the OpenAI + Anthropic adapters.
+// Bits shared by the OpenAI, Anthropic and Gemini adapters.
 // ============================================================
 
 export interface ProviderArgs {
@@ -51,6 +51,29 @@ export function toNetworkError(err: unknown): AiError {
   })
 }
 
+interface ProviderErrorBody {
+  error?:
+    | string
+    | {
+        message?: string
+        /** Google APIs: `google.rpc.ErrorInfo` entries carry a `reason`. */
+        details?: { reason?: string }[]
+      }
+}
+
+/**
+ * Google answers a malformed/unknown API key with **400** (not 401) and
+ * `reason: "API_KEY_INVALID"` in the error details. OpenAI and Anthropic
+ * never send that reason, so checking it is safe for every provider.
+ */
+function isGoogleInvalidKey(body: ProviderErrorBody | null): boolean {
+  const err = body?.error
+  if (!err || typeof err === 'string' || !Array.isArray(err.details)) {
+    return false
+  }
+  return err.details.some((d) => d?.reason === 'API_KEY_INVALID')
+}
+
 /** Build a typed AiError from a non-2xx provider response, pulling the
  *  provider's own error message out of the JSON body when present. */
 export async function providerHttpError(
@@ -58,8 +81,9 @@ export async function providerHttpError(
   res: Response,
 ): Promise<AiError> {
   let detail = ''
+  let body: ProviderErrorBody | null = null
   try {
-    const body = (await res.json()) as { error?: { message?: string } | string }
+    body = (await res.json()) as ProviderErrorBody
     detail =
       typeof body?.error === 'string'
         ? body.error
@@ -70,7 +94,9 @@ export async function providerHttpError(
 
   const { status } = res
   const code =
-    status === 401 || status === 403
+    status === 401 ||
+    status === 403 ||
+    (status === 400 && isGoogleInvalidKey(body))
       ? 'invalid_key'
       : status === 429
         ? 'rate_limited'
@@ -92,7 +118,7 @@ export async function providerHttpError(
 
 /**
  * Collapse consecutive same-role turns into one (joined with blank
- * lines). Anthropic requires strictly alternating roles; merging is
+ * lines). Anthropic and Gemini want alternating roles; merging is
  * also harmless for OpenAI and keeps the transcript compact.
  */
 export function mergeConsecutive(messages: ChatMessage[]): ChatMessage[] {

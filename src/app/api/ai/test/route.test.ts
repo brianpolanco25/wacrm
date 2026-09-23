@@ -64,6 +64,7 @@ beforeEach(() => {
   mocks.validateAiCredentials.mockResolvedValue(undefined);
   vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', '');
   vi.stubEnv('AI_PLATFORM_ANTHROPIC_API_KEY', '');
+  vi.stubEnv('AI_PLATFORM_GEMINI_API_KEY', '');
 });
 
 afterEach(() => {
@@ -147,6 +148,33 @@ describe('POST /api/ai/test', () => {
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Enter an API key to test.' });
+    expect(mocks.validateAiCredentials).not.toHaveBeenCalled();
+  });
+
+  it('tests a Gemini key (p8.3)', async () => {
+    const res = await POST(
+      post({
+        provider: 'gemini',
+        model: 'gemini-3.5-flash-lite',
+        api_key: 'AIza-typed',
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.validateAiCredentials.mock.calls[0][0]).toMatchObject({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash-lite',
+      apiKey: 'AIza-typed',
+    });
+  });
+
+  it('rejects an invented provider', async () => {
+    const res = await POST(
+      post({ provider: 'mistral', model: 'x', api_key: 'k' })
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'provider must be "openai", "anthropic" or "gemini"',
+    });
     expect(mocks.validateAiCredentials).not.toHaveBeenCalled();
   });
 });

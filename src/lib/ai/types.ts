@@ -3,10 +3,25 @@
 //
 // One small provider-agnostic surface so the inbox draft route and the
 // inbound auto-reply bot both talk to `generateReply` without caring
-// whether the account is on OpenAI or Anthropic.
+// whether the account is on OpenAI, Anthropic or Google Gemini.
 // ============================================================
 
-export type AiProvider = 'openai' | 'anthropic';
+export type AiProvider = 'openai' | 'anthropic' | 'gemini';
+
+/** Every supported provider — the domain of `ai_configs.provider` (066). */
+export const AI_PROVIDERS: readonly AiProvider[] = [
+  'openai',
+  'anthropic',
+  'gemini',
+];
+
+/** Narrow untrusted input (a request body) to a supported provider. */
+export function isAiProvider(value: unknown): value is AiProvider {
+  return (
+    typeof value === 'string' &&
+    (AI_PROVIDERS as readonly string[]).includes(value)
+  );
+}
 
 /**
  * Where auto-reply routes a conversation when the model hands off
@@ -66,7 +81,7 @@ export interface AiConfig {
   embeddingsApiKey: string | null;
 }
 
-/** A single conversation turn in the shape both providers accept. */
+/** A single conversation turn; each adapter maps it to its provider's shape. */
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -74,7 +89,8 @@ export interface ChatMessage {
 
 /**
  * Token counts for one provider call, normalized across OpenAI
- * (`prompt`/`completion`) and Anthropic (`input`/`output`). Null when
+ * (`prompt`/`completion`), Anthropic (`input`/`output`) and Gemini
+ * (`promptTokenCount`/`candidatesTokenCount`). Null when
  * the provider didn't return usage. Logged to `ai_usage_log`.
  */
 export interface AiUsage {
