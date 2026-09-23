@@ -11,6 +11,24 @@ and polish.
 
 ## [Unreleased]
 
+### AI assistant: Google Gemini as a third provider
+
+> **Migration required:** apply
+> `supabase/migrations/066_ai_provider_gemini.sql`.
+
+- Settings → AI offers **Google Gemini** next to OpenAI and Anthropic.
+  The default model is `gemini-3.5-flash-lite` (editable, like the
+  others). Drafts, auto-reply, the Playground and **Test key** all work
+  with a Gemini key.
+- A reply blocked by Gemini's safety filter is reported as such instead
+  of a generic empty response; an invalid Gemini key shows as an invalid
+  key.
+- Deployments can fund Gemini for their accounts with
+  `AI_PLATFORM_GEMINI_API_KEY` (see `docs/docker.md`, «Platform AI
+  keys»).
+- The knowledge base's semantic search still needs an OpenAI embeddings
+  key; there are no Gemini embeddings.
+
 ### Inbox: no "Nobody on it" alarm in one-person accounts
 
 - In an account with a single member, the inbox list no longer paints the
