@@ -16,6 +16,12 @@ import {
 } from '@/lib/whatsapp/template-sync';
 
 /**
+ * Lo único que viaja al navegador cuando una plantilla concreta no se
+ * pudo guardar. Mismo texto que `POST /api/v1/templates/sync` (80e0e9d).
+ */
+const TEMPLATE_SAVE_FAILED = 'Template could not be saved';
+
+/**
  * Sync message templates from Meta → local message_templates table.
  *
  * El algoritmo vive en `src/lib/whatsapp/template-sync.ts` desde la
@@ -72,17 +78,33 @@ export async function POST() {
       accessToken,
     });
 
+    // Los `message` de `result.errors` son `PostgrestError.message` tal
+    // cual (constraint, columna, tabla). 80e0e9d los tapó en `/api/v1` y
+    // dejó aquí el detalle porque lo veía un admin de la propia cuenta,
+    // pero la interfaz nunca lo muestra (solo `name` y `language`), así
+    // que tampoco tiene por qué salir del servidor (a7.8 §4): va al log.
+    for (const e of result.errors) {
+      console.error(
+        `[whatsapp/templates/sync] account=${accountId} template=${e.name}/${e.language}:`,
+        e.message
+      );
+    }
+
     return NextResponse.json({
       success: result.errors.length === 0,
       total: result.total,
       inserted: result.inserted,
       updated: result.updated,
-      errors: result.errors,
+      errors: result.errors.map((e) => ({
+        name: e.name,
+        language: e.language,
+        message: TEMPLATE_SAVE_FAILED,
+      })),
       truncated: result.truncated,
     });
   } catch (error) {
     // Auth failures map to 401/403 rather than being folded into the
-    // generic 500 below, which surfaces `error.message` as a sync failure.
+    // generic 500 below.
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {
       return toErrorResponse(error);
     }
@@ -94,12 +116,12 @@ export async function POST() {
         { status: error.status }
       );
     }
+    // Cualquier otra cosa (un fallo de descifrado, un error de Postgres
+    // lanzado en vez de devuelto) es interna: el detalle al log, al
+    // navegador un texto fijo.
     console.error('Error syncing WhatsApp templates:', error);
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : 'Failed to sync templates',
-      },
+      { error: 'Failed to sync templates' },
       { status: 500 }
     );
   }
