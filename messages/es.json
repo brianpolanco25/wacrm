@@ -1845,7 +1845,7 @@
     },
     "aiConfig": {
       "title": "Configuración del asistente",
-      "description": "Usa tu propia clave de OpenAI o de Anthropic. Cabbity CRM llama al proveedor directamente con tu clave: sin cuotas de IA por puesto, y tus datos siguen siendo tuyos. De aquí salen las respuestas que redacta la IA en la bandeja, el bot de respuesta automática y el banco de pruebas.",
+      "description": "Usa tu propia clave de OpenAI, Anthropic o Google Gemini. Cabbity CRM llama al proveedor directamente con tu clave: sin cuotas de IA por puesto, y tus datos siguen siendo tuyos. De aquí salen las respuestas que redacta la IA en la bandeja, el bot de respuesta automática y el banco de pruebas.",
       "adminOnlyConfig": "Solo los administradores y los propietarios pueden cambiar la configuración de la IA.",
       "loadFailed": "No se pudo cargar la configuración de la IA",
       "providerAndKey": "Proveedor y clave",

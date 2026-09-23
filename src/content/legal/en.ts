@@ -53,7 +53,7 @@ export const en: LegalCatalogue = {
           'Meta Platforms (WhatsApp Business API): to send and receive messages.',
           'Supabase: database, authentication and file storage.',
           'PayPal: payment processing.',
-          'OpenAI and Anthropic: only if the business enables AI replies; they receive the part of the conversation needed to generate the reply.',
+          'OpenAI, Anthropic and Google (Gemini): only if the business enables AI replies; they receive the part of the conversation needed to generate the reply.',
           'Hosting providers for the application server.',
         ],
       },

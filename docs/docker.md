@@ -128,7 +128,7 @@ a webhook again.
 
 ## Platform AI keys (optional)
 
-By default every account brings its own OpenAI / Anthropic key in
+By default every account brings its own OpenAI / Anthropic / Gemini key in
 Settings → AI. A deployment that wants to pay for AI on behalf of its
 accounts (the SaaS model) can set a platform-level key per provider:
 
@@ -136,6 +136,7 @@ accounts (the SaaS model) can set a platform-level key per provider:
 | ------------------------------- | --------------------------------------------------------------------- |
 | `AI_PLATFORM_OPENAI_API_KEY`    | an account's provider is `openai` and it has not saved its own key    |
 | `AI_PLATFORM_ANTHROPIC_API_KEY` | an account's provider is `anthropic` and it has not saved its own key |
+| `AI_PLATFORM_GEMINI_API_KEY`    | an account's provider is `gemini` and it has not saved its own key    |
 
 Resolution order for the **chat** key (drafts, auto-reply, playground,
 "Test key", save): the account's own key → the platform key for its
@@ -150,11 +151,14 @@ This fallback covers the chat key only. The **embeddings** key
 (`ai_configs.embeddings_api_key`, used to index the knowledge base) has
 no platform-level equivalent: an account that does not save one keeps
 using lexical search even on a deployment with
-`AI_PLATFORM_OPENAI_API_KEY` set.
+`AI_PLATFORM_OPENAI_API_KEY` set. The embeddings key is always an
+OpenAI one (`text-embedding-3-small`), whatever the chat provider: an
+account on Anthropic or Gemini that wants semantic search saves a
+separate OpenAI key for it. Gemini embeddings are not supported.
 
-Both variables are server-only runtime secrets (never `NEXT_PUBLIC_*`);
+These variables are server-only runtime secrets (never `NEXT_PUBLIC_*`);
 the app only ever tells the browser _whether_ a platform key exists,
-never its value. With neither variable set the behaviour is exactly the
+never its value. With none of them set the behaviour is exactly the
 bring-your-own-key one: the key field is required when saving an AI
 configuration.
 

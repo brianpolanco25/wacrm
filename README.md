@@ -33,8 +33,8 @@ clone or fork it to run your own CRM.
 - **No-code automations** — triggers on inbound messages, new
   contacts, keywords, or schedule; conditional branches, waits,
   tags, webhooks. Visual builder.
-- **AI reply assistant** — bring your own OpenAI or Anthropic key
-  (stored encrypted; no per-seat AI fee, your data stays yours).
+- **AI reply assistant** — bring your own OpenAI, Anthropic or Google
+  Gemini key (stored encrypted; no per-seat AI fee, your data stays yours).
   One-click AI-drafted replies in the inbox, plus an optional
   auto-reply bot with a per-conversation cap and clean human handoff.
   Add a **knowledge base** (FAQs, policies, product docs) and it
