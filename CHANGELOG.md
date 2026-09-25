@@ -11,6 +11,23 @@ and polish.
 
 ## [Unreleased]
 
+### AI assistant: knowledge base can embed with Google Gemini
+
+> **Migration required:** apply
+> `supabase/migrations/068_embeddings_provider.sql`.
+
+- Settings → AI gains an **Embeddings provider** picker next to the
+  embeddings key: OpenAI (`text-embedding-3-small`, as before) or Google
+  Gemini (`gemini-embedding-2`, free tier). An account on Gemini can now
+  run drafts, auto-reply and semantic knowledge-base search on a single
+  Google key.
+- Existing accounts keep OpenAI; nothing is re-embedded. Switching
+  provider with documents already indexed needs **Reindex** in the
+  knowledge base — the hint says so — because the two providers'
+  vectors are not comparable.
+- The key is validated against the chosen provider before it is stored,
+  same as before.
+
 ### WhatsApp: Embedded Signup tokens are renewed before they expire
 
 > **Migration required:** apply

@@ -229,6 +229,7 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
     handoffAgentId: null,
     handoffMessage: null,
     embeddingsApiKey: null,
+    embeddingsProvider: 'openai',
     ...overrides,
   };
 }

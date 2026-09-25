@@ -12,13 +12,16 @@ import {
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption';
 import { validateAiCredentials } from '@/lib/ai/validate';
 import { embedTexts } from '@/lib/ai/embeddings';
+import { embeddingsProviderOf } from '@/lib/ai/config';
 import { hasPlatformApiKey, platformApiKey } from '@/lib/ai/platform-key';
 import {
+  type AiEmbeddingsProvider,
   AiError,
+  isAiEmbeddingsProvider,
+  isAiProvider,
   type AiKeySource,
   type AiProvider,
   type HandoffMode,
-  isAiProvider,
 } from '@/lib/ai/types';
 
 /** Upper bound for `ai_configs.handoff_message` (WhatsApp allows 4096; a
@@ -59,7 +62,7 @@ export async function GET() {
       // `api_key` is selected only to derive `has_key` — it is stripped
       // out below and never returned to the client.
       .select(
-        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, api_key, embeddings_api_key'
+        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, api_key, embeddings_api_key, embeddings_provider'
       )
       .eq('account_id', accountId)
       .maybeSingle();
@@ -85,6 +88,9 @@ export async function GET() {
       has_embeddings_key: !!embeddings_api_key,
       platform_key_available,
       ...safe,
+      // A row read without migration 068 (or mocked without the column)
+      // means OpenAI, which is what every embeddings key was until then.
+      embeddings_provider: embeddingsProviderOf(safe.embeddings_provider),
     });
   } catch (err) {
     return toErrorResponse(err);
@@ -207,14 +213,34 @@ export async function POST(request: Request) {
         : '';
     const clearEmbeddingsKey = body.embeddings_api_key === null;
 
+    // Whose key the embeddings key is (migration 068). Absent → left
+    // unchanged on update, OpenAI on a first save; anything else must be
+    // one of the two providers that have an embeddings API.
+    const embeddingsProviderProvided = 'embeddings_provider' in body;
+    if (
+      embeddingsProviderProvided &&
+      !isAiEmbeddingsProvider(body.embeddings_provider)
+    ) {
+      return bad('embeddings_provider must be "openai" or "gemini"');
+    }
+
     // Reuse the stored key when the form didn't send a fresh one.
     const { data: existing } = await supabase
       .from('ai_configs')
       // `handoff_mode` / `handoff_agent_id` are read to validate a
       // partial save against the merged state, not to write them back.
-      .select('id, provider, model, api_key, handoff_mode, handoff_agent_id')
+      .select(
+        'id, provider, model, api_key, handoff_mode, handoff_agent_id, embeddings_provider'
+      )
       .eq('account_id', accountId)
       .maybeSingle();
+
+    // The provider the embeddings key will be validated against and
+    // stored with: the one in this save, else the stored one, else
+    // OpenAI (the only option before 068).
+    const embeddingsProvider: AiEmbeddingsProvider = embeddingsProviderProvided
+      ? (body.embeddings_provider as AiEmbeddingsProvider)
+      : embeddingsProviderOf(existing?.embeddings_provider);
 
     // `fixed` needs a target: a fixed handoff to nobody silently degrades
     // to the queue while the UI claims otherwise. Validate the row as it
@@ -295,6 +321,7 @@ export async function POST(request: Request) {
           handoffAgentId: null,
           handoffMessage: null,
           embeddingsApiKey: null,
+          embeddingsProvider,
         });
       } catch (err) {
         if (err instanceof AiError) {
@@ -312,7 +339,7 @@ export async function POST(request: Request) {
     // embed), same "verify before save" discipline as the chat key.
     if (rawEmbeddingsKey) {
       try {
-        await embedTexts(rawEmbeddingsKey, ['ping']);
+        await embedTexts(rawEmbeddingsKey, ['ping'], embeddingsProvider);
       } catch (err) {
         if (err instanceof AiError) {
           return NextResponse.json(
@@ -342,6 +369,9 @@ export async function POST(request: Request) {
       shared.embeddings_api_key = encrypt(rawEmbeddingsKey);
     } else if (clearEmbeddingsKey) {
       shared.embeddings_api_key = null;
+    }
+    if (embeddingsProviderProvided) {
+      shared.embeddings_provider = embeddingsProvider;
     }
     // Same three-way rule for the chat key: typed → store it encrypted;
     // explicit null → back to the platform key; absent → untouched.

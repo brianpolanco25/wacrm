@@ -24,6 +24,29 @@ export function isAiProvider(value: unknown): value is AiProvider {
 }
 
 /**
+ * Who embeds the knowledge base (migration 068). Anthropic has no
+ * embeddings endpoint, so the domain is smaller than `AiProvider`. The
+ * vectors of the two are NOT comparable: switching requires a reindex,
+ * which the settings screen says out loud.
+ */
+export type AiEmbeddingsProvider = 'openai' | 'gemini';
+
+/** Every supported embeddings provider — the domain of `ai_configs.embeddings_provider`. */
+export const AI_EMBEDDINGS_PROVIDERS: readonly AiEmbeddingsProvider[] = [
+  'openai',
+  'gemini',
+];
+
+export function isAiEmbeddingsProvider(
+  value: unknown
+): value is AiEmbeddingsProvider {
+  return (
+    typeof value === 'string' &&
+    (AI_EMBEDDINGS_PROVIDERS as readonly string[]).includes(value)
+  );
+}
+
+/**
  * Where auto-reply routes a conversation when the model hands off
  * (fase 1, migration 043):
  *   - `fixed` → the agent in `handoffAgentId`
@@ -75,10 +98,12 @@ export interface AiConfig {
   /** Text sent to the customer right before the bot hands off, so the
    *  thread doesn't just go silent. Null/empty → nothing is sent. */
   handoffMessage: string | null;
-  /** Optional OpenAI-compatible key for embeddings. When set, the
-   *  knowledge base is embedded and semantic retrieval turns on; when
-   *  null, retrieval falls back to lexical full-text search. */
+  /** Optional key for embeddings, of `embeddingsProvider`. When set,
+   *  the knowledge base is embedded and semantic retrieval turns on;
+   *  when null, retrieval falls back to lexical full-text search. */
   embeddingsApiKey: string | null;
+  /** Which API `embeddingsApiKey` belongs to (migration 068). */
+  embeddingsProvider: AiEmbeddingsProvider;
 }
 
 /** A single conversation turn; each adapter maps it to its provider's shape. */

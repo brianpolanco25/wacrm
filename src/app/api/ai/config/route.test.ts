@@ -417,6 +417,102 @@ describe('GET /api/ai/config — platform key availability', () => {
   });
 });
 
+describe('POST /api/ai/config — embeddings provider (068)', () => {
+  beforeEach(() => {
+    mocks.embedTexts.mockReset().mockResolvedValue([[0.1]]);
+  });
+
+  it('rejects an unknown embeddings_provider', async () => {
+    const res = await POST(
+      post({ ...BASE_BODY, api_key: 'sk-1', embeddings_provider: 'cohere' })
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'embeddings_provider must be "openai" or "gemini"',
+    });
+    expect(mocks.state.inserts).toEqual([]);
+  });
+
+  it('validates a new embeddings key against the chosen provider and stores both', async () => {
+    const res = await POST(
+      post({
+        ...BASE_BODY,
+        api_key: 'sk-1',
+        embeddings_provider: 'gemini',
+        embeddings_api_key: 'AIza-emb',
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.embedTexts).toHaveBeenCalledWith(
+      'AIza-emb',
+      ['ping'],
+      'gemini'
+    );
+    expect(mocks.state.inserts[0]).toMatchObject({
+      embeddings_provider: 'gemini',
+      embeddings_api_key: 'enc:AIza-emb',
+    });
+  });
+
+  it('validates against the STORED provider when the save omits it', async () => {
+    mocks.state.existing = {
+      id: 'cfg-1',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: 'enc:sk-stored',
+      handoff_mode: 'queue',
+      handoff_agent_id: null,
+      embeddings_provider: 'gemini',
+    };
+    const res = await POST(
+      post({ ...BASE_BODY, embeddings_api_key: 'AIza-2' })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.embedTexts).toHaveBeenCalledWith('AIza-2', ['ping'], 'gemini');
+    // Not in the body → not in the write: a partial save leaves it alone.
+    expect(mocks.state.updates[0]).not.toHaveProperty('embeddings_provider');
+  });
+
+  it('a row without the column (pre-068 read) reports openai', async () => {
+    mocks.state.existing = {
+      provider: 'openai',
+      model: 'gpt-x',
+      system_prompt: null,
+      is_active: true,
+      auto_reply_enabled: false,
+      auto_reply_max_per_conversation: 3,
+      handoff_agent_id: null,
+      api_key: null,
+      embeddings_api_key: null,
+    };
+    const res = await GET();
+    const body = await res.json();
+    expect(body.embeddings_provider).toBe('openai');
+  });
+
+  it('the read path hands gemini to the config draft/auto-reply will use', async () => {
+    const config = await loadAiConfig(
+      rowDb({
+        provider: 'gemini',
+        model: 'g',
+        api_key: 'enc:AIza-chat',
+        system_prompt: null,
+        is_active: true,
+        auto_reply_enabled: false,
+        auto_reply_max_per_conversation: 3,
+        handoff_agent_id: null,
+        handoff_mode: 'queue',
+        handoff_message: null,
+        embeddings_api_key: 'enc:AIza-emb',
+        embeddings_provider: 'gemini',
+      }),
+      'acct-1'
+    );
+    expect(config?.embeddingsApiKey).toBe('AIza-emb');
+    expect(config?.embeddingsProvider).toBe('gemini');
+  });
+});
+
 describe('POST /api/ai/config — handoff mode (fase 1)', () => {
   beforeEach(() => {
     vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');

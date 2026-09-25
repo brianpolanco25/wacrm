@@ -151,10 +151,15 @@ This fallback covers the chat key only. The **embeddings** key
 (`ai_configs.embeddings_api_key`, used to index the knowledge base) has
 no platform-level equivalent: an account that does not save one keeps
 using lexical search even on a deployment with
-`AI_PLATFORM_OPENAI_API_KEY` set. The embeddings key is always an
-OpenAI one (`text-embedding-3-small`), whatever the chat provider: an
-account on Anthropic or Gemini that wants semantic search saves a
-separate OpenAI key for it. Gemini embeddings are not supported.
+`AI_PLATFORM_OPENAI_API_KEY` set. The embeddings key belongs to the
+**embeddings provider** the account picks in Settings → AI (migration
+068): OpenAI (`text-embedding-3-small`) or Google Gemini
+(`gemini-embedding-2`, requested at 1536 dimensions to fit the same
+`vector(1536)` column). It is independent of the chat provider — an
+account on Anthropic saves whichever of the two it prefers. Vectors from
+the two are not comparable: after switching provider, press **Reindex**
+in the knowledge base, or semantic search returns noise until every
+document is re-embedded.
 
 These variables are server-only runtime secrets (never `NEXT_PUBLIC_*`);
 the app only ever tells the browser _whether_ a platform key exists,

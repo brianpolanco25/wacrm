@@ -1,14 +1,18 @@
-import { NextResponse } from 'next/server'
+import { NextResponse } from 'next/server';
 import {
   getCurrentAccount,
   requireRole,
   toErrorResponse,
-} from '@/lib/auth/account'
-import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { loadEmbeddingsKey } from '@/lib/ai/config'
-import { ingestDocument } from '@/lib/ai/knowledge'
-import { AiError } from '@/lib/ai/types'
-import { assertStockLimit, getEntitlements } from '@/lib/billing/enforce'
+} from '@/lib/auth/account';
+import {
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
+import { loadEmbeddingsKey } from '@/lib/ai/config';
+import { ingestDocument } from '@/lib/ai/knowledge';
+import { AiError } from '@/lib/ai/types';
+import { assertStockLimit, getEntitlements } from '@/lib/billing/enforce';
 
 /**
  * GET /api/ai/knowledge
@@ -17,22 +21,22 @@ import { assertStockLimit, getEntitlements } from '@/lib/billing/enforce'
  */
 export async function GET() {
   try {
-    const { supabase, accountId } = await getCurrentAccount()
+    const { supabase, accountId } = await getCurrentAccount();
     const { data, error } = await supabase
       .from('ai_knowledge_documents')
       .select('id, title, updated_at')
       .eq('account_id', accountId)
-      .order('updated_at', { ascending: false })
+      .order('updated_at', { ascending: false });
     if (error) {
-      console.error('[ai/knowledge GET] error:', error)
+      console.error('[ai/knowledge GET] error:', error);
       return NextResponse.json(
         { error: 'Failed to load knowledge base' },
-        { status: 500 },
-      )
+        { status: 500 }
+      );
     }
-    return NextResponse.json({ documents: data ?? [] })
+    return NextResponse.json({ documents: data ?? [] });
   } catch (err) {
-    return toErrorResponse(err)
+    return toErrorResponse(err);
   }
 }
 
@@ -44,74 +48,76 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('admin')
-    const limit = checkRateLimit(`ai-kb:${userId}`, RATE_LIMITS.adminAction)
-    if (!limit.success) return rateLimitResponse(limit)
+    const { supabase, accountId, userId } = await requireRole('admin');
+    const limit = checkRateLimit(`ai-kb:${userId}`, RATE_LIMITS.adminAction);
+    if (!limit.success) return rateLimitResponse(limit);
 
-    const body = await request.json().catch(() => null)
-    const title = typeof body?.title === 'string' ? body.title.trim() : ''
-    const content = typeof body?.content === 'string' ? body.content.trim() : ''
+    const body = await request.json().catch(() => null);
+    const title = typeof body?.title === 'string' ? body.title.trim() : '';
+    const content =
+      typeof body?.content === 'string' ? body.content.trim() : '';
     if (!title || !content) {
       return NextResponse.json(
         { error: 'title and content are required' },
-        { status: 400 },
-      )
+        { status: 400 }
+      );
     }
 
     // Fase 3 §4: `knowledge_documents`. Stock limit — deleting a
     // document frees the slot, so it is counted live rather than
     // accumulated in `usage_counters`.
-    const entitlements = await getEntitlements(accountId)
+    const entitlements = await getEntitlements(accountId);
     const { count: docCount, error: countErr } = await supabase
       .from('ai_knowledge_documents')
       .select('id', { count: 'exact', head: true })
-      .eq('account_id', accountId)
+      .eq('account_id', accountId);
     if (countErr) {
       // Fail closed: "we could not count" is not "you have none".
-      console.error('[ai/knowledge POST] document count error:', countErr)
+      console.error('[ai/knowledge POST] document count error:', countErr);
       return NextResponse.json(
         { error: 'Failed to check the document limit' },
-        { status: 500 },
-      )
+        { status: 500 }
+      );
     }
-    assertStockLimit(entitlements, 'knowledge_documents', docCount ?? 0)
+    assertStockLimit(entitlements, 'knowledge_documents', docCount ?? 0);
 
     const { data: doc, error } = await supabase
       .from('ai_knowledge_documents')
       .insert({ account_id: accountId, created_by: userId, title, content })
       .select('id')
-      .single()
+      .single();
     if (error || !doc) {
-      console.error('[ai/knowledge POST] insert error:', error)
+      console.error('[ai/knowledge POST] insert error:', error);
       return NextResponse.json(
         { error: 'Failed to save document' },
-        { status: 500 },
-      )
+        { status: 500 }
+      );
     }
 
-    const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
-      supabase,
-      accountId,
-    )
+    const {
+      key: embeddingsApiKey,
+      provider: embeddingsProvider,
+      corrupt,
+    } = await loadEmbeddingsKey(supabase, accountId);
     try {
       await ingestDocument(
         supabase,
         accountId,
-        { embeddingsApiKey },
+        { embeddingsApiKey, embeddingsProvider },
         doc.id,
-        content,
-      )
+        content
+      );
     } catch (err) {
-      const message = err instanceof AiError ? err.message : 'indexing failed'
-      console.error('[ai/knowledge POST] ingest error:', err)
+      const message = err instanceof AiError ? err.message : 'indexing failed';
+      console.error('[ai/knowledge POST] ingest error:', err);
       return NextResponse.json(
         {
           success: true,
           id: doc.id,
           warning: `Saved, but semantic indexing failed (${message}). Lexical search still works; use Reindex to retry.`,
         },
-        { status: 200 },
-      )
+        { status: 200 }
+      );
     }
 
     if (corrupt) {
@@ -120,10 +126,10 @@ export async function POST(request: Request) {
         id: doc.id,
         warning:
           'Saved with keyword search only — your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key).',
-      })
+      });
     }
-    return NextResponse.json({ success: true, id: doc.id })
+    return NextResponse.json({ success: true, id: doc.id });
   } catch (err) {
-    return toErrorResponse(err)
+    return toErrorResponse(err);
   }
 }

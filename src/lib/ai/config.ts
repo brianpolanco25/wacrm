@@ -1,7 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { resolveAiApiKey } from './platform-key';
-import type { AiConfig, AiProvider, HandoffMode } from './types';
+import type {
+  AiConfig,
+  AiEmbeddingsProvider,
+  AiProvider,
+  HandoffMode,
+} from './types';
 
 interface AiConfigRow {
   provider: AiProvider;
@@ -16,10 +21,20 @@ interface AiConfigRow {
   handoff_mode: HandoffMode | null;
   handoff_message: string | null;
   embeddings_api_key: string | null;
+  /** Null only in a read mocked without migration 068; treated as openai. */
+  embeddings_provider: AiEmbeddingsProvider | null;
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, embeddings_api_key';
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, embeddings_api_key, embeddings_provider';
+
+/**
+ * Rows written before migration 068 carry no provider: every embeddings
+ * key until then was an OpenAI one, so that is what the absence means.
+ */
+export function embeddingsProviderOf(value: unknown): AiEmbeddingsProvider {
+  return value === 'gemini' ? 'gemini' : 'openai';
+}
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -97,6 +112,7 @@ export async function loadAiConfig(
     handoffAgentId: row.handoff_agent_id,
     handoffMessage: row.handoff_message ?? null,
     embeddingsApiKey,
+    embeddingsProvider: embeddingsProviderOf(row.embeddings_provider),
   };
 }
 
@@ -114,19 +130,26 @@ export async function loadAiConfig(
 export async function loadEmbeddingsKey(
   db: SupabaseClient,
   accountId: string
-): Promise<{ key: string | null; corrupt: boolean }> {
+): Promise<{
+  key: string | null;
+  provider: AiEmbeddingsProvider;
+  corrupt: boolean;
+}> {
   const { data, error } = await db
     .from('ai_configs')
-    .select('embeddings_api_key')
+    .select('embeddings_api_key, embeddings_provider')
     .eq('account_id', accountId)
     .maybeSingle();
-  if (error || !data?.embeddings_api_key) return { key: null, corrupt: false };
+  const provider = embeddingsProviderOf(data?.embeddings_provider);
+  if (error || !data?.embeddings_api_key) {
+    return { key: null, provider, corrupt: false };
+  }
   try {
-    return { key: decrypt(data.embeddings_api_key), corrupt: false };
+    return { key: decrypt(data.embeddings_api_key), provider, corrupt: false };
   } catch {
     console.error(
       `[ai config] embeddings key for account ${accountId} could not be decrypted — check ENCRYPTION_KEY.`
     );
-    return { key: null, corrupt: true };
+    return { key: null, provider, corrupt: true };
   }
 }

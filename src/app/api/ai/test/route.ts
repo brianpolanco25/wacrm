@@ -112,6 +112,7 @@ export async function POST(request: Request) {
         handoffAgentId: null,
         handoffMessage: null,
         embeddingsApiKey: null,
+        embeddingsProvider: 'openai',
       });
     } catch (err) {
       if (err instanceof AiError) {

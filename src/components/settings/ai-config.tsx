@@ -51,7 +51,11 @@ import {
   secretFieldWillHaveValue,
   type SecretFieldState,
 } from '@/lib/ai/secret-field';
-import type { AiProvider, HandoffMode } from '@/lib/ai/types';
+import type {
+  AiEmbeddingsProvider,
+  AiProvider,
+  HandoffMode,
+} from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
 import { useTranslations } from 'next-intl';
@@ -71,6 +75,16 @@ const KEY_PLACEHOLDER: Record<AiProvider, string> = {
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
   gemini: 'AIza...',
+};
+
+const EMBEDDINGS_PROVIDER_LABEL: Record<AiEmbeddingsProvider, string> = {
+  openai: 'OpenAI (text-embedding-3-small)',
+  gemini: 'Google Gemini (gemini-embedding-2)',
+};
+
+const EMBEDDINGS_KEY_PLACEHOLDER: Record<AiEmbeddingsProvider, string> = {
+  openai: 'sk-... (OpenAI)',
+  gemini: 'AIza... (Gemini)',
 };
 
 export function AiConfig() {
@@ -105,6 +119,11 @@ export function AiConfig() {
     secretFieldLoaded(false)
   );
   const [hasStoredEmbeddingsKey, setHasStoredEmbeddingsKey] = useState(false);
+  // Whose key the embeddings key is (migration 068). Vectors from the two
+  // providers are not comparable, so a change with documents already
+  // indexed is flagged in the hint (reindex).
+  const [embeddingsProvider, setEmbeddingsProvider] =
+    useState<AiEmbeddingsProvider>('openai');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [isActive, setIsActive] = useState(false);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
@@ -170,6 +189,9 @@ export function AiConfig() {
         setKeyField(secretFieldLoaded(Boolean(data.has_key)));
         setHasStoredEmbeddingsKey(Boolean(data.has_embeddings_key));
         setEmbeddingsField(secretFieldLoaded(Boolean(data.has_embeddings_key)));
+        setEmbeddingsProvider(
+          data.embeddings_provider === 'gemini' ? 'gemini' : 'openai'
+        );
       }
     } catch {
       toast.error(t('loadFailed'));
@@ -219,6 +241,7 @@ export function AiConfig() {
     model: model.trim(),
     api_key: keyPayload(),
     embeddings_api_key: embeddingsKeyPayload(),
+    embeddings_provider: embeddingsProvider,
     system_prompt: systemPrompt.trim() || null,
     is_active: isActive,
     auto_reply_enabled: autoReplyEnabled,
@@ -510,6 +533,32 @@ export function AiConfig() {
             </div>
 
             <div className="space-y-2">
+              <Label>{t('embeddingsProvider')}</Label>
+              <Select
+                value={embeddingsProvider}
+                onValueChange={(v) =>
+                  setEmbeddingsProvider(v as AiEmbeddingsProvider)
+                }
+                disabled={disabled}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="openai">
+                    {EMBEDDINGS_PROVIDER_LABEL.openai}
+                  </SelectItem>
+                  <SelectItem value="gemini">
+                    {EMBEDDINGS_PROVIDER_LABEL.gemini}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-muted-foreground text-xs">
+                {t('embeddingsProviderHint')}
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="ai-embeddings-key">
                 {t('embeddingsKey')}{' '}
                 <span className="text-muted-foreground font-normal">
@@ -527,7 +576,7 @@ export function AiConfig() {
                 // field has no platform fallback, so clearing it turns
                 // semantic search off — it needs an explicit ask too.
                 onFocus={() => setEmbeddingsField(secretFieldFocused)}
-                placeholder="sk-... (OpenAI)"
+                placeholder={EMBEDDINGS_KEY_PLACEHOLDER[embeddingsProvider]}
                 disabled={disabled || embeddingsField.clearRequested}
                 autoComplete="off"
               />
@@ -550,10 +599,19 @@ export function AiConfig() {
                   </>
                 ) : (
                   <>
-                    {t('embeddingsHint', {
-                      sameKeyText:
-                        provider === 'openai' ? t('sameKeyText') : '',
-                    })}{' '}
+                    {t(
+                      embeddingsProvider === 'gemini'
+                        ? 'embeddingsHintGemini'
+                        : 'embeddingsHint',
+                      {
+                        // "Can be the same key as above" only when the chat
+                        // provider is the one that embeds.
+                        sameKeyText:
+                          provider === embeddingsProvider
+                            ? t('sameKeyText')
+                            : '',
+                      }
+                    )}{' '}
                     {hasStoredEmbeddingsKey && (
                       <button
                         type="button"
