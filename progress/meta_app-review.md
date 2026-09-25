@@ -4,14 +4,18 @@ Borrador para pegar en Revisión → Revisión de la aplicación cuando la verif
 negocio y la de acceso estén aprobadas. Meta revisa en inglés: los textos van en inglés.
 Una vez enviado, **no se puede editar ni cancelar**.
 
-Estado al 2026-09-23: app publicada (modo activo); marcada como Tech Provider;
-verificación del negocio «Negocio de Brian Polanco» en proceso; ícono pendiente de subir
-(`~/Downloads/cabbity-meta-icon-1024.png`); JS SDK activado para `https://crm.cabbity.com/`.
-Falta crear la configuración de Embedded Signup (`META_CONFIG_ID`): el asset «Cuentas de
-WhatsApp» y la variación de Embedded Signup no aparecen hasta completar las verificaciones.
-Al crearla: identificador de **usuario del sistema**, caducidad **Nunca** (el código no
-renueva tokens), activo **Cuentas de WhatsApp**, permisos `whatsapp_business_management` y
-`whatsapp_business_messaging`.
+Estado al 2026-09-25: app publicada (modo activo); marcada como Tech Provider;
+verificación del negocio «Negocio de Brian Polanco» **aprobada** (CABBITY SRL, verificada el
+2026-09-23); ícono subido; JS SDK activado para `https://crm.cabbity.com/`.
+Configuración de Embedded Signup creada: «Cabbity Embedded Signup»,
+`META_CONFIG_ID=4722841751306607` (variación Registro insertado de WhatsApp, token de
+usuario del sistema, activo Cuentas de WhatsApp, producto WhatsApp Cloud API, permisos
+`whatsapp_business_management` y `whatsapp_business_messaging`). **El token caduca a los 60
+días**: Meta solo ofrece la variación de WhatsApp vía plantilla y esa fija la caducidad; el
+asistente desde cero no lista «Cuentas de WhatsApp». `META_CONFIG_ID` ya está en el
+entorno. La renovación automática la hace el barrido de `GET /api/webhooks/cron`
+(migración 067, `src/lib/whatsapp/token-renewal.ts`): en producción ese cron tiene que
+estar programado cada minuto con `WEBHOOK_CRON_SECRET`, o los números mueren a los 60 días.
 
 ## Descripción general de la app
 
@@ -25,6 +29,7 @@ that business.
 ## Por permiso
 
 ### whatsapp_business_messaging
+
 Cabbity uses this permission to send and receive WhatsApp messages on behalf of the
 businesses that connect their WhatsApp Business Account. Incoming messages arrive through
 our webhook and are shown in the business's shared inbox; agents reply from the inbox, and
@@ -32,17 +37,20 @@ the business can send approved template messages and broadcasts to contacts who 
 Without it the core product (the inbox) cannot work.
 
 ### whatsapp_business_management
+
 Cabbity uses this permission to read the phone numbers and display names of the WhatsApp
 Business Account the business connected, register the phone number for Cloud API, subscribe
 our app to the account's webhooks, and create, list and sync message templates from the
 Templates screen. It is used only on accounts the business explicitly shared with us.
 
 ### whatsapp_business_manage_events
+
 Used to receive account and template status events (template approval/rejection, phone
 number quality and status changes) so the business sees up-to-date template status and
 number health in Cabbity.
 
 ### manage_app_solution / public_profile
+
 Requested by the WhatsApp use case / Facebook Login for Business flow; public_profile
 identifies the Facebook user who completes Embedded Signup.
 
