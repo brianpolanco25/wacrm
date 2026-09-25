@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "leader",
+  "instructions": ["AGENTS.md", "CLAUDE.md", "docs/harness.md"],
+  "permission": {
+    "read": {
+      "*": "allow",
+      ".env": "deny",
+      ".env.local": "deny",
+      "**/.env*": "deny"
+    },
+   "edit": "allow",
+"bash": {
+  "*": "allow",
+  "rm -rf /*": "deny",
+  "git push *": "deny",
+  "git merge *": "deny",
+  "git rebase *": "deny",
+  "gh pr *": "deny",
+  "supabase *": "deny",
+  "npx supabase *": "deny"
+},
+    "external_directory": {
+  "*": "allow"
+}
+  }
+}

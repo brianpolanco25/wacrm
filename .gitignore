@@ -49,3 +49,7 @@ graphify-out/
 
 # Worktrees de los agentes del harness (docs/harness.md): derivados, uno por fase.
 .claude/worktrees/
+
+# Estado local del CLI de Supabase (enlace, secretos de start, ramas)
+supabase/.temp/
+supabase/.branches/
