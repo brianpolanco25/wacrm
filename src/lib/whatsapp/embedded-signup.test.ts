@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   exchangeCodeForToken,
   generateRegistrationPin,
+  refreshBusinessToken,
 } from './embedded-signup';
 
 // ---------------------------------------------------------------------------
@@ -159,5 +160,96 @@ describe('generateRegistrationPin', () => {
       Array.from({ length: 50 }, () => generateRegistrationPin())
     );
     expect(seen.size).toBeGreaterThan(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The 60-day refresh (migration 067). Same endpoint, different grant:
+// what goes on the wire is what Meta documents for expiring system-user
+// tokens, and the failure handling is shared with the code exchange.
+// ---------------------------------------------------------------------------
+
+const REFRESH_ARGS = {
+  accessToken: 'EAAB-current-token',
+  appId: 'app-123',
+  appSecret: 'the-app-secret',
+  graphVersion: 'v21.0',
+};
+
+describe('refreshBusinessToken', () => {
+  it('asks for fb_exchange_token with the 60-day flag and no code', async () => {
+    fetchMock.mockResolvedValue(
+      reply({ access_token: 'EAAB-fresh', expires_in: 5_184_000 })
+    );
+
+    await refreshBusinessToken(REFRESH_ARGS);
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.origin + url.pathname).toBe(
+      'https://graph.facebook.com/v21.0/oauth/access_token'
+    );
+    expect(url.searchParams.get('grant_type')).toBe('fb_exchange_token');
+    expect(url.searchParams.get('client_id')).toBe('app-123');
+    expect(url.searchParams.get('client_secret')).toBe('the-app-secret');
+    expect(url.searchParams.get('fb_exchange_token')).toBe(
+      'EAAB-current-token'
+    );
+    expect(url.searchParams.get('set_token_expires_in_60_days')).toBe('true');
+    expect(url.searchParams.get('code')).toBeNull();
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual({ method: 'GET' });
+  });
+
+  it('returns the fresh token with its expiry as an ISO instant', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-25T00:00:00.000Z'));
+    fetchMock.mockResolvedValue(
+      reply({ access_token: 'EAAB-fresh', expires_in: 60 * 24 * 60 * 60 })
+    );
+
+    const result = await refreshBusinessToken(REFRESH_ARGS);
+    expect(result).toEqual({
+      accessToken: 'EAAB-fresh',
+      expiresAt: '2026-11-24T00:00:00.000Z',
+    });
+    vi.useRealTimers();
+  });
+
+  it("propagates Meta's message when the token can no longer be exchanged", async () => {
+    fetchMock.mockResolvedValue(
+      reply(
+        {
+          error: {
+            message: 'Error validating access token: Session has expired',
+          },
+        },
+        false,
+        400
+      )
+    );
+    await expect(refreshBusinessToken(REFRESH_ARGS)).rejects.toThrow(
+      'Session has expired'
+    );
+  });
+
+  it('rejects a 200 without a token with a refresh-specific message', async () => {
+    fetchMock.mockResolvedValue(reply({ token_type: 'bearer' }));
+    await expect(refreshBusinessToken(REFRESH_ARGS)).rejects.toThrow(
+      /reconnect the number/
+    );
+  });
+
+  it('never puts the current token or the secret in the thrown message', async () => {
+    fetchMock.mockResolvedValue(
+      reply({ error: { message: 'Invalid OAuth access token.' } }, false, 400)
+    );
+    let thrown: unknown;
+    try {
+      await refreshBusinessToken(REFRESH_ARGS);
+    } catch (err) {
+      thrown = err;
+    }
+    const text = String((thrown as Error).message);
+    expect(text).not.toContain('EAAB-current-token');
+    expect(text).not.toContain('the-app-secret');
   });
 });

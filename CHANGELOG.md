@@ -11,6 +11,27 @@ and polish.
 
 ## [Unreleased]
 
+### WhatsApp: Embedded Signup tokens are renewed before they expire
+
+> **Migration required:** apply
+> `supabase/migrations/067_token_renewal.sql`.
+
+- Numbers connected through the **Connect with Facebook** dialog get
+  60-day business tokens (Meta's WhatsApp Embedded Signup template fixes
+  that lifetime and the panel does not allow "never"). The
+  `GET /api/webhooks/cron` sweep now refreshes any such token that has
+  less than 14 days left and stores the new one encrypted, so a
+  connected number keeps sending past day 60.
+- A refused renewal is recorded on the row (`token_renewal_error`) and
+  retried after 6 hours; a token that reached its expiry without a
+  renewal is marked as such and the remedy is reconnecting the number
+  from Settings → WhatsApp. The cron response gains a `tokens` block.
+- Self-hosted deployments (no `META_CONFIG_ID`) are unaffected: the
+  sweep reports `enabled: false` and touches nothing.
+- **Platform operators:** the scheduler for `/api/webhooks/cron`
+  (`WEBHOOK_CRON_SECRET`, see `docs/docker.md`) is now what keeps every
+  connected number alive. Without it, tokens die on day 60.
+
 ### AI assistant: Google Gemini as a third provider
 
 > **Migration required:** apply

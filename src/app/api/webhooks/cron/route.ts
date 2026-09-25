@@ -19,7 +19,11 @@
 //      un export cuesta órdenes de magnitud más que un POST a un
 //      receptor, y compartir lote significaría que una cuenta
 //      exportando su historial retrasa las notificaciones de todas las
-//      demás.
+//      demás;
+//   5. renueva los tokens de Embedded Signup a punto de caducar
+//      (migración 067). Va aquí y no en una ruta propia porque una
+//      ruta propia necesita su propia entrada en el programador, y
+//      olvidarla es justo el fallo que la renovación evita.
 //
 // La frecuencia recomendada es un minuto: es el primer peldaño de la
 // escalera de reintentos.
@@ -31,6 +35,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { purgeOldDeliveries, sweepDueDeliveries } from '@/lib/webhooks/queue';
 import { purgeExpiredExports, sweepExportJobs } from '@/lib/exports/jobs';
+import { renewExpiringTokens } from '@/lib/whatsapp/token-renewal';
 
 function secretMatches(supplied: string, expected: string): boolean {
   const suppliedBuf = Buffer.from(supplied);
@@ -65,9 +70,14 @@ export async function GET(request: Request) {
   const exportSweep = await sweepExportJobs(admin);
   const exportsPurged = await purgeExpiredExports(admin);
 
+  // Migración 067. Tampoco lanza, y `tokens` es un bloque aditivo por
+  // la misma razón que `exports`.
+  const tokens = await renewExpiringTokens(admin);
+
   return NextResponse.json({
     ...swept,
     purged,
     exports: { ...exportSweep, purged: exportsPurged },
+    tokens,
   });
 }

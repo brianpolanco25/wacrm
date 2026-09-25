@@ -377,3 +377,21 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   so a tenant exporting a year of history never delays anybody's webhook
   retries. No extra variable: without the scheduler an export that was
   interrupted stays `queued` and expired files are never removed.
+
+  **The same sweep also renews the WhatsApp tokens of Embedded Signup**
+  (migration 067). The Embedded Signup configuration of a platform
+  deployment mints business tokens that expire after 60 days (Meta's
+  WhatsApp template fixes that lifetime), so every number connected
+  through the dialog would go silent two months later. Each run looks
+  for `embedded_signup` rows whose `token_expires_at` is less than 14
+  days away, exchanges the token with Meta
+  (`grant_type=fb_exchange_token`) and stores the fresh one encrypted.
+  A refusal is recorded on the row (`token_renewal_error`) and retried
+  no sooner than 6 hours later; a token that expired without a renewal
+  cannot be refreshed — the customer reconnects the number from
+  Settings → WhatsApp. The response carries a `tokens` block
+  (`enabled`, `scanned`, `renewed`, `failed`, `skipped`); `enabled` is
+  `false` on a self-hosted deployment, where there is nothing to renew.
+  **This is the only thing keeping platform tokens alive: a platform
+  deployment without this scheduler loses every connected number after
+  60 days.**

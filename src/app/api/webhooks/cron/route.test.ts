@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   purgeOldDeliveries: vi.fn(),
   sweepExportJobs: vi.fn(),
   purgeExpiredExports: vi.fn(),
+  renewExpiringTokens: vi.fn(),
 }));
 
 vi.mock('@/lib/flows/admin-client', () => ({
@@ -26,6 +27,12 @@ vi.mock('@/lib/exports/jobs', async (importOriginal) => ({
   purgeExpiredExports: mocks.purgeExpiredExports,
 }));
 
+// Migración 067: el mismo barrido renueva los tokens de Embedded Signup.
+vi.mock('@/lib/whatsapp/token-renewal', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/whatsapp/token-renewal')>()),
+  renewExpiringTokens: mocks.renewExpiringTokens,
+}));
+
 import { GET } from './route';
 
 const EMPTY_SWEEP = {
@@ -41,6 +48,14 @@ const EMPTY_EXPORT_SWEEP = {
   scanned: 0,
   processed: 0,
   done: 0,
+  failed: 0,
+  skipped: 0,
+};
+
+const TOKEN_SWEEP = {
+  enabled: true,
+  scanned: 1,
+  renewed: 1,
   failed: 0,
   skipped: 0,
 };
@@ -67,6 +82,7 @@ beforeEach(() => {
     done: 1,
   });
   mocks.purgeExpiredExports.mockReset().mockResolvedValue(2);
+  mocks.renewExpiringTokens.mockReset().mockResolvedValue(TOKEN_SWEEP);
   vi.stubEnv('WEBHOOK_CRON_SECRET', 'cron-secret');
 });
 
@@ -114,11 +130,18 @@ describe('GET /api/webhooks/cron', () => {
         done: 1,
         purged: 2,
       },
+      tokens: TOKEN_SWEEP,
     });
     expect(mocks.sweepDueDeliveries).toHaveBeenCalledTimes(1);
     expect(mocks.purgeOldDeliveries).toHaveBeenCalledTimes(1);
     expect(mocks.sweepExportJobs).toHaveBeenCalledTimes(1);
     expect(mocks.purgeExpiredExports).toHaveBeenCalledTimes(1);
+    expect(mocks.renewExpiringTokens).toHaveBeenCalledTimes(1);
+  });
+
+  it('no renueva tokens sin el secreto', async () => {
+    await GET(req());
+    expect(mocks.renewExpiringTokens).not.toHaveBeenCalled();
   });
 
   it('las entregas no dependen de las exportaciones: el bloque exports es aditivo', async () => {
@@ -130,5 +153,6 @@ describe('GET /api/webhooks/cron', () => {
     expect(body.delivered).toBe(1);
     expect(body.purged).toBe(7);
     expect(body.exports.purged).toBe(2);
+    expect(body.tokens.renewed).toBe(1);
   });
 });
