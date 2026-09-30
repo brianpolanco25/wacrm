@@ -186,6 +186,20 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // The operator's console (s9.4). Every page under /platform
+        // carries data of EVERY customer of the service — the census,
+        // one company's file, the MRR — so a shared cache must never
+        // hold one: `private, no-store`, always, not only during a
+        // support session (which is all the middleware covers).
+        //
+        // AFTER the catch-all above on purpose: when two rules match the
+        // same path and set the same key, the last one wins
+        // (next/dist/docs/.../next-config-js/headers.md). `:path*` is
+        // «zero or more», so this also covers `/platform` itself.
+        source: '/platform/:path*',
+        headers: [{ key: 'Cache-Control', value: 'private, no-store' }],
+      },
+      {
         // Security headers on every response, including /_next/static
         // assets (nosniff matters there) and /api/* (HSTS + referrer-
         // policy don't hurt).
