@@ -1970,7 +1970,8 @@
         "past_due": "Pago fallido",
         "suspended": "Suspendida",
         "cancelled": "Cancelada",
-        "expired": "Vencida"
+        "expired": "Vencida",
+        "incomplete": "Alta incompleta"
       },
       "cycleMonth": "Facturación mensual",
       "cycleYear": "Facturación anual",
@@ -1978,8 +1979,6 @@
       "nextChargeLabel": "Próximo cobro",
       "periodEndLabel": "El periodo actual termina",
       "noNextCharge": "—",
-      "trialEnds": "Tu prueba termina el {date}. Elige un plan antes de esa fecha para seguir enviando.",
-      "trialNoDate": "Estás en la prueba. Elige un plan para seguir enviando cuando termine.",
       "cancelScheduled": "Cancelada. El servicio sigue funcionando hasta el {date} y no se te volverá a cobrar.",
       "cancelScheduledNoDate": "Cancelada. No se te volverá a cobrar.",
       "noSubscription": "Esta cuenta no tiene ninguna suscripción activa. No se ha borrado nada, y al contratar un plan vuelve todo.",
@@ -2011,7 +2010,9 @@
       "receiptDate": "Fecha",
       "receiptAmount": "Importe",
       "receiptTransaction": "Transacción de PayPal",
-      "receiptLink": "Abrir"
+      "receiptLink": "Abrir",
+      "incompleteNote": "Esta cuenta todavía no ha pagado ningún plan: es de solo lectura hasta que se complete el alta.",
+      "incompleteAction": "Completar el alta"
     },
     "return": {
       "title": "Estamos confirmando tu pago",
@@ -2022,11 +2023,13 @@
       "slowBody": "Está tardando más de lo normal. Tu pago está a salvo y el plan se activa en el momento en que PayPal lo confirme: no hace falta volver a pagar.",
       "backToDashboard": "Ir al panel"
     },
-    "trialEndsIn": "Tu prueba termina en {days} {days, plural, =1 {día} other {días}}",
-    "trialEndsToday": "Tu prueba termina hoy",
-    "trialChoosePlan": "Elegir un plan",
     "heldTitle": "El operador del servicio ha suspendido esta cuenta",
-    "heldBody": "Un operador del servicio ha dejado esta cuenta en suspenso, así que todo el mundo aquí puede leer, pero no escribir: no se envían mensajes ni difusiones, y la IA no responde. Los mensajes entrantes de WhatsApp siguen llegando y no se borra nada. Pagar no levanta esta suspensión: contacta con soporte."
+    "heldBody": "Un operador del servicio ha dejado esta cuenta en suspenso, así que todo el mundo aquí puede leer, pero no escribir: no se envían mensajes ni difusiones, y la IA no responde. Los mensajes entrantes de WhatsApp siguen llegando y no se borra nada. Pagar no levanta esta suspensión: contacta con soporte.",
+    "incomplete": {
+      "title": "Tu alta está incompleta",
+      "body": "Esta cuenta aún no tiene un plan pagado, así que no se puede guardar nada. Completa los datos de la empresa y contrata un plan para empezar.",
+      "action": "Completar el alta"
+    }
   },
   "Platform": {
     "title": "Cuentas de la plataforma",
@@ -2143,7 +2146,7 @@
         "suspended": "Suspendida",
         "cancelled": "Cancelada",
         "expired": "Caducada",
-        "incomplete": "Pago pendiente",
+        "incomplete": "Alta incompleta",
         "none": "Sin suscripción"
       },
       "weeklyTitle": "Altas por semana (últimas 12)",
@@ -2286,7 +2289,7 @@
       "ownerEmailLabel": "Correo del propietario",
       "ownerNameLabel": "Nombre del propietario (opcional)",
       "planLabel": "Plan (opcional)",
-      "planNone": "Sin plan manual (prueba estándar)",
+      "planNone": "Sin plan manual (pagará con PayPal)",
       "privatePlan": "(privado)",
       "reasonLabel": "Motivo",
       "reasonHelp": "Obligatorio, al menos {min} caracteres. Queda en la bitácora de la plataforma con tu nombre y el momento.",
@@ -2419,5 +2422,54 @@
       "fixed": "Corregido",
       "deprecated": "Obsoleto"
     }
+  },
+  "Onboarding": {
+    "title": "Completa tu alta",
+    "signOut": "Cerrar sesión",
+    "steps": {
+      "label": "Pasos del alta",
+      "company": "Empresa",
+      "plan": "Elegir plan",
+      "payment": "Pago con PayPal"
+    },
+    "company": {
+      "title": "Datos de tu empresa",
+      "subtitle": "Antes de entrar necesitamos conocer tu empresa. Después eliges el plan y lo pagas con PayPal.",
+      "name": "Nombre de la empresa",
+      "country": "País",
+      "phone": "Teléfono",
+      "phonePlaceholder": "+1 809 555 0101",
+      "industry": "Sector",
+      "teamSize": "Tamaño del equipo",
+      "teamSizeOption": "{size} personas",
+      "choose": "Elige una opción",
+      "continue": "Continuar",
+      "saveFailed": "No se pudieron guardar los datos. Inténtalo de nuevo.",
+      "errors": {
+        "name": "Escribe el nombre de la empresa (80 caracteres como máximo).",
+        "country": "Elige el país de la empresa.",
+        "phone": "Escribe un teléfono válido, con entre 6 y 15 dígitos.",
+        "industry": "Elige el sector.",
+        "teamSize": "Elige el tamaño del equipo."
+      },
+      "industries": {
+        "retail": "Comercio y tiendas",
+        "services": "Servicios profesionales",
+        "health": "Salud y bienestar",
+        "education": "Educación",
+        "real_estate": "Inmobiliaria",
+        "hospitality": "Hostelería y turismo",
+        "technology": "Tecnología",
+        "finance": "Finanzas y seguros",
+        "manufacturing": "Industria y fabricación",
+        "logistics": "Logística y transporte",
+        "other": "Otro"
+      }
+    },
+    "ownerOnlyTitle": "Falta completar el alta",
+    "ownerOnlyBody": "El propietario de la cuenta tiene que rellenar los datos de la empresa y contratar un plan. Cuando lo haga, podrás entrar.",
+    "adminOnlyTitle": "Falta contratar un plan",
+    "adminOnlyBody": "Un administrador o el propietario de la cuenta tiene que elegir el plan y pagarlo con PayPal. Cuando lo haga, podrás entrar.",
+    "editCompany": "Corregir los datos de la empresa"
   }
 }

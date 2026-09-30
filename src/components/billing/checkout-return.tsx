@@ -41,7 +41,25 @@ interface StatusPayload {
 
 type Phase = 'confirming' | 'active' | 'slow';
 
-export function CheckoutReturn() {
+/** How long "your plan is active" stays on screen before moving on. */
+const CONTINUE_DELAY_MS = 1500;
+
+interface CheckoutReturnProps {
+  /** Where the button (and, with `continueOnActive`, the page) goes. */
+  continueHref?: string;
+  /**
+   * s9.6: the onboarding return page moves on by itself once the webhook
+   * activated the plan. A full navigation, not `router.push`: the
+   * dashboard layout has to render again on the server so its onboarding
+   * gate sees the new status (and stamps the onboarding as done).
+   */
+  continueOnActive?: boolean;
+}
+
+export function CheckoutReturn({
+  continueHref = '/dashboard',
+  continueOnActive = false,
+}: CheckoutReturnProps = {}) {
   const t = useTranslations('Billing.return');
   const searchParams = useSearchParams();
   const subscriptionId = searchParams.get('subscription_id');
@@ -103,6 +121,15 @@ export function CheckoutReturn() {
     };
   }, [poll]);
 
+  useEffect(() => {
+    if (!continueOnActive || phase !== 'active') return;
+    const timer = setTimeout(
+      () => window.location.assign(continueHref),
+      CONTINUE_DELAY_MS
+    );
+    return () => clearTimeout(timer);
+  }, [continueOnActive, continueHref, phase]);
+
   return (
     <div className="mx-auto flex max-w-xl flex-col items-center gap-4 py-16 text-center">
       {phase === 'active' ? (
@@ -132,7 +159,7 @@ export function CheckoutReturn() {
       {/* Anchor styled with `buttonVariants`: the wacrm Button is the
           Base UI primitive and has no Radix-style `asChild` slot. */}
       <Link
-        href="/dashboard"
+        href={continueHref}
         className={buttonVariants({
           variant: phase === 'active' ? 'default' : 'outline',
         })}

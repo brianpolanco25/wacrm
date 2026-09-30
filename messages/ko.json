@@ -1970,7 +1970,8 @@
         "past_due": "결제 실패",
         "suspended": "일시 중지",
         "cancelled": "해지됨",
-        "expired": "만료됨"
+        "expired": "만료됨",
+        "incomplete": "가입 미완료"
       },
       "cycleMonth": "월단위 결제",
       "cycleYear": "연단위 결제",
@@ -1978,8 +1979,6 @@
       "nextChargeLabel": "다음 결제일",
       "periodEndLabel": "현재 주기 종료일",
       "noNextCharge": "—",
-      "trialEnds": "체험 기간은 {date}에 끝납니다. 그 전에 요금제를 선택하세요.",
-      "trialNoDate": "현재 체험 중입니다. 종료 후에도 발송하려면 요금제를 선택하세요.",
       "cancelScheduled": "해지되었습니다. {date}까지는 그대로 이용할 수 있고 다시 청구되지 않습니다.",
       "cancelScheduledNoDate": "해지되었습니다. 다시 청구되지 않습니다.",
       "noSubscription": "현재 유효한 구독이 없습니다. 삭제된 데이터는 없으며, 요금제를 다시 결제하면 그대로 돌아옵니다.",
@@ -2011,7 +2010,9 @@
       "receiptDate": "날짜",
       "receiptAmount": "금액",
       "receiptTransaction": "PayPal 거래 ID",
-      "receiptLink": "열기"
+      "receiptLink": "열기",
+      "incompleteNote": "이 계정은 아직 요금제를 결제하지 않았습니다. 가입을 마칠 때까지 읽기 전용입니다.",
+      "incompleteAction": "가입 완료하기"
     },
     "return": {
       "title": "결제를 확인하는 중입니다",
@@ -2022,11 +2023,13 @@
       "slowBody": "평소보다 오래 걸리고 있습니다. 결제는 안전하며 PayPal이 확인하는 즉시 요금제가 켜집니다. 다시 결제할 필요는 없습니다.",
       "backToDashboard": "대시보드로 이동"
     },
-    "trialEndsIn": "무료 체험 종료까지 {days}일",
-    "trialEndsToday": "무료 체험이 오늘 종료됩니다",
-    "trialChoosePlan": "요금제 선택",
     "heldTitle": "서비스 운영자가 이 계정을 정지했습니다",
-    "heldBody": "서비스 운영자가 이 계정을 보류 상태로 두었기 때문에 모든 구성원이 읽기만 할 수 있습니다. 발신, 브로드캐스트, AI 응답이 중지됩니다. 수신 WhatsApp 메시지는 계속 도착하며 삭제되는 데이터는 없습니다. 결제로는 해제되지 않으니 지원팀에 문의하세요."
+    "heldBody": "서비스 운영자가 이 계정을 보류 상태로 두었기 때문에 모든 구성원이 읽기만 할 수 있습니다. 발신, 브로드캐스트, AI 응답이 중지됩니다. 수신 WhatsApp 메시지는 계속 도착하며 삭제되는 데이터는 없습니다. 결제로는 해제되지 않으니 지원팀에 문의하세요.",
+    "incomplete": {
+      "title": "가입이 완료되지 않았습니다",
+      "body": "이 계정에는 아직 결제된 요금제가 없어 아무것도 저장할 수 없습니다. 회사 정보를 입력하고 요금제를 구매해 시작하세요.",
+      "action": "가입 완료하기"
+    }
   },
   "Platform": {
     "title": "플랫폼 계정",
@@ -2143,7 +2146,7 @@
         "suspended": "정지",
         "cancelled": "취소됨",
         "expired": "만료됨",
-        "incomplete": "결제 대기",
+        "incomplete": "가입 미완료",
         "none": "구독 없음"
       },
       "weeklyTitle": "주별 가입(최근 12주)",
@@ -2286,7 +2289,7 @@
       "ownerEmailLabel": "소유자 이메일",
       "ownerNameLabel": "소유자 이름 (선택)",
       "planLabel": "요금제 (선택)",
-      "planNone": "수동 요금제 없음 (기본 체험)",
+      "planNone": "수동 요금제 없음 (PayPal로 결제 예정)",
       "privatePlan": "(비공개)",
       "reasonLabel": "사유",
       "reasonHelp": "필수이며 최소 {min}자입니다. 이름과 시각과 함께 플랫폼 기록에 남습니다.",
@@ -2419,5 +2422,54 @@
       "fixed": "수정",
       "deprecated": "지원 중단"
     }
+  },
+  "Onboarding": {
+    "title": "가입 완료하기",
+    "signOut": "로그아웃",
+    "steps": {
+      "label": "가입 단계",
+      "company": "회사",
+      "plan": "요금제",
+      "payment": "PayPal 결제"
+    },
+    "company": {
+      "title": "회사 정보",
+      "subtitle": "시작하기 전에 회사 정보를 알려 주세요. 그다음 요금제를 고르고 PayPal로 결제합니다.",
+      "name": "회사 이름",
+      "country": "국가",
+      "phone": "전화번호",
+      "phonePlaceholder": "+82 2 555 0101",
+      "industry": "업종",
+      "teamSize": "팀 규모",
+      "teamSizeOption": "{size}명",
+      "choose": "선택하세요",
+      "continue": "계속",
+      "saveFailed": "정보를 저장하지 못했습니다. 다시 시도해 주세요.",
+      "errors": {
+        "name": "회사 이름을 입력하세요(최대 80자).",
+        "country": "회사 국가를 선택하세요.",
+        "phone": "6~15자리의 올바른 전화번호를 입력하세요.",
+        "industry": "업종을 선택하세요.",
+        "teamSize": "팀 규모를 선택하세요."
+      },
+      "industries": {
+        "retail": "소매·상점",
+        "services": "전문 서비스",
+        "health": "건강·웰니스",
+        "education": "교육",
+        "real_estate": "부동산",
+        "hospitality": "숙박·관광",
+        "technology": "기술",
+        "finance": "금융·보험",
+        "manufacturing": "제조",
+        "logistics": "물류·운송",
+        "other": "기타"
+      }
+    },
+    "ownerOnlyTitle": "아직 가입이 완료되지 않았습니다",
+    "ownerOnlyBody": "계정 소유자가 회사 정보를 입력하고 요금제를 구매해야 합니다. 완료되면 들어갈 수 있습니다.",
+    "adminOnlyTitle": "아직 요금제가 없습니다",
+    "adminOnlyBody": "관리자 또는 계정 소유자가 요금제를 고르고 PayPal로 결제해야 합니다. 완료되면 들어갈 수 있습니다.",
+    "editCompany": "회사 정보 수정"
   }
 }

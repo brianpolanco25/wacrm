@@ -199,7 +199,8 @@ vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
 // s9.4: `inviteUserByEmail` is Supabase Auth, not PostgREST, and the fake
 // has no `auth.admin`. What matters to this suite is what it does to the
 // database: Supabase creates the auth user and `handle_new_user()` (017)
-// gives them a profile and a company of their own, and 046 a trial row.
+// gives them a profile and a company of their own, and 073 its unpaid
+// `incomplete` seed (046 seeded a trial before it).
 // That is simulated here, so the route's writes that follow land on a real
 // third company and the snapshots of A and B can be compared.
 vi.mock('@/lib/platform/provisioning', async (importOriginal) => ({
@@ -225,7 +226,8 @@ vi.mock('@/lib/platform/provisioning', async (importOriginal) => ({
       account_id: accountId,
       plan_id: 'pro',
       provider: 'paypal',
-      status: 'trialing',
+      // 073 (s9.6): the seed is `incomplete` now, no trial.
+      status: 'incomplete',
       provider_subscription_id: null,
     });
     h.invitedEmails.push(email);
@@ -338,6 +340,8 @@ import * as platformOperatorById from '@/app/api/platform/operators/[userId]/rou
 // el mismo sitio en paralelo.
 import * as v1Tags from '@/app/api/v1/tags/route';
 import * as v1TagById from '@/app/api/v1/tags/[id]/route';
+// s9.6: step 1 of the paid onboarding.
+import * as onboardingCompany from '@/app/api/onboarding/company/route';
 import * as v1ContactTags from '@/app/api/v1/contacts/[id]/tags/route';
 import * as v1ContactTagById from '@/app/api/v1/contacts/[id]/tags/[tagId]/route';
 import * as v1Templates from '@/app/api/v1/templates/route';
@@ -2322,6 +2326,10 @@ describe('/api/automations (service-role writes)', () => {
       .find((p) => p.user_id === USER_A)!;
     movedProfile.account_id = C;
     movedProfile.account_role = 'owner';
+    // s9.6: an account without a paid (or manual) subscription is
+    // `incomplete` and read-only, which would 403 before the ownership
+    // check this test is about. C pays, so the 404 is the tenant filter.
+    h.db.rows('subscriptions').push(paidSubscription(C));
     // Same user id, same session — only the profile moved. `auto-a`
     // still reads `account_id: A, user_id: USER_A`.
     h.actor = { userId: USER_A, accountId: C };
@@ -2889,6 +2897,25 @@ function makePlatformAdmin(userId: string): void {
 }
 
 /** A third company for the operator to look at. */
+/** An active, manually assigned subscription (s9.4) for a test account. */
+function paidSubscription(accountId: string): Record<string, unknown> {
+  return {
+    id: `sub-${accountId}`,
+    account_id: accountId,
+    plan_id: 'pro',
+    status: 'active',
+    provider: 'manual',
+    provider_subscription_id: null,
+    cycle: null,
+    trial_ends_at: null,
+    grace_until: null,
+    current_period_end: null,
+    cancel_at_period_end: false,
+    last_event_at: null,
+    manual_hold_at: null,
+  };
+}
+
 function seedTargetAccount(): void {
   h.db.rows('accounts').push({
     id: TARGET,
@@ -2986,6 +3013,9 @@ describe('/api/platform (support sessions, service role)', () => {
   it('resolves the account context to the impersonated company, acting as admin (s9.5)', async () => {
     makePlatformAdmin(USER_A);
     seedTargetAccount();
+    // s9.6: a company that never paid is read-only for its own admins and
+    // for support alike; this one is on a manual plan, so it writes.
+    h.db.rows('subscriptions').push(paidSubscription(TARGET));
     const beforeA = h.db.snapshot(A);
 
     await platformImpersonate.POST(
@@ -4087,5 +4117,77 @@ describe('/api/platform/plans (catalogue writes, service role)', () => {
     expect(h.db.snapshot(B)).toEqual(beforeB);
     const body = JSON.stringify(await edited.json());
     expectNoBIds(JSON.parse(body));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /api/onboarding/company (s9.6) — the owner writes their OWN company
+// profile with the session client, and the service-role reads and the
+// onboarding stamp of `loadOnboardingState` are scoped by the account id.
+// ---------------------------------------------------------------------------
+describe('/api/onboarding/company (s9.6)', () => {
+  const PROFILE = {
+    name: 'Company A, renamed',
+    country: 'DO',
+    phone: '+1 809 555 0101',
+    industry: 'retail',
+    teamSize: '6-20',
+  };
+
+  it('saves the profile of A and stamps A only — B untouched, even when the body names B', async () => {
+    const beforeB = h.db.snapshot(B);
+
+    const res = await onboardingCompany.POST(
+      req('POST', '/api/onboarding/company', {
+        ...PROFILE,
+        accountId: B,
+        id: B,
+      })
+    );
+    expect(res.status).toBe(200);
+    // A pays (the fixture's active PayPal row): step 1 was all it lacked.
+    expect(await res.json()).toEqual({ step: 'done' });
+
+    const a = h.db.rows('accounts').find((r) => r.id === A)!;
+    expect(a).toMatchObject({
+      name: 'Company A, renamed',
+      country: 'DO',
+      phone: '+1 809 555 0101',
+      industry: 'retail',
+      team_size: '6-20',
+    });
+    expect(a.onboarding_completed_at).toEqual(expect.any(String));
+    expectBUnchanged(beforeB);
+  });
+
+  it('lets an INCOMPLETE A save its profile, without stamping it and without touching B', async () => {
+    const subA = h.db.rows('subscriptions').find((r) => r.account_id === A)!;
+    subA.status = 'incomplete';
+    subA.provider_subscription_id = null;
+    const beforeB = h.db.snapshot(B);
+
+    const res = await onboardingCompany.POST(
+      req('POST', '/api/onboarding/company', PROFILE)
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ step: 'plan' });
+    const a = h.db.rows('accounts').find((r) => r.id === A)!;
+    expect(a.country).toBe('DO');
+    expect(a.onboarding_completed_at ?? null).toBeNull();
+    expectBUnchanged(beforeB);
+  });
+
+  it('403s an agent of A and writes nothing anywhere', async () => {
+    const profileA = h.db.rows('profiles').find((p) => p.user_id === USER_A)!;
+    profileA.account_role = 'agent';
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await onboardingCompany.POST(
+      req('POST', '/api/onboarding/company', PROFILE)
+    );
+    expect(res.status).toBe(403);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
   });
 });

@@ -37,9 +37,6 @@ vi.mock('@/hooks/use-total-unread', () => ({ useTotalUnread: () => 0 }));
 vi.mock('@/hooks/use-unread-notifications', () => ({
   useUnreadNotifications: () => 0,
 }));
-vi.mock('@/components/billing/trial-banner', () => ({
-  TrialBanner: () => null,
-}));
 vi.mock('@/components/layout/mode-toggle', () => ({
   ModeToggle: () => null,
 }));

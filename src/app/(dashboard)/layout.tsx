@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { DashboardShell } from "./dashboard-shell";
 import { supportBanner } from "@/lib/auth/support-view";
+import { onboardingRedirect } from "@/lib/onboarding/gate";
 
 // Server layout whose only job is to declare "do not index" metadata
 // for the authed app. robots.ts already disallows these paths at the
@@ -29,6 +31,14 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // s9.6: no trial. An account that has not given its company details
+  // or paid goes to /onboarding (an operator, to /platform). Resolved
+  // here, on the server, and not in the middleware — see
+  // `src/lib/onboarding/gate.ts` for why. `redirect()` throws, so it stays
+  // outside any try/catch.
+  const gate = await onboardingRedirect();
+  if (gate) redirect(gate);
+
   const support = await supportBanner();
   return <DashboardShell support={support}>{children}</DashboardShell>;
 }

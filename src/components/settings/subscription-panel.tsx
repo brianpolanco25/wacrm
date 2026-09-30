@@ -114,6 +114,7 @@ const METRIC_KEY: Record<string, string> = {
 };
 
 const STATUS_TONE: Record<string, 'default' | 'secondary' | 'destructive'> = {
+  incomplete: 'destructive',
   trialing: 'secondary',
   active: 'default',
   past_due: 'destructive',
@@ -312,7 +313,6 @@ export function SubscriptionPanel() {
   const periodEnd = fmtDate(data.currentPeriodEnd);
   const nextCharge = fmtDate(data.nextChargeAt);
   const graceDate = fmtDate(data.graceUntil);
-  const trialEnd = fmtDate(data.trialEndsAt);
 
   // One sentence that says where this account stands. Ordered by how
   // much it matters to the person reading it, and being locked out
@@ -320,23 +320,25 @@ export function SubscriptionPanel() {
   // that also cancelled would otherwise read "the service keeps running
   // until <a date already past>" and never see the one line that
   // explains why nothing works.
-  const note = data.readOnly
-    ? t('lockedBody')
-    : data.cancelAtPeriodEnd
-      ? periodEnd
-        ? ts('cancelScheduled', { date: periodEnd })
-        : ts('cancelScheduledNoDate')
-      : data.status === 'past_due'
-        ? graceDate
-          ? t('pastDueBodyWithDate', { date: graceDate })
-          : t('pastDueBody')
-        : data.status === 'trialing'
-          ? trialEnd
-            ? ts('trialEnds', { date: trialEnd })
-            : ts('trialNoDate')
-          : data.status === 'cancelled' || data.status === 'expired'
-            ? ts('noSubscription')
-            : null;
+  // s9.6: an account that never paid is read-only too, but «settle the
+  // subscription» is the wrong sentence for it: it has to finish signing
+  // up, at /onboarding. Checked before the generic lock for that reason.
+  const note =
+    data.status === 'incomplete'
+      ? ts('incompleteNote')
+      : data.readOnly
+        ? t('lockedBody')
+        : data.cancelAtPeriodEnd
+          ? periodEnd
+            ? ts('cancelScheduled', { date: periodEnd })
+            : ts('cancelScheduledNoDate')
+          : data.status === 'past_due'
+            ? graceDate
+              ? t('pastDueBodyWithDate', { date: graceDate })
+              : t('pastDueBody')
+            : data.status === 'cancelled' || data.status === 'expired'
+              ? ts('noSubscription')
+              : null;
 
   const cycleLabel =
     data.cycle === 'year'
@@ -377,6 +379,11 @@ export function SubscriptionPanel() {
               <p className="text-muted-foreground max-w-[70ch] text-sm">
                 {note}
               </p>
+            ) : null}
+            {data.status === 'incomplete' ? (
+              <Button size="sm" onClick={() => router.push('/onboarding')}>
+                {ts('incompleteAction')}
+              </Button>
             ) : null}
 
             <dl className="grid gap-4 sm:grid-cols-2">
