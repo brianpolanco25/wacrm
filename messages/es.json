@@ -2112,6 +2112,45 @@
         "signups": "Altas recientes",
         "delinquent": "Morosos"
       }
+    },
+    "metrics": {
+      "title": "Resumen",
+      "subtitle": "El servicio de un vistazo: cuentas, ingresos recurrentes, altas, morosos y actividad del mes.",
+      "loading": "Cargando las métricas…",
+      "loadFailed": "No se pudieron cargar las métricas. Las cifras no se muestran para no confundir un error con un cero.",
+      "refresh": "Actualizar",
+      "cards": {
+        "accounts": "Cuentas totales",
+        "mrr": "Ingresos recurrentes (MRR)",
+        "arr": "Ingresos anuales (ARR)",
+        "comped": "Cortesía (comped)",
+        "signups": "Altas 7 / 30 días",
+        "delinquent": "Morosos",
+        "whatsapp": "Números de WhatsApp conectados",
+        "messages": "Mensajes del mes (entrantes / salientes)"
+      },
+      "payingHint": "{count, plural, =0 {Ninguna cuenta de pago} one {# cuenta de pago} other {# cuentas de pago}}",
+      "compedHint": "Plan asignado a mano; fuera del MRR.",
+      "signupsHint": "Cuentas creadas en los últimos 7 y 30 días.",
+      "delinquentHint": "{pastDue} con pago atrasado · {suspended} suspendidas",
+      "messagesHint": "Mes natural en curso. Salientes: mensajes y difusiones.",
+      "byStatusTitle": "Cuentas por estado de suscripción",
+      "noAccounts": "Aún no hay cuentas.",
+      "status": {
+        "active": "Activa",
+        "trialing": "En prueba",
+        "past_due": "Pago atrasado",
+        "suspended": "Suspendida",
+        "cancelled": "Cancelada",
+        "expired": "Caducada",
+        "incomplete": "Pago pendiente",
+        "none": "Sin suscripción"
+      },
+      "weeklyTitle": "Altas por semana (últimas 12)",
+      "noSignups": "Sin datos de altas.",
+      "weekTooltip": "Semana del {week}: {count, plural, one {# alta} other {# altas}}",
+      "weekColumn": "Semana",
+      "countColumn": "Altas"
     }
   },
   "Developers": {

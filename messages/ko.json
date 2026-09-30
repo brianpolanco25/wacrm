@@ -2112,6 +2112,45 @@
         "signups": "최근 가입",
         "delinquent": "연체"
       }
+    },
+    "metrics": {
+      "title": "개요",
+      "subtitle": "서비스 한눈에 보기: 계정, 반복 매출, 신규 가입, 연체 계정, 이번 달 활동.",
+      "loading": "지표를 불러오는 중…",
+      "loadFailed": "지표를 불러오지 못했습니다. 오류를 0으로 착각하지 않도록 수치를 표시하지 않습니다.",
+      "refresh": "새로고침",
+      "cards": {
+        "accounts": "전체 계정",
+        "mrr": "월간 반복 매출(MRR)",
+        "arr": "연간 반복 매출(ARR)",
+        "comped": "무상 제공(comped)",
+        "signups": "가입 7일 / 30일",
+        "delinquent": "연체",
+        "whatsapp": "연결된 WhatsApp 번호",
+        "messages": "이번 달 메시지(수신 / 발신)"
+      },
+      "payingHint": "{count, plural, =0 {유료 계정 없음} other {유료 계정 #개}}",
+      "compedHint": "수동으로 지정한 요금제이며 MRR에 포함되지 않습니다.",
+      "signupsHint": "최근 7일과 30일 동안 생성된 계정.",
+      "delinquentHint": "결제 지연 {pastDue} · 정지 {suspended}",
+      "messagesHint": "이번 달 기준. 발신: 메시지와 브로드캐스트.",
+      "byStatusTitle": "구독 상태별 계정",
+      "noAccounts": "아직 계정이 없습니다.",
+      "status": {
+        "active": "활성",
+        "trialing": "체험 중",
+        "past_due": "결제 지연",
+        "suspended": "정지",
+        "cancelled": "취소됨",
+        "expired": "만료됨",
+        "incomplete": "결제 대기",
+        "none": "구독 없음"
+      },
+      "weeklyTitle": "주별 가입(최근 12주)",
+      "noSignups": "가입 데이터가 없습니다.",
+      "weekTooltip": "{week} 주: 가입 {count, plural, other {#건}}",
+      "weekColumn": "주",
+      "countColumn": "가입"
     }
   },
   "Developers": {

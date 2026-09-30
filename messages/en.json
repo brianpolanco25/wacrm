@@ -2112,6 +2112,45 @@
         "signups": "Recent signups",
         "delinquent": "Delinquent"
       }
+    },
+    "metrics": {
+      "title": "Overview",
+      "subtitle": "The service at a glance: accounts, recurring revenue, signups, delinquent accounts and this month's activity.",
+      "loading": "Loading the metrics…",
+      "loadFailed": "The metrics could not be loaded. No figures are shown, so an error is never mistaken for a zero.",
+      "refresh": "Refresh",
+      "cards": {
+        "accounts": "Total accounts",
+        "mrr": "Monthly recurring revenue (MRR)",
+        "arr": "Annual recurring revenue (ARR)",
+        "comped": "Comped",
+        "signups": "Signups 7 / 30 days",
+        "delinquent": "Delinquent",
+        "whatsapp": "Connected WhatsApp numbers",
+        "messages": "Messages this month (inbound / outbound)"
+      },
+      "payingHint": "{count, plural, =0 {No paying accounts} one {# paying account} other {# paying accounts}}",
+      "compedHint": "Plan assigned by hand; not in MRR.",
+      "signupsHint": "Accounts created in the last 7 and 30 days.",
+      "delinquentHint": "{pastDue} past due · {suspended} suspended",
+      "messagesHint": "Current calendar month. Outbound: messages and broadcasts.",
+      "byStatusTitle": "Accounts by subscription status",
+      "noAccounts": "No accounts yet.",
+      "status": {
+        "active": "Active",
+        "trialing": "Trialing",
+        "past_due": "Past due",
+        "suspended": "Suspended",
+        "cancelled": "Cancelled",
+        "expired": "Expired",
+        "incomplete": "Payment pending",
+        "none": "No subscription"
+      },
+      "weeklyTitle": "Signups per week (last 12)",
+      "noSignups": "No signup data.",
+      "weekTooltip": "Week of {week}: {count, plural, one {# signup} other {# signups}}",
+      "weekColumn": "Week",
+      "countColumn": "Signups"
     }
   },
   "Developers": {
