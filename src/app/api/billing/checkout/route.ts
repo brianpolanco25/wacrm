@@ -43,6 +43,7 @@ import {
   checkoutRequestId,
   checkoutUrls,
   isBillingCycle,
+  isOnboardingCheckout,
   priceFor,
   providerPlanIdFor,
   resolveAppOrigin,
@@ -235,7 +236,10 @@ export async function POST(request: Request) {
     }
 
     const origin = resolveAppOrigin(request);
-    const { returnUrl, cancelUrl } = checkoutUrls(origin);
+    // s9.6: an account still signing up comes back to /onboarding.
+    const { returnUrl, cancelUrl } = checkoutUrls(origin, {
+      onboarding: isOnboardingCheckout(existing),
+    });
 
     let subscription;
     try {

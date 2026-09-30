@@ -72,8 +72,9 @@ export function priceFor(
  * plan-swap in place, so moving between plans is a Fase 3 §6 flow, not
  * a second checkout.
  *
- * `trialing`, `cancelled` and `expired` are deliberately absent: those
- * accounts have nothing being charged and must be able to contract.
+ * `incomplete` (s9.6: signed up, never paid), `trialing` (before 073),
+ * `cancelled` and `expired` are deliberately absent: those accounts
+ * have nothing being charged and must be able to contract.
  */
 const CONTRACTED_STATUSES = new Set(['active', 'past_due', 'suspended']);
 
@@ -117,16 +118,40 @@ export function checkoutRequestId(
  * Both pages are informational. `return_url` in particular activates
  * nothing: it renders "we are confirming your payment" and polls, and
  * the account only gains service when the webhook says so.
+ *
+ * An account still signing up (`onboarding`, s9.6) comes back to the
+ * onboarding flow instead — `/onboarding/return` renders the same
+ * waiting screen — because `/billing/*` sits behind the dashboard's
+ * onboarding gate and would bounce them anyway.
  */
-export function checkoutUrls(origin: string): {
+export function checkoutUrls(
+  origin: string,
+  options: { onboarding?: boolean } = {}
+): {
   returnUrl: string;
   cancelUrl: string;
 } {
   const base = origin.replace(/\/+$/, '');
+  if (options.onboarding) {
+    return {
+      returnUrl: `${base}/onboarding/return`,
+      cancelUrl: `${base}/onboarding?checkout=cancelled`,
+    };
+  }
   return {
     returnUrl: `${base}/billing/return`,
     cancelUrl: `${base}/billing?checkout=cancelled`,
   };
+}
+
+/**
+ * True when a checkout is the account's FIRST contract — the one the
+ * onboarding flow starts. No row, or the unpaid seed of migration 073.
+ */
+export function isOnboardingCheckout(
+  subscription: { status: string } | null | undefined
+): boolean {
+  return !subscription || subscription.status === 'incomplete';
 }
 
 /**

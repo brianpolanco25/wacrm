@@ -373,6 +373,30 @@ describe('BILLING.SUBSCRIPTION.ACTIVATED', () => {
     expect(decision.patch.status).toBe('active');
   });
 
+  // s9.6: the row every account is born with since migration 073.
+  it('activates the incomplete seed of an account that never paid, on the plan it bought', () => {
+    const decision = applied(
+      decide(
+        activated(),
+        subscription({
+          plan_id: 'inicio',
+          status: 'incomplete',
+          provider_subscription_id: null,
+          current_period_end: null,
+          last_event_at: null,
+        }),
+        { plan_id: 'negocio', cycle: 'year' }
+      )
+    );
+    expect(decision.patch).toMatchObject({
+      plan_id: 'negocio',
+      status: 'active',
+      provider_subscription_id: 'I-SUB',
+      cycle: 'year',
+    });
+    expect(decision.intentStatus).toBe('activated');
+  });
+
   // THE out-of-order case of the spec.
   it('cannot resurrect a subscription cancelled by a newer event', () => {
     const decision = decide(
@@ -653,6 +677,33 @@ describe('PAYMENT.SALE.COMPLETED', () => {
       status: 'active',
       provider_subscription_id: 'I-SUB',
       current_period_end: '2026-04-15T12:00:00.000Z',
+    });
+    expect(decision.intentStatus).toBe('activated');
+  });
+
+  it('activates an incomplete seed when the first sale beats the activation (s9.6)', () => {
+    const decision = applied(
+      decide(
+        sale('2026-03-15T12:00:00Z'),
+        subscription({
+          plan_id: 'inicio',
+          status: 'incomplete',
+          provider_subscription_id: null,
+          current_period_end: null,
+          last_event_at: null,
+          cycle: null,
+        }),
+        { plan_id: 'pro', cycle: 'month' }
+      )
+    );
+    // The intent's plan and cycle, not the placeholder the seed named.
+    expect(decision.patch).toMatchObject({
+      plan_id: 'pro',
+      status: 'active',
+      provider_subscription_id: 'I-SUB',
+      current_period_end: '2026-04-15T12:00:00.000Z',
+      cycle: 'month',
+      grace_until: null,
     });
     expect(decision.intentStatus).toBe('activated');
   });

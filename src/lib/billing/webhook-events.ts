@@ -304,7 +304,28 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 /** Statuses a completed payment may lift back to `active`. */
-const REVIVABLE = new Set(['trialing', 'active', 'past_due', 'suspended']);
+const REVIVABLE = new Set([
+  'incomplete',
+  'trialing',
+  'active',
+  'past_due',
+  'suspended',
+]);
+
+/**
+ * The row the account-creation trigger seeded and nobody has paid for:
+ * `incomplete` since migration 073 (`trialing` before it), with no
+ * PayPal id. A payment that lands on it is the first one — it carries
+ * the plan and cycle of the checkout intent, not the placeholder plan
+ * the seed had to name (s9.6).
+ */
+function isUnpaidSeed(existing: SubscriptionState | null): boolean {
+  return Boolean(
+    existing &&
+    (existing.status === 'incomplete' || existing.status === 'trialing') &&
+    !existing.provider_subscription_id
+  );
+}
 
 /** Statuses that are the end of the line: a late event cannot undo them. */
 const TERMINAL = new Set(['cancelled', 'expired']);
@@ -711,7 +732,7 @@ function buildPatch(input: BuildInput): Decision {
 
       const periodEnd = addCycle(eventTime, cycle);
 
-      if (!existing || adopting) {
+      if (!existing || adopting || isUnpaidSeed(existing)) {
         // The sale beat the activation. Creating the row — or taking
         // over the terminal one left by the subscription this customer
         // cancelled — keeps them served; ACTIVATED arrives later and

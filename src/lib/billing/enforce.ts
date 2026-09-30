@@ -62,6 +62,22 @@ export {
 export const BILLING_UPGRADE_PATH = '/billing';
 
 /**
+ * Where an account that never paid goes instead (s9.6): company details,
+ * then the plan. `/billing` would skip the first step, and the gate of
+ * the dashboard layout would bounce them to `/onboarding` anyway.
+ */
+export const ONBOARDING_PATH = '/onboarding';
+
+/** The way out of a read-only lock with this subscription status. */
+export function upgradePathFor(
+  subscriptionStatus: string | null | undefined
+): string {
+  return subscriptionStatus === 'incomplete'
+    ? ONBOARDING_PATH
+    : BILLING_UPGRADE_PATH;
+}
+
+/**
  * The account may only read: the subscription is suspended/expired, or
  * past due with the grace period spent, or a platform operator put a
  * manual hold on it (migration 058). 403, not 402 — the caller is
@@ -85,7 +101,11 @@ export class AccountLockedError extends Error {
     super(
       manualHold
         ? 'This account has been suspended by the service operator and is read-only. Contact support to have it reactivated.'
-        : `This account is read-only while its subscription is '${subscriptionStatus}'. Settle the subscription to write again.`
+        : subscriptionStatus === 'incomplete'
+          ? // s9.6: no trial. Nothing to "settle" — the account has not
+            // finished signing up (company details + a paid plan).
+            'Complete your sign-up to start using this account: add your company details and choose a plan.'
+          : `This account is read-only while its subscription is '${subscriptionStatus}'. Settle the subscription to write again.`
     );
     this.name = 'AccountLockedError';
     this.subscriptionStatus = subscriptionStatus;
@@ -123,7 +143,10 @@ export class PlanLimitError extends Error {
 export interface BillingErrorPayload {
   error: string;
   code: string;
-  /** Always `/billing` — "how do I raise this?" in one field. */
+  /**
+   * "How do I raise this?" in one field: `/billing`, or `/onboarding`
+   * for an account that never finished signing up (s9.6).
+   */
   upgradeUrl: string;
   metric?: string;
   limit?: number;
@@ -148,7 +171,9 @@ export function billingErrorPayload(err: unknown): BillingErrorPayload | null {
     return {
       error: err.message,
       code: err.code,
-      upgradeUrl: BILLING_UPGRADE_PATH,
+      upgradeUrl: err.manualHold
+        ? BILLING_UPGRADE_PATH
+        : upgradePathFor(err.subscriptionStatus),
       subscriptionStatus: err.subscriptionStatus,
       manualHold: err.manualHold,
       status: err.status,

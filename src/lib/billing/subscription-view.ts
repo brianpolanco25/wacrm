@@ -228,7 +228,7 @@ export type ReactivateMode = 'activate' | 'checkout';
  *
  *   'revise'    There is a live PayPal subscription: move it onto the
  *               new plan. One subscription, one charge.
- *   'checkout'  Nothing is being charged (trial, cancelled, expired,
+ *   'checkout'  Nothing is being charged (incomplete, cancelled, expired,
  *               or cancelled-at-period-end): contracting is the plan
  *               change, and it reuses §2 rather than duplicating it.
  */
@@ -253,7 +253,7 @@ export function availableActions(
   subscription: SubscriptionShape | null
 ): SubscriptionActions {
   const providerId = subscription?.providerSubscriptionId ?? null;
-  const status = subscription?.status ?? 'trialing';
+  const status = subscription?.status ?? 'incomplete';
   const cancelPending = Boolean(subscription?.cancelAtPeriodEnd);
 
   // PayPal still has a subscription we can act on. A cancellation it

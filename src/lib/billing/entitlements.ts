@@ -9,12 +9,15 @@
 // in production.
 //
 // Rules
-//   - An account with no `subscriptions` row resolves to the trial:
-//     plan `pro`, status `trialing`, not read-only. The 14-day trial
-//     uses Pro's limits; its end date is stamped by fase 3 when it
-//     seeds subscriptions, so `trialEndsAt` is null here.
-//   - `readOnly` is true when the subscription is `suspended` or
-//     `expired`, or when it is `past_due` and `grace_until` has passed,
+//   - An account with no `subscriptions` row resolves to `incomplete`
+//     on plan `inicio`, read-only (s9.6, migration 073: there is no
+//     free trial any more — the account has to give its company data
+//     and pay before it may write). Before 073 the fallback was the
+//     trial (`pro` / `trialing`); the migration moved every such row to
+//     `incomplete`, so both paths now agree.
+//   - `readOnly` is true when the subscription is `incomplete`,
+//     `suspended` or `expired`, or when it is `past_due` and
+//     `grace_until` has passed,
 //     or when a platform operator put a MANUAL HOLD on the account
 //     (migration 058). The hold is a separate axis from `status` on
 //     purpose: `status` is what the PayPal webhook rewrites, so a hold
@@ -31,11 +34,29 @@
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 
+/**
+ * `incomplete` (073): signed up, has not paid yet. `trialing` stays in
+ * the union because the CHECK still accepts it and old rows or events
+ * may carry it, but nothing writes it any more.
+ */
 export type SubscriptionStatus =
-  'trialing' | 'active' | 'past_due' | 'suspended' | 'cancelled' | 'expired';
+  | 'incomplete'
+  | 'trialing'
+  | 'active'
+  | 'past_due'
+  | 'suspended'
+  | 'cancelled'
+  | 'expired';
 
-/** Plan an account falls back to when it has no `subscriptions` row. */
-export const TRIAL_PLAN_ID = 'pro';
+/**
+ * Plan an account falls back to when it has no `subscriptions` row —
+ * the same one the 073 trigger seeds. With `incomplete` it grants
+ * nothing (read-only); it is there because a plan has to be named.
+ */
+export const DEFAULT_PLAN_ID = 'inicio';
+
+/** Status an account falls back to when it has no `subscriptions` row. */
+export const DEFAULT_STATUS: SubscriptionStatus = 'incomplete';
 
 export interface Entitlements {
   planId: string;
@@ -95,6 +116,7 @@ export class FeatureNotAvailableError extends Error {
 // ------------------------------------------------------------
 
 const STATUSES: readonly SubscriptionStatus[] = [
+  'incomplete',
   'trialing',
   'active',
   'past_due',
@@ -110,16 +132,18 @@ function isSubscriptionStatus(value: unknown): value is SubscriptionStatus {
 }
 
 /**
- * True when the account may only read: suspended/expired outright, or
- * past_due once the grace period has run out. `cancelled` keeps access
- * until the period ends (the gateway then flips it to `expired`).
+ * True when the account may only read: incomplete (never paid — s9.6),
+ * suspended or expired outright, or past_due once the grace period has
+ * run out. `cancelled` keeps access until the period ends (the gateway
+ * then flips it to `expired`).
  */
 export function isReadOnly(
   status: SubscriptionStatus,
   graceUntil: string | null,
   now: Date = new Date()
 ): boolean {
-  if (status === 'suspended' || status === 'expired') return true;
+  if (status === 'incomplete' || status === 'suspended' || status === 'expired')
+    return true;
   if (status === 'past_due' && graceUntil) {
     const grace = new Date(graceUntil);
     return Number.isFinite(grace.getTime()) && grace.getTime() < now.getTime();
@@ -183,7 +207,8 @@ interface PlanRow {
 
 /**
  * Resolve the account's plan, status and derived flags. Falls back to
- * the trial plan when the account has no subscription row.
+ * `inicio` / `incomplete` (read-only) when the account has no
+ * subscription row.
  *
  * Throws on a DB error or when the resolved plan is missing from the
  * catalogue — both are deployment faults (041 not applied, plan deleted),
@@ -203,11 +228,13 @@ export async function getEntitlements(
   if (subErr) throw subErr;
 
   const subscription = (sub as SubscriptionRow | null) ?? null;
-  const planId = subscription?.plan_id ?? TRIAL_PLAN_ID;
+  const planId = subscription?.plan_id ?? DEFAULT_PLAN_ID;
+  // An unknown status (a value a future migration adds before this
+  // union learns it) fails closed, like a missing row: read-only.
   const status: SubscriptionStatus =
     subscription && isSubscriptionStatus(subscription.status)
       ? subscription.status
-      : 'trialing';
+      : DEFAULT_STATUS;
 
   const { data: plan, error: planErr } = await db
     .from('plans')

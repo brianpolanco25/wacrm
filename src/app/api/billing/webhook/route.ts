@@ -321,7 +321,7 @@ async function handleEvent(
  * precisely because the key they match on is globally unique, and
  * because they select nothing but the owner. The row we then act on is
  * read back **by `account_id`**, which is also what makes a tenant that
- * is still `trialing` (a `subscriptions` row with no provider id yet)
+ * is still on its unpaid seed (`incomplete`, a `subscriptions` row with no provider id yet)
  * get updated instead of inserted over.
  */
 async function resolveAccount(
@@ -395,7 +395,7 @@ async function resolveAccount(
   }
 
   // The row we are about to change, read by account. An account that
-  // is still `trialing` has a `subscriptions` row with no provider id,
+  // is still on its unpaid seed (`incomplete`) has a `subscriptions` row with no provider id,
   // which the lookup above cannot see — inserting over it would hit the
   // primary key, and worse, would mean we never recognised the tenant's
   // existing state.

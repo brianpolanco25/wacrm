@@ -70,7 +70,8 @@ import {
   isReadOnly,
   normalizeLimits,
   QuotaExceededError,
-  TRIAL_PLAN_ID,
+  DEFAULT_PLAN_ID,
+  DEFAULT_STATUS,
   type Entitlements,
 } from './entitlements';
 
@@ -126,15 +127,26 @@ afterEach(() => {
 });
 
 describe('getEntitlements', () => {
-  it('resolves an account with no subscription row to the trial plan (pro, trialing, not read-only)', async () => {
+  it('resolves an account with no subscription row to incomplete on inicio, read-only (s9.6: no trial)', async () => {
     const e = await getEntitlements(ACCOUNT);
-    expect(TRIAL_PLAN_ID).toBe('pro');
-    expect(e.planId).toBe('pro');
-    expect(e.status).toBe('trialing');
-    expect(e.readOnly).toBe(false);
+    expect(DEFAULT_PLAN_ID).toBe('inicio');
+    expect(DEFAULT_STATUS).toBe('incomplete');
+    expect(e.planId).toBe('inicio');
+    expect(e.status).toBe('incomplete');
+    expect(e.readOnly).toBe(true);
+    expect(e.readOnlyReason).toBe('subscription');
+    expect(e.manualHold).toBe(false);
     expect(e.trialEndsAt).toBeNull();
-    expect(e.limits).toEqual(PRO.limits);
-    expect(e.features).toEqual(PRO.features);
+    expect(e.limits).toEqual(INICIO.limits);
+    expect(e.features).toEqual(INICIO.features);
+  });
+
+  it('an incomplete row (the 073 seed) is read-only for the subscription, not a hold', async () => {
+    subscribed({ status: 'incomplete' });
+    const e = await getEntitlements(ACCOUNT);
+    expect(e.status).toBe('incomplete');
+    expect(e.readOnly).toBe(true);
+    expect(e.readOnlyReason).toBe('subscription');
   });
 
   it('uses the subscribed plan, status and trial end when a row exists', async () => {
@@ -177,18 +189,20 @@ describe('getEntitlements', () => {
   it('throws when the resolved plan is missing from the catalogue', async () => {
     h.state.plans = {};
     await expect(getEntitlements(ACCOUNT)).rejects.toThrow(
-      /plan 'pro' is missing/
+      /plan 'inicio' is missing/
     );
   });
 
-  it('falls back to trialing when the stored status is not a known value', async () => {
+  it('fails closed to incomplete (read-only) when the stored status is not a known value', async () => {
     subscribed({ status: 'weird' });
     const e = await getEntitlements(ACCOUNT);
-    expect(e.status).toBe('trialing');
+    expect(e.status).toBe('incomplete');
+    expect(e.readOnly).toBe(true);
   });
 
   describe('readOnly', () => {
     it.each([
+      ['incomplete', true],
       ['trialing', false],
       ['active', false],
       ['cancelled', false],
@@ -270,6 +284,7 @@ describe('getEntitlements', () => {
 describe('isReadOnly (pure)', () => {
   const now = new Date('2026-09-10T12:00:00Z');
   it('handles every status', () => {
+    expect(isReadOnly('incomplete', null, now)).toBe(true);
     expect(isReadOnly('suspended', null, now)).toBe(true);
     expect(isReadOnly('expired', null, now)).toBe(true);
     expect(isReadOnly('past_due', '2026-09-01T00:00:00Z', now)).toBe(true);
@@ -369,13 +384,13 @@ describe('assertQuota', () => {
     ).rejects.toBeInstanceOf(QuotaExceededError);
   });
 
-  it('uses the trial plan limits for an account without a subscription', async () => {
-    // No subscription → pro → ai_replies 3000.
-    h.state.usage = { value: 3000 };
+  it('uses the fallback plan (inicio) limits for an account without a subscription', async () => {
+    // No subscription → inicio → ai_replies 500.
+    h.state.usage = { value: 500 };
     await expect(assertQuota(ACCOUNT, 'ai_replies')).rejects.toBeInstanceOf(
       QuotaExceededError
     );
-    h.state.usage = { value: 2999 };
+    h.state.usage = { value: 499 };
     await expect(assertQuota(ACCOUNT, 'ai_replies')).resolves.toBeUndefined();
   });
 
