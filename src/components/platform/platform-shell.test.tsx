@@ -53,11 +53,17 @@ function render(
   );
 }
 
-function frame(path = '/platform', locale: 'es' | 'en' | 'ko' = 'es') {
+type Support = React.ComponentProps<typeof PlatformFrame>['support'];
+
+function frame(
+  path = '/platform',
+  locale: 'es' | 'en' | 'ko' = 'es',
+  support: Support = null
+) {
   pathname = path;
   const messages = CATALOGUES.find(([l]) => l === locale)![1];
   return render(
-    <PlatformFrame support={null}>
+    <PlatformFrame support={support}>
       <p>contenido</p>
     </PlatformFrame>,
     locale,
@@ -138,6 +144,40 @@ describe('PlatformFrame — the operator nav', () => {
     }
     expect(html).toContain(messages.Platform.shell.goToCrm);
     expect(html).toContain(messages.Platform.shell.badge);
+  });
+});
+
+describe('PlatformFrame — during a support session', () => {
+  const SESSION = {
+    accountId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    accountName: 'Acme',
+    expiresAt: '2026-01-01T00:30:00.000Z',
+  };
+
+  it('says whose company the operator is in, above the console', () => {
+    // What the (platform) layout inherits from (dashboard): walking back to
+    // the panel mid-session must not hide that a session is open.
+    const html = frame('/platform/accounts', 'es', SESSION);
+    const viewing = es.Impersonation.viewing.replace('{account}', 'Acme');
+    expect(html).toContain(viewing);
+    expect(html.indexOf(viewing)).toBeLessThan(html.indexOf('<aside'));
+  });
+
+  it('offers the exit button', () => {
+    const html = frame('/platform/accounts', 'es', SESSION);
+    expect(html).toMatch(
+      new RegExp(`<button[^>]*>.*?${es.Impersonation.exit}</button>`)
+    );
+  });
+
+  it.each(CATALOGUES)('is translated in %s (CP6)', (locale, messages) => {
+    const html = frame('/platform', locale, SESSION);
+    expect(html).toContain(messages.Impersonation.exit);
+    expect(html).not.toContain('Impersonation.');
+  });
+
+  it('shows no banner outside a session', () => {
+    expect(frame()).not.toContain(es.Impersonation.exit);
   });
 });
 

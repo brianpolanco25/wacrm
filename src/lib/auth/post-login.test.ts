@@ -18,6 +18,7 @@ describe('postLoginDestination', () => {
     );
     expect(fetchImpl).toHaveBeenCalledWith('/api/platform/me', {
       cache: 'no-store',
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -37,6 +38,32 @@ describe('postLoginDestination', () => {
     await expect(postLoginDestination(null, offline)).resolves.toBe(
       '/dashboard'
     );
+  });
+
+  it('gives up on a /api/platform/me that never answers → /dashboard', async () => {
+    // Ignores the abort signal on purpose: the bound must not depend on
+    // `fetch` honouring it.
+    const hung = vi.fn(
+      () => new Promise<Response>(() => {})
+    ) as unknown as typeof fetch;
+    await expect(postLoginDestination(null, hung, 20)).resolves.toBe(
+      '/dashboard'
+    );
+  });
+
+  it('treats an aborted request (TimeoutError) as "not an operator"', async () => {
+    const aborted = vi.fn(async () => {
+      throw new DOMException('timed out', 'TimeoutError');
+    }) as unknown as typeof fetch;
+    await expect(postLoginDestination(null, aborted)).resolves.toBe(
+      '/dashboard'
+    );
+  });
+
+  it('waits at most a few seconds by default', async () => {
+    const { PLATFORM_CHECK_TIMEOUT_MS } = await import('./post-login');
+    expect(PLATFORM_CHECK_TIMEOUT_MS).toBeGreaterThanOrEqual(2000);
+    expect(PLATFORM_CHECK_TIMEOUT_MS).toBeLessThanOrEqual(3000);
   });
 
   it('an invite still wins, for operators too, without asking', async () => {

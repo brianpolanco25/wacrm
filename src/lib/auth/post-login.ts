@@ -11,21 +11,43 @@
 // middleware keeps a `platform_admins` lookup (service role) out of
 // every request of the app: only a sign-in pays for it.
 //
-// Fails toward /dashboard: a network error or any non-2xx answer is "not
-// an operator". That is the safe direction — the panel's pages 404 on the
+// Fails toward /dashboard: a network error, any non-2xx answer or no
+// answer within `timeoutMs` is "not an operator". The check runs on EVERY
+// sign-in, tenants included, with the session already open — a hung route
+// must not leave the button spinning. That is the safe direction — the panel's pages 404 on the
 // server regardless, and an operator can still reach /platform from the
 // CRM sidebar.
 // ============================================================
 
+/** How long a sign-in waits for `/api/platform/me` before giving up. */
+export const PLATFORM_CHECK_TIMEOUT_MS = 3000;
+
 export async function postLoginDestination(
   inviteToken: string | null,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs: number = PLATFORM_CHECK_TIMEOUT_MS
 ): Promise<string> {
   if (inviteToken) return `/join/${encodeURIComponent(inviteToken)}`;
+
+  // The signal cancels the request where `fetch` honours it; the race
+  // bounds the wait even where it does not.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
   try {
-    const res = await fetchImpl('/api/platform/me', { cache: 'no-store' });
+    const res = await Promise.race([
+      fetchImpl('/api/platform/me', {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(timeoutMs),
+      }),
+      timedOut,
+    ]);
+    if (res === 'timeout') return '/dashboard';
     return res.ok ? '/platform' : '/dashboard';
   } catch {
     return '/dashboard';
+  } finally {
+    clearTimeout(timer);
   }
 }

@@ -16,14 +16,17 @@
 // ============================================================
 
 import { cache } from 'react';
-import { notFound } from 'next/navigation';
+import { notFound, unstable_rethrow } from 'next/navigation';
 
 import { requirePlatformAdmin, type PlatformContext } from './platform';
 
 export const guardPlatformPage = cache(async (): Promise<PlatformContext> => {
   try {
     return await requirePlatformAdmin();
-  } catch {
+  } catch (err) {
+    // Next's own control-flow signals (dynamic usage, redirects) are not
+    // "not an admin"; let them through, as `support-view.ts` does.
+    unstable_rethrow(err);
     notFound();
   }
 });

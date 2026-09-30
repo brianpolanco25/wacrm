@@ -17,6 +17,8 @@ vi.mock('next/navigation', () => ({
     throw new Error(NOT_FOUND);
   },
   usePathname: () => '/platform',
+  // Real behaviour for anything that is not a Next signal: return.
+  unstable_rethrow: vi.fn(),
 }));
 vi.mock('@/lib/auth/support-view', () => ({
   supportBanner: vi.fn(async () => null),
@@ -79,5 +81,17 @@ describe.each(ROUTES)('%s', (_route, render) => {
   it('renders for a platform admin', async () => {
     requirePlatformAdmin.mockResolvedValue(ADMIN);
     await expect(render()).resolves.toBeTruthy();
+  });
+});
+
+describe('guardPlatformPage and Next signals', () => {
+  it('rethrows through unstable_rethrow before deciding 404', async () => {
+    const { unstable_rethrow } = await import('next/navigation');
+    const signal = new Error('NEXT_REDIRECT');
+    vi.mocked(unstable_rethrow).mockImplementationOnce(() => {
+      throw signal;
+    });
+    requirePlatformAdmin.mockRejectedValue(signal);
+    await expect(guardPlatformPage()).rejects.toBe(signal);
   });
 });
