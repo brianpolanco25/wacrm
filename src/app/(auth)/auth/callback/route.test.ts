@@ -85,4 +85,35 @@ describe('GET /auth/callback', () => {
     );
     expect(location).toBe('https://app.test/dashboard');
   });
+
+  // Review of s9.8: dot segments and encodings that normalise to
+  // `//evil.com`. Encoded in the query, as an attacker would send them.
+  const VECTORS = [
+    '//evil.com',
+    'https://evil.com',
+    '/\\evil.com',
+    '%2F%2Fevil.com',
+    '/%2F%2Fevil.com',
+    '/.//evil.com',
+    '/..//evil.com',
+    '/%2e//evil.com',
+    '/a/..//evil.com',
+  ];
+
+  it.each(VECTORS)('code + next=%s → /dashboard on this host', async (next) => {
+    const { location } = await get(
+      `/auth/callback?code=c1&next=${encodeURIComponent(next)}`
+    );
+    expect(location).toBe('https://app.test/dashboard');
+  });
+
+  it.each(VECTORS)(
+    'no code + next=%s → the browser page WITHOUT that next',
+    async (next) => {
+      const { location } = await get(
+        `/auth/callback?next=${encodeURIComponent(next)}`
+      );
+      expect(location).toBe('https://app.test/auth/callback/complete');
+    }
+  );
 });

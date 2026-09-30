@@ -32,23 +32,59 @@ export const RESET_PASSWORD_PATH = '/reset-password';
 /** Link types after which the person must choose a password. */
 const PASSWORD_TYPES = new Set(['invite', 'recovery']);
 
+/** Throwaway origin to resolve relative paths against. */
+const PROBE_ORIGIN = 'http://same.origin.invalid';
+
+/**
+ * True when `path` — the FINAL string a browser will navigate to — is a
+ * path on this site: exactly one leading `/`, not followed by another
+ * `/` or a `\`, no control characters, and it resolves to the same
+ * origin and to itself (so no `.`/`..` segment is left to collapse into
+ * `//host` later). Also checked once percent-decoded, so `/%2F%2Fhost`
+ * or `/%5Chost` are refused as well.
+ */
+export function isSameOriginPath(path: string): boolean {
+  const shape = (p: string) =>
+    p.startsWith('/') &&
+    p[1] !== '/' &&
+    p[1] !== '\\' &&
+    !/[\\\u0000-\u001f\u007f]/.test(p);
+  if (!shape(path)) return false;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path.split(/[?#]/)[0]);
+  } catch {
+    return false;
+  }
+  if (!shape(decoded)) return false;
+  try {
+    const url = new URL(path, PROBE_ORIGIN);
+    if (url.origin !== PROBE_ORIGIN) return false;
+    return `${url.pathname}${url.search}${url.hash}` === path;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * `next` as a same-origin path, or `null` when it is anything else.
  *
- * `next` arrives in a query string anybody can write, so a bare
- * `startsWith('/')` would still let `//evil.example` or `/\evil.example`
- * through — both of which browsers treat as another host. Parsing it
- * against a throwaway origin and requiring that origin back is what
- * rules those out.
+ * `next` arrives in a query string anybody can write. It is normalised
+ * with `new URL` (which resolves `.` and `..`) and then the RESULT is
+ * validated with `isSameOriginPath`: checking only the raw input let
+ * `/.//evil.com`, `/..//evil.com`, `/%2e//evil.com` or `/a/..//evil.com`
+ * through, all of which normalise to `//evil.com` — another host.
  */
 export function safeNextPath(next: string | null | undefined): string | null {
-  if (!next || !next.startsWith('/') || next.startsWith('//')) return null;
-  if (/[\\\u0000-\u001f]/.test(next)) return null;
+  if (!next || !next.startsWith('/')) return null;
+  // `new URL` silently drops tabs and newlines and turns `\` into `/`;
+  // refuse them on the way in rather than let the parser "fix" them.
+  if (/[\\\u0000-\u001f\u007f]/.test(next)) return null;
   try {
-    const base = 'http://same.origin.invalid';
-    const url = new URL(next, base);
-    if (url.origin !== base) return null;
-    return `${url.pathname}${url.search}${url.hash}`;
+    const url = new URL(next, PROBE_ORIGIN);
+    if (url.origin !== PROBE_ORIGIN) return null;
+    const result = `${url.pathname}${url.search}${url.hash}`;
+    return isSameOriginPath(result) ? result : null;
   } catch {
     return null;
   }
@@ -57,7 +93,7 @@ export function safeNextPath(next: string | null | undefined): string | null {
 /** `path` with `invite=<token>` added to its query string. */
 function withInvite(path: string, invite: string | null | undefined): string {
   if (!invite) return path;
-  const url = new URL(path, 'http://same.origin.invalid');
+  const url = new URL(path, PROBE_ORIGIN);
   url.searchParams.set('invite', invite);
   return `${url.pathname}${url.search}`;
 }
@@ -106,6 +142,16 @@ export function authCallbackUrl(
  * because without a password the person cannot sign in again tomorrow.
  */
 export function callbackDestination(opts: {
+  type?: string | null;
+  next?: string | null;
+  invite?: string | null;
+}): string | null {
+  const destination = rawDestination(opts);
+  // Whatever was built, it is checked once more as the final string.
+  return destination && isSameOriginPath(destination) ? destination : null;
+}
+
+function rawDestination(opts: {
   type?: string | null;
   next?: string | null;
   invite?: string | null;

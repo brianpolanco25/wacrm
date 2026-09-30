@@ -16,6 +16,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { resolveCallback } from '@/lib/auth/callback';
+import { isSameOriginPath } from '@/lib/auth/redirects';
 import { createClient } from '@/lib/supabase/server';
 
 export async function GET(request: NextRequest) {
@@ -26,7 +27,11 @@ export async function GET(request: NextRequest) {
   );
   // Same host the request came in on — as the middleware's own
   // redirects do — because the cookies just written belong to it.
-  const target = new URL(path, 'http://same.origin.invalid');
+  // `path` is already a checked same-origin path; checked again here so
+  // no future branch of resolveCallback can turn this into a way off
+  // the site.
+  const safe = isSameOriginPath(path) ? path : '/dashboard';
+  const target = new URL(safe, request.nextUrl.origin);
   const url = request.nextUrl.clone();
   url.pathname = target.pathname;
   url.search = target.search;

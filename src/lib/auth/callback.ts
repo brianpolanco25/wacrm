@@ -38,7 +38,11 @@
 import type { EmailOtpType, SupabaseClient } from '@supabase/supabase-js';
 
 import { postLoginDestination } from './post-login';
-import { AUTH_CALLBACK_COMPLETE_PATH, callbackDestination } from './redirects';
+import {
+  AUTH_CALLBACK_COMPLETE_PATH,
+  callbackDestination,
+  safeNextPath,
+} from './redirects';
 
 type Auth = SupabaseClient['auth'];
 
@@ -87,10 +91,12 @@ function completePath(
   errorCode?: string | null
 ): string {
   const out = new URLSearchParams();
-  for (const key of ['next', 'invite']) {
-    const value = params.get(key);
-    if (value) out.set(key, value);
-  }
+  // Only a `next` that is a path on this site is passed on; anything
+  // else is dropped here, not left for the browser page to judge.
+  const next = safeNextPath(params.get('next'));
+  if (next) out.set('next', next);
+  const invite = params.get('invite');
+  if (invite) out.set('invite', invite);
   if (errorCode) out.set('error_code', errorCode);
   const qs = out.toString();
   return qs

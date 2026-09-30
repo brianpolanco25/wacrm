@@ -12,7 +12,7 @@
 // cookies to the middleware (same reason as /login, issue #365).
 // ============================================================
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Loader2, MailX } from 'lucide-react';
@@ -23,14 +23,23 @@ import {
   completeAuthCallback,
   type CallbackErrorReason,
 } from '@/lib/auth/callback';
+import { isSameOriginPath } from '@/lib/auth/redirects';
 import { createClient } from '@/lib/supabase/client';
 
 export default function AuthCallbackCompletePage() {
   const t = useTranslations('AuthCallback');
   const [reason, setReason] = useState<CallbackErrorReason | null>(null);
 
+  // Runs once per page load. React's StrictMode (on in dev) mounts,
+  // unmounts and mounts again: a second pass would find the fragment
+  // already wiped from the address bar and lose the link's `type`. So
+  // the URL is read once, and the first pass is never cancelled —
+  // StrictMode keeps the same state, so its result still lands.
+  const started = useRef(false);
+
   useEffect(() => {
-    let cancelled = false;
+    if (started.current) return;
+    started.current = true;
     const { hash, search, pathname } = window.location;
     // The tokens must not linger in the address bar or in history,
     // whatever happens next.
@@ -42,13 +51,15 @@ export default function AuthCallbackCompletePage() {
       search,
       auth: createClient().auth,
     }).then((result) => {
-      if (cancelled) return;
-      if (result.ok) window.location.replace(result.destination);
-      else setReason(result.reason);
+      if (!result.ok) {
+        setReason(result.reason);
+        return;
+      }
+      // Last line of defence: never leave the site, whatever was built.
+      window.location.replace(
+        isSameOriginPath(result.destination) ? result.destination : '/dashboard'
+      );
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   if (!reason) {

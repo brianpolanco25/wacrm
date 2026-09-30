@@ -309,4 +309,60 @@ describe('completeAuthCallback — browser half', () => {
       await completeAuthCallback({ hash: '', search: '', auth: b.auth })
     ).toEqual({ ok: false, reason: 'missing' });
   });
+
+  it('tokens in the QUERY are never used (only the fragment counts)', async () => {
+    const b = browserAuth({ user: null });
+    expect(
+      await completeAuthCallback({
+        hash: '',
+        search: '?access_token=at&refresh_token=rt&type=invite',
+        auth: b.auth,
+      })
+    ).toEqual({ ok: false, reason: 'missing' });
+    expect(b.setSession).not.toHaveBeenCalled();
+  });
+
+  // Review of s9.8: with a session open (or the attacker's own tokens
+  // in the fragment) a `next` that normalises to `//evil.com` used to
+  // be handed to window.location.replace.
+  it.each([
+    '//evil.com',
+    'https://evil.com',
+    '/\\evil.com',
+    '/%2F%2Fevil.com',
+    '/.//evil.com',
+    '/..//evil.com',
+    '/%2e//evil.com',
+    '/a/..//evil.com',
+  ])('never leaves the site with next=%s', async (next) => {
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 404 }));
+    for (const hash of ['', TOKENS]) {
+      const b = browserAuth({ user: { id: 'u' } });
+      const result = await completeAuthCallback({
+        hash,
+        search: `?next=${encodeURIComponent(next)}`,
+        auth: b.auth,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect(result).toEqual({ ok: true, destination: '/dashboard' });
+    }
+  });
+});
+
+describe('resolveCallback — forwarding drops an unsafe next', () => {
+  it.each(['/.//evil.com', '//evil.com', '/%2e//evil.com'])(
+    '%s is not passed to the browser page',
+    async (next) => {
+      const s = serverAuth({});
+      expect(
+        await resolveCallback(q(`next=${encodeURIComponent(next)}`), s.auth)
+      ).toBe('/auth/callback/complete');
+      expect(
+        await resolveCallback(
+          q(`error_code=otp_expired&next=${encodeURIComponent(next)}`),
+          s.auth
+        )
+      ).toBe('/auth/callback/complete?error_code=otp_expired');
+    }
+  );
 });

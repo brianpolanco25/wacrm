@@ -2,10 +2,23 @@ import { describe, expect, it } from 'vitest';
 
 import {
   authCallbackUrl,
+  isSameOriginPath,
   callbackDestination,
   resetPasswordPath,
   safeNextPath,
 } from './redirects';
+
+/** Inputs that normalise (or decode) into another host. */
+const OPEN_REDIRECT_VECTORS = [
+  '//evil.com',
+  '/\\evil.com',
+  'https://evil.com',
+  '/.//evil.com',
+  '/..//evil.com',
+  '/%2e//evil.com',
+  '/%2E%2E//evil.com',
+  '/a/..//evil.com',
+];
 
 describe('authCallbackUrl — the redirectTo of every auth email (s9.8)', () => {
   it('sign-up without invite: the bare callback', () => {
@@ -59,6 +72,42 @@ describe('safeNextPath', () => {
   ])('refuses %s', (p) => {
     expect(safeNextPath(p)).toBeNull();
   });
+  // Review of s9.8: the raw input passed, but `new URL` collapses the
+  // dot segments into `//evil.com`, another host.
+  it.each(OPEN_REDIRECT_VECTORS)('refuses %s (after normalising)', (p) => {
+    expect(safeNextPath(p)).toBeNull();
+  });
+
+  it('refuses a percent-encoded double slash in the path', () => {
+    expect(safeNextPath('/%2F%2Fevil.com')).toBeNull();
+    expect(safeNextPath('/%5Cevil.com')).toBeNull();
+  });
+
+  it('still keeps legitimate dot segments that stay on the site', () => {
+    expect(safeNextPath('/a/../settings')).toBe('/settings');
+  });
+});
+
+describe('isSameOriginPath — the final check on every destination', () => {
+  it.each(['/dashboard', '/join/a%20b', '/reset-password?invite=t&welcome=1'])(
+    'accepts %s',
+    (p) => {
+      expect(isSameOriginPath(p)).toBe(true);
+    }
+  );
+
+  it.each([
+    '//evil.com',
+    '/\\evil.com',
+    'https://evil.com',
+    '/%2F%2Fevil.com',
+    '/./x',
+    '/a/../b',
+    'evil.com',
+    '',
+  ])('refuses %s', (p) => {
+    expect(isSameOriginPath(p)).toBe(false);
+  });
 });
 
 describe('callbackDestination', () => {
@@ -96,6 +145,11 @@ describe('callbackDestination', () => {
     expect(callbackDestination({ type: 'signup' })).toBeNull();
     expect(callbackDestination({ type: 'email' })).toBeNull();
     expect(callbackDestination({})).toBeNull();
+  });
+
+  it.each(OPEN_REDIRECT_VECTORS)('ignores next=%s', (next) => {
+    expect(callbackDestination({ next })).toBeNull();
+    expect(callbackDestination({ next, invite: 'tok' })).toBe('/join/tok');
   });
 
   it('a safe next wins over the default; an unsafe one is ignored', () => {
