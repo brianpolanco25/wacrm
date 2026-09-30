@@ -39,10 +39,15 @@
 --   3. Reescribe las políticas de INSERT/UPDATE/DELETE/ALL de las tablas
 --      de inquilino que llamaban a `is_account_member` para que llamen a
 --      `can_write_account` — mismo bucle sobre `pg_policies` que la 057,
---      misma sustitución de nombre y nada más. 59 políticas al aplicar
+--      misma sustitución de nombre y nada más. 56 políticas en 24 tablas
 --      al escribir esta migración (el NOTICE lo dice).
---   4. Cuelga `record_support_write()` de cada tabla cuya política de
---      escritura acabe llamando a `can_write_account`.
+--   4. Cuelga de cada tabla cuya política de escritura acabe llamando a
+--      `can_write_account` dos triggers: `record_support_write()` (AFTER,
+--      el rastro, mirando la cuenta de OLD y de NEW) y
+--      `forbid_support_account_move()` (BEFORE UPDATE: una sesión de
+--      soporte no saca filas de una empresa a otra).
+--   5. Una sola sesión de soporte abierta por operador (índice UNIQUE
+--      parcial en `impersonation_log`).
 --
 -- Qué NO se abre al soporte, y por qué cada una
 --   accounts             renombrar / moneda de la cuenta y, sobre todo, la
@@ -54,6 +59,10 @@
 --   api_keys             una clave de API es una credencial permanente que
 --                        el operador vería en claro: el mismo acceso que
 --                        sobrevive a la sesión.
+--   webhook_endpoints    un webhook saliente es un canal permanente de los
+--                        eventos del cliente hacia una URL cualquiera: el
+--                        mismo motivo que `api_keys` (decisión del líder,
+--                        segunda ronda de s9.5).
 --   subscriptions,       facturación / PayPal del cliente. `subscriptions`
 --   checkout_intents     no tiene política de escritura y sigue sin ella
 --                        (058 lo afirma); `checkout_intents` tampoco.
@@ -170,10 +179,15 @@ COMMENT ON FUNCTION public.can_write_account(uuid, account_role_enum) IS
 -- ============================================================
 -- 3. El registro de las escrituras que no pasan por Next
 --
--- Una fila por fila escrita con el JWT de un operador que tiene una sesión
--- de soporte abierta, SOBRE LA CUENTA DE ESA SESIÓN. Si el operador
--- escribe en su propia empresa durante la sesión, eso no es una acción de
--- soporte y no se apunta aquí.
+-- Una fila por fila escrita con el JWT de un operador, POR CADA CUENTA DE
+-- LA FILA sobre la que ese operador tiene una sesión de soporte abierta.
+-- "Las cuentas de la fila": la de OLD y la de NEW. Mirar solo NEW dejaba
+-- sin rastro justo el UPDATE que saca una fila de la cuenta del cliente
+-- (revisión de s9.5, H1); y la sesión se busca POR LA CUENTA DE LA FILA,
+-- no "la más reciente del operador", que con dos sesiones abiertas dejaba
+-- sin rastro las escrituras en la otra (H2). Si el operador escribe en su
+-- propia empresa durante la sesión, eso no es una acción de soporte y no
+-- se apunta.
 --
 -- La cuenta de la fila: su propia columna `account_id` o, en las tablas
 -- hijas que no la tienen, la de su padre. Para esas el trigger recibe dos
@@ -192,11 +206,13 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  uid         uuid := auth.uid();
-  session_id  uuid;
-  session_acc uuid;
-  rec         jsonb;
-  row_account uuid;
+  uid      uuid := auth.uid();
+  rec_old  jsonb;
+  rec_new  jsonb;
+  old_acc  uuid;
+  new_acc  uuid;
+  acc      uuid;
+  sid      uuid;
 BEGIN
   -- Rol de servicio, webhook, crons: no hay operador. Nada que hacer, y
   -- nada que cueste (CP11).
@@ -204,42 +220,70 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  SELECT l.id, l.account_id
-    INTO session_id, session_acc
-    FROM impersonation_log l
-   WHERE l.actor_user_id = uid
-     AND l.action = 'impersonation'
-     AND l.ended_at IS NULL
-     AND l.expires_at > now()
-   ORDER BY l.started_at DESC
-   LIMIT 1;
-
-  IF session_id IS NULL THEN
+  -- Un usuario normal no tiene ninguna sesión abierta: salida barata por el
+  -- índice parcial, antes de convertir la fila.
+  IF NOT EXISTS (
+    SELECT 1 FROM impersonation_log l
+     WHERE l.actor_user_id = uid
+       AND l.action = 'impersonation'
+       AND l.ended_at IS NULL
+       AND l.expires_at > now()
+  ) THEN
     RETURN NULL;
   END IF;
 
-  rec := to_jsonb(CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END);
-
-  IF TG_NARGS >= 2 THEN
-    EXECUTE TG_ARGV[0] INTO row_account USING (rec ->> TG_ARGV[1])::uuid;
-  ELSE
-    row_account := (rec ->> 'account_id')::uuid;
+  IF TG_OP <> 'INSERT' THEN
+    rec_old := to_jsonb(OLD);
+    IF TG_NARGS >= 2 THEN
+      EXECUTE TG_ARGV[0] INTO old_acc USING (rec_old ->> TG_ARGV[1])::uuid;
+    ELSE
+      old_acc := (rec_old ->> 'account_id')::uuid;
+    END IF;
+  END IF;
+  IF TG_OP <> 'DELETE' THEN
+    rec_new := to_jsonb(NEW);
+    IF TG_NARGS >= 2 THEN
+      EXECUTE TG_ARGV[0] INTO new_acc USING (rec_new ->> TG_ARGV[1])::uuid;
+    ELSE
+      new_acc := (rec_new ->> 'account_id')::uuid;
+    END IF;
   END IF;
 
-  IF row_account IS DISTINCT FROM session_acc THEN
-    RETURN NULL;
-  END IF;
+  FOR acc IN
+    SELECT DISTINCT a FROM unnest(ARRAY[old_acc, new_acc]) AS a WHERE a IS NOT NULL
+  LOOP
+    sid := NULL;
+    SELECT l.id INTO sid
+      FROM impersonation_log l
+     WHERE l.actor_user_id = uid
+       AND l.account_id = acc
+       AND l.action = 'impersonation'
+       AND l.ended_at IS NULL
+       AND l.expires_at > now()
+     ORDER BY l.started_at DESC
+     LIMIT 1;
 
-  INSERT INTO impersonation_actions
-    (log_id, actor_user_id, account_id, method, path, source)
-  VALUES (
-    session_id,
-    uid,
-    session_acc,
-    CASE TG_OP WHEN 'INSERT' THEN 'POST' WHEN 'UPDATE' THEN 'PATCH' ELSE 'DELETE' END,
-    'db:' || TG_TABLE_NAME || COALESCE('/' || (rec ->> 'id'), ''),
-    'db'
-  );
+    IF sid IS NOT NULL THEN
+      INSERT INTO impersonation_actions
+        (log_id, actor_user_id, account_id, method, path, source)
+      VALUES (
+        sid,
+        uid,
+        acc,
+        CASE TG_OP WHEN 'INSERT' THEN 'POST' WHEN 'UPDATE' THEN 'PATCH' ELSE 'DELETE' END,
+        'db:' || TG_TABLE_NAME
+          || COALESCE(
+               '/' || (COALESCE(rec_new, rec_old) ->> 'id'),
+               -- sin `id` propio: la clave del padre identifica la fila
+               CASE WHEN TG_NARGS >= 2
+                    THEN '/' || TG_ARGV[1] || '=' || (COALESCE(rec_new, rec_old) ->> TG_ARGV[1])
+               END,
+               ''),
+        'db'
+      );
+    END IF;
+  END LOOP;
+
   RETURN NULL;
 END;
 $$;
@@ -249,8 +293,111 @@ REVOKE ALL ON FUNCTION public.record_support_write() FROM PUBLIC;
 
 COMMENT ON FUNCTION public.record_support_write() IS
   'Trigger AFTER ROW: apunta en impersonation_actions (source=db) cada fila '
-  'que un operador escribe con su JWT sobre la cuenta de su sesión de '
-  'soporte abierta (migración 072).';
+  'que un operador escribe con su JWT, por cada cuenta de la fila (OLD y NEW) '
+  'sobre la que tiene una sesión de soporte abierta (migración 072).';
+
+-- ============================================================
+-- 3b. Una sesión de soporte no mueve filas entre empresas
+--
+-- La política de UPDATE sin WITH CHECK reutiliza la USING para la fila
+-- nueva: la vieja pasa por la sesión (cuenta del cliente) y la nueva por
+-- la pertenencia del operador a SU empresa. Resultado: `UPDATE contacts SET
+-- account_id = <empresa del operador>` sacaba datos del cliente. Mover
+-- datos entre empresas no es una acción de soporte, así que se prohíbe
+-- aquí, con un solo trigger BEFORE UPDATE para las tablas abiertas en vez
+-- de 24 políticas con WITH CHECK a mano: cubre también las hijas (cambiar
+-- `contact_tags.contact_id` a un contacto de otra empresa) y no toca en
+-- nada el UPDATE de un miembro normal, que no tiene sesión abierta.
+--
+-- Salta en cuanto la cuenta (o la clave del padre) no cambia: el caso de
+-- todos los UPDATE de la aplicación.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.forbid_support_account_move()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  uid      uuid := auth.uid();
+  rec_old  jsonb;
+  rec_new  jsonb;
+  key_col  text := CASE WHEN TG_NARGS >= 2 THEN TG_ARGV[1] ELSE 'account_id' END;
+  old_acc  uuid;
+  new_acc  uuid;
+BEGIN
+  IF uid IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  rec_old := to_jsonb(OLD);
+  rec_new := to_jsonb(NEW);
+  IF (rec_old ->> key_col) IS NOT DISTINCT FROM (rec_new ->> key_col) THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_NARGS >= 2 THEN
+    EXECUTE TG_ARGV[0] INTO old_acc USING (rec_old ->> key_col)::uuid;
+    EXECUTE TG_ARGV[0] INTO new_acc USING (rec_new ->> key_col)::uuid;
+  ELSE
+    old_acc := (rec_old ->> key_col)::uuid;
+    new_acc := (rec_new ->> key_col)::uuid;
+  END IF;
+
+  IF old_acc IS NOT DISTINCT FROM new_acc THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM impersonation_log l
+     WHERE l.actor_user_id = uid
+       AND l.account_id IN (old_acc, new_acc)
+       AND l.action = 'impersonation'
+       AND l.ended_at IS NULL
+       AND l.expires_at > now()
+  ) THEN
+    RAISE EXCEPTION 'a support session cannot move rows between accounts (%)', TG_TABLE_NAME
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+ALTER FUNCTION public.forbid_support_account_move() OWNER TO postgres;
+REVOKE ALL ON FUNCTION public.forbid_support_account_move() FROM PUBLIC;
+
+COMMENT ON FUNCTION public.forbid_support_account_move() IS
+  'Trigger BEFORE UPDATE: rechaza (42501) que un operador con sesión de '
+  'soporte abierta sobre la cuenta vieja o la nueva cambie la cuenta de una '
+  'fila (o la clave de su padre). Migración 072.';
+
+-- ============================================================
+-- 3c. Una sola sesión de soporte abierta por operador
+--
+-- Con dos sesiones abiertas (dos navegadores) la bitácora dejaba de decir
+-- dónde estaba actuando el operador (revisión de s9.5, H2). La ruta que
+-- abre una sesión cierra ahora TODAS las abiertas del operador antes de
+-- escribir la nueva; este índice es lo que lo garantiza aunque dos
+-- peticiones lleguen a la vez. Antes de crearlo, las filas duplicadas que
+-- pudiera haber se cierran como `superseded` (se queda abierta la más
+-- reciente de cada operador).
+-- ============================================================
+UPDATE impersonation_log l
+   SET ended_at = now(), ended_reason = 'superseded'
+ WHERE l.action = 'impersonation'
+   AND l.ended_at IS NULL
+   AND EXISTS (
+     SELECT 1 FROM impersonation_log n
+      WHERE n.actor_user_id = l.actor_user_id
+        AND n.action = 'impersonation'
+        AND n.ended_at IS NULL
+        AND (n.started_at, n.id) > (l.started_at, l.id)
+   );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_impersonation_log_one_open_session
+  ON impersonation_log(actor_user_id)
+  WHERE action = 'impersonation' AND ended_at IS NULL;
 
 -- ============================================================
 -- 4. Reescritura de las políticas de escritura y triggers
@@ -270,7 +417,7 @@ COMMENT ON FUNCTION public.record_support_write() IS
 DO $$
 DECLARE
   excluded  text[] := ARRAY[
-    'accounts', 'account_invitations', 'api_keys',
+    'accounts', 'account_invitations', 'api_keys', 'webhook_endpoints',
     'subscriptions', 'checkout_intents',
     'platform_admins', 'impersonation_log', 'impersonation_actions',
     'profiles', 'notifications'
@@ -326,6 +473,47 @@ BEGIN
 
   RAISE NOTICE '072: % políticas de escritura abiertas a la sesión de soporte (can_write_account)', touched;
 
+  -- Al revés, para las excluidas: una base donde una versión anterior de
+  -- esta migración abrió una tabla que ahora está cerrada
+  -- (`webhook_endpoints`, cerrada en la segunda ronda de s9.5) vuelve a
+  -- `is_account_member` y pierde sus triggers.
+  touched := 0;
+  FOR pol IN
+    SELECT schemaname, tablename, policyname, permissive, cmd,
+           pg_policies.roles AS role_names, qual, with_check
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND cmd IN ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+      AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%can_write_account(%'
+      AND tablename = ANY (excluded)
+  LOOP
+    SELECT string_agg(
+             CASE WHEN r = 'public' THEN 'PUBLIC' ELSE quote_ident(r) END, ', ')
+      INTO role_list
+      FROM unnest(pol.role_names) AS r;
+    using_sql := CASE WHEN pol.qual IS NULL THEN ''
+      ELSE format(' USING (%s)', replace(pol.qual, 'can_write_account(', 'is_account_member(')) END;
+    check_sql := CASE WHEN pol.with_check IS NULL THEN ''
+      ELSE format(' WITH CHECK (%s)', replace(pol.with_check, 'can_write_account(', 'is_account_member(')) END;
+    EXECUTE format('DROP POLICY %I ON %I.%I',
+                   pol.policyname, pol.schemaname, pol.tablename);
+    EXECUTE format('CREATE POLICY %I ON %I.%I AS %s FOR %s TO %s%s%s',
+                   pol.policyname, pol.schemaname, pol.tablename,
+                   CASE WHEN pol.permissive = 'PERMISSIVE'
+                        THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END,
+                   pol.cmd, role_list, using_sql, check_sql);
+    touched := touched + 1;
+  END LOOP;
+  FOR tbl IN SELECT unnest(excluded) AS tablename LOOP
+    IF to_regclass(format('public.%I', tbl.tablename)) IS NOT NULL THEN
+      EXECUTE format('DROP TRIGGER IF EXISTS record_support_write ON public.%I', tbl.tablename);
+      EXECUTE format('DROP TRIGGER IF EXISTS forbid_support_account_move ON public.%I', tbl.tablename);
+    END IF;
+  END LOOP;
+  IF touched > 0 THEN
+    RAISE NOTICE '072: % políticas de tablas excluidas devueltas a is_account_member', touched;
+  END IF;
+
   -- Un trigger por tabla que acabe con una política de escritura que
   -- llama a `can_write_account` — también en la segunda pasada, cuando el
   -- bucle de arriba ya no encuentra nada que reescribir.
@@ -344,16 +532,27 @@ BEGIN
     ) INTO has_col;
 
     EXECUTE format('DROP TRIGGER IF EXISTS record_support_write ON public.%I', tbl.tablename);
+    EXECUTE format('DROP TRIGGER IF EXISTS forbid_support_account_move ON public.%I', tbl.tablename);
 
     IF has_col THEN
       EXECUTE format(
         'CREATE TRIGGER record_support_write AFTER INSERT OR UPDATE OR DELETE '
         'ON public.%I FOR EACH ROW EXECUTE FUNCTION public.record_support_write()',
         tbl.tablename);
+      EXECUTE format(
+        'CREATE TRIGGER forbid_support_account_move BEFORE UPDATE '
+        'ON public.%I FOR EACH ROW EXECUTE FUNCTION public.forbid_support_account_move()',
+        tbl.tablename);
     ELSIF parents ? tbl.tablename THEN
       EXECUTE format(
         'CREATE TRIGGER record_support_write AFTER INSERT OR UPDATE OR DELETE '
         'ON public.%I FOR EACH ROW EXECUTE FUNCTION public.record_support_write(%L, %L)',
+        tbl.tablename,
+        parents -> tbl.tablename ->> 0,
+        parents -> tbl.tablename ->> 1);
+      EXECUTE format(
+        'CREATE TRIGGER forbid_support_account_move BEFORE UPDATE '
+        'ON public.%I FOR EACH ROW EXECUTE FUNCTION public.forbid_support_account_move(%L, %L)',
         tbl.tablename,
         parents -> tbl.tablename ->> 0,
         parents -> tbl.tablename ->> 1);
@@ -365,6 +564,6 @@ BEGIN
     triggered := triggered + 1;
   END LOOP;
 
-  RAISE NOTICE '072: record_support_write colgado de % tablas', triggered;
+  RAISE NOTICE '072: record_support_write y forbid_support_account_move colgados de % tablas', triggered;
 END
 $$;

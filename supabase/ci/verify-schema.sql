@@ -1531,12 +1531,13 @@ BEGIN
     RAISE EXCEPTION 'record_support_write() is missing or not SECURITY DEFINER (migration 072)';
   END IF;
 
-  -- Cuántas políticas de escritura abre la 072 (59 al escribirla). Un
-  -- número menor significa que el bucle no corrió o se quedó corto.
+  -- Cuántas políticas de escritura abre la 072 (56 en 24 tablas al
+  -- escribirla). Un número menor significa que el bucle no corrió o se
+  -- quedó corto.
   IF (SELECT count(*) FROM pg_policies
       WHERE schemaname = 'public' AND cmd <> 'SELECT'
-        AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%can_write_account(%') < 59 THEN
-    RAISE EXCEPTION 'fewer than 59 write policies call can_write_account (migration 072)';
+        AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%can_write_account(%') < 56 THEN
+    RAISE EXCEPTION 'fewer than 56 write policies call can_write_account (migration 072)';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
@@ -1553,7 +1554,8 @@ BEGIN
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'public' AND cmd <> 'SELECT'
       AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%is_account_member(%'
-      AND tablename NOT IN ('accounts', 'account_invitations', 'api_keys')
+      AND tablename NOT IN ('accounts', 'account_invitations', 'api_keys',
+                            'webhook_endpoints')
   ) THEN
     RAISE EXCEPTION 'a write policy still calls is_account_member() directly; use can_write_account() or exclude the table explicitly (migration 072)';
   END IF;
@@ -1564,7 +1566,7 @@ BEGIN
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'public' AND cmd <> 'SELECT'
       AND tablename IN ('accounts', 'account_invitations', 'api_keys',
-                        'subscriptions', 'checkout_intents', 'platform_admins',
+                        'webhook_endpoints', 'subscriptions', 'checkout_intents', 'platform_admins',
                         'impersonation_log', 'impersonation_actions',
                         'profiles', 'notifications')
       AND (COALESCE(qual, '') || COALESCE(with_check, ''))
@@ -1586,6 +1588,47 @@ BEGIN
       )
   ) THEN
     RAISE EXCEPTION 'a support-writable table has no record_support_write trigger — its writes would go unaudited (migration 072)';
+  END IF;
+  -- …y ninguna deja que la sesión mueva filas entre empresas (H1 de la
+  -- revisión de s9.5).
+  IF EXISTS (
+    SELECT DISTINCT tablename FROM pg_policies pol
+    WHERE schemaname = 'public' AND cmd <> 'SELECT'
+      AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%can_write_account(%'
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_trigger t
+        WHERE t.tgrelid = format('public.%I', pol.tablename)::regclass
+          AND t.tgname = 'forbid_support_account_move' AND NOT t.tgisinternal
+      )
+  ) THEN
+    RAISE EXCEPTION 'a support-writable table has no forbid_support_account_move trigger — a support session could move its rows to another account (migration 072)';
+  END IF;
+  -- El rastro mira la fila vieja Y la nueva, y busca la sesión por la
+  -- cuenta de la fila (H1/H2).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'record_support_write'
+      AND p.prosrc LIKE '%rec_old%' AND p.prosrc LIKE '%l.account_id = acc%'
+  ) THEN
+    RAISE EXCEPTION 'record_support_write() does not look at OLD or does not find the session by the row''s account (migration 072)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'forbid_support_account_move' AND p.prosecdef
+  ) THEN
+    RAISE EXCEPTION 'forbid_support_account_move() is missing or not SECURITY DEFINER (migration 072)';
+  END IF;
+  -- Una sola sesión abierta por operador (H2).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relname = 'uq_impersonation_log_one_open_session'
+      AND i.indrelid = 'public.impersonation_log'::regclass
+      AND i.indisunique
+      AND pg_get_expr(i.indpred, i.indrelid) LIKE '%ended_at IS NULL%'
+      AND pg_get_expr(i.indpred, i.indrelid) LIKE '%impersonation%'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_log allows two open support sessions per operator (migration 072)';
   END IF;
   -- /072 -----------------------------------------------------------
 
