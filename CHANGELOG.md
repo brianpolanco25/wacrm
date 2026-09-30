@@ -940,6 +940,23 @@ behaviour changes**; nothing is limited by plan yet.
   the deal cards now follow the reader's locale instead of being pinned
   to US English.
 
+### Platform console: the Overview
+
+> **Migration required:** apply
+> `supabase/migrations/069_platform_metrics.sql`.
+
+- `/platform` now shows the service at a glance instead of «coming soon»
+  cards: total accounts and accounts by subscription status, **MRR** and
+  **ARR** in USD (yearly plans count as a twelfth of their price; comped
+  accounts stay out), comped accounts, signups in the last 7 and 30 days,
+  delinquent accounts (past due and suspended), connected WhatsApp
+  numbers, and this month's inbound and outbound messages.
+- A bar chart of signups per week over the last 12 weeks, with a tooltip
+  per week.
+- The figures come from `GET /api/platform/metrics`, operators only; while
+  they load the page says so, and a failed load is shown as an error, never
+  as zeros.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same
