@@ -27,6 +27,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { USAGE_METRICS } from '@/lib/billing/subscription-view';
+import { NewAccountButton } from './platform-provisioning';
 
 interface AccountRow {
   accountId: string;
@@ -121,6 +122,10 @@ export function PlatformAccounts() {
           </Button>
         </form>
       </div>
+
+      {/* s9.4: companies are created from here; the rest of what an
+          operator changes lives on each company's file. */}
+      <NewAccountButton onCreated={load} />
 
       {failed ? (
         <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-center gap-2 rounded-lg border p-4 text-sm">

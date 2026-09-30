@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clampExpiryDays,
   DEFAULT_INVITE_EXPIRY_DAYS,
@@ -7,6 +7,7 @@ import {
   inviteExpiresAt,
   inviteUrl,
   MAX_INVITE_EXPIRY_DAYS,
+  resolveInviteBaseUrl,
 } from "./invitations";
 
 describe("generateInviteToken", () => {
@@ -140,5 +141,44 @@ describe("inviteExpiresAt", () => {
       now.getTime() + MAX_INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
     );
     expect(out.toISOString()).toBe(expected.toISOString());
+  });
+});
+
+describe("resolveInviteBaseUrl (shared by the Team tab and the platform panel, s9.4)", () => {
+  const reqWith = (headers: Record<string, string>) =>
+    new Request("http://internal/x", { headers });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("prefers NEXT_PUBLIC_SITE_URL, without a trailing slash", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://crm.example.com/");
+    expect(resolveInviteBaseUrl(reqWith({ host: "evil.test" }))).toBe(
+      "https://crm.example.com",
+    );
+  });
+
+  it("uses the proxy headers when no site URL is set", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    vi.stubEnv("ALLOWED_INVITE_HOSTS", "");
+    expect(
+      resolveInviteBaseUrl(
+        reqWith({ "x-forwarded-host": "app.test", "x-forwarded-proto": "https" }),
+      ),
+    ).toBe("https://app.test");
+  });
+
+  it("refuses a host outside ALLOWED_INVITE_HOSTS", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    vi.stubEnv("ALLOWED_INVITE_HOSTS", "crm.example.com");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
+      resolveInviteBaseUrl(reqWith({ "x-forwarded-host": "phishing.test" })),
+    ).toBe("https://wacrm.tech");
+    expect(
+      resolveInviteBaseUrl(reqWith({ "x-forwarded-host": "crm.example.com" })),
+    ).toBe("https://crm.example.com");
   });
 });
