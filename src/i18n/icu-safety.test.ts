@@ -20,7 +20,7 @@ import { createTranslator } from 'next-intl';
 
 const MESSAGES_DIR = join(process.cwd(), 'messages');
 const SOURCE_LOCALE = 'en';
-const TRANSLATED_LOCALES = ['es', 'ko'];
+const TRANSLATED_LOCALES = ['es'];
 const SRC = join(process.cwd(), 'src');
 
 /** Leaf keypaths whose value next-intl cannot parse as an ICU message. */

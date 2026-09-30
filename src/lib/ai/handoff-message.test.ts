@@ -33,12 +33,12 @@ describe('DEFAULT_HANDOFF_MESSAGE stays in sync with its copies', () => {
     );
   });
 
-  it('is English, not Spanish — the product only ships en/ko catalogues', () => {
-    const ko = JSON.parse(
-      readFileSync(join(repoRoot, 'messages', 'ko.json'), 'utf8')
+  it('is English, as migration 043 seeded it, with the placeholder in es too', () => {
+    const es = JSON.parse(
+      readFileSync(join(repoRoot, 'messages', 'es.json'), 'utf8')
     );
     // Same key present in both catalogues (CP6); the seed itself is `en`.
-    expect(ko.Settings.aiConfig.handoffMessagePlaceholder).toBeTruthy();
+    expect(es.Settings.aiConfig.handoffMessagePlaceholder).toBeTruthy();
     expect(DEFAULT_HANDOFF_MESSAGE).not.toMatch(/Gracias por escribirnos/);
   });
 });

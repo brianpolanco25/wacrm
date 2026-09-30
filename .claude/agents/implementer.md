@@ -43,8 +43,8 @@ el código y los commits, en tu worktree.
      objeto nuevo en `supabase/ci/verify-schema.sql`. Nunca supabase contra un proyecto remoto.
    - Toda consulta con el cliente de rol de servicio (`supabaseAdmin()`) filtra por `account_id`
      y lleva test de fuga entre cuentas.
-   - Textos de UI en `messages/es.json`, `messages/en.json` y `messages/ko.json` (los tres
-     catálogos completos del repo; `es` es el idioma por defecto), misma clave.
+   - Textos de UI en `messages/es.json` y `messages/en.json` (los dos catálogos del repo;
+     `es` es el idioma por defecto), misma clave.
    - Prettier en lo tocado: `npx prettier --write <archivos>`.
 5. **Verifica.** Aquí SÍ hay runner: cada criterio de aceptación del spec lleva su test vitest
    junto al código (`*.test.ts`, patrón de mocks encadenados de

@@ -5,11 +5,10 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
-import ko from '../../../messages/ko.json';
 
 // s9.6: the three steps of /onboarding, rendered to static markup like
 // the rest of the component tests (no jsdom). The step comes from the
-// server; this checks that each one renders what it should, in es/en/ko.
+// server; this checks that each one renders what it should, in es/en.
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: () => {}, refresh: () => {} }),
@@ -24,15 +23,14 @@ vi.mock('@/hooks/use-auth', () => ({
 import { OnboardingFlow, type OnboardingFlowState } from './onboarding-flow';
 
 type Catalogue = typeof es;
-const CATALOGUES: Array<['es' | 'en' | 'ko', Catalogue]> = [
+const CATALOGUES: Array<['es' | 'en', Catalogue]> = [
   ['es', es],
   ['en', en as Catalogue],
-  ['ko', ko as Catalogue],
 ];
 
 function render(
   state: OnboardingFlowState,
-  locale: 'es' | 'en' | 'ko' = 'es',
+  locale: 'es' | 'en' = 'es',
   messages: Catalogue = es
 ) {
   return renderToStaticMarkup(

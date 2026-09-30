@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 const MESSAGES_DIR = join(process.cwd(), 'messages');
 const SOURCE_LOCALE = 'en';
-const TRANSLATED_LOCALES = ['es', 'ko'];
+const TRANSLATED_LOCALES = ['es'];
 /** The locale a deployment gets when NEXT_PUBLIC_APP_LOCALE is unset. */
 const DEFAULT_LOCALE = 'es';
 
@@ -165,6 +165,17 @@ function icuArguments(message: string): Set<string> {
   return found;
 }
 
+describe('shipped catalogues', () => {
+  // s9.9 retired Korean: the product ships es (default) and en, and a
+  // stray catalogue would silently re-open the three-way parity chore.
+  it('messages/ holds exactly en.json and es.json', () => {
+    const files = readdirSync(MESSAGES_DIR)
+      .filter((f) => f.endsWith('.json'))
+      .sort();
+    expect(files).toEqual(['en.json', 'es.json']);
+  });
+});
+
 describe('message catalogue parity', () => {
   const source = loadKeys(SOURCE_LOCALE);
 
@@ -214,9 +225,7 @@ describe('ICU placeholders survive translation', () => {
   );
 
   // ICU requires an `other` branch; without it the message does not parse
-  // and next-intl renders the keypath. Deliberately not "the same branches
-  // as en": Korean has no plural forms, so ko.json collapses
-  // `{count, plural, …}` to a plain `{count}` on purpose.
+  // and next-intl renders the keypath.
   it.each(TRANSLATED_LOCALES)(
     '%s.json never leaves a plural without `other`',
     (locale) => {

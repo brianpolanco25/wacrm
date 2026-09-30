@@ -5,7 +5,6 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
-import ko from '../../../messages/ko.json';
 import { useSubscriptionStatusLabel } from './subscription-status';
 
 // s9.6: the census and the account page name `incomplete` as a state of
@@ -18,7 +17,7 @@ function Label({ status }: { status: string | null }) {
 
 function render(
   status: string | null,
-  locale: 'es' | 'en' | 'ko',
+  locale: 'es' | 'en',
   messages: typeof es
 ) {
   return renderToStaticMarkup(
@@ -32,7 +31,6 @@ describe('useSubscriptionStatusLabel', () => {
   it.each([
     ['es', es],
     ['en', en as typeof es],
-    ['ko', ko as typeof es],
   ] as const)('names incomplete in %s', (locale, messages) => {
     expect(render('incomplete', locale, messages)).toBe(
       `<span>${messages.Platform.metrics.status.incomplete}</span>`

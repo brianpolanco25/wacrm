@@ -7,7 +7,6 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
-import ko from '../../../messages/ko.json';
 import { PLAN_FEATURES, PLAN_LIMIT_KEYS } from '@/lib/billing/plan-catalog';
 import { PlatformPlans, type PlatformPlanView } from './platform-plans';
 
@@ -15,7 +14,7 @@ import { PlatformPlans, type PlatformPlanView } from './platform-plans';
 // rendered to static markup with a pre-loaded catalogue. What the page
 // DOES is tested in the route tests and in `plan-form.test.ts`.
 
-const CATALOGUES = { en, es, ko } as const;
+const CATALOGUES = { en, es } as const;
 
 const SYNC = (state: string, id: string | null = null) => ({
   state,
@@ -135,7 +134,7 @@ describe('PlatformPlans', () => {
     expect(render('en')).not.toContain(en.Platform.plans.paypalMissing);
   });
 
-  it.each(['en', 'es', 'ko'] as const)('is translated in %s (CP6)', (loc) => {
+  it.each(['en', 'es'] as const)('is translated in %s (CP6)', (loc) => {
     const html = render(loc);
     expect(html).toContain(CATALOGUES[loc].Platform.plans.title);
     expect(html).not.toContain('Platform.plans.');
@@ -215,7 +214,7 @@ describe('Platform.plans catalogue (CP6)', () => {
       );
   }
 
-  it.each(['en', 'es', 'ko'] as const)(
+  it.each(['en', 'es'] as const)(
     'every static key the page asks for exists in %s',
     (loc) => {
       const keys = keysUsedBy('platform-plans.tsx');
@@ -229,7 +228,7 @@ describe('Platform.plans catalogue (CP6)', () => {
     }
   );
 
-  it.each(['en', 'es', 'ko'] as const)(
+  it.each(['en', 'es'] as const)(
     'every metric, feature, state and cycle has a label in %s',
     (loc) => {
       const plans = CATALOGUES[loc].Platform.plans as unknown as Record<

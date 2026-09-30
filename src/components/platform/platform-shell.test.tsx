@@ -5,14 +5,13 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
-import ko from '../../../messages/ko.json';
 
 /**
  * s9.1: the operator's panel has its own chrome. Rendered to static
  * markup, same approach as `platform-panel.test.tsx` (no jsdom, no new
  * dependency): it pins which links the nav offers, which it does NOT
  * (no inbox, contacts or pipelines), that the way back to the CRM is
- * there, and that every string is translated in es/en/ko (CP6).
+ * there, and that every string is translated in es/en (CP6).
  */
 
 let pathname = '/platform';
@@ -35,15 +34,14 @@ import { PlatformFrame, platformSectionFor } from './platform-shell';
 import { PlatformPlaceholder } from './platform-placeholder';
 
 type Catalogue = typeof es;
-const CATALOGUES: Array<['es' | 'en' | 'ko', Catalogue]> = [
+const CATALOGUES: Array<['es' | 'en', Catalogue]> = [
   ['es', es],
   ['en', en as Catalogue],
-  ['ko', ko as Catalogue],
 ];
 
 function render(
   node: React.ReactNode,
-  locale: 'es' | 'en' | 'ko' = 'es',
+  locale: 'es' | 'en' = 'es',
   messages: Catalogue = es
 ): string {
   return renderToStaticMarkup(
@@ -57,7 +55,7 @@ type Support = React.ComponentProps<typeof PlatformFrame>['support'];
 
 function frame(
   path = '/platform',
-  locale: 'es' | 'en' | 'ko' = 'es',
+  locale: 'es' | 'en' = 'es',
   support: Support = null
 ) {
   pathname = path;

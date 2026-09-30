@@ -1,4 +1,4 @@
-import { DEFAULT_LOCALE } from '@/i18n/request';
+import { resolveLocale } from '@/i18n/request';
 
 import { DOCS_LOCALES, type DocSlug, type DocsLocale } from './types';
 
@@ -10,12 +10,12 @@ export const DOCS_BASE = '/developers';
  *
  * La instancia tiene un solo idioma de interfaz (`NEXT_PUBLIC_APP_LOCALE`,
  * `src/i18n/request.ts`), así que se hereda: una instancia en español
- * abre la documentación en español. El coreano no tiene prosa (S-A5) y
- * cae a inglés, igual que cualquier valor desconocido.
+ * abre la documentación en español. Un valor que el producto no sirve
+ * (`ko`, retirado en s9.9, o cualquier otro) cae a `es` igual que la
+ * interfaz, vía `resolveLocale`.
  */
 export function instanceDocsLocale(): DocsLocale {
-  const appLocale = process.env.NEXT_PUBLIC_APP_LOCALE || DEFAULT_LOCALE;
-  return appLocale === 'es' ? 'es' : 'en';
+  return resolveLocale(process.env.NEXT_PUBLIC_APP_LOCALE);
 }
 
 /** Lee el `?lang=` de la URL; cualquier otra cosa es el idioma de la instancia. */

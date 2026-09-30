@@ -5,7 +5,6 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
-import ko from '../../../messages/ko.json';
 import type { SupportActivity } from '@/lib/platform/support-activity';
 import {
   ImpersonationActions,
@@ -69,7 +68,7 @@ const ACTIVITY: SupportActivity = {
   ],
 };
 
-const CATALOGUES = { en, es, ko } as const;
+const CATALOGUES = { en, es } as const;
 
 function render(
   node: React.ReactNode,
@@ -158,7 +157,7 @@ describe('SupportSessionList', () => {
     expect(html).toContain('500 most recent');
   });
 
-  it.each(['es', 'ko'] as const)('is translated in %s (CP6)', (locale) => {
+  it.each(['es', 'en'] as const)('is translated in %s (CP6)', (locale) => {
     const html = render(
       <SupportSessionList activity={ACTIVITY} actionLimit={500} />,
       locale
