@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { resolveEffectiveAccountId } from '@/lib/auth/account';
 import { createClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { getSubscribedApps, verifyPhoneNumber } from '@/lib/whatsapp/meta-api';
@@ -38,12 +39,10 @@ export async function GET(request: Request) {
   // whatsapp_config is one-row-per-account post-017. Resolve the
   // caller's account_id so a teammate who joined an existing account
   // sees the same registration state as the admin who set it up.
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  const accountId = profile?.account_id as string | undefined;
+  // The effective account (s9.5): the impersonated company inside a
+  // support session, never the operator's own profile.
+  const accountId =
+    (await resolveEffectiveAccountId(supabase, user.id)) ?? undefined;
   if (!accountId) {
     return NextResponse.json({
       live: false,

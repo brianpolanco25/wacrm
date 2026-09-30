@@ -73,6 +73,8 @@ function fakeClient() {
 }
 
 vi.mock('@/lib/auth/account', () => ({
+  // s9.5: outside a support session this is a no-op.
+  assertNotSupportSession: async () => {},
   requireRole: async () => ({
     supabase: fakeClient(),
     accountId: h.accountId,

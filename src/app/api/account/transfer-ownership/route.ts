@@ -21,7 +21,7 @@
 import { NextResponse } from "next/server";
 import type { PostgrestError } from "@supabase/supabase-js";
 
-import { requireRole, toErrorResponse } from "@/lib/auth/account";
+import { assertNotSupportSession, requireRole, toErrorResponse } from "@/lib/auth/account";
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -58,6 +58,8 @@ export async function POST(request: Request) {
     // this too, but failing fast here saves a Supabase round trip
     // on the obvious "admin trying to transfer" case.
     const ctx = await requireRole("owner");
+    // s9.5: never during a support session, whatever the role.
+    await assertNotSupportSession(ctx);
 
     // Rate-limit owner-only transfers. Legitimate use is one click
     // every few months at most; a script run in a loop would

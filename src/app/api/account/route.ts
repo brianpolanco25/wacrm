@@ -13,11 +13,7 @@
 
 import { NextResponse } from "next/server";
 
-import {
-  requireRole,
-  getCurrentAccount,
-  toErrorResponse,
-} from "@/lib/auth/account";
+import { assertNotSupportSession, requireRole, getCurrentAccount, toErrorResponse } from "@/lib/auth/account";
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -41,6 +37,8 @@ const MAX_NAME_LEN = 80;
 export async function PATCH(request: Request) {
   try {
     const ctx = await requireRole("admin");
+    // s9.5: never during a support session, whatever the role.
+    await assertNotSupportSession(ctx);
 
     // Per-user limit on admin-class mutations. Bounds accidental
     // abuse (script run in a loop) and a compromised admin session

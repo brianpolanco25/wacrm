@@ -52,7 +52,11 @@
 
 import { NextResponse } from 'next/server';
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import {
+  assertNotSupportSession,
+  requireRole,
+  toErrorResponse,
+} from '@/lib/auth/account';
 import {
   expiryFromDays,
   generateApiKey,
@@ -73,6 +77,8 @@ export async function POST(
 ) {
   try {
     const ctx = await requireRole('admin');
+    // s9.5: never during a support session, whatever the role.
+    await assertNotSupportSession(ctx);
     // Same rule as minting: the replacement key would be refused by
     // `/api/v1` on a plan without the `api` feature.
     await assertPlanFeature(ctx.accountId, 'api');

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { resolveEffectiveAccountId } from '@/lib/auth/account';
 import { createClient } from '@/lib/supabase/server';
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api';
 import {
@@ -35,12 +36,10 @@ export async function GET(
     // account post-multi-user, so a teammate fetching media for a
     // conversation in the shared inbox needs the account's config,
     // not their personal (non-existent) row.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    const accountId = profile?.account_id as string | undefined;
+    // The effective account (s9.5): the impersonated company inside a
+    // support session, never the operator's own profile.
+    const accountId =
+      (await resolveEffectiveAccountId(supabase, user.id)) ?? undefined;
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },

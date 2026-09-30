@@ -5,6 +5,7 @@ import {
   supportFlagAccountId,
   supportFlagValue,
 } from '@/lib/auth/support-cookie'
+import { SUPPORT_WRITABLE_TABLES } from '@/lib/auth/support-scope'
 
 // Singleton instance — one client shared across the whole browser session.
 // Creating multiple clients causes auth-lock contention ("Lock was released
@@ -12,34 +13,42 @@ import {
 let browserClient: SupabaseClient | undefined
 
 // ------------------------------------------------------------
-// Read-only during a support session
+// What a support session may write from the browser
 //
 // Most of this panel talks to Supabase from the browser: `contacts/page.tsx`
 // deletes with `supabase.from('contacts').delete()`, the tag manager
 // inserts, the deal settings update `accounts`. Those requests go straight
 // from the browser to `*.supabase.co` — they never reach Next, so neither
-// `middleware.ts` nor the effective `viewer` role that `getCurrentAccount()`
-// hands out ever sees them, and RLS runs them with the OPERATOR'S OWN JWT
-// against the OPERATOR'S OWN account.
+// `middleware.ts` nor the account context ever sees them, and RLS runs
+// them with the OPERATOR'S OWN JWT.
 //
-// The failure that produces is the exact one this feature exists to
-// prevent, only worse than the obvious version: the operator opens a
-// support session on company T, goes to Contacts, selects rows, deletes —
-// and deletes their own company's contacts while an amber banner says
-// "Nothing you do here is saved".
+// Since s9.5 a support session writes: migration 072 opens the write
+// policies of the tenant tables to an open session (`can_write_account`)
+// and its trigger records every row written in `impersonation_actions`.
+// Writes to THOSE tables (`SUPPORT_WRITABLE_TABLES`) go through, and every
+// one of them names the impersonated account (`useAuth().accountId`;
+// `support-session-view.test.ts` enforces it).
 //
-// Migration 057 already makes the customer's data unwritable (only SELECT
-// policies carry the support predicate). This guard is about the other
-// account in the room: the operator's own.
+// Everything else is still refused here, before it leaves the browser:
+//
+//   - the tables 072 keeps closed (`accounts`, `profiles`, `notifications`,
+//     …): the RLS refuses the customer's rows, but `profiles` and
+//     `notifications` are keyed by `auth.uid()` and would quietly write the
+//     OPERATOR'S OWN rows under the customer's banner;
+//   - `rpc()`: the functions in this schema are SECURITY DEFINER almost
+//     without exception and resolve the account from `auth.uid()` — the
+//     operator's company;
+//   - `storage` writes: the bucket policies were not widened (057/072), so
+//     an upload would go to the operator's own prefix or fail half-way.
 //
 // It is a guard rail, not a security boundary. The flag it reads is a
 // plain cookie the operator could delete; doing so would let them write to
-// their own account, which they can already do by leaving the session. No
-// customer data is on the other side of it.
+// their own account, which they can already do by leaving the session. The
+// boundary for the customer's data is RLS.
 // ------------------------------------------------------------
 
-/** Operations a support session must never perform from the browser. */
-const BLOCKED_OPS = new Set([
+/** Query-builder methods that write. */
+const WRITE_OPS = new Set([
   'insert',
   'update',
   'upsert',
@@ -72,9 +81,10 @@ const STORAGE_READS = new Set([
   'info',
 ])
 
-export const SUPPORT_READ_ONLY_ERROR = {
-  message: 'A support session is read-only; exit it before making changes',
-  code: 'support_session_read_only',
+export const SUPPORT_REFUSED_ERROR = {
+  message:
+    'Not available during a support session: it would change the operator\'s own profile, the account itself, or run outside the audit trail',
+  code: 'support_session_forbidden',
   details: '',
   hint: 'Exit the support session from the banner at the top of the page.',
 }
@@ -132,7 +142,7 @@ export async function endSupportSession(): Promise<void> {
  * makes the refusal arrive through the path the code already handles.
  */
 function refusedQuery(): unknown {
-  const result = { data: null, error: SUPPORT_READ_ONLY_ERROR, count: null, status: 403, statusText: 'Forbidden' }
+  const result = { data: null, error: SUPPORT_REFUSED_ERROR, count: null, status: 403, statusText: 'Forbidden' }
   const target = function () {} as unknown as Record<string | symbol, unknown>
   const proxy: unknown = new Proxy(target, {
     get(_t, prop) {
@@ -154,15 +164,16 @@ function refusedQuery(): unknown {
 }
 
 /**
- * Wrap a browser client so that, while a support session is open, nothing
- * it does can write.
+ * Wrap a browser client so that, while a support session is open, it can
+ * only write what the session is allowed to write.
  *
- * `from()` returns a builder whose mutating methods refuse; `storage`
- * allows only the read operations (`createSignedUrl`, `download`, …); and
- * `rpc()` refuses outright. RPCs are blocked wholesale rather than by name because they are
- * `SECURITY DEFINER` almost without exception in this schema — a "read-only"
- * one would answer for the operator's own account anyway, which is the
- * mislabelled view all over again.
+ * `from(table)` writes normally when `table` is in
+ * `SUPPORT_WRITABLE_TABLES` and returns a refusing builder otherwise;
+ * `storage` allows only the read operations (`createSignedUrl`,
+ * `download`, …); and `rpc()` refuses outright. RPCs are blocked wholesale
+ * rather than by name because they are `SECURITY DEFINER` almost without
+ * exception in this schema — one would answer for the operator's own
+ * account, which is the mislabelled view (or write) all over again.
  *
  * The check runs per call, not once at construction: the client is a
  * singleton that outlives the session.
@@ -174,9 +185,10 @@ export function guardReadOnly<T extends SupabaseClient>(client: T): T {
         return (relation: string) => {
           const builder = target.from(relation)
           if (!supportSessionActive()) return builder
+          if (SUPPORT_WRITABLE_TABLES.has(relation)) return builder
           return new Proxy(builder as object, {
             get(b, method, r) {
-              if (typeof method === 'string' && BLOCKED_OPS.has(method)) {
+              if (typeof method === 'string' && WRITE_OPS.has(method)) {
                 return () => refusedQuery()
               }
               return Reflect.get(b, method, r)

@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ============================================================
-// The browser client is read-only during a support session.
+// What the browser client may write during a support session.
+//
+// s9.5: a support session writes the tenant tables migration 072 opened
+// (`SUPPORT_WRITABLE_TABLES`), and nothing else — not `profiles` or
+// `notifications` (the OPERATOR'S own rows), not `accounts`, not rpc, not
+// storage. What follows is the history of why the guard exists at all.
 //
 // This is the hole the first round of f4.4 left open, and it is the one
 // that mattered: `middleware.ts` only ever sees requests that go through
@@ -157,7 +162,7 @@ describe('supportSessionAccountId', () => {
 describe('the browser client during a support session', () => {
   beforeEach(() => setCookies(`${SUPPORT_ACTIVE_COOKIE}=${CUSTOMER}`));
 
-  it('refuses a delete — the exact call contacts/page.tsx makes', async () => {
+  it('lets the delete contacts/page.tsx makes through — the session writes (s9.5)', async () => {
     const supabase = createClient();
 
     const { error } = await supabase
@@ -165,13 +170,12 @@ describe('the browser client during a support session', () => {
       .delete()
       .in('id', ['c1', 'c2']);
 
-    expect(error).toMatchObject({ code: 'support_session_read_only' });
-    // And nothing about it reached the network layer.
-    expect(h.reached.filter((c) => c.includes('delete'))).toEqual([]);
+    expect(error).toBeNull();
+    expect(h.reached).toContain('contacts.delete([])');
   });
 
   it.each(['insert', 'update', 'upsert', 'delete'])(
-    'refuses %s, and keeps the chain refusing',
+    'lets %s through on a table the session may write',
     async (op) => {
       const supabase = createClient();
       const builder = supabase.from('tags') as unknown as Record<
@@ -180,10 +184,43 @@ describe('the browser client during a support session', () => {
       >;
 
       const { error } = await builder[op]({ name: 'x' }).select();
-      expect(error).toMatchObject({ code: 'support_session_read_only' });
-      expect(h.reached).toEqual([]);
+      expect(error).toBeNull();
+      expect(h.reached[0]).toMatch(new RegExp(`^tags\\.${op}\\(`));
     }
   );
+
+  it.each([
+    'profiles',
+    'notifications',
+    'accounts',
+    'api_keys',
+    'account_invitations',
+  ])('refuses writes to %s, and keeps the chain refusing', async (table) => {
+    // profiles / notifications are keyed by auth.uid(): during a session
+    // they are the OPERATOR'S own rows under the customer's banner.
+    const supabase = createClient();
+    for (const op of ['insert', 'update', 'upsert', 'delete']) {
+      const builder = supabase.from(table) as unknown as Record<
+        string,
+        (...a: unknown[]) => {
+          eq: (...a: unknown[]) => PromiseLike<{ error: unknown }>;
+        }
+      >;
+      const { error } = await builder[op]({ x: 1 }).eq('id', 'r1');
+      expect(error).toMatchObject({ code: 'support_session_forbidden' });
+    }
+    expect(h.reached).toEqual([]);
+  });
+
+  it('refuses the profile save profile-form.tsx makes', async () => {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from('profiles')
+      .update({ full_name: 'Not the operator' })
+      .eq('user_id', 'operator-1');
+    expect(error).toMatchObject({ code: 'support_session_forbidden' });
+    expect(h.reached).toEqual([]);
+  });
 
   it('refuses rpc wholesale', async () => {
     // Nearly every function in this schema is SECURITY DEFINER; a
@@ -196,7 +233,7 @@ describe('the browser client during a support session', () => {
     ) as unknown as PromiseLike<{
       error: unknown;
     }>);
-    expect(error).toMatchObject({ code: 'support_session_read_only' });
+    expect(error).toMatchObject({ code: 'support_session_forbidden' });
     expect(h.reached).toEqual([]);
   });
 
@@ -223,7 +260,7 @@ describe('the browser client during a support session', () => {
   // ----------------------------------------------------------
 
   it.each(['upload', 'remove', 'move', 'copy', 'createSignedUploadUrl'])(
-    'refuses storage.%s — the banner says nothing is saved',
+    'refuses storage.%s — uploads stay out of a support session',
     async (op) => {
       const supabase = createClient();
       const bucket = supabase.storage.from('avatars') as unknown as Record<
@@ -232,7 +269,7 @@ describe('the browser client during a support session', () => {
       >;
 
       const { error } = await bucket[op]('some/path', new Blob());
-      expect(error).toMatchObject({ code: 'support_session_read_only' });
+      expect(error).toMatchObject({ code: 'support_session_forbidden' });
       expect(h.reached).toEqual([]);
     }
   );
@@ -243,7 +280,7 @@ describe('the browser client during a support session', () => {
       .from('avatars')
       .upload('operator-1/avatar.png', new Blob(), { upsert: true });
 
-    expect(error).toMatchObject({ code: 'support_session_read_only' });
+    expect(error).toMatchObject({ code: 'support_session_forbidden' });
     expect(h.reached).toEqual([]);
   });
 
@@ -275,7 +312,7 @@ describe('the browser client during a support session', () => {
       'anything'
     ) as unknown as PromiseLike<{ error: unknown }>);
 
-    expect(error).toMatchObject({ code: 'support_session_read_only' });
+    expect(error).toMatchObject({ code: 'support_session_forbidden' });
     expect(h.reached).toEqual([]);
   });
 });

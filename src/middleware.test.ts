@@ -144,18 +144,23 @@ describe("middleware — /platform is a protected page (s9.1)", () => {
 });
 
 // ============================================================
-// A support session is read-only, everywhere.
+// A support session writes (s9.5), and every write is recorded.
 //
-// The effective `viewer` role from `getCurrentAccount()` already stops
-// every route that asks `requireRole('agent')` or above. This block is the
-// layer under it: a route that never consults the role and writes through
-// the operator's OWN session client would land the change in the
-// operator's company while they believe they are looking at a customer's.
-// Refusing the request outright is the only version that does not depend
-// on every present and future route remembering.
+// The middleware cannot verify the cookie on Edge, so it does two things
+// by path alone: it refuses the short list a support session never
+// reaches (billing, ownership, members, invitations, API keys, a nested
+// session, and anything outside /api), and it TAGS every other mutation
+// with `x-wacrm-support-*` request headers so the server can record it
+// once the session is verified. The tags are stripped from every incoming
+// request first, so a client can never supply them.
 // ============================================================
 
-describe("middleware — support sessions cannot write", () => {
+/** A header the middleware forwards to the route, as Next encodes it. */
+function forwarded(res: Response, name: string): string | null {
+  return res.headers.get(`x-middleware-request-${name}`)
+}
+
+describe("middleware — support sessions write, and are recorded", () => {
   const SUPPORT = "wacrm_support_session";
   const SUPPORT_ACTIVE = "wacrm_support_active";
 
@@ -195,29 +200,116 @@ describe("middleware — support sessions cannot write", () => {
     mockUser = { id: "operator-1" };
   });
 
-  it("refuses a mutating API request while the support cookie is present", async () => {
-    const res = await middleware(request("https://app.test/api/quick-replies"));
-    expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toMatchObject({
-      error: expect.stringContaining("read-only"),
-    });
-  });
+  it("lets a mutating API request through while the support cookie is present", async () => {
+    const res = await middleware(request("https://app.test/api/quick-replies"))
+    expect(res.status).not.toBe(403)
+  })
 
   it.each(["POST", "PUT", "PATCH", "DELETE"])(
-    "refuses %s, not just POST",
+    "tags %s for the server to record, with a fresh request id",
     async (method) => {
       const res = await middleware(
-        request("https://app.test/api/contacts/abc", { method }),
-      );
-      expect(res.status).toBe(403);
+        request("https://app.test/api/contacts/abc/tags", { method }),
+      )
+      expect(res.status).not.toBe(403)
+      expect(forwarded(res, "x-wacrm-support-method")).toBe(method)
+      expect(forwarded(res, "x-wacrm-support-path")).toBe("/api/contacts/abc/tags")
+      expect(forwarded(res, "x-wacrm-support-request")).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      )
     },
-  );
+  )
 
-  it("refuses a mutating page request too, not only /api", async () => {
-    // Server actions POST to the page route; they must not slip through.
-    const res = await middleware(request("https://app.test/contacts"));
-    expect(res.status).toBe(403);
-  });
+  it("gives every request its own id, so one request is one row", async () => {
+    const a = await middleware(request("https://app.test/api/quick-replies"))
+    const b = await middleware(request("https://app.test/api/quick-replies"))
+    expect(forwarded(a, "x-wacrm-support-request")).not.toBe(
+      forwarded(b, "x-wacrm-support-request"),
+    )
+  })
+
+  it("never lets the client supply the tags itself", async () => {
+    // Without a support cookie: stripped and not re-added.
+    const plain = await middleware(
+      new NextRequest("https://app.test/api/quick-replies", {
+        method: "POST",
+        headers: {
+          "x-wacrm-support-method": "DELETE",
+          "x-wacrm-support-path": "/api/forged",
+          "x-wacrm-support-request": "00000000-0000-4000-8000-000000000000",
+        },
+      }),
+    )
+    expect(forwarded(plain, "x-wacrm-support-method")).toBeNull()
+    expect(forwarded(plain, "x-wacrm-support-path")).toBeNull()
+    expect(forwarded(plain, "x-wacrm-support-request")).toBeNull()
+
+    // With one: replaced by the middleware's own word.
+    const tagged = await middleware(
+      new NextRequest("https://app.test/api/quick-replies", {
+        method: "POST",
+        headers: {
+          cookie: `${SUPPORT}=${token("operator-1")}; ${SUPPORT_ACTIVE}=1`,
+          "x-wacrm-support-path": "/api/forged",
+          "x-wacrm-support-request": "00000000-0000-4000-8000-000000000000",
+        },
+      }),
+    )
+    expect(forwarded(tagged, "x-wacrm-support-path")).toBe("/api/quick-replies")
+    expect(forwarded(tagged, "x-wacrm-support-request")).not.toBe(
+      "00000000-0000-4000-8000-000000000000",
+    )
+  })
+
+  it("does not tag a read", async () => {
+    const res = await middleware(
+      request("https://app.test/api/quick-replies", { method: "GET" }),
+    )
+    expect(forwarded(res, "x-wacrm-support-method")).toBeNull()
+  })
+
+  it.each([
+    ["POST", "/api/billing/checkout"],
+    ["POST", "/api/billing/subscription"],
+    ["PATCH", "/api/account"],
+    ["POST", "/api/account/transfer-ownership"],
+    ["PATCH", "/api/account/members/u-1"],
+    ["DELETE", "/api/account/members/u-1"],
+    ["POST", "/api/account/invitations"],
+    ["DELETE", "/api/account/invitations/i-1"],
+    ["POST", "/api/account/api-keys"],
+    ["POST", "/api/account/api-keys/k-1/rotate"],
+    ["POST", "/api/invitations/tok/redeem"],
+    ["POST", "/api/platform/impersonate"],
+  ])("still refuses %s %s during a support session", async (method, path) => {
+    const res = await middleware(request(`https://app.test${path}`, { method }))
+    expect(res.status).toBe(403)
+    await expect(res.json()).resolves.toMatchObject({
+      code: "support_session_forbidden",
+    })
+  })
+
+  it("lets the same routes be READ — the billing and team screens are what tickets are about", async () => {
+    for (const path of ["/api/billing/status", "/api/billing/subscription", "/api/account/members", "/api/account"]) {
+      const res = await middleware(
+        request(`https://app.test${path}`, { method: "GET" }),
+      )
+      expect(res.status, path).not.toBe(403)
+    }
+  })
+
+  it("does not mistake a sibling path for a blocked one", async () => {
+    // `/api/account` is blocked exactly; its webhooks are support's to fix.
+    const res = await middleware(request("https://app.test/api/account/webhooks"))
+    expect(res.status).not.toBe(403)
+    expect(forwarded(res, "x-wacrm-support-path")).toBe("/api/account/webhooks")
+  })
+
+  it("refuses a mutating page request, which nothing would record", async () => {
+    // Server actions POST to the page route.
+    const res = await middleware(request("https://app.test/contacts"))
+    expect(res.status).toBe(403)
+  })
 
   it("leaves reads alone — looking is the entire point of a support session", async () => {
     const res = await middleware(
@@ -262,12 +354,21 @@ describe("middleware — support sessions cannot write", () => {
       request("https://app.test/api/platform/impersonate/stop"),
     );
     expect(res.status).not.toBe(403);
+    // Nor record it: the platform prefix has its own bitácora.
+    expect(forwarded(res, "x-wacrm-support-method")).toBeNull();
   });
 
   it("still carries the rotated auth cookies on the 403", async () => {
     refreshedCookies = [ROTATED];
-    const res = await middleware(request("https://app.test/api/quick-replies"));
+    const res = await middleware(request("https://app.test/api/billing/checkout"));
     expect(res.status).toBe(403);
+    expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+  });
+
+  it("carries them on a recorded write too", async () => {
+    refreshedCookies = [ROTATED];
+    const res = await middleware(request("https://app.test/api/quick-replies"));
+    expect(forwarded(res, "x-wacrm-support-method")).toBe("POST");
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 
@@ -285,7 +386,7 @@ describe("middleware — support sessions cannot write", () => {
   it("does not strand a different user who inherited the cookie", async () => {
     mockUser = { id: "someone-else" };
     const res = await middleware(
-      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
+      request("https://app.test/api/billing/checkout", { actor: "operator-1" }),
     );
     expect(res.status).not.toBe(403);
   });
@@ -309,11 +410,11 @@ describe("middleware — support sessions cannot write", () => {
   });
 
   it("keeps blocking the operator the cookie actually names", async () => {
-    // The recovery above must not become the way out of the read-only
-    // rule for the person whose session it is.
+    // The recovery above must not become the way around the block list
+    // for the person whose session it is.
     mockUser = { id: "operator-1" };
     const res = await middleware(
-      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
+      request("https://app.test/api/billing/checkout", { actor: "operator-1" }),
     );
     expect(res.status).toBe(403);
     expect(res.cookies.get(SUPPORT)?.value).not.toBe("");

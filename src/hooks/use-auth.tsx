@@ -225,6 +225,31 @@ export function effectiveAccountId(
 }
 
 /**
+ * The role this browser acts with: the operator's own normally, `admin`
+ * while a support session is open (s9.5) — the same effective role the
+ * server gives the session (`IMPERSONATED_ROLE`). Showing the operator's
+ * own role would offer an `owner` of their own company the owner-only
+ * controls of the CUSTOMER'S (transfer ownership), which the server then
+ * refuses; showing `viewer` would hide the editing the session exists for.
+ */
+export function effectiveAccountRole(
+  ownRole: AccountRole | null,
+  supportFlag: string | null,
+): AccountRole | null {
+  if (supportFlag === null) return ownRole;
+  return "admin";
+}
+
+/** The raw support flag as a hook (same store as `useEffectiveAccountId`). */
+function useSupportFlag(): string | null {
+  return useSyncExternalStore(
+    subscribeSupportFlag,
+    readSupportFlag,
+    readSupportFlag,
+  );
+}
+
+/**
  * `effectiveAccountId` as a hook. `useSyncExternalStore` rather than
  * state+effect because the cookie is exactly that: state outside React,
  * read during render, with a server snapshot (`null` — there is no
@@ -233,11 +258,7 @@ export function effectiveAccountId(
 export function useEffectiveAccountId(
   ownAccountId: string | null,
 ): string | null {
-  const flag = useSyncExternalStore(
-    subscribeSupportFlag,
-    readSupportFlag,
-    readSupportFlag,
-  );
+  const flag = useSupportFlag();
   return effectiveAccountId(ownAccountId, flag);
 }
 
@@ -525,13 +546,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // dependencies downstream.
   // The account this browser is showing. Equal to the profile's own
   // account except inside a support session, where it is the customer's.
-  // The effective ROLE stays the operator's own on purpose: support is
-  // there to look at what the customer's admin sees (invitations, usage,
-  // billing screens), and downgrading the UI to `viewer` would hide the
-  // very screens tickets are about. Nothing can be written either way —
-  // RLS refuses the customer's account and `guardReadOnly` refuses the
-  // operator's own.
+  // The effective ROLE inside a session is `admin` (s9.5), as on the
+  // server — see `effectiveAccountRole`.
   const effectiveAccount = useEffectiveAccountId(profile?.account_id ?? null);
+  const supportFlag = useSupportFlag();
 
   // Resolve the name and currency of THAT account, and re-resolve it
   // whenever it changes. It used to be read once inside `fetchProfile`,
@@ -555,7 +573,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [userId, effectiveAccount, accountRefreshTick]);
 
   const derived = useMemo(() => {
-    const role = profile?.account_role ?? null;
+    const role = effectiveAccountRole(
+      profile?.account_role ?? null,
+      supportFlag,
+    );
     return {
       accountRole: role,
       accountId: effectiveAccount,
@@ -567,7 +588,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
     };
-  }, [profile?.account_role, effectiveAccount]);
+  }, [profile?.account_role, effectiveAccount, supportFlag]);
 
   // Never hand out a summary for an account other than the one the lists
   // are querying — see `accountSummaryFor`.

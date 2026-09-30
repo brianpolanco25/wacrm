@@ -26,6 +26,7 @@
 import { NextResponse } from 'next/server';
 
 import {
+  assertNotSupportSession,
   requireRole,
   toErrorResponse,
   type AccountContext,
@@ -154,6 +155,8 @@ export async function POST(request: Request) {
     // read-only lock: a suspended account that could not reach its own
     // checkout would have no way to start paying again.
     const ctx = await requireRole('admin', { allowReadOnly: true });
+    // s9.5: never during a support session, whatever the role.
+    await assertNotSupportSession(ctx);
 
     const limit = checkRateLimit(
       `admin:billingCheckout:${ctx.userId}`,

@@ -3,6 +3,7 @@ import {
   resolveWhatsAppConfig,
   type WhatsAppConfigRow,
 } from '@/lib/whatsapp/resolve-config';
+import { resolveEffectiveAccountId } from '@/lib/auth/account';
 import { createClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import {
@@ -72,12 +73,10 @@ export async function PATCH(
 
     // Resolve the caller's account_id so template + whatsapp_config
     // lookups work for teammates who didn't author the row.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    const accountId = profile?.account_id as string | undefined;
+    // The effective account (s9.5): the impersonated company inside a
+    // support session, never the operator's own profile.
+    const accountId =
+      (await resolveEffectiveAccountId(supabase, user.id)) ?? undefined;
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -277,12 +276,10 @@ export async function DELETE(
     // Same account-scoping rationale as the PATCH handler above —
     // teammates need to be able to operate on shared templates +
     // the shared whatsapp_config.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    const accountId = profile?.account_id as string | undefined;
+    // The effective account (s9.5): the impersonated company inside a
+    // support session, never the operator's own profile.
+    const accountId =
+      (await resolveEffectiveAccountId(supabase, user.id)) ?? undefined;
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },

@@ -6,58 +6,53 @@ import {
   SUPPORT_COOKIE,
   supportCookieActor,
 } from '@/lib/auth/support-cookie'
-
-// Methods that change something. A support session is allowed none of
-// them (see `supportSessionBlocks` below).
-const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
-
-// Paths a support session must never interfere with, even though the
-// cookie is on the request.
-//
-//   /api/platform/           the operator's own prefix — the exit button
-//                            lives here, so blocking it would trap them.
-//   /api/whatsapp/webhook    Non-negotiable: NOTHING about billing,
-//                            suspension or support may stop an inbound
-//                            message from being stored. Meta's request
-//                            carries no browser cookie, so this branch is
-//                            unreachable in practice; it is spelled out
-//                            anyway so a future refactor cannot make it
-//                            reachable by accident.
-//   /api/v1/                 public API, authenticated by API key. Same
-//                            reasoning: no cookies, stated explicitly.
-//   /api/automations/cron,
-//   /api/flows/cron          scheduled sweeps behind a shared secret.
-const SUPPORT_SESSION_EXEMPT = [
-  '/api/platform/',
-  '/api/whatsapp/webhook',
-  '/api/v1/',
-  '/api/automations/cron',
-  '/api/flows/cron',
-]
+import {
+  SUPPORT_WRITE_HEADERS,
+  SUPPORT_WRITE_METHOD_HEADER,
+  SUPPORT_WRITE_PATH_HEADER,
+  SUPPORT_WRITE_REQUEST_HEADER,
+  supportWriteVerdict,
+} from '@/lib/auth/support-scope'
 
 /**
- * True when this request must be refused because a support session is
- * open. Defence in depth on top of the effective `viewer` role that
- * `getCurrentAccount()` hands out during impersonation: that role stops
- * every route which asks `requireRole('agent')` or above, but a route
- * that talks to Supabase through the operator's own session client
- * without consulting the role at all would write to the OPERATOR'S
- * account while they believe they are looking at a customer's. Refusing
- * the whole request is the only version of this that does not depend on
- * every present and future route remembering.
+ * Support sessions WRITE (s9.5), and every write is recorded — but not
+ * here. The middleware runs on Edge and cannot verify the cookie's
+ * signature (`node:crypto`), so it cannot know whose session this is or
+ * whether it is still open. What it can do is decide, by method and path
+ * alone (`supportWriteVerdict` in `@/lib/auth/support-scope`):
  *
- * Presence of the cookie is enough — its signature is not checked here.
- * Verifying it would need `node:crypto` in the Edge bundle, and the worst
- * a forged cookie achieves is making its own holder read-only.
+ *   'block'   the short list a support session never reaches — billing,
+ *             ownership, members, invitations, API keys, a nested session —
+ *             and every mutation outside /api (nothing there records it).
+ *   'record'  let it through, tagged with `x-wacrm-support-*` request
+ *             headers. `resolveSupportSession` (server, Node) verifies the
+ *             session and writes one `impersonation_actions` row for the
+ *             request before the route may touch anything.
+ *   'pass'    reads, and the exempt paths (webhook, public API, crons, the
+ *             operator's own /api/platform prefix).
+ *
+ * The tagging headers are stripped from EVERY incoming request first, so
+ * they only ever carry the middleware's word. They grant nothing anyway:
+ * with no verified session the server records nothing and resolves the
+ * caller's own account, exactly as for anyone else.
  */
-function supportSessionBlocks(request: NextRequest): boolean {
-  if (!request.cookies.has(SUPPORT_COOKIE)) return false
-  if (!MUTATING_METHODS.has(request.method)) return false
-  const path = request.nextUrl.pathname
-  return !SUPPORT_SESSION_EXEMPT.some((prefix) => path.startsWith(prefix))
+function supportSessionVerdict(request: NextRequest): 'pass' | 'block' | 'record' {
+  if (!request.cookies.has(SUPPORT_COOKIE)) return 'pass'
+  return supportWriteVerdict(request.method, request.nextUrl.pathname)
 }
 
 export async function middleware(request: NextRequest) {
+  // Before anything is forwarded: the support tagging headers are ours
+  // alone. `NextResponse.next({ request })` forwards `request.headers`, so
+  // this has to happen before the first response object is built.
+  for (const name of SUPPORT_WRITE_HEADERS) request.headers.delete(name)
+  const supportVerdict = supportSessionVerdict(request)
+  if (supportVerdict === 'record') {
+    request.headers.set(SUPPORT_WRITE_METHOD_HEADER, request.method)
+    request.headers.set(SUPPORT_WRITE_PATH_HEADER, request.nextUrl.pathname)
+    request.headers.set(SUPPORT_WRITE_REQUEST_HEADER, crypto.randomUUID())
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -161,13 +156,18 @@ export async function middleware(request: NextRequest) {
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // A support session is read-only, everywhere. See supportSessionBlocks().
-  // An orphan cookie blocks nobody: it is being dropped on this very
-  // response, and its holder is not the operator it names.
-  if (!orphanSupportCookie && supportSessionBlocks(request)) {
+  // The few mutations a support session never makes. See
+  // supportSessionVerdict(). An orphan cookie blocks nobody: it is being
+  // dropped on this very response, and its holder is not the operator it
+  // names.
+  if (!orphanSupportCookie && supportVerdict === 'block') {
     return withRefreshedCookies(
       NextResponse.json(
-        { error: 'A support session is read-only; exit it before making changes' },
+        {
+          error:
+            'Not available during a support session: billing, ownership, team members and API keys stay with the customer. Exit the session first.',
+          code: 'support_session_forbidden',
+        },
         { status: 403 }
       )
     )
