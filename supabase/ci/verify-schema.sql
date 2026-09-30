@@ -1323,6 +1323,34 @@ BEGIN
       'ai_usage_log_provider_check must allow provider = gemini (migration 066)';
   END IF;
 
+  -- 069
+  -- ---- 069: el Resumen del panel de plataforma (s9.2) ----------
+  -- Misma guarda que platform_account_list (058): sin SECURITY DEFINER
+  -- y ejecutable solo por service_role. Las cifras son del negocio
+  -- entero; un GRANT de mas a un rol cliente no puede pasar en silencio.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'platform_metrics'
+      AND p.prosecdef = false
+      AND p.prorettype = 'jsonb'::regtype
+  ) THEN
+    RAISE EXCEPTION
+      'platform_metrics() is missing, is SECURITY DEFINER or does not return jsonb (migration 069)';
+  END IF;
+  IF has_function_privilege('authenticated',
+       'public.platform_metrics()', 'EXECUTE')
+     OR has_function_privilege('anon',
+       'public.platform_metrics()', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'platform_metrics() is executable by a client role (migration 069)';
+  END IF;
+  IF NOT has_function_privilege('service_role',
+       'public.platform_metrics()', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'platform_metrics() is not executable by service_role (migration 069)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
