@@ -156,13 +156,20 @@ describe('what the gate never sees', () => {
     expect(users).toEqual(['(dashboard)/layout.tsx']);
   });
 
-  it('lets the WhatsApp webhook, /api/v1, crons, /api/platform and /api/billing through the middleware untouched', () => {
-    // The middleware's own block for signed-out users covers page paths
-    // only; the onboarding gate adds nothing to it.
+  it('the middleware never resolves the gate: it only forwards the path (no state, no database)', () => {
     const mw = readFileSync(
       path.join(process.cwd(), 'src/middleware.ts'),
       'utf8'
     );
-    expect(mw).not.toMatch(/onboarding/);
+    const onboardingImports = [
+      ...mw.matchAll(/from '(@\/lib\/onboarding\/[^']+)'/g),
+    ].map((m) => m[1]);
+    expect(onboardingImports).toEqual(['@/lib/onboarding/path-header']);
+    // And that module imports nothing (Edge-safe).
+    const header = readFileSync(
+      path.join(process.cwd(), 'src/lib/onboarding/path-header.ts'),
+      'utf8'
+    );
+    expect(header).not.toMatch(/^import /m);
   });
 });

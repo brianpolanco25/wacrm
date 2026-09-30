@@ -519,3 +519,48 @@ describe("middleware — /developers se sirve sin sesión", () => {
     expect(res.headers.get("location")).toBeNull();
   });
 });
+
+// ============================================================
+// s9.6: the path header for the onboarding gate of the (dashboard)
+// layout. The middleware only forwards the path; it redirects nobody to
+// /onboarding and consults no database for it.
+// ============================================================
+describe("middleware — onboarding path header (s9.6)", () => {
+  const HEADER = "x-wacrm-pathname";
+
+  it.each(["/billing", "/billing/return", "/dashboard"])(
+    "forwards %s to the layout",
+    async (path) => {
+      mockUser = { id: "user-1" };
+      const res = await middleware(new NextRequest(`https://app.test${path}`));
+      expect(res.status).toBe(200);
+      expect(forwarded(res, HEADER)).toBe(path);
+    },
+  );
+
+  it("overwrites a value the client sent", async () => {
+    mockUser = { id: "user-1" };
+    const res = await middleware(
+      new NextRequest("https://app.test/dashboard", {
+        headers: { [HEADER]: "/billing" },
+      }),
+    );
+    expect(forwarded(res, HEADER)).toBe("/dashboard");
+  });
+
+  it.each([
+    ["POST", "/api/whatsapp/webhook"],
+    ["POST", "/api/billing/webhook"],
+    ["GET", "/api/v1/me"],
+    ["GET", "/api/automations/cron"],
+    ["GET", "/api/platform/metrics"],
+    ["GET", "/api/billing/status"],
+  ])("never redirects %s %s to /onboarding", async (method, path) => {
+    mockUser = { id: "user-1" };
+    const res = await middleware(
+      new NextRequest(`https://app.test${path}`, { method }),
+    );
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.status).toBe(200);
+  });
+});

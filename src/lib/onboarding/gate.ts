@@ -31,17 +31,26 @@
 // has its twin outside the gate (`checkoutUrls`).
 //
 // Exempt by rule, below: a support session (the operator looks at the
-// customer as they are), platform operators (sent to `/platform`), and
+// customer as they are), platform operators (sent to `/platform`),
 // members of an account that pays (their `account_id` is the paying one,
-// so `loadOnboardingState` answers `done`).
+// so `loadOnboardingState` answers `done`), accounts on hold or locked by
+// billing (also `done`: the dunning banner and /billing own them), and
+// `/billing` itself for every account that is not `incomplete` — read
+// from the path header the middleware sets (`path-header.ts`), because a
+// layout has no pathname. That exemption is per navigation into the group:
+// a paying owner who then moves inside the CRM client-side is not gated
+// again until the next server render — the company step is a request,
+// not a lock.
 // ============================================================
 
 import { cache } from 'react';
+import { headers } from 'next/headers';
 import { unstable_rethrow } from 'next/navigation';
 
 import { getCurrentAccount } from '@/lib/auth/account';
 import { isPlatformAdmin } from '@/lib/auth/platform-admins';
 
+import { isBillingPath, REQUEST_PATH_HEADER } from './path-header';
 import { loadOnboardingState } from './state';
 
 export const ONBOARDING_PATH = '/onboarding';
@@ -69,6 +78,13 @@ export const onboardingRedirect = cache(async (): Promise<string | null> => {
   try {
     const state = await loadOnboardingState(ctx);
     if (state.step === 'done') return null;
+    // /billing is never behind the gate for an account that has paid or
+    // pays: the company step of a paying owner can wait, the invoice
+    // cannot. Only `incomplete` — never paid — is sent away from it.
+    if (state.status !== 'incomplete') {
+      const path = (await headers()).get(REQUEST_PATH_HEADER);
+      if (isBillingPath(path)) return null;
+    }
   } catch (err) {
     unstable_rethrow(err);
     console.error(

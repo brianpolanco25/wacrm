@@ -21,6 +21,12 @@
 // s9.4, or a customer who paid before 073) only gates the owner, who is
 // the one who can fill it; their team keeps working.
 //
+// Never gated, whatever the profile: an account an operator put on hold,
+// and a paying account locked by billing (suspended, expired, past due
+// past its grace). Their way out is /billing or the operator, and the
+// company route would refuse the save anyway; the profile waits until
+// they can write again.
+//
 // `onboarding_completed_at` is stamped here, the first time the two
 // conditions hold together, whoever notices first: the company route
 // (profile saved on an account that already pays), the onboarding page,
@@ -129,10 +135,22 @@ export async function loadOnboardingState(
 
   let completedAt = account.onboarding_completed_at;
   let step: OnboardingStep;
-  if (!paying) {
+  if (entitlements.manualHold) {
+    // An operator's hold wins over everything (058): the account is
+    // read-only, the company route would refuse the save, and only the
+    // operator can lift it. `BillingStatusAlert` says so inside the CRM.
+    step = 'done';
+  } else if (!paying) {
     step = profileComplete ? 'plan' : 'company';
   } else if (profileComplete) {
     if (!completedAt) completedAt = await stampCompleted(ctx.accountId);
+    step = 'done';
+  } else if (entitlements.readOnly) {
+    // Paid once and locked now (suspended, expired, past due past its
+    // grace): the dunning ladder and /billing own it. Asking for the
+    // company here would be a trap — the company route refuses writes in
+    // that state — so the profile is asked for once the account can
+    // write again (review of s9.6, finding 1).
     step = 'done';
   } else {
     step = canEditCompany ? 'company' : 'done';

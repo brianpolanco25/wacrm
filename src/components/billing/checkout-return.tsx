@@ -42,7 +42,21 @@ interface StatusPayload {
 type Phase = 'confirming' | 'active' | 'slow';
 
 /** How long "your plan is active" stays on screen before moving on. */
-const CONTINUE_DELAY_MS = 1500;
+export const CONTINUE_DELAY_MS = 1500;
+
+/**
+ * Schedule the move on to `href` once the plan is active, or do nothing.
+ * Pulled out of the effect so the rule is testable without a DOM; returns
+ * the cleanup the effect hands back to React.
+ */
+export function scheduleContinue(
+  opts: { phase: string; continueOnActive: boolean; href: string },
+  navigate: (href: string) => void
+): (() => void) | undefined {
+  if (!opts.continueOnActive || opts.phase !== 'active') return undefined;
+  const timer = setTimeout(() => navigate(opts.href), CONTINUE_DELAY_MS);
+  return () => clearTimeout(timer);
+}
 
 interface CheckoutReturnProps {
   /** Where the button (and, with `continueOnActive`, the page) goes. */
@@ -122,12 +136,10 @@ export function CheckoutReturn({
   }, [poll]);
 
   useEffect(() => {
-    if (!continueOnActive || phase !== 'active') return;
-    const timer = setTimeout(
-      () => window.location.assign(continueHref),
-      CONTINUE_DELAY_MS
+    return scheduleContinue(
+      { phase, continueOnActive, href: continueHref },
+      (href) => window.location.assign(href)
     );
-    return () => clearTimeout(timer);
   }, [continueOnActive, continueHref, phase]);
 
   return (

@@ -7,6 +7,34 @@ const h = vi.hoisted(() => ({
   getCurrentAccount: vi.fn(),
   loadOnboardingState: vi.fn(),
   isPlatformAdmin: vi.fn(),
+  /** What the middleware put in `x-wacrm-pathname`. */
+  path: '/dashboard' as string | null,
+  /** The company columns the real state reads (service role, mocked). */
+  account: {} as Record<string, unknown>,
+  getEntitlements: vi.fn(),
+}));
+
+vi.mock('next/headers', () => ({
+  headers: async () =>
+    new Headers(h.path === null ? {} : { 'x-wacrm-pathname': h.path }),
+}));
+// Only reached by the tests that run the REAL loadOnboardingState.
+vi.mock('@/lib/auth/admin-client', () => ({
+  supabaseAdmin: () => {
+    const chain = {
+      select: () => chain,
+      update: () => chain,
+      eq: () => chain,
+      is: () => chain,
+      maybeSingle: async () => ({ data: h.account, error: null }),
+      then: (resolve: (v: unknown) => unknown) =>
+        resolve({ data: null, error: null }),
+    };
+    return { from: () => chain };
+  },
+}));
+vi.mock('@/lib/billing/enforce', () => ({
+  getEntitlements: h.getEntitlements,
 }));
 
 vi.mock('@/lib/auth/account', async (importOriginal) => ({
@@ -36,6 +64,17 @@ const CTX = {
 };
 
 beforeEach(() => {
+  h.path = '/dashboard';
+  h.account = {
+    id: 'acct-1',
+    name: 'Acme',
+    country: null,
+    phone: null,
+    industry: null,
+    team_size: null,
+    onboarding_completed_at: null,
+  };
+  h.getEntitlements.mockReset();
   h.getCurrentAccount.mockReset().mockResolvedValue(CTX);
   h.loadOnboardingState.mockReset();
   h.isPlatformAdmin.mockReset().mockResolvedValue(false);
@@ -96,5 +135,93 @@ describe('onboardingRedirect', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(onboardingRedirect()).resolves.toBeNull();
     err.mockRestore();
+  });
+});
+
+describe('onboardingRedirect — /billing stays open for anyone who is not incomplete', () => {
+  it('a paying owner still owing the company step reaches /billing and /billing/return', async () => {
+    h.loadOnboardingState.mockResolvedValue({
+      step: 'company',
+      status: 'active',
+    });
+    for (const path of ['/billing', '/billing/return']) {
+      h.path = path;
+      await expect(onboardingRedirect()).resolves.toBeNull();
+    }
+    // …but is asked for it anywhere else in the CRM.
+    h.path = '/dashboard';
+    await expect(onboardingRedirect()).resolves.toBe('/onboarding');
+  });
+
+  it('an incomplete account is sent to /onboarding even from /billing', async () => {
+    h.loadOnboardingState.mockResolvedValue({
+      step: 'plan',
+      status: 'incomplete',
+    });
+    h.path = '/billing';
+    await expect(onboardingRedirect()).resolves.toBe('/onboarding');
+  });
+
+  it('does not mistake a lookalike path for /billing, nor a missing header', async () => {
+    h.loadOnboardingState.mockResolvedValue({
+      step: 'company',
+      status: 'active',
+    });
+    for (const path of ['/billingx', '/settings/billing', null]) {
+      h.path = path;
+      await expect(onboardingRedirect()).resolves.toBe('/onboarding');
+    }
+  });
+});
+
+describe('onboardingRedirect — accounts locked after paying, real state (review s9.6, finding 1)', () => {
+  // The real `loadOnboardingState`, over a pre-073 account: no company
+  // profile at all. The owner must not be trapped in /onboarding.
+  beforeEach(async () => {
+    const real = await vi.importActual<typeof import('./state')>('./state');
+    h.loadOnboardingState.mockImplementation(real.loadOnboardingState);
+  });
+
+  function entitlements(status: string, extra: Record<string, unknown> = {}) {
+    return {
+      planId: 'pro',
+      status,
+      limits: {},
+      features: [],
+      readOnly: true,
+      readOnlyReason: 'subscription',
+      manualHold: false,
+      trialEndsAt: null,
+      ...extra,
+    };
+  }
+
+  it.each([
+    ['suspended', entitlements('suspended')],
+    ['expired', entitlements('expired')],
+    ['past_due past its grace', entitlements('past_due')],
+    [
+      'a manual hold',
+      entitlements('active', {
+        manualHold: true,
+        readOnlyReason: 'manual_hold',
+      }),
+    ],
+  ])(
+    '%s: the owner without a profile goes straight in, from anywhere',
+    async (_l, e) => {
+      h.getEntitlements.mockResolvedValue(e);
+      for (const path of ['/dashboard', '/billing', '/settings']) {
+        h.path = path;
+        await expect(onboardingRedirect()).resolves.toBeNull();
+      }
+    }
+  );
+
+  it('control: an active, writable owner without a profile is asked for it', async () => {
+    h.getEntitlements.mockResolvedValue(
+      entitlements('active', { readOnly: false, readOnlyReason: null })
+    );
+    await expect(onboardingRedirect()).resolves.toBe('/onboarding');
   });
 });

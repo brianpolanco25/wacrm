@@ -221,6 +221,52 @@ describe('loadOnboardingState — the step', () => {
   });
 });
 
+describe('loadOnboardingState — accounts locked after paying (review s9.6, finding 1)', () => {
+  // Pre-073 accounts have NULL company columns. If the account is read-only
+  // for billing or a hold, sending its owner to step 1 is a trap: the
+  // company route refuses the save and /billing sits behind the gate.
+  it.each([
+    ['suspended', {}],
+    ['expired', {}],
+    ['past_due past its grace', { status: 'past_due' }],
+    [
+      'active with a manual hold',
+      { status: 'active', manualHold: true, readOnlyReason: 'manual_hold' },
+    ],
+  ] as const)(
+    '%s, no company profile, owner → done (the dunning ladder and /billing own it)',
+    async (label, extra) => {
+      const status = (extra as { status?: string }).status ?? label;
+      subscription(status, {
+        readOnly: true,
+        readOnlyReason: 'subscription',
+        ...extra,
+      });
+      const s = await loadOnboardingState({ accountId: A, role: 'owner' });
+      expect(s.step).toBe('done');
+      expect(s.profileComplete).toBe(false);
+      // Nothing is stamped: the profile is still owed.
+      expect(h.queries.filter((q) => q.op === 'update')).toHaveLength(0);
+      expect(h.accounts[A].onboarding_completed_at).toBeNull();
+    }
+  );
+
+  it('an incomplete account an operator put on hold is not sent to onboarding either', async () => {
+    subscription('incomplete', {
+      manualHold: true,
+      readOnlyReason: 'manual_hold',
+    });
+    const s = await loadOnboardingState({ accountId: A, role: 'owner' });
+    expect(s.step).toBe('done');
+  });
+
+  it('a past_due account still inside its grace (writable) is asked for the profile', async () => {
+    subscription('past_due', { readOnly: false, readOnlyReason: null });
+    const s = await loadOnboardingState({ accountId: A, role: 'owner' });
+    expect(s.step).toBe('company');
+  });
+});
+
 describe('loadOnboardingState — isolation (service role, CP3)', () => {
   it('reads and stamps ONLY the caller account, and leaves B untouched', async () => {
     account(A, PROFILE);
