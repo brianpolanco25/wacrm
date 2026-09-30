@@ -2419,5 +2419,45 @@
       "fixed": "Fixed",
       "deprecated": "Deprecated"
     }
+  },
+  "AuthCallback": {
+    "title": "Signing you in…",
+    "description": "One moment while we open your session.",
+    "errorTitle": "This link no longer works",
+    "errors": {
+      "expired": "The link has expired or has already been used. Ask for a new one and open it straight away.",
+      "otherBrowser": "Open the link in the same browser where you asked for it, or ask for a new one here.",
+      "invalid": "We could not open a session with this link. Ask for a new one.",
+      "missing": "This link has no session in it. Open the latest email we sent you, or ask for a new link."
+    },
+    "requestNewLink": "Get a new link",
+    "backToSignIn": "Back to sign in"
+  },
+  "ResetPassword": {
+    "checking": "Checking your session…",
+    "titleWelcome": "Choose your password",
+    "descWelcome": "You will use it to sign in from now on.",
+    "titleReset": "Set a new password",
+    "descReset": "Choose a password you have not used here before.",
+    "passwordLabel": "New password",
+    "passwordPlaceholder": "At least {min} characters",
+    "confirmLabel": "Confirm password",
+    "confirmPlaceholder": "Repeat your password",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "submit": "Save password",
+    "saving": "Saving…",
+    "errors": {
+      "mismatch": "The passwords do not match.",
+      "tooShort": "The password must be at least {min} characters.",
+      "samePassword": "The new password must be different from the current one.",
+      "weakPassword": "That password is too weak. Try a longer one with letters and numbers.",
+      "noSession": "Your session has expired. Ask for a new link to continue.",
+      "failed": "We could not save the password. Try again in a moment."
+    },
+    "noSessionTitle": "Your link has expired",
+    "noSessionDesc": "To choose a password you need to open the link from the email. Ask for a new one and open it in this browser.",
+    "requestNewLink": "Get a new link",
+    "backToSignIn": "Back to sign in"
   }
 }

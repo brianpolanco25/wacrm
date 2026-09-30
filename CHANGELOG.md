@@ -1036,6 +1036,24 @@ no-store`; before, a shared cache could keep them for five minutes.
 - Uploading attachments and editing the operator's own profile stay
   unavailable inside a session.
 
+### Invitations and password recovery: choose a password
+
+- Email links from Supabase Auth (sign-up confirmation, password
+  recovery, invitations sent from the operator panel or by email to a
+  team) now land on **`/auth/callback`**, which opens the session —
+  from a PKCE `code`, a `token_hash`, or the tokens an invitation carries
+  in the URL fragment — instead of arriving without a session.
+- New page **`/reset-password`**: after an invitation or a recovery link
+  the person chooses a password (at least 6 characters, typed twice) and
+  goes on to the team invitation (`/join/<token>`), to the operator panel
+  or to the dashboard. The "Forgot password?" email, which pointed to a
+  page that did not exist, now works end to end.
+- An expired or already used link says so and offers to request a new
+  one.
+- **Action required:** add `<site>/auth/callback**` to Supabase Auth →
+  URL Configuration → Redirect URLs (see `docs/docker.md`, "Auth email
+  links"). No migration and no new environment variables.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

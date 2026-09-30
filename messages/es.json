@@ -2419,5 +2419,45 @@
       "fixed": "Corregido",
       "deprecated": "Obsoleto"
     }
+  },
+  "AuthCallback": {
+    "title": "Iniciando sesión…",
+    "description": "Un momento mientras abrimos tu sesión.",
+    "errorTitle": "Este enlace ya no sirve",
+    "errors": {
+      "expired": "El enlace caducó o ya se usó. Pide uno nuevo y ábrelo enseguida.",
+      "otherBrowser": "Abre el enlace en el mismo navegador donde lo pediste, o pide uno nuevo aquí.",
+      "invalid": "No pudimos abrir la sesión con este enlace. Pide uno nuevo.",
+      "missing": "Este enlace no trae ninguna sesión. Abre el último correo que te enviamos o pide un enlace nuevo."
+    },
+    "requestNewLink": "Pedir un enlace nuevo",
+    "backToSignIn": "Volver a iniciar sesión"
+  },
+  "ResetPassword": {
+    "checking": "Comprobando tu sesión…",
+    "titleWelcome": "Elige tu contraseña",
+    "descWelcome": "La usarás para iniciar sesión a partir de ahora.",
+    "titleReset": "Nueva contraseña",
+    "descReset": "Elige una contraseña que no hayas usado aquí antes.",
+    "passwordLabel": "Nueva contraseña",
+    "passwordPlaceholder": "Al menos {min} caracteres",
+    "confirmLabel": "Confirmar contraseña",
+    "confirmPlaceholder": "Repite tu contraseña",
+    "showPassword": "Mostrar contraseña",
+    "hidePassword": "Ocultar contraseña",
+    "submit": "Guardar contraseña",
+    "saving": "Guardando…",
+    "errors": {
+      "mismatch": "Las contraseñas no coinciden.",
+      "tooShort": "La contraseña debe tener al menos {min} caracteres.",
+      "samePassword": "La contraseña nueva debe ser distinta de la actual.",
+      "weakPassword": "Esa contraseña es demasiado débil. Prueba una más larga, con letras y números.",
+      "noSession": "Tu sesión caducó. Pide un enlace nuevo para continuar.",
+      "failed": "No pudimos guardar la contraseña. Inténtalo de nuevo en un momento."
+    },
+    "noSessionTitle": "Tu enlace caducó",
+    "noSessionDesc": "Para elegir contraseña tienes que abrir el enlace del correo. Pide uno nuevo y ábrelo en este navegador.",
+    "requestNewLink": "Pedir un enlace nuevo",
+    "backToSignIn": "Volver a iniciar sesión"
   }
 }
