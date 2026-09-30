@@ -204,6 +204,12 @@ export interface AccountDetail {
   cancelAtPeriodEnd: boolean;
   cycle: string | null;
   providerSubscriptionId: string | null;
+  /**
+   * Who bills this subscription: `paypal`, or `manual` when an operator
+   * assigned the plan by hand (s9.4) — out of the MRR (069), and shown as
+   * «Asignado a mano» on the file. Null with no subscription row.
+   */
+  provider: string | null;
   /** Consumption of the current cycle against the plan's caps. */
   usage: UsageLine[];
   /** Caps that are a headcount of rows, not a counter. */
@@ -217,6 +223,7 @@ export interface AccountDetail {
 
 interface SubscriptionRow {
   plan_id: string | null;
+  provider: string | null;
   status: string | null;
   provider_subscription_id: string | null;
   current_period_end: string | null;
@@ -258,7 +265,7 @@ async function loadSubscription(
   const { data, error } = await supabaseAdmin()
     .from('subscriptions')
     .select(
-      'plan_id, status, provider_subscription_id, current_period_end, ' +
+      'plan_id, provider, status, provider_subscription_id, current_period_end, ' +
         'grace_until, trial_ends_at, cancel_at_period_end, cycle, ' +
         'manual_hold_at, manual_hold_by, manual_hold_reason'
     )
@@ -517,6 +524,7 @@ export async function loadAccountDetail(
     cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end),
     cycle: subscription?.cycle ?? null,
     providerSubscriptionId: subscription?.provider_subscription_id ?? null,
+    provider: subscription?.provider ?? null,
     usage: buildUsage(entitlements.limits, counters),
     limits: entitlements.limits,
     members,

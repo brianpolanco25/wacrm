@@ -72,6 +72,8 @@ const h = vi.hoisted(() => ({
   validatedAiKeys: [] as string[],
   /** Browser cookie jar, for the support-session routes. */
   cookies: new Map<string, string>(),
+  /** Emails the s9.4 routes asked Supabase to invite. */
+  invitedEmails: [] as string[],
 }));
 
 // ---- module mocks --------------------------------------------------
@@ -194,6 +196,43 @@ vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
   };
 });
 
+// s9.4: `inviteUserByEmail` is Supabase Auth, not PostgREST, and the fake
+// has no `auth.admin`. What matters to this suite is what it does to the
+// database: Supabase creates the auth user and `handle_new_user()` (017)
+// gives them a profile and a company of their own, and 046 a trial row.
+// That is simulated here, so the route's writes that follow land on a real
+// third company and the snapshots of A and B can be compared.
+vi.mock('@/lib/platform/provisioning', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/platform/provisioning')>()),
+  inviteAuthUser: async ({ email }: { email: string }) => {
+    const userId = crypto.randomUUID();
+    const accountId = crypto.randomUUID();
+    h.db.rows('accounts').push({
+      id: accountId,
+      name: email,
+      owner_user_id: userId,
+    });
+    h.db.rows('profiles').push({
+      id: `profile-${userId}`,
+      user_id: userId,
+      account_id: accountId,
+      account_role: 'owner',
+      full_name: '',
+      email,
+    });
+    h.db.rows('subscriptions').push({
+      id: `sub-${accountId}`,
+      account_id: accountId,
+      plan_id: 'pro',
+      provider: 'paypal',
+      status: 'trialing',
+      provider_subscription_id: null,
+    });
+    h.invitedEmails.push(email);
+    return { ok: true, userId };
+  },
+}));
+
 vi.mock('@/lib/whatsapp/webhook-signature', () => ({
   verifyMetaWebhookSignature: () => true,
 }));
@@ -287,6 +326,10 @@ import * as platformAccounts from '@/app/api/platform/accounts/route';
 import * as platformAccountById from '@/app/api/platform/accounts/[id]/route';
 import * as platformAccountHold from '@/app/api/platform/accounts/[id]/hold/route';
 import * as platformMetrics from '@/app/api/platform/metrics/route';
+import * as platformAccountPlan from '@/app/api/platform/accounts/[id]/plan/route';
+import * as platformAccountMembers from '@/app/api/platform/accounts/[id]/members/route';
+import * as platformOperators from '@/app/api/platform/operators/route';
+import * as platformOperatorById from '@/app/api/platform/operators/[userId]/route';
 // Etiquetas (fase 7 §2) y plantillas (fase 7 §3) de la API pública. Al
 // final de la lista a propósito: las dos mitades de la fase crecían por
 // el mismo sitio en paralelo.
@@ -1199,6 +1242,7 @@ beforeEach(() => {
   h.db = seed();
   h.actor = { userId: USER_A, accountId: A };
   extraWaivers = [];
+  h.invitedEmails = [];
   h.after = [];
   h.meta.sends = [];
   h.webhookEvents = [];
@@ -3209,6 +3253,391 @@ describe('/api/platform/metrics (the Resumen, service role)', () => {
     // Read-only: nothing moved on either side.
     expect(h.db.snapshot(A)).toEqual(beforeA);
     expectBUnchanged(beforeB);
+  });
+});
+
+// ============================================================
+// s9.4 — what the panel CREATES: companies, manual plans, members and
+// operators. Same two seeded companies, same actor (USER_A, owner of A).
+//
+// Without a platform_admins row he must get 403 on every one of these
+// routes and move nothing. With one, each write must land on the company
+// it names — a third one — and leave A and B byte-for-byte alone.
+//
+// The waivers below are per test (`extraWaivers`) and each says why the
+// query cannot carry an account filter: they are the lookups that
+// RESOLVE a person, not a company.
+// ============================================================
+
+describe('/api/platform provisioning (s9.4, service role)', () => {
+  const REASON_S94 = 'comped: partner agreement 2026';
+
+  const EMAIL_LOOKUP: ScopeWaiver = {
+    table: 'profiles',
+    op: 'select',
+    by: ['email'],
+    reason:
+      'Resolves a PERSON by email (findProfileByEmail): "which company is ' +
+      'this address in" is the question, so there is no account to filter ' +
+      'by yet. Behind requirePlatformAdmin(); returns one profile, and the ' +
+      'routes only use it to refuse (409), to decide whether to email, or ' +
+      'to name the user a grant is for.',
+  };
+  const OWNER_ACCOUNT: ScopeWaiver = {
+    table: 'accounts',
+    op: 'select',
+    by: ['owner_user_id'],
+    reason:
+      'Resolves the company handle_new_user() (017) just made for the ' +
+      "invited owner. The uid comes from Supabase's invite response, never " +
+      'from the request, and idx_accounts_one_per_owner makes it one row.',
+  };
+  const ACCOUNTLESS_LOG: ScopeWaiver = {
+    table: 'impersonation_log',
+    op: 'insert',
+    reason:
+      'The account_create line is written BEFORE the company exists (the ' +
+      'audit comes first), so it has no account_id yet — migration 071 ' +
+      'allows exactly that for this act and refuses it for every other. ' +
+      'The route fills it in right after (attachAccountToAuditRow).',
+  };
+
+  function seedTarget(sub: Partial<Row> = {}) {
+    seedTargetAccount();
+    h.db.rows('subscriptions').push({
+      id: 'sub-target',
+      account_id: TARGET,
+      plan_id: 'pro',
+      provider: 'paypal',
+      status: 'trialing',
+      provider_subscription_id: null,
+      cycle: null,
+      trial_ends_at: FUTURE,
+      grace_until: null,
+      cancel_at_period_end: false,
+      manual_hold_at: null,
+      manual_hold_by: null,
+      manual_hold_reason: null,
+      ...sub,
+    });
+    h.db.rows('plans').push({
+      id: 'negocio',
+      name: 'Negocio',
+      limits: {},
+      features: [],
+      is_public: true,
+      sort_order: 3,
+    });
+  }
+
+  function planReq(accountId: string, body: unknown) {
+    return platformAccountPlan.POST(
+      req('POST', `/api/platform/accounts/${accountId}/plan`, body),
+      { params: Promise.resolve({ id: accountId }) }
+    );
+  }
+
+  function memberReq(accountId: string, body: unknown) {
+    return platformAccountMembers.POST(
+      req('POST', `/api/platform/accounts/${accountId}/members`, body),
+      { params: Promise.resolve({ id: accountId }) }
+    );
+  }
+
+  it('403s the owner of A on every s9.4 route, and moves nothing', async () => {
+    seedTarget();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+    const beforeT = h.db.snapshot(TARGET);
+
+    const responses = [
+      await platformAccounts.POST(
+        req('POST', '/api/platform/accounts', {
+          name: 'Evil Corp',
+          ownerEmail: 'evil@x.test',
+          reason: REASON_S94,
+        })
+      ),
+      await planReq(A, { planId: 'negocio', reason: REASON_S94 }),
+      await planReq(TARGET, { planId: 'negocio', reason: REASON_S94 }),
+      await memberReq(TARGET, { email: 'spy@x.test', role: 'admin' }),
+      await platformOperators.GET(),
+      await platformOperators.POST(
+        req('POST', '/api/platform/operators', {
+          email: 'a@x.test',
+          note: REASON_S94,
+        })
+      ),
+      await platformOperatorById.DELETE(
+        req('DELETE', `/api/platform/operators/${USER_TARGET}`, {
+          reason: REASON_S94,
+        }),
+        { params: Promise.resolve({ userId: USER_TARGET }) }
+      ),
+    ];
+    for (const res of responses) {
+      expect(res.status).toBe(403);
+      expectNoBIds(await res.json());
+    }
+
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    expect(h.db.snapshot(TARGET)).toEqual(beforeT);
+    expect(h.db.rows('impersonation_log')).toEqual([]);
+    expect(h.db.rows('platform_admins')).toEqual([]);
+    expect(h.invitedEmails).toEqual([]);
+  });
+
+  it('creates a company: a new account, renamed and on a manual plan — A and B untouched', async () => {
+    makePlatformAdmin(USER_A);
+    seedTarget();
+    extraWaivers = [EMAIL_LOOKUP, OWNER_ACCOUNT, ACCOUNTLESS_LOG];
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await platformAccounts.POST(
+      req('POST', '/api/platform/accounts', {
+        name: 'Acme SRL',
+        ownerEmail: 'owner@acme.test',
+        planId: 'negocio',
+        reason: REASON_S94,
+      })
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expectNoBIds(body);
+    expect(body.accountId).not.toBe(A);
+
+    const created = h.db
+      .rows('accounts')
+      .find((row) => row.id === body.accountId)!;
+    expect(created.name).toBe('Acme SRL');
+    expect(
+      h.db.rows('subscriptions').find((r) => r.account_id === body.accountId)
+    ).toMatchObject({
+      plan_id: 'negocio',
+      provider: 'manual',
+      status: 'active',
+    });
+
+    // Both lines of the trail point at the NEW company — the account_create
+    // one was written without it and filled in afterwards.
+    const trail = h.db.rows('impersonation_log');
+    expect(trail.map((r) => r.action)).toEqual([
+      'account_create',
+      'plan_override',
+    ]);
+    for (const line of trail) expect(line.account_id).toBe(body.accountId);
+
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+  });
+
+  it('409s an email that already has a user, and creates nothing', async () => {
+    makePlatformAdmin(USER_A);
+    extraWaivers = [EMAIL_LOOKUP];
+    h.db.rows('profiles').find((p) => p.user_id === USER_B)!.email =
+      'owner-b@x.test';
+    const accounts = h.db.rows('accounts').length;
+
+    const res = await platformAccounts.POST(
+      req('POST', '/api/platform/accounts', {
+        name: 'Duplicate',
+        ownerEmail: 'owner-b@x.test',
+        reason: REASON_S94,
+      })
+    );
+    expect(res.status).toBe(409);
+    expectNoBIds(await res.json());
+    expect(h.db.rows('accounts')).toHaveLength(accounts);
+    expect(h.invitedEmails).toEqual([]);
+  });
+
+  it('assigns a plan by hand to ONE company: only its subscription moves', async () => {
+    makePlatformAdmin(USER_A);
+    seedTarget();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await planReq(TARGET, {
+      planId: 'negocio',
+      reason: REASON_S94,
+    });
+    expect(res.status).toBe(200);
+    expectNoBIds(await res.json());
+
+    expect(
+      h.db.rows('subscriptions').find((r) => r.account_id === TARGET)
+    ).toMatchObject({
+      plan_id: 'negocio',
+      provider: 'manual',
+      status: 'active',
+      provider_subscription_id: null,
+      trial_ends_at: null,
+    });
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    expect(h.db.rows('impersonation_log')).toHaveLength(1);
+    expect(h.db.rows('impersonation_log')[0]).toMatchObject({
+      action: 'plan_override',
+      account_id: TARGET,
+      details: {
+        from_plan: 'pro',
+        to_plan: 'negocio',
+        from_provider: 'paypal',
+      },
+    });
+  });
+
+  it('409s a company PayPal is still billing, and moves nothing at all', async () => {
+    makePlatformAdmin(USER_A);
+    seedTarget({ status: 'active', provider_subscription_id: 'I-LIVE' });
+    const beforeT = h.db.snapshot(TARGET);
+
+    const res = await planReq(TARGET, {
+      planId: 'negocio',
+      reason: REASON_S94,
+    });
+    expect(res.status).toBe(409);
+    expect(h.db.snapshot(TARGET)).toEqual(beforeT);
+    expect(h.db.rows('impersonation_log')).toEqual([]);
+  });
+
+  it('invites a member to ONE company: the invitation is its, A and B untouched', async () => {
+    makePlatformAdmin(USER_A);
+    seedTarget();
+    extraWaivers = [EMAIL_LOOKUP];
+    // Declared before the snapshots, so the table merely appearing is not
+    // read as a difference in A's.
+    h.db.rows('account_invitations');
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await memberReq(TARGET, {
+      email: 'new.agent@acme.test',
+      role: 'agent',
+    });
+    expect(res.status).toBe(201);
+    expectNoBIds(await res.json());
+
+    const invitations = h.db.rows('account_invitations');
+    expect(invitations).toHaveLength(1);
+    expect(invitations[0]).toMatchObject({
+      account_id: TARGET,
+      role: 'agent',
+      created_by_user_id: USER_A,
+    });
+    expect(h.db.rows('impersonation_log')[0]).toMatchObject({
+      action: 'member_invite',
+      account_id: TARGET,
+    });
+    // The Supabase invite made the new person their own (empty) company,
+    // which redeem_invitation() dissolves on accept. A and B did not move.
+    expect(h.invitedEmails).toEqual(['new.agent@acme.test']);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+  });
+
+  it('grants and revokes an operator: platform_admins moves, no company does', async () => {
+    makePlatformAdmin(USER_A);
+    seedTarget();
+    h.db.rows('profiles').find((p) => p.user_id === USER_TARGET)!.email =
+      'owner-t@x.test';
+    // The 071 functions, as the fake sees them: the log line and the row.
+    h.db.rpcHandlers.platform_grant_operator = (args, db) => {
+      db.rows('impersonation_log').push({
+        id: `log-${db.rows('impersonation_log').length}`,
+        action: 'operator_grant',
+        account_id: null,
+        actor_user_id: args.p_by,
+        details: { target_user_id: args.p_user },
+      });
+      db.rows('platform_admins').push({
+        user_id: args.p_user,
+        granted_by: args.p_by,
+        granted_at: PAST,
+        note: args.p_reason,
+      });
+      return null;
+    };
+    h.db.rpcHandlers.platform_revoke_operator = (args, db) => {
+      db.tables.platform_admins = db
+        .rows('platform_admins')
+        .filter((r) => r.user_id !== args.p_user);
+      return null;
+    };
+    extraWaivers = [
+      EMAIL_LOOKUP,
+      {
+        table: 'rpc:platform_grant_operator',
+        reason:
+          'The operator role is above every company (055): there is no ' +
+          'account to pass. Granted to service_role only (071), behind ' +
+          'requirePlatformAdmin().',
+      },
+      {
+        table: 'rpc:platform_revoke_operator',
+        reason: 'Same as platform_grant_operator.',
+      },
+      {
+        table: 'platform_admins',
+        op: 'select',
+        by: [],
+        reason:
+          'The list of operators: platform_admins has no account_id; the ' +
+          'whole table IS the answer, behind requirePlatformAdmin().',
+      },
+      {
+        table: 'profiles',
+        op: 'select',
+        by: ['user_id'],
+        reason:
+          'Names and emails of the operators just listed, by their own ' +
+          'user ids (from platform_admins, not from the request).',
+      },
+    ];
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+    const beforeT = h.db.snapshot(TARGET);
+
+    const granted = await platformOperators.POST(
+      req('POST', '/api/platform/operators', {
+        email: 'owner-t@x.test',
+        note: REASON_S94,
+      })
+    );
+    expect(granted.status).toBe(201);
+    expect(h.db.rows('platform_admins').map((r) => r.user_id)).toEqual([
+      USER_A,
+      USER_TARGET,
+    ]);
+
+    const list = await (await platformOperators.GET()).json();
+    expect(list.operators.map((o: Row) => o.userId)).toEqual([
+      USER_A,
+      USER_TARGET,
+    ]);
+    expect(
+      list.operators.find((o: Row) => o.userId === USER_TARGET).email
+    ).toBe('owner-t@x.test');
+    expectNoBIds(list);
+
+    const revoked = await platformOperatorById.DELETE(
+      req('DELETE', `/api/platform/operators/${USER_TARGET}`, {
+        reason: REASON_S94,
+      }),
+      { params: Promise.resolve({ userId: USER_TARGET }) }
+    );
+    expect(revoked.status).toBe(200);
+    expect(h.db.rows('platform_admins').map((r) => r.user_id)).toEqual([
+      USER_A,
+    ]);
+
+    // Operators are not tenants: no company moved, not even the one whose
+    // owner was promoted and demoted.
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    expect(h.db.snapshot(TARGET)).toEqual(beforeT);
   });
 });
 
