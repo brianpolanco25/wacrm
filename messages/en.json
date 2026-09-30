@@ -1970,7 +1970,8 @@
         "past_due": "Payment failed",
         "suspended": "Suspended",
         "cancelled": "Cancelled",
-        "expired": "Expired"
+        "expired": "Expired",
+        "incomplete": "Sign-up incomplete"
       },
       "cycleMonth": "Billed monthly",
       "cycleYear": "Billed yearly",
@@ -1978,8 +1979,6 @@
       "nextChargeLabel": "Next charge",
       "periodEndLabel": "Current period ends",
       "noNextCharge": "—",
-      "trialEnds": "Your trial ends on {date}. Pick a plan before then to keep sending.",
-      "trialNoDate": "You are on the trial. Pick a plan to keep sending when it ends.",
       "cancelScheduled": "Cancelled. The service keeps running until {date} and you will not be charged again.",
       "cancelScheduledNoDate": "Cancelled. You will not be charged again.",
       "noSubscription": "This account has no active subscription. Nothing has been deleted, and contracting a plan brings everything back.",
@@ -2011,7 +2010,9 @@
       "receiptDate": "Date",
       "receiptAmount": "Amount",
       "receiptTransaction": "PayPal transaction",
-      "receiptLink": "Open"
+      "receiptLink": "Open",
+      "incompleteNote": "This account has not paid for a plan yet: it is read-only until the sign-up is finished.",
+      "incompleteAction": "Finish signing up"
     },
     "return": {
       "title": "We are confirming your payment",
@@ -2022,11 +2023,13 @@
       "slowBody": "This is taking longer than usual. Your payment is safe and the plan switches on the moment PayPal confirms it — no need to pay again.",
       "backToDashboard": "Go to dashboard"
     },
-    "trialEndsIn": "Trial ends in {days} {days, plural, =1 {day} other {days}}",
-    "trialEndsToday": "Trial ends today",
-    "trialChoosePlan": "Choose a plan",
     "heldTitle": "This account has been suspended by the service operator",
-    "heldBody": "An operator of the service has put this account on hold, so everyone here can read but not write: no sending, no broadcasts, no AI replies. Incoming WhatsApp messages keep arriving and nothing is deleted. Paying will not lift this one — contact support."
+    "heldBody": "An operator of the service has put this account on hold, so everyone here can read but not write: no sending, no broadcasts, no AI replies. Incoming WhatsApp messages keep arriving and nothing is deleted. Paying will not lift this one — contact support.",
+    "incomplete": {
+      "title": "Your sign-up is not finished",
+      "body": "This account has no paid plan yet, so nothing can be saved. Fill in the company details and buy a plan to get started.",
+      "action": "Finish signing up"
+    }
   },
   "Platform": {
     "title": "Platform accounts",
@@ -2143,7 +2146,7 @@
         "suspended": "Suspended",
         "cancelled": "Cancelled",
         "expired": "Expired",
-        "incomplete": "Payment pending",
+        "incomplete": "Sign-up incomplete",
         "none": "No subscription"
       },
       "weeklyTitle": "Signups per week (last 12)",
@@ -2286,7 +2289,7 @@
       "ownerEmailLabel": "Owner email",
       "ownerNameLabel": "Owner name (optional)",
       "planLabel": "Plan (optional)",
-      "planNone": "No manual plan (standard trial)",
+      "planNone": "No manual plan (will pay through PayPal)",
       "privatePlan": "(private)",
       "reasonLabel": "Reason",
       "reasonHelp": "Required, at least {min} characters. It is kept in the platform log with your name and the time.",
@@ -2459,5 +2462,54 @@
     "noSessionDesc": "To choose a password you need to open the link from the email. Ask for a new one and open it in this browser.",
     "requestNewLink": "Get a new link",
     "backToSignIn": "Back to sign in"
+  },
+  "Onboarding": {
+    "title": "Finish signing up",
+    "signOut": "Sign out",
+    "steps": {
+      "label": "Sign-up steps",
+      "company": "Company",
+      "plan": "Plan",
+      "payment": "PayPal payment"
+    },
+    "company": {
+      "title": "Your company",
+      "subtitle": "Before you get in we need to know who you are. Then you pick a plan and pay for it with PayPal.",
+      "name": "Company name",
+      "country": "Country",
+      "phone": "Phone",
+      "phonePlaceholder": "+1 555 010 0101",
+      "industry": "Industry",
+      "teamSize": "Team size",
+      "teamSizeOption": "{size} people",
+      "choose": "Choose one",
+      "continue": "Continue",
+      "saveFailed": "The details could not be saved. Please try again.",
+      "errors": {
+        "name": "Enter the company name (80 characters at most).",
+        "country": "Choose the company’s country.",
+        "phone": "Enter a valid phone number, 6 to 15 digits.",
+        "industry": "Choose the industry.",
+        "teamSize": "Choose the team size."
+      },
+      "industries": {
+        "retail": "Retail and shops",
+        "services": "Professional services",
+        "health": "Health and wellness",
+        "education": "Education",
+        "real_estate": "Real estate",
+        "hospitality": "Hospitality and tourism",
+        "technology": "Technology",
+        "finance": "Finance and insurance",
+        "manufacturing": "Manufacturing",
+        "logistics": "Logistics and transport",
+        "other": "Other"
+      }
+    },
+    "ownerOnlyTitle": "Sign-up not finished yet",
+    "ownerOnlyBody": "The account owner has to fill in the company details and buy a plan. Once they do, you can get in.",
+    "adminOnlyTitle": "No plan yet",
+    "adminOnlyBody": "An admin or the account owner has to choose a plan and pay for it with PayPal. Once they do, you can get in.",
+    "editCompany": "Correct the company details"
   }
 }

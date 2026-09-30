@@ -4,6 +4,7 @@ import {
   alreadyContracted,
   checkoutRequestId,
   checkoutUrls,
+  isOnboardingCheckout,
   isBillingCycle,
   priceFor,
   providerPlanIdFor,
@@ -147,6 +148,32 @@ describe('checkoutUrls', () => {
     expect(checkoutUrls('https://app.example.com//').returnUrl).toBe(
       'https://app.example.com/billing/return'
     );
+  });
+
+  it('brings an account still signing up back to the onboarding flow (s9.6)', () => {
+    expect(
+      checkoutUrls('https://app.example.com/', { onboarding: true })
+    ).toEqual({
+      returnUrl: 'https://app.example.com/onboarding/return',
+      cancelUrl: 'https://app.example.com/onboarding?checkout=cancelled',
+    });
+  });
+});
+
+describe('isOnboardingCheckout', () => {
+  it('is the first contract: no row, or the incomplete seed', () => {
+    expect(isOnboardingCheckout(null)).toBe(true);
+    expect(isOnboardingCheckout(undefined)).toBe(true);
+    expect(isOnboardingCheckout({ status: 'incomplete' })).toBe(true);
+    for (const status of [
+      'active',
+      'past_due',
+      'suspended',
+      'cancelled',
+      'expired',
+    ]) {
+      expect(isOnboardingCheckout({ status })).toBe(false);
+    }
   });
 });
 

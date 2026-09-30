@@ -55,6 +55,8 @@ vi.mock('@/lib/automations/admin-client', () => ({
 import {
   AccountLockedError,
   BILLING_UPGRADE_PATH,
+  ONBOARDING_PATH,
+  upgradePathFor,
   FeatureNotAvailableError,
   PlanLimitError,
   QuotaExceededError,
@@ -198,15 +200,40 @@ describe('assertWritable', () => {
     );
   });
 
-  it('lets a seeded trial write', async () => {
-    // Migration 046 gives every account a `pro`/`trialing` row.
+  it('refuses an incomplete account (s9.6, the 073 seed) and says «complete your sign-up»', async () => {
+    // Migration 073 seeds every new account `inicio`/`incomplete`.
     h.state.subscription = {
-      plan_id: 'pro',
-      status: 'trialing',
-      trial_ends_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+      plan_id: 'inicio',
+      status: 'incomplete',
+      trial_ends_at: null,
       grace_until: null,
+      manual_hold_at: null,
     };
-    await expect(assertWritable(ACCOUNT)).resolves.toBeTruthy();
+    await expect(assertWritable(ACCOUNT)).rejects.toBeInstanceOf(
+      AccountLockedError
+    );
+    await assertWritable(ACCOUNT).catch((err: AccountLockedError) => {
+      expect(err.status).toBe(403);
+      expect(err.subscriptionStatus).toBe('incomplete');
+      expect(err.manualHold).toBe(false);
+      expect(err.message).toMatch(/complete your sign-up/i);
+      expect(err.message).not.toMatch(/settle/i);
+    });
+  });
+
+  it('refuses an account with no subscription row at all (no trial fallback)', async () => {
+    h.state.subscription = null;
+    await assertWritable(ACCOUNT).then(
+      () => {
+        throw new Error(
+          'an account with no subscription row was allowed to write'
+        );
+      },
+      (err: AccountLockedError) => {
+        expect(err).toBeInstanceOf(AccountLockedError);
+        expect(err.subscriptionStatus).toBe('incomplete');
+      }
+    );
   });
 
   it('reads the subscription of THIS account and no other (leak test)', async () => {
@@ -403,6 +430,24 @@ describe('billingErrorPayload', () => {
       status: 403,
       upgradeUrl: BILLING_UPGRADE_PATH,
     });
+  });
+
+  it('sends an incomplete account to /onboarding, not /billing (s9.6)', () => {
+    expect(ONBOARDING_PATH).toBe('/onboarding');
+    const p = billingErrorPayload(new AccountLockedError('incomplete'));
+    expect(p).toMatchObject({
+      code: 'account_read_only',
+      subscriptionStatus: 'incomplete',
+      status: 403,
+      upgradeUrl: '/onboarding',
+    });
+    expect(p?.error).toMatch(/complete your sign-up/i);
+    // A manual hold keeps its own way out, whatever the status.
+    expect(
+      billingErrorPayload(new AccountLockedError('incomplete', true))
+    ).toMatchObject({ upgradeUrl: BILLING_UPGRADE_PATH, manualHold: true });
+    expect(upgradePathFor('suspended')).toBe('/billing');
+    expect(upgradePathFor(null)).toBe('/billing');
   });
 
   it('tells the wire which of the two locks it is', () => {

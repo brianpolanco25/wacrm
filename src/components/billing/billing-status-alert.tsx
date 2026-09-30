@@ -19,10 +19,14 @@
 //   held       a platform operator suspended the account by hand
 //              (fase 4 §2). Same read-only effect, different way out:
 //              only the operator can lift it, so no `/billing` button.
+//   incomplete the account signed up and never paid (s9.6, no trial).
+//              Read-only, and the way out is `/onboarding` (company
+//              details, then the plan), not `/billing`. The dashboard
+//              gate normally sends these users there before this renders;
+//              it shows during a support session, which the gate lets in.
 //
-// `active`, `trialing` and `cancelled` (still inside the paid period)
-// render nothing: a banner that is always there is a banner nobody
-// reads.
+// `active` and `cancelled` (still inside the paid period) render
+// nothing: a banner that is always there is a banner nobody reads.
 // ============================================================
 
 import { useRouter } from 'next/navigation';
@@ -41,8 +45,8 @@ import {
 export function BillingStatusAlert() {
   const router = useRouter();
   const t = useTranslations('Billing');
-  // Shared with the header's trial countdown (p6.2): one
-  // `/api/billing/status` read per account serves both. A failed read
+  // One `/api/billing/status` read per account (`useBillingStatus`,
+  // cached and shared with any other consumer). A failed read
   // resolves to null and leaves the banner hidden on purpose — the
   // server is the thing that actually blocks writes, and inventing a
   // "your account is suspended" notice out of a network blip would be
@@ -52,6 +56,7 @@ export function BillingStatusAlert() {
   if (!status) return null;
   const locked = status.readOnly;
   const held = locked && status.manualHold === true;
+  const incomplete = locked && !held && status.status === 'incomplete';
   const warning = !locked && status.status === 'past_due';
   if (!locked && !warning) return null;
 
@@ -63,16 +68,24 @@ export function BillingStatusAlert() {
     <Alert variant="destructive" className="mb-4">
       {locked ? <TriangleAlert /> : <CreditCard />}
       <AlertTitle>
-        {held ? t('heldTitle') : locked ? t('lockedTitle') : t('pastDueTitle')}
+        {held
+          ? t('heldTitle')
+          : incomplete
+            ? t('incomplete.title')
+            : locked
+              ? t('lockedTitle')
+              : t('pastDueTitle')}
       </AlertTitle>
       <AlertDescription>
         {held
           ? t('heldBody')
-          : locked
-            ? t('lockedBody')
-            : graceDate
-              ? t('pastDueBodyWithDate', { date: graceDate })
-              : t('pastDueBody')}
+          : incomplete
+            ? t('incomplete.body')
+            : locked
+              ? t('lockedBody')
+              : graceDate
+                ? t('pastDueBodyWithDate', { date: graceDate })
+                : t('pastDueBody')}
       </AlertDescription>
       {/* No "fix now" for a manual hold: `/billing` cannot lift one, and
           a button that charges the card without unlocking anything is
@@ -82,9 +95,9 @@ export function BillingStatusAlert() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => router.push('/billing')}
+            onClick={() => router.push(incomplete ? '/onboarding' : '/billing')}
           >
-            {t('fixNow')}
+            {incomplete ? t('incomplete.action') : t('fixNow')}
           </Button>
         </AlertAction>
       )}

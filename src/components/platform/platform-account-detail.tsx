@@ -40,6 +40,7 @@ import {
   type MemberInviteOutcome,
 } from './platform-provisioning';
 import { ImpersonationActions } from './impersonation-actions';
+import { useSubscriptionStatusLabel } from './subscription-status';
 
 interface UsageLine {
   metric: string;
@@ -142,6 +143,7 @@ export function PlatformAccountDetail({
   initial?: { detail: Detail; inviteLink?: string | null };
 }) {
   const t = useTranslations('Platform');
+  const statusLabel = useSubscriptionStatusLabel();
   const [detail, setDetail] = useState<Detail | null>(initial?.detail ?? null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState<'notFound' | 'error' | null>(null);
@@ -287,7 +289,8 @@ export function PlatformAccountDetail({
             {detail.name || detail.accountId}
           </h1>
           <Badge variant="outline">
-            {detail.planName ?? detail.planId} · {detail.subscriptionStatus}
+            {detail.planName ?? detail.planId} ·{' '}
+            {statusLabel(detail.subscriptionStatus)}
           </Badge>
           {detail.provider === 'manual' ? (
             <Badge variant="secondary">{t('provisioning.manualBadge')}</Badge>

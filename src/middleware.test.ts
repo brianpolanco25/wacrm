@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // --- Scenario knobs the mock reads -----------------------------------------
 // `mockUser`         — what getUser() resolves to (a refreshed session ⇒ user,
@@ -15,13 +15,13 @@ let refreshedCookies: Array<{
   options: Record<string, unknown>;
 }> = [];
 
-vi.mock("@supabase/ssr", () => ({
+vi.mock('@supabase/ssr', () => ({
   createServerClient: (
     _url: string,
     _key: string,
     opts: {
       cookies: { setAll: (c: typeof refreshedCookies) => void };
-    },
+    }
   ) => ({
     auth: {
       // Mirrors real auth-js: an expired access token is transparently
@@ -36,11 +36,11 @@ vi.mock("@supabase/ssr", () => ({
 }));
 
 // Imported after the mock is registered.
-const { middleware } = await import("./middleware");
+const { middleware } = await import('./middleware');
 
 beforeEach(() => {
-  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon-key';
   mockUser = null;
   refreshedCookies = [];
 });
@@ -48,98 +48,92 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 const ROTATED = {
-  name: "sb-test-auth-token",
-  value: "rotated-refresh-token",
-  options: { path: "/", httpOnly: true },
+  name: 'sb-test-auth-token',
+  value: 'rotated-refresh-token',
+  options: { path: '/', httpOnly: true },
 };
 
-describe("middleware — refreshed auth cookies survive redirects", () => {
-  it("carries the rotated token when redirecting a signed-in user off /login", async () => {
-    mockUser = { id: "user-1" };
+describe('middleware — refreshed auth cookies survive redirects', () => {
+  it('carries the rotated token when redirecting a signed-in user off /login', async () => {
+    mockUser = { id: 'user-1' };
     refreshedCookies = [ROTATED];
 
-    const res = await middleware(
-      new NextRequest("https://app.test/login"),
-    );
+    const res = await middleware(new NextRequest('https://app.test/login'));
 
     // Redirect to /dashboard…
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toContain("/dashboard");
+    expect(res.headers.get('location')).toContain('/dashboard');
     // …and the rotated cookie MUST ride along, otherwise the browser keeps
     // replaying the now-consumed refresh token and the session wedges until
     // the user manually clears cookies.
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 
-  it("carries the rotated token when redirecting an unauth user to /login", async () => {
+  it('carries the rotated token when redirecting an unauth user to /login', async () => {
     mockUser = null;
     // Even on the logged-out path getUser() may emit cookie writes (e.g.
     // clearing a dead session); those must not be dropped on the redirect.
-    refreshedCookies = [{ ...ROTATED, value: "cleared" }];
+    refreshedCookies = [{ ...ROTATED, value: 'cleared' }];
 
-    const res = await middleware(
-      new NextRequest("https://app.test/dashboard"),
-    );
+    const res = await middleware(new NextRequest('https://app.test/dashboard'));
 
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toContain("/login");
-    expect(res.cookies.get(ROTATED.name)?.value).toBe("cleared");
+    expect(res.headers.get('location')).toContain('/login');
+    expect(res.cookies.get(ROTATED.name)?.value).toBe('cleared');
   });
 
-  it("redirects a signed-in user with an invite token to /join/<token>", async () => {
-    mockUser = { id: "user-1" };
+  it('redirects a signed-in user with an invite token to /join/<token>', async () => {
+    mockUser = { id: 'user-1' };
     refreshedCookies = [ROTATED];
 
     const res = await middleware(
-      new NextRequest("https://app.test/login?invite=abc123"),
+      new NextRequest('https://app.test/login?invite=abc123')
     );
 
-    expect(res.headers.get("location")).toContain("/join/abc123");
+    expect(res.headers.get('location')).toContain('/join/abc123');
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 
-  it("passes through (no redirect) for a signed-in user on a protected page", async () => {
-    mockUser = { id: "user-1" };
+  it('passes through (no redirect) for a signed-in user on a protected page', async () => {
+    mockUser = { id: 'user-1' };
     refreshedCookies = [ROTATED];
 
-    const res = await middleware(
-      new NextRequest("https://app.test/dashboard"),
-    );
+    const res = await middleware(new NextRequest('https://app.test/dashboard'));
 
     // No redirect — the normal NextResponse.next() already carries cookies.
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get('location')).toBeNull();
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 });
 
-describe("middleware — /platform is a protected page (s9.1)", () => {
+describe('middleware — /platform is a protected page (s9.1)', () => {
   it.each([
-    "/platform",
-    "/platform/accounts",
-    "/platform/plans",
-    "/platform/operators",
-    "/platform/aaaaaaaa-0000-4000-8000-000000000001",
-  ])("redirects %s to /login without a session", async (path) => {
+    '/platform',
+    '/platform/accounts',
+    '/platform/plans',
+    '/platform/operators',
+    '/platform/aaaaaaaa-0000-4000-8000-000000000001',
+  ])('redirects %s to /login without a session', async (path) => {
     mockUser = null;
     const res = await middleware(new NextRequest(`https://app.test${path}`));
     expect(res.status).toBe(307);
-    expect(new URL(res.headers.get("location")!).pathname).toBe("/login");
+    expect(new URL(res.headers.get('location')!).pathname).toBe('/login');
   });
 
-  it("lets a signed-in user through (the page decides, with a 404)", async () => {
-    mockUser = { id: "user-1" };
+  it('lets a signed-in user through (the page decides, with a 404)', async () => {
+    mockUser = { id: 'user-1' };
     const res = await middleware(
-      new NextRequest("https://app.test/platform/accounts"),
+      new NextRequest('https://app.test/platform/accounts')
     );
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get('location')).toBeNull();
   });
 
-  it("does not turn /api/platform/* into a redirect", async () => {
+  it('does not turn /api/platform/* into a redirect', async () => {
     mockUser = null;
     const res = await middleware(
-      new NextRequest("https://app.test/api/platform/me"),
+      new NextRequest('https://app.test/api/platform/me')
     );
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get('location')).toBeNull();
   });
 });
 
@@ -157,12 +151,12 @@ describe("middleware — /platform is a protected page (s9.1)", () => {
 
 /** A header the middleware forwards to the route, as Next encodes it. */
 function forwarded(res: Response, name: string): string | null {
-  return res.headers.get(`x-middleware-request-${name}`)
+  return res.headers.get(`x-middleware-request-${name}`);
 }
 
-describe("middleware — support sessions write, and are recorded", () => {
-  const SUPPORT = "wacrm_support_session";
-  const SUPPORT_ACTIVE = "wacrm_support_active";
+describe('middleware — support sessions write, and are recorded', () => {
+  const SUPPORT = 'wacrm_support_session';
+  const SUPPORT_ACTIVE = 'wacrm_support_active';
 
   // A real token is `<base64url payload>.<hmac>`. The middleware cannot
   // verify the signature (no node:crypto on Edge) but it does read the
@@ -170,23 +164,23 @@ describe("middleware — support sessions write, and are recorded", () => {
   function token(actorUserId: string) {
     const payload = Buffer.from(
       JSON.stringify({
-        logId: "log-1",
+        logId: 'log-1',
         actorUserId,
-        accountId: "acct-t",
+        accountId: 'acct-t',
         expiresAt: Date.now() + 60_000,
       }),
-      "utf8",
-    ).toString("base64url");
+      'utf8'
+    ).toString('base64url');
     return `${payload}.not-checked-here`;
   }
 
   function request(
     url: string,
     {
-      method = "POST",
+      method = 'POST',
       support = true,
-      actor = "operator-1",
-    }: { method?: string; support?: boolean; actor?: string } = {},
+      actor = 'operator-1',
+    }: { method?: string; support?: boolean; actor?: string } = {}
   ) {
     return new NextRequest(url, {
       method,
@@ -197,161 +191,172 @@ describe("middleware — support sessions write, and are recorded", () => {
   }
 
   beforeEach(() => {
-    mockUser = { id: "operator-1" };
+    mockUser = { id: 'operator-1' };
   });
 
-  it("lets a mutating API request through while the support cookie is present", async () => {
-    const res = await middleware(request("https://app.test/api/quick-replies"))
-    expect(res.status).not.toBe(403)
-  })
+  it('lets a mutating API request through while the support cookie is present', async () => {
+    const res = await middleware(request('https://app.test/api/quick-replies'));
+    expect(res.status).not.toBe(403);
+  });
 
-  it.each(["POST", "PUT", "PATCH", "DELETE"])(
-    "tags %s for the server to record, with a fresh request id",
+  it.each(['POST', 'PUT', 'PATCH', 'DELETE'])(
+    'tags %s for the server to record, with a fresh request id',
     async (method) => {
       const res = await middleware(
-        request("https://app.test/api/contacts/abc/tags", { method }),
-      )
-      expect(res.status).not.toBe(403)
-      expect(forwarded(res, "x-wacrm-support-method")).toBe(method)
-      expect(forwarded(res, "x-wacrm-support-path")).toBe("/api/contacts/abc/tags")
-      expect(forwarded(res, "x-wacrm-support-request")).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-      )
-    },
-  )
+        request('https://app.test/api/contacts/abc/tags', { method })
+      );
+      expect(res.status).not.toBe(403);
+      expect(forwarded(res, 'x-wacrm-support-method')).toBe(method);
+      expect(forwarded(res, 'x-wacrm-support-path')).toBe(
+        '/api/contacts/abc/tags'
+      );
+      expect(forwarded(res, 'x-wacrm-support-request')).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+      );
+    }
+  );
 
-  it("gives every request its own id, so one request is one row", async () => {
-    const a = await middleware(request("https://app.test/api/quick-replies"))
-    const b = await middleware(request("https://app.test/api/quick-replies"))
-    expect(forwarded(a, "x-wacrm-support-request")).not.toBe(
-      forwarded(b, "x-wacrm-support-request"),
-    )
-  })
+  it('gives every request its own id, so one request is one row', async () => {
+    const a = await middleware(request('https://app.test/api/quick-replies'));
+    const b = await middleware(request('https://app.test/api/quick-replies'));
+    expect(forwarded(a, 'x-wacrm-support-request')).not.toBe(
+      forwarded(b, 'x-wacrm-support-request')
+    );
+  });
 
-  it("never lets the client supply the tags itself", async () => {
+  it('never lets the client supply the tags itself', async () => {
     // Without a support cookie: stripped and not re-added.
     const plain = await middleware(
-      new NextRequest("https://app.test/api/quick-replies", {
-        method: "POST",
+      new NextRequest('https://app.test/api/quick-replies', {
+        method: 'POST',
         headers: {
-          "x-wacrm-support-method": "DELETE",
-          "x-wacrm-support-path": "/api/forged",
-          "x-wacrm-support-request": "00000000-0000-4000-8000-000000000000",
+          'x-wacrm-support-method': 'DELETE',
+          'x-wacrm-support-path': '/api/forged',
+          'x-wacrm-support-request': '00000000-0000-4000-8000-000000000000',
         },
-      }),
-    )
-    expect(forwarded(plain, "x-wacrm-support-method")).toBeNull()
-    expect(forwarded(plain, "x-wacrm-support-path")).toBeNull()
-    expect(forwarded(plain, "x-wacrm-support-request")).toBeNull()
+      })
+    );
+    expect(forwarded(plain, 'x-wacrm-support-method')).toBeNull();
+    expect(forwarded(plain, 'x-wacrm-support-path')).toBeNull();
+    expect(forwarded(plain, 'x-wacrm-support-request')).toBeNull();
 
     // With one: replaced by the middleware's own word.
     const tagged = await middleware(
-      new NextRequest("https://app.test/api/quick-replies", {
-        method: "POST",
+      new NextRequest('https://app.test/api/quick-replies', {
+        method: 'POST',
         headers: {
-          cookie: `${SUPPORT}=${token("operator-1")}; ${SUPPORT_ACTIVE}=1`,
-          "x-wacrm-support-path": "/api/forged",
-          "x-wacrm-support-request": "00000000-0000-4000-8000-000000000000",
+          cookie: `${SUPPORT}=${token('operator-1')}; ${SUPPORT_ACTIVE}=1`,
+          'x-wacrm-support-path': '/api/forged',
+          'x-wacrm-support-request': '00000000-0000-4000-8000-000000000000',
         },
-      }),
-    )
-    expect(forwarded(tagged, "x-wacrm-support-path")).toBe("/api/quick-replies")
-    expect(forwarded(tagged, "x-wacrm-support-request")).not.toBe(
-      "00000000-0000-4000-8000-000000000000",
-    )
-  })
+      })
+    );
+    expect(forwarded(tagged, 'x-wacrm-support-path')).toBe(
+      '/api/quick-replies'
+    );
+    expect(forwarded(tagged, 'x-wacrm-support-request')).not.toBe(
+      '00000000-0000-4000-8000-000000000000'
+    );
+  });
 
-  it("does not tag a read", async () => {
+  it('does not tag a read', async () => {
     const res = await middleware(
-      request("https://app.test/api/quick-replies", { method: "GET" }),
-    )
-    expect(forwarded(res, "x-wacrm-support-method")).toBeNull()
-  })
+      request('https://app.test/api/quick-replies', { method: 'GET' })
+    );
+    expect(forwarded(res, 'x-wacrm-support-method')).toBeNull();
+  });
 
   it.each([
-    ["POST", "/api/billing/checkout"],
-    ["POST", "/api/billing/subscription"],
-    ["PATCH", "/api/account"],
-    ["POST", "/api/account/transfer-ownership"],
-    ["PATCH", "/api/account/members/u-1"],
-    ["DELETE", "/api/account/members/u-1"],
-    ["POST", "/api/account/invitations"],
-    ["DELETE", "/api/account/invitations/i-1"],
-    ["POST", "/api/account/api-keys"],
-    ["POST", "/api/account/api-keys/k-1/rotate"],
-    ["POST", "/api/account/webhooks"],
-    ["DELETE", "/api/account/webhooks/w-1"],
-    ["POST", "/api/invitations/tok/redeem"],
-    ["POST", "/api/platform/impersonate"],
-  ])("still refuses %s %s during a support session", async (method, path) => {
-    const res = await middleware(request(`https://app.test${path}`, { method }))
-    expect(res.status).toBe(403)
+    ['POST', '/api/billing/checkout'],
+    ['POST', '/api/billing/subscription'],
+    ['PATCH', '/api/account'],
+    ['POST', '/api/account/transfer-ownership'],
+    ['PATCH', '/api/account/members/u-1'],
+    ['DELETE', '/api/account/members/u-1'],
+    ['POST', '/api/account/invitations'],
+    ['DELETE', '/api/account/invitations/i-1'],
+    ['POST', '/api/account/api-keys'],
+    ['POST', '/api/account/api-keys/k-1/rotate'],
+    ['POST', '/api/account/webhooks'],
+    ['DELETE', '/api/account/webhooks/w-1'],
+    ['POST', '/api/invitations/tok/redeem'],
+    ['POST', '/api/platform/impersonate'],
+  ])('still refuses %s %s during a support session', async (method, path) => {
+    const res = await middleware(
+      request(`https://app.test${path}`, { method })
+    );
+    expect(res.status).toBe(403);
     await expect(res.json()).resolves.toMatchObject({
-      code: "support_session_forbidden",
-    })
-  })
+      code: 'support_session_forbidden',
+    });
+  });
 
-  it("lets the same routes be READ — the billing and team screens are what tickets are about", async () => {
-    for (const path of ["/api/billing/status", "/api/billing/subscription", "/api/account/members", "/api/account"]) {
+  it('lets the same routes be READ — the billing and team screens are what tickets are about', async () => {
+    for (const path of [
+      '/api/billing/status',
+      '/api/billing/subscription',
+      '/api/account/members',
+      '/api/account',
+    ]) {
       const res = await middleware(
-        request(`https://app.test${path}`, { method: "GET" }),
-      )
-      expect(res.status, path).not.toBe(403)
+        request(`https://app.test${path}`, { method: 'GET' })
+      );
+      expect(res.status, path).not.toBe(403);
     }
-  })
+  });
 
-  it("does not mistake a sibling path for a blocked one", async () => {
+  it('does not mistake a sibling path for a blocked one', async () => {
     // `/api/account` is blocked exactly, not as a prefix of every path
     // that happens to start with those letters.
-    const res = await middleware(request("https://app.test/api/accounting"))
-    expect(res.status).not.toBe(403)
-    expect(forwarded(res, "x-wacrm-support-path")).toBe("/api/accounting")
-  })
+    const res = await middleware(request('https://app.test/api/accounting'));
+    expect(res.status).not.toBe(403);
+    expect(forwarded(res, 'x-wacrm-support-path')).toBe('/api/accounting');
+  });
 
-  it("runs on every /api path, image-looking ones included", async () => {
+  it('runs on every /api path, image-looking ones included', async () => {
     // The page matcher skips `*.png` & co. for static assets; an API route
     // ending like that would reach the server untagged and leave no
     // `http` row (review of s9.5). `/api/:path*` is matched on its own.
-    const { config } = await import("./middleware")
-    expect(config.matcher).toContain("/api/:path*")
-  })
+    const { config } = await import('./middleware');
+    expect(config.matcher).toContain('/api/:path*');
+  });
 
-  it("refuses a mutating page request, which nothing would record", async () => {
+  it('refuses a mutating page request, which nothing would record', async () => {
     // Server actions POST to the page route.
-    const res = await middleware(request("https://app.test/contacts"))
-    expect(res.status).toBe(403)
-  })
+    const res = await middleware(request('https://app.test/contacts'));
+    expect(res.status).toBe(403);
+  });
 
-  it("leaves reads alone — looking is the entire point of a support session", async () => {
+  it('leaves reads alone — looking is the entire point of a support session', async () => {
     const res = await middleware(
-      request("https://app.test/api/quick-replies", { method: "GET" }),
+      request('https://app.test/api/quick-replies', { method: 'GET' })
     );
     expect(res.status).not.toBe(403);
   });
 
-  it("leaves ordinary users alone when no support cookie is present", async () => {
+  it('leaves ordinary users alone when no support cookie is present', async () => {
     const res = await middleware(
-      request("https://app.test/api/quick-replies", { support: false }),
+      request('https://app.test/api/quick-replies', { support: false })
     );
     expect(res.status).not.toBe(403);
   });
 
-  it("NEVER blocks the WhatsApp webhook", async () => {
+  it('NEVER blocks the WhatsApp webhook', async () => {
     // Nothing about billing, suspension or support may stop an inbound
     // message from being stored. Meta sends no browser cookie, so this is
     // unreachable in practice — asserted anyway so a refactor cannot make
     // it reachable by accident.
     const res = await middleware(
-      request("https://app.test/api/whatsapp/webhook"),
+      request('https://app.test/api/whatsapp/webhook')
     );
     expect(res.status).not.toBe(403);
   });
 
-  it("does not block the public API or the cron sweeps", async () => {
+  it('does not block the public API or the cron sweeps', async () => {
     for (const path of [
-      "/api/v1/messages",
-      "/api/automations/cron",
-      "/api/flows/cron",
+      '/api/v1/messages',
+      '/api/automations/cron',
+      '/api/flows/cron',
     ]) {
       const res = await middleware(request(`https://app.test${path}`));
       expect(res.status, path).not.toBe(403);
@@ -362,24 +367,26 @@ describe("middleware — support sessions write, and are recorded", () => {
     // Blocking /api/platform would trap an operator inside the session
     // they are trying to leave.
     const res = await middleware(
-      request("https://app.test/api/platform/impersonate/stop"),
+      request('https://app.test/api/platform/impersonate/stop')
     );
     expect(res.status).not.toBe(403);
     // Nor record it: the platform prefix has its own bitácora.
-    expect(forwarded(res, "x-wacrm-support-method")).toBeNull();
+    expect(forwarded(res, 'x-wacrm-support-method')).toBeNull();
   });
 
-  it("still carries the rotated auth cookies on the 403", async () => {
+  it('still carries the rotated auth cookies on the 403', async () => {
     refreshedCookies = [ROTATED];
-    const res = await middleware(request("https://app.test/api/billing/checkout"));
+    const res = await middleware(
+      request('https://app.test/api/billing/checkout')
+    );
     expect(res.status).toBe(403);
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 
-  it("carries them on a recorded write too", async () => {
+  it('carries them on a recorded write too', async () => {
     refreshedCookies = [ROTATED];
-    const res = await middleware(request("https://app.test/api/quick-replies"));
-    expect(forwarded(res, "x-wacrm-support-method")).toBe("POST");
+    const res = await middleware(request('https://app.test/api/quick-replies'));
+    expect(forwarded(res, 'x-wacrm-support-method')).toBe('POST');
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
 
@@ -394,41 +401,41 @@ describe("middleware — support sessions write, and are recorded", () => {
   // "could not save" with nothing on screen explaining why.
   // ----------------------------------------------------------------
 
-  it("does not strand a different user who inherited the cookie", async () => {
-    mockUser = { id: "someone-else" };
+  it('does not strand a different user who inherited the cookie', async () => {
+    mockUser = { id: 'someone-else' };
     const res = await middleware(
-      request("https://app.test/api/billing/checkout", { actor: "operator-1" }),
+      request('https://app.test/api/billing/checkout', { actor: 'operator-1' })
     );
     expect(res.status).not.toBe(403);
   });
 
-  it("drops the orphan cookies on that same response, both of them", async () => {
-    mockUser = { id: "someone-else" };
+  it('drops the orphan cookies on that same response, both of them', async () => {
+    mockUser = { id: 'someone-else' };
     const res = await middleware(
-      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
+      request('https://app.test/api/quick-replies', { actor: 'operator-1' })
     );
     // `delete` on a response cookie is an immediate expiry.
-    expect(res.cookies.get(SUPPORT)?.value).toBe("");
-    expect(res.cookies.get(SUPPORT_ACTIVE)?.value).toBe("");
+    expect(res.cookies.get(SUPPORT)?.value).toBe('');
+    expect(res.cookies.get(SUPPORT_ACTIVE)?.value).toBe('');
   });
 
-  it("drops them for a signed-out browser too", async () => {
+  it('drops them for a signed-out browser too', async () => {
     mockUser = null;
     const res = await middleware(
-      request("https://app.test/api/quick-replies", { actor: "operator-1" }),
+      request('https://app.test/api/quick-replies', { actor: 'operator-1' })
     );
-    expect(res.cookies.get(SUPPORT)?.value).toBe("");
+    expect(res.cookies.get(SUPPORT)?.value).toBe('');
   });
 
-  it("keeps blocking the operator the cookie actually names", async () => {
+  it('keeps blocking the operator the cookie actually names', async () => {
     // The recovery above must not become the way around the block list
     // for the person whose session it is.
-    mockUser = { id: "operator-1" };
+    mockUser = { id: 'operator-1' };
     const res = await middleware(
-      request("https://app.test/api/billing/checkout", { actor: "operator-1" }),
+      request('https://app.test/api/billing/checkout', { actor: 'operator-1' })
     );
     expect(res.status).toBe(403);
-    expect(res.cookies.get(SUPPORT)?.value).not.toBe("");
+    expect(res.cookies.get(SUPPORT)?.value).not.toBe('');
   });
 
   // ----------------------------------------------------------------
@@ -441,32 +448,32 @@ describe("middleware — support sessions write, and are recorded", () => {
   // ----------------------------------------------------------------
 
   it("forbids shared caching of any page carrying the customer's name", async () => {
-    mockUser = { id: "operator-1" };
+    mockUser = { id: 'operator-1' };
     const res = await middleware(
-      request("https://app.test/dashboard", { method: "GET" }),
+      request('https://app.test/dashboard', { method: 'GET' })
     );
-    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
   });
 
-  it("leaves the cache header alone when nobody is impersonating", async () => {
-    mockUser = { id: "user-1" };
+  it('leaves the cache header alone when nobody is impersonating', async () => {
+    mockUser = { id: 'user-1' };
     const res = await middleware(
-      request("https://app.test/dashboard", { method: "GET", support: false }),
+      request('https://app.test/dashboard', { method: 'GET', support: false })
     );
-    expect(res.headers.get("cache-control")).toBeNull();
+    expect(res.headers.get('cache-control')).toBeNull();
   });
 
-  it("drops a cookie whose payload is not even readable", async () => {
-    mockUser = { id: "operator-1" };
+  it('drops a cookie whose payload is not even readable', async () => {
+    mockUser = { id: 'operator-1' };
     const res = await middleware(
-      new NextRequest("https://app.test/api/quick-replies", {
-        method: "POST",
+      new NextRequest('https://app.test/api/quick-replies', {
+        method: 'POST',
         headers: { cookie: `${SUPPORT}=garbage` },
-      }),
+      })
     );
     // Unreadable ⇒ names nobody ⇒ nobody's session ⇒ blocks nobody.
     expect(res.status).not.toBe(403);
-    expect(res.cookies.get(SUPPORT)?.value).toBe("");
+    expect(res.cookies.get(SUPPORT)?.value).toBe('');
   });
 });
 
@@ -483,40 +490,40 @@ describe("middleware — support sessions write, and are recorded", () => {
 // que el bloque sigue su estilo en vez de reformatear 300 líneas ajenas.)
 // ----------------------------------------------------------------
 
-describe("middleware — /developers se sirve sin sesión", () => {
+describe('middleware — /developers se sirve sin sesión', () => {
   const PUBLIC_DOC_PATHS = [
-    "/developers",
-    "/developers/authentication",
-    "/developers/conventions",
-    "/developers/guides/webhooks",
-    "/developers/reference",
-    "/developers/changelog",
+    '/developers',
+    '/developers/authentication',
+    '/developers/conventions',
+    '/developers/guides/webhooks',
+    '/developers/reference',
+    '/developers/changelog',
   ];
 
-  it.each(PUBLIC_DOC_PATHS)("deja pasar %s sin usuario", async (path) => {
+  it.each(PUBLIC_DOC_PATHS)('deja pasar %s sin usuario', async (path) => {
     mockUser = null;
     const res = await middleware(new NextRequest(`https://app.test${path}`));
     // Ni redirección a /login ni 401: la petición sigue su camino.
     expect(res.status).toBe(200);
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get('location')).toBeNull();
   });
 
-  it("no cambia con sesión iniciada", async () => {
-    mockUser = { id: "user-1" };
+  it('no cambia con sesión iniciada', async () => {
+    mockUser = { id: 'user-1' };
     const res = await middleware(
-      new NextRequest("https://app.test/developers/reference"),
+      new NextRequest('https://app.test/developers/reference')
     );
     expect(res.status).toBe(200);
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get('location')).toBeNull();
   });
 
-  it("conserva el ?lang= del selector de idioma", async () => {
+  it('conserva el ?lang= del selector de idioma', async () => {
     mockUser = null;
     const res = await middleware(
-      new NextRequest("https://app.test/developers/guides?lang=en"),
+      new NextRequest('https://app.test/developers/guides?lang=en')
     );
     expect(res.status).toBe(200);
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get('location')).toBeNull();
   });
 });
 
@@ -529,34 +536,79 @@ describe("middleware — /developers se sirve sin sesión", () => {
 // ella misma que el enlace caducó y ofrece pedir otro.
 // ----------------------------------------------------------------
 
-describe("middleware — /auth/callback y /reset-password (s9.8)", () => {
+describe('middleware — /auth/callback y /reset-password (s9.8)', () => {
   const PATHS = [
-    "/auth/callback?code=abc",
-    "/auth/callback?token_hash=h&type=invite&next=/reset-password",
-    "/auth/callback/complete?next=/reset-password",
-    "/reset-password",
-    "/reset-password?invite=tok&welcome=1",
+    '/auth/callback?code=abc',
+    '/auth/callback?token_hash=h&type=invite&next=/reset-password',
+    '/auth/callback/complete?next=/reset-password',
+    '/reset-password',
+    '/reset-password?invite=tok&welcome=1',
   ];
 
-  it.each(PATHS)("no redirige a quien ya tiene sesión: %s", async (path) => {
-    mockUser = { id: "user-1" };
+  it.each(PATHS)('no redirige a quien ya tiene sesión: %s', async (path) => {
+    mockUser = { id: 'user-1' };
     const res = await middleware(new NextRequest(`https://app.test${path}`));
     expect(res.status).toBe(200);
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get('location')).toBeNull();
   });
 
-  it.each(PATHS)("tampoco manda a /login sin sesión: %s", async (path) => {
+  it.each(PATHS)('tampoco manda a /login sin sesión: %s', async (path) => {
     mockUser = null;
     const res = await middleware(new NextRequest(`https://app.test${path}`));
     expect(res.status).toBe(200);
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get('location')).toBeNull();
   });
 
-  it("/forgot-password sigue mandando al dashboard a quien tiene sesión", async () => {
-    mockUser = { id: "user-1" };
+  it('/forgot-password sigue mandando al dashboard a quien tiene sesión', async () => {
+    mockUser = { id: 'user-1' };
     const res = await middleware(
-      new NextRequest("https://app.test/forgot-password"),
+      new NextRequest('https://app.test/forgot-password')
     );
-    expect(res.headers.get("location")).toContain("/dashboard");
+    expect(res.headers.get('location')).toContain('/dashboard');
+  });
+});
+
+// ============================================================
+// s9.6: the path header for the onboarding gate of the (dashboard)
+// layout. The middleware only forwards the path; it redirects nobody to
+// /onboarding and consults no database for it.
+// ============================================================
+describe('middleware — onboarding path header (s9.6)', () => {
+  const HEADER = 'x-wacrm-pathname';
+
+  it.each(['/billing', '/billing/return', '/dashboard'])(
+    'forwards %s to the layout',
+    async (path) => {
+      mockUser = { id: 'user-1' };
+      const res = await middleware(new NextRequest(`https://app.test${path}`));
+      expect(res.status).toBe(200);
+      expect(forwarded(res, HEADER)).toBe(path);
+    }
+  );
+
+  it('overwrites a value the client sent', async () => {
+    mockUser = { id: 'user-1' };
+    const res = await middleware(
+      new NextRequest('https://app.test/dashboard', {
+        headers: { [HEADER]: '/billing' },
+      })
+    );
+    expect(forwarded(res, HEADER)).toBe('/dashboard');
+  });
+
+  it.each([
+    ['POST', '/api/whatsapp/webhook'],
+    ['POST', '/api/billing/webhook'],
+    ['GET', '/api/v1/me'],
+    ['GET', '/api/automations/cron'],
+    ['GET', '/api/platform/metrics'],
+    ['GET', '/api/billing/status'],
+  ])('never redirects %s %s to /onboarding', async (method, path) => {
+    mockUser = { id: 'user-1' };
+    const res = await middleware(
+      new NextRequest(`https://app.test${path}`, { method })
+    );
+    expect(res.headers.get('location')).toBeNull();
+    expect(res.status).toBe(200);
   });
 });

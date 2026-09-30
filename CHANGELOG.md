@@ -1054,6 +1054,33 @@ no-store`; before, a shared cache could keep them for five minutes.
   URL Configuration → Redirect URLs (see `docs/docker.md`, "Auth email
   links"). No migration and no new environment variables.
 
+### Paid sign-up: no free trial, company details and PayPal before the CRM
+
+> **Migration required:** apply `supabase/migrations/073_no_trial.sql`.
+>
+> **Behaviour change:** there is no free trial any more. Every account that
+> is on the trial today moves to «sign-up incomplete» (`incomplete`) when
+> the migration runs and meets the payment gate at its next sign-in; its
+> data stays where it was.
+
+- New accounts are born `incomplete` on the Inicio plan, read-only, with no
+  trial end date. Writes answer 403 «complete your sign-up», with
+  `upgradeUrl: /onboarding`.
+- **`/onboarding`**, outside the CRM's sidebar and header, in three steps:
+  company details (name, country, phone, industry, team size — owner
+  only), choosing a plan and paying with PayPal, and waiting for PayPal to
+  confirm (`/onboarding/return`), which then opens the dashboard.
+- Anyone signing in to an account that has not paid, or whose owner has
+  not given the company details, is sent to `/onboarding`; platform
+  operators go to `/platform`. Accounts on a manual plan, or already paying,
+  only see the company step, once. Incoming WhatsApp messages keep arriving
+  whatever the account's state.
+- The trial countdown in the header is gone, and so are the trial texts in
+  Settings and in the catalogues. The billing banner, Settings → Subscription
+  and the platform console show the new «Sign-up incomplete» state.
+- Accepting an invitation still dissolves the new user's empty personal
+  account, now that it is born `incomplete` instead of on a trial.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

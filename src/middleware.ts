@@ -6,6 +6,7 @@ import {
   SUPPORT_COOKIE,
   supportCookieActor,
 } from '@/lib/auth/support-cookie'
+import { REQUEST_PATH_HEADER } from '@/lib/onboarding/path-header'
 import {
   SUPPORT_WRITE_HEADERS,
   SUPPORT_WRITE_METHOD_HEADER,
@@ -52,6 +53,15 @@ export async function middleware(request: NextRequest) {
     request.headers.set(SUPPORT_WRITE_PATH_HEADER, request.nextUrl.pathname)
     request.headers.set(SUPPORT_WRITE_REQUEST_HEADER, crypto.randomUUID())
   }
+
+  // ---- s9.6 onboarding gate --------------------------------------------
+  // The (dashboard) layout cannot see the pathname, and the gate needs it
+  // to leave /billing open for every account that is not `incomplete`.
+  // `set` overwrites any value the client sent. The gate itself runs in
+  // the layout (src/lib/onboarding/gate.ts), not here: nothing below
+  // consults the database for it.
+  request.headers.set(REQUEST_PATH_HEADER, request.nextUrl.pathname)
+  // ---- /s9.6 ------------------------------------------------------------
 
   let supabaseResponse = NextResponse.next({ request })
 

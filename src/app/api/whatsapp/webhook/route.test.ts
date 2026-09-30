@@ -985,6 +985,37 @@ describe('inbound webhook: billing never blocks what comes in (CP11)', () => {
     expect(billingGates.assertWritable).not.toHaveBeenCalled();
   });
 
+  it('stores it for an account that never paid — incomplete, no trial (s9.6)', async () => {
+    // Migration 073 seeds every account `incomplete` and read-only until
+    // PayPal activates it. A company that connected its number and has not
+    // finished paying still gets its customers' messages on record.
+    billingGates.assertWritable.mockRejectedValue(
+      new AccountLockedError('incomplete')
+    );
+    billingGates.getEntitlements.mockResolvedValue({
+      planId: 'inicio',
+      status: 'incomplete',
+      limits: {},
+      features: [],
+      readOnly: true,
+      readOnlyReason: 'subscription',
+      manualHold: false,
+      trialEndsAt: null,
+    } as never);
+
+    await runWebhook();
+
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+    });
+    expect(h.state.rpcCalls[0]).toMatchObject({
+      name: 'bump_conversation_on_inbound',
+    });
+    expect(billingGates.assertWritable).not.toHaveBeenCalled();
+  });
+
   it('never asks the billing layer anything while storing an inbound', async () => {
     await runWebhook();
 

@@ -5,17 +5,17 @@
 // consumer.
 //
 // It used to live inside `billing-status-alert.tsx` as a bare `fetch`
-// in a `useEffect`. p6.2 adds a second consumer in the header (the
-// trial countdown), and the spec is explicit that the banner must not
-// cost a query of its own ("sin consulta nueva por página"). So the
-// fetch and its cache moved here and both consumers share them: the
-// dunning alert and the trial banner together cost at most one
-// `/api/billing/status` round-trip per account.
+// in a `useEffect`. p6.2 added a second consumer in the header (the
+// trial countdown, retired with the free trial in s9.6), and the spec is
+// explicit that a banner must not cost a query of its own ("sin consulta
+// nueva por página"). So the fetch and its cache live here, and every
+// consumer shares at most one `/api/billing/status` round-trip per
+// account.
 //
 // The endpoint is the one f3.5 opened to ANY member (`getCurrentAccount`,
 // no role floor) — deliberately not `/api/billing/subscription`, which
 // is admin-only and would 403 for the agents and viewers who are exactly
-// who the trial countdown is for. It resolves the subscription through
+// who a billing notice is for. It resolves the subscription through
 // the same entitlements layer the server enforces with, scoped by
 // `account_id` on top of RLS.
 //
@@ -24,10 +24,10 @@
 //   1. Keyed by accountId — a support session or a workspace switch must
 //      never show the previous account's billing state.
 //   2. A failure resolves to `null` = **unknown**, never to a state.
-//      Inventing "your account is suspended" (or "your trial ends
-//      today") out of a network blip is worse than saying nothing.
-//   3. Successful reads expire (TTL). Contracting a plan from `/billing`
-//      has to make the trial banner go away without a hard reload.
+//      Inventing "your account is suspended" out of a network blip is
+//      worse than saying nothing.
+//   3. Successful reads expire (TTL). Settling a plan from `/billing`
+//      has to make the dunning banner go away without a hard reload.
 // ============================================================
 
 import { useEffect, useState } from 'react';
@@ -48,7 +48,7 @@ export interface BillingStatus {
   /**
    * Epoch ms at the moment this snapshot landed.
    *
-   * The trial countdown needs a clock, and React 19 forbids reading one
+   * A countdown needs a clock, and React 19 forbids reading one
    * during render (`Date.now()` is impure — the compiler's lint rule
    * catches it). So the clock is read where the data is, once, and
    * travels with it: the component stays a pure function of its input
@@ -58,7 +58,7 @@ export interface BillingStatus {
 }
 
 /**
- * How long a successful read is reused. Short enough that the trial
+ * How long a successful read is reused. Short enough that a billing
  * banner disappears on its own after checkout (the return page lands
  * back in the shell, not on a fresh document), long enough that two
  * consumers mounting together cost one request.
@@ -72,8 +72,8 @@ interface CacheEntry {
 }
 
 const statusCache = new Map<string, CacheEntry>();
-// The header banner and the in-page alert mount in the same commit, so
-// without this they would both miss the (still empty) cache and race.
+// Two consumers mounting in the same commit would otherwise both miss
+// the (still empty) cache and race.
 const inFlight = new Map<string, Promise<BillingStatus | null>>();
 
 /**

@@ -299,6 +299,25 @@ describe('POST /api/billing/checkout', () => {
     expect(createSubscription.mock.calls[0][0]).toMatchObject({
       planId: 'P-PRO-YEAR',
       customId: ACCOUNT_A,
+      // No subscription row = an account still signing up (s9.6): it
+      // comes back to the onboarding flow, not to /billing.
+      returnUrl: 'https://app.example.com/onboarding/return',
+      cancelUrl: 'https://app.example.com/onboarding?checkout=cancelled',
+    });
+  });
+
+  it('sends an account that already contracted once back to /billing/return', async () => {
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'expired',
+      provider_subscription_id: 'I-OLD',
+      current_period_end: null,
+      cancel_at_period_end: false,
+    });
+
+    await post({ planId: 'pro', cycle: 'month' });
+    expect(createSubscription.mock.calls[0][0]).toMatchObject({
       returnUrl: 'https://app.example.com/billing/return',
       cancelUrl: 'https://app.example.com/billing?checkout=cancelled',
     });
@@ -662,6 +681,28 @@ describe('GET /api/billing/checkout (the return page status)', () => {
 // creates for this route.
 // ---------------------------------------------------------------------------
 describe('POST /api/billing/checkout — the seeded trial (fase 3 §4)', () => {
+  it('lets an incomplete account (the 073 seed, read-only) contract and return to /onboarding', async () => {
+    // s9.6: every account is born `inicio`/`incomplete` and read-only.
+    // The checkout is its way in, so `allowReadOnly` has to cover it.
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'inicio',
+      status: 'incomplete',
+      provider_subscription_id: null,
+      current_period_end: null,
+      cancel_at_period_end: false,
+    });
+
+    const res = await post({ planId: 'pro', cycle: 'month' });
+
+    expect(res.status).toBe(201);
+    expect(createSubscription).toHaveBeenCalledTimes(1);
+    expect(createSubscription.mock.calls[0][0]).toMatchObject({
+      returnUrl: 'https://app.example.com/onboarding/return',
+      cancelUrl: 'https://app.example.com/onboarding?checkout=cancelled',
+    });
+  });
+
   it('lets a trialing account contract', async () => {
     // Migration 046 gives EVERY account a `pro`/`trialing` row. If that
     // row read as "already contracted", nobody could ever pay us.

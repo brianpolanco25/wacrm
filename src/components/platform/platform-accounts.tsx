@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/table';
 import { USAGE_METRICS } from '@/lib/billing/subscription-view';
 import { NewAccountButton } from './platform-provisioning';
+import { useSubscriptionStatusLabel } from './subscription-status';
 
 interface AccountRow {
   accountId: string;
@@ -57,6 +58,7 @@ function day(value: string | null): string {
 
 export function PlatformAccounts() {
   const t = useTranslations('Platform');
+  const statusLabel = useSubscriptionStatusLabel();
   const [page, setPage] = useState<Page | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -171,8 +173,15 @@ export function PlatformAccounts() {
                   <TableCell>{row.planId ?? '—'}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-1">
-                      <Badge variant="outline">
-                        {row.subscriptionStatus ?? '—'}
+                      <Badge
+                        variant={
+                          row.subscriptionStatus === 'incomplete'
+                            ? 'secondary'
+                            : 'outline'
+                        }
+                        data-status={row.subscriptionStatus ?? 'none'}
+                      >
+                        {statusLabel(row.subscriptionStatus)}
                       </Badge>
                       {/* The hold is its own chip, not a status: the two
                           are independent, and an operator has to see
