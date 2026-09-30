@@ -209,10 +209,14 @@ describe('inviting', () => {
     expect(body.url).toMatch(/^http:\/\/app\.test\/join\//);
     const token = body.url.split('/join/')[1];
     expect(hashInviteToken(token)).toBe(h.invitations[0].tokenHash);
-    expect(h.inviteArgs).toEqual({
-      email: 'new.agent@acme.test',
-      redirectTo: body.url,
-    });
+    // s9.8: the email goes through /auth/callback → /reset-password and
+    // then /join/<token>; `body.url` stays the link for the operator.
+    expect(h.inviteArgs?.email).toBe('new.agent@acme.test');
+    const redirect = new URL(h.inviteArgs!.redirectTo as string);
+    expect(redirect.origin).toBe('http://app.test');
+    expect(redirect.pathname).toBe('/auth/callback');
+    expect(redirect.searchParams.get('next')).toBe('/reset-password');
+    expect(redirect.searchParams.get('invite')).toBe(token);
     expect(body.emailed).toBe(true);
   });
 

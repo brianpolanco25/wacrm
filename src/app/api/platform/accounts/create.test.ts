@@ -200,8 +200,15 @@ describe('creating the company', () => {
     expect(h.inviteArgs).toEqual({
       email: 'owner@acme.test',
       fullName: 'Ana Owner',
-      redirectTo: 'http://app.example.test/login',
+      // s9.8: through /auth/callback, then /reset-password.
+      redirectTo:
+        'http://app.example.test/auth/callback?next=%2Freset-password',
     });
+    const redirect = new URL(h.inviteArgs!.redirectTo as string);
+    expect(redirect.origin).toBe('http://app.example.test');
+    expect(redirect.pathname).toBe('/auth/callback');
+    expect(redirect.searchParams.get('next')).toBe('/reset-password');
+    expect(redirect.searchParams.get('invite')).toBeNull();
     expect(h.attached).toEqual([['log-1', 'acct-new']]);
     expect(h.renamed).toEqual([['acct-new', 'Acme SRL']]);
   });
@@ -209,7 +216,9 @@ describe('creating the company', () => {
   it('builds the redirect from NEXT_PUBLIC_SITE_URL when it is set', async () => {
     vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.com/');
     await call(VALID, { host: 'evil.test' });
-    expect(h.inviteArgs?.redirectTo).toBe('https://crm.example.com/login');
+    expect(h.inviteArgs?.redirectTo).toBe(
+      'https://crm.example.com/auth/callback?next=%2Freset-password'
+    );
   });
 
   it('gives the new company the plan by hand, with the same reason', async () => {

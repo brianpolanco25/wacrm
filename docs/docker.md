@@ -325,8 +325,9 @@ who has not changed plan.
 ## Auth email links (`/auth/callback`, `/reset-password`)
 
 **No new environment variables.** Every email Supabase Auth sends for this app
-(sign-up confirmation, password recovery, and the invitations from the operator
-panel or from Settings → Team) points at `<site>/auth/callback`, which opens the
+(sign-up confirmation, password recovery, and the invitations the operator
+panel sends when it creates a company or adds a member) points at
+`<site>/auth/callback`, which opens the
 session and sends the person on: invitations and recoveries to
 `/reset-password` to choose a password, then to `/join/<token>` if there is a
 team invitation, to `/platform` for an operator, or to `/dashboard`. The URLs
@@ -370,11 +371,11 @@ stay as they are:
 
   **Only switch to this template when every sender uses `authCallbackUrl()`.**
   It works only when the app's `redirectTo` already carries a query string
-  (`/auth/callback?next=…`), which is the case for `/forgot-password` and — once
-  the operator-panel provisioning (s9.4) builds its invitations with
-  `authCallbackUrl()` — for invitations. It does **not** work for emails sent
-  from the Supabase dashboard (Authentication → Users → "Invite user" / "Send
-  password recovery"): there `{{ .RedirectTo }}` is the bare Site URL, so the
+  (`/auth/callback?next=…`), which is the case for `/forgot-password` and for
+  the invitations of the operator panel (new company: `?next=/reset-password`;
+  new member: `?next=/reset-password&invite=<token>`). It does **not** work for
+  emails sent from the Supabase dashboard (Authentication → Users → "Invite
+  user" / "Send password recovery"): there `{{ .RedirectTo }}` is the bare Site URL, so the
   link comes out as `https://site&token_hash=…` and breaks. The same happens if
   a `redirectTo` is rejected by the Redirect URLs above. If you need those
   emails too, keep the default template.

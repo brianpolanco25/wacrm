@@ -23,6 +23,7 @@ import {
   UnauthorizedError,
 } from '@/lib/auth/account';
 import { resolveInviteBaseUrl } from '@/lib/auth/invitations';
+import { authCallbackUrl, RESET_PASSWORD_PATH } from '@/lib/auth/redirects';
 import { requirePlatformAdmin } from '@/lib/auth/platform';
 import {
   DEFAULT_PAGE_SIZE,
@@ -210,8 +211,12 @@ export async function POST(request: Request) {
       email,
       fullName: ownerName,
       // Same origin rules as the invite links of the Team tab, with
-      // ALLOWED_INVITE_HOSTS.
-      redirectTo: `${resolveInviteBaseUrl(request)}/login`,
+      // ALLOWED_INVITE_HOSTS. The link comes back through /auth/callback
+      // (s9.8), which opens the session and sends the new owner to
+      // /reset-password to choose a password.
+      redirectTo: authCallbackUrl(resolveInviteBaseUrl(request), {
+        next: RESET_PASSWORD_PATH,
+      }),
     });
     if (!invited.ok) {
       return invited.reason === 'exists'

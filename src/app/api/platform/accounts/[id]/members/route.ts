@@ -15,7 +15,8 @@
 // and how the link travels:
 //
 //   - nobody has that email yet → Supabase emails an invitation whose
-//     link lands on `/join/<token>` (`inviteUserByEmail` + `redirectTo`);
+//     link goes through `/auth/callback` → `/reset-password` → `/join/<token>`
+//     (`inviteUserByEmail` + `redirectTo`, s9.8);
 //   - somebody does → no email from us (Supabase would refuse to invite
 //     an existing user); the link comes back for the operator to share,
 //     as the Members tab does;
@@ -43,6 +44,7 @@ import {
   resolveInviteBaseUrl,
 } from '@/lib/auth/invitations';
 import { requirePlatformAdmin } from '@/lib/auth/platform';
+import { authCallbackUrl, RESET_PASSWORD_PATH } from '@/lib/auth/redirects';
 import {
   assertStockLimit,
   getEntitlements,
@@ -167,11 +169,21 @@ export async function POST(
       label: email,
       expiresAt: inviteExpiresAt(DEFAULT_INVITE_EXPIRY_DAYS),
     });
-    const url = inviteUrl(token, resolveInviteBaseUrl(request));
+    const baseUrl = resolveInviteBaseUrl(request);
+    const url = inviteUrl(token, baseUrl);
 
     let emailed = false;
     if (!existing) {
-      const invited = await inviteAuthUser({ email, redirectTo: url });
+      // The email link goes through /auth/callback (s9.8): it opens the
+      // session, asks for a password on /reset-password and then lands
+      // on /join/<token>. `url` stays the link shown to the operator.
+      const invited = await inviteAuthUser({
+        email,
+        redirectTo: authCallbackUrl(baseUrl, {
+          next: RESET_PASSWORD_PATH,
+          invite: token,
+        }),
+      });
       emailed = invited.ok;
     }
 
