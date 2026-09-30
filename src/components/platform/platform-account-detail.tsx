@@ -33,6 +33,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { MIN_REASON_LENGTH } from '@/lib/auth/support-cookie';
+import {
+  AddMemberForm,
+  PlanAssignment,
+  usePlanOptions,
+} from './platform-provisioning';
 
 interface UsageLine {
   metric: string;
@@ -87,6 +92,8 @@ interface Detail {
   planId: string;
   planName: string | null;
   subscriptionStatus: string;
+  /** `manual` when an operator assigned the plan by hand (s9.4). */
+  provider: string | null;
   readOnly: boolean;
   manualHold: boolean;
   manualHoldAt: string | null;
@@ -115,6 +122,7 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
   const [failed, setFailed] = useState<'notFound' | 'error' | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const { plans } = usePlanOptions();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -237,6 +245,9 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
           <Badge variant="outline">
             {detail.planName ?? detail.planId} · {detail.subscriptionStatus}
           </Badge>
+          {detail.provider === 'manual' ? (
+            <Badge variant="secondary">{t('provisioning.manualBadge')}</Badge>
+          ) : null}
           {detail.manualHold ? (
             <Badge variant="destructive">{t('held')}</Badge>
           ) : null}
@@ -307,6 +318,19 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
           ) : null}
         </CardContent>
       </Card>
+
+      {/* ---- s9.4: the plan by hand, and a new member ---------------- */}
+      <PlanAssignment
+        accountId={detail.accountId}
+        accountName={detail.name}
+        planId={detail.planId}
+        planName={detail.planName}
+        provider={detail.provider}
+        subscriptionStatus={detail.subscriptionStatus}
+        plans={plans}
+        onChanged={load}
+      />
+      <AddMemberForm accountId={detail.accountId} onInvited={load} />
 
       {/* ---- consumption -------------------------------------------- */}
       <Card>
