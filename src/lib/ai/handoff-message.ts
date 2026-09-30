@@ -12,8 +12,8 @@
  *      that has no config row yet, so a first save doesn't silently
  *      overwrite the database default with an empty string.
  *
- * English on purpose: the product ships `en` and `ko` catalogues, `en` is
- * the default locale, and seeding a language the interface doesn't offer
+ * English on purpose: when migration 043 seeded it the product shipped
+ * `en` as the default locale (today it ships `es` and `en`), and seeding a language the interface doesn't offer
  * would leave an account texting its customers something it can't read in
  * its own panel. Accounts that want another language (or silence) edit
  * the field; an empty value is an explicit "say nothing".

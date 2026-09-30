@@ -7,7 +7,6 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
-import ko from '../../../messages/ko.json';
 import {
   AddMemberForm,
   CreateAccountForm,
@@ -25,18 +24,17 @@ import { OperatorsTable, PlatformOperators } from './platform-operators';
 
 // s9.4 UI, rendered to static markup like the rest of the panel (no
 // jsdom, no new dependency): what each piece shows on its first paint,
-// in the three catalogues. What the buttons DO is tested on the routes.
+// in both catalogues. What the buttons DO is tested on the routes.
 
 type Catalogue = typeof es;
-const CATALOGUES: Array<['es' | 'en' | 'ko', Catalogue]> = [
+const CATALOGUES: Array<['es' | 'en', Catalogue]> = [
   ['es', es],
   ['en', en as Catalogue],
-  ['ko', ko as Catalogue],
 ];
 
 function render(
   node: React.ReactNode,
-  locale: 'es' | 'en' | 'ko' = 'es',
+  locale: 'es' | 'en' = 'es',
   messages: Catalogue = es
 ): string {
   return renderToStaticMarkup(
@@ -346,7 +344,7 @@ function resolve(messages: Record<string, unknown>, dotted: string): unknown {
     );
 }
 
-describe('every key exists in es, en AND ko (CP6)', () => {
+describe('every key exists in es AND en (CP6)', () => {
   it.each([
     ['platform-provisioning.tsx', 'provisioning'],
     ['platform-operators.tsx', 'operators'],

@@ -5,7 +5,6 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../../messages/en.json';
 import es from '../../../../messages/es.json';
-import ko from '../../../../messages/ko.json';
 
 /**
  * p8.1 §3: the login footer points developers at the public API docs,
@@ -42,7 +41,7 @@ describe('LoginPage → /developers', () => {
   });
 
   it('labels the link in every catalogue', () => {
-    for (const messages of [en, ko] as Catalogue[]) {
+    for (const messages of [es, en] as Catalogue[]) {
       expect(render(messages)).toContain(messages.LoginPage.developersLink);
     }
   });

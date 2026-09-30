@@ -3,7 +3,6 @@ import { describe, it, expect } from 'vitest';
 import { isDuplicateTagNameError } from './tag-manager';
 import es from '../../../messages/es.json';
 import en from '../../../messages/en.json';
-import ko from '../../../messages/ko.json';
 
 /**
  * Integración de la fase 7 — el panel frente al índice único que añade
@@ -18,7 +17,7 @@ import ko from '../../../messages/ko.json';
  *
  * No hay jsdom ni testing-library en el repo (y no se añaden
  * dependencias), así que lo que se prueba es la rama: el clasificador
- * del error y que la clave del mensaje esté en los tres catálogos.
+ * del error y que la clave del mensaje esté en los dos catálogos (es, en).
  */
 describe('TagManager — nombre duplicado', () => {
   it('reconoce el 23505 del índice único como "ya existe"', () => {
@@ -35,8 +34,8 @@ describe('TagManager — nombre duplicado', () => {
     expect(isDuplicateTagNameError(undefined)).toBe(false);
   });
 
-  it('tiene el mensaje en los tres catálogos (CP6)', () => {
-    for (const messages of [es, en, ko]) {
+  it('tiene el mensaje en los dos catálogos (CP6)', () => {
+    for (const messages of [es, en]) {
       const section = (
         messages as unknown as {
           Settings: { tagsAndFields: Record<string, string> };

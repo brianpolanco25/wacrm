@@ -15,7 +15,7 @@
 // roto— sin analizar cadenas.
 // ============================================================
 
-/** Idiomas en los que existe la prosa. El coreano cae a inglés. */
+/** Idiomas en los que existe la prosa: los mismos que la interfaz. */
 export const DOCS_LOCALES = ['es', 'en'] as const;
 export type DocsLocale = (typeof DOCS_LOCALES)[number];
 

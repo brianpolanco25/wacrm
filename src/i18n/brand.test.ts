@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 // It is a proper noun, so it is deliberately identical in every catalogue.
 
 const MESSAGES_DIR = join(process.cwd(), 'messages');
-const LOCALES = ['en', 'es', 'ko'] as const;
+const LOCALES = ['en', 'es'] as const;
 const BRAND = 'Cabbity CRM';
 /** Matches `wacrm`, `WaCRM`, `wa crm`… — the names this release retires. */
 const RETIRED = /wa\s?crm/i;

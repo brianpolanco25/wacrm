@@ -12,7 +12,7 @@
 /**
  * Countries offered in the form, ISO-3166 alpha-2. A short list, not
  * the whole standard: Cabbity sells to Latin America and Spain first,
- * plus the markets the other two catalogues (en, ko) speak to. The UI
+ * plus a few markets beyond them. The UI
  * names them with `Intl.DisplayNames` in the user's locale, so no
  * translation table is needed for them.
  */

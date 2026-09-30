@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import getConfig, { DEFAULT_LOCALE } from './request';
+import getConfig, { DEFAULT_LOCALE, LOCALES, resolveLocale } from './request';
 
 // next-intl's `getRequestConfig` is the identity function (it exists for
 // typing), so the default export of request.ts is the config callback
@@ -36,23 +36,32 @@ describe('request config locale', () => {
     ).toBe('Bandeja');
   });
 
-  it.each([
-    ['en', 'Inbox'],
-    ['ko', '인박스'],
-  ])('still serves %s when the variable asks for it', async (locale, inbox) => {
-    process.env.NEXT_PUBLIC_APP_LOCALE = locale;
+  it('still serves en when the variable asks for it', async () => {
+    process.env.NEXT_PUBLIC_APP_LOCALE = 'en';
     const config = await getConfig(params);
-    expect(config.locale).toBe(locale);
-    expect(
-      (config.messages as { Sidebar: { inbox: string } }).Sidebar.inbox
-    ).toBe(inbox);
-  });
-
-  it('falls back to the English catalogue for an unknown locale', async () => {
-    process.env.NEXT_PUBLIC_APP_LOCALE = 'xx';
-    const config = await getConfig(params);
+    expect(config.locale).toBe('en');
     expect(
       (config.messages as { Sidebar: { inbox: string } }).Sidebar.inbox
     ).toBe('Inbox');
   });
+
+  it('ships exactly es and en', () => {
+    expect([...LOCALES]).toEqual(['es', 'en']);
+  });
+
+  // s9.9: Korean was retired. A deployment still built with
+  // NEXT_PUBLIC_APP_LOCALE=ko must land on Spanish, not on a missing
+  // catalogue.
+  it.each(['ko', 'xx', ''])(
+    '%j is not a valid locale and resolves to es',
+    async (locale) => {
+      expect(resolveLocale(locale)).toBe('es');
+      process.env.NEXT_PUBLIC_APP_LOCALE = locale;
+      const config = await getConfig(params);
+      expect(config.locale).toBe('es');
+      expect(
+        (config.messages as { Sidebar: { inbox: string } }).Sidebar.inbox
+      ).toBe('Bandeja');
+    }
+  );
 });

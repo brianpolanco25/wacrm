@@ -5,7 +5,6 @@ import { NextIntlClientProvider, createTranslator } from 'next-intl';
 
 import en from '../../../../messages/en.json';
 import es from '../../../../messages/es.json';
-import ko from '../../../../messages/ko.json';
 import type { NewPasswordError } from '@/lib/auth/reset-password';
 
 /**
@@ -29,7 +28,6 @@ type Catalogue = typeof en;
 const CATALOGUES: Array<[string, Catalogue]> = [
   ['es', es as Catalogue],
   ['en', en],
-  ['ko', ko as Catalogue],
 ];
 
 const ERRORS: NewPasswordError[] = [

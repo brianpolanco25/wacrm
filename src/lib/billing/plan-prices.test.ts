@@ -123,7 +123,7 @@ describe('los textos de precio de la UI', () => {
     // El criterio del spec es que subir el precio NO exige tocar
     // código: si una traducción escribiese «$29 / mes», la tabla diría
     // 35 y la pantalla seguiría diciendo 29.
-    for (const locale of ['en', 'ko']) {
+    for (const locale of ['es', 'en']) {
       const messages = JSON.parse(
         fs.readFileSync(
           path.join(process.cwd(), `messages/${locale}.json`),

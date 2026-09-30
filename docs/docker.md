@@ -39,9 +39,9 @@ is included.
   `docker compose --env-file .env.local up --build -d`.
 - `NEXT_PUBLIC_APP_LOCALE` picks the language of every screen. It
   defaults to **`es`** (Spanish) in the `Dockerfile` and in
-  `docker-compose.yml`; the other two shipped catalogues are `en` and
-  `ko`. There is no per-key fallback: an unknown value loads the English
-  catalogue whole. Being a `NEXT_PUBLIC_*` it is baked in at build time,
+  `docker-compose.yml`; the only other shipped catalogue is `en`. Any
+  other value — including `ko`, no longer shipped — falls back to `es`
+  whole; there is no per-key fallback. Being a `NEXT_PUBLIC_*` it is baked in at build time,
   so changing the language means a rebuild, not a restart.
 - Everything else (`SUPABASE_SERVICE_ROLE_KEY`, `ENCRYPTION_KEY`,
   `ENCRYPTION_KEY_PREVIOUS`, `META_APP_SECRET`,

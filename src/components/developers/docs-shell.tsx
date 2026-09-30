@@ -19,8 +19,9 @@ import { LocaleSwitch } from './locale-switch';
 // El idioma de la PROSA lo elige el visitante (`?lang=`), mientras que
 // los textos de interfaz —copiar, menú, "en esta página"— siguen el
 // idioma de la instancia y salen de `messages/*.json` (CP6). Son dos
-// dimensiones distintas a propósito: una instancia en coreano enseña su
-// interfaz en coreano y la prosa en inglés, que es lo que dice S-A5.
+// dimensiones distintas a propósito: una instancia en español puede
+// enseñar su interfaz en español y la prosa en inglés, que es lo que dice
+// S-A5.
 // ============================================================
 
 export interface TocEntry {
@@ -132,8 +133,7 @@ export function DocsShell({
         {/*
           `lang` en todo lo que lleva PROSA. El `<html lang>` del layout
           raíz declara el idioma de la INSTANCIA, pero aquí el idioma lo
-          elige el visitante con `?lang=` (y en una instancia en coreano
-          la prosa siempre cae a inglés). Sin esto un lector de pantalla
+          elige el visitante con `?lang=`. Sin esto un lector de pantalla
           pronuncia el texto con la fonética equivocada — WCAG 3.1.2.
           Va en el `<main>`, en el menú lateral y en el `<details>` de
           móvil, porque las entradas del menú son títulos de página, o

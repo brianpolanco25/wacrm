@@ -5,7 +5,6 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
-import ko from '../../../messages/ko.json';
 import { ImpersonationBanner } from './impersonation-banner';
 
 /**
@@ -28,12 +27,12 @@ function render(
     accountName: string | null;
     expiresAt: string;
   } | null,
-  locale: 'en' | 'ko' = 'en'
+  locale: 'en' | 'es' = 'en'
 ): string {
   return renderToStaticMarkup(
     <NextIntlClientProvider
       locale={locale}
-      messages={locale === 'en' ? en : ko}
+      messages={locale === 'en' ? en : es}
     >
       <ImpersonationBanner session={session} />
     </NextIntlClientProvider>
@@ -93,16 +92,16 @@ describe('ImpersonationBanner', () => {
     expect(html).not.toContain('Impersonation.');
   });
 
-  it('names the missing account in Korean too (CP6)', () => {
-    const html = render({ ...SESSION, accountName: null }, 'ko');
-    expect(html).toContain(ko.Impersonation.unknownAccount);
+  it('names the missing account in Spanish too (CP6)', () => {
+    const html = render({ ...SESSION, accountName: null }, 'es');
+    expect(html).toContain(es.Impersonation.unknownAccount);
     expect(html).not.toContain('Impersonation.');
   });
 
-  it('is translated, not English-with-a-Korean-shell (CP6)', () => {
-    const html = render(SESSION, 'ko');
+  it('is translated, not English-with-a-Spanish-shell (CP6)', () => {
+    const html = render(SESSION, 'es');
     expect(html).toContain('Acme Foods');
-    expect(html).toContain(ko.Impersonation.exit);
+    expect(html).toContain(es.Impersonation.exit);
     // A missing key renders as the keypath; this is what catches that.
     expect(html).not.toContain('Impersonation.');
   });

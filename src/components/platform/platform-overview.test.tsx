@@ -7,7 +7,6 @@ import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
 import es from '../../../messages/es.json';
-import ko from '../../../messages/ko.json';
 import type { PlatformMetrics } from '@/lib/platform/metrics';
 import {
   formatUsd,
@@ -22,15 +21,14 @@ import {
 // view on each of its three states.
 
 type Catalogue = typeof es;
-const CATALOGUES: Array<['es' | 'en' | 'ko', Catalogue]> = [
+const CATALOGUES: Array<['es' | 'en', Catalogue]> = [
   ['es', es],
   ['en', en as Catalogue],
-  ['ko', ko as Catalogue],
 ];
 
 function render(
   node: React.ReactNode,
-  locale: 'es' | 'en' | 'ko' = 'es',
+  locale: 'es' | 'en' = 'es',
   messages: Catalogue = es
 ): string {
   return renderToStaticMarkup(
@@ -186,7 +184,7 @@ describe('PlatformOverviewView', () => {
 });
 
 describe('Platform.metrics catalogue (CP6)', () => {
-  it('every key the component asks for exists in es, en AND ko', () => {
+  it('every key the component asks for exists in es AND en', () => {
     const source = readFileSync(
       path.join(process.cwd(), 'src/components/platform/platform-overview.tsx'),
       'utf8'

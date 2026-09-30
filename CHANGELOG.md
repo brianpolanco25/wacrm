@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Korean retired
+
+- The Korean interface (`messages/ko.json`) is gone: the product ships Spanish (default) and English. An instance built with `NEXT_PUBLIC_APP_LOCALE=ko` now falls back to Spanish, interface and `/developers` alike.
+
 ### Platform console: its own shell for operators
 
 - The operator panel moves out of the CRM chrome into its own console

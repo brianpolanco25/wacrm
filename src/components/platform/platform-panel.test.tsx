@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
-import ko from '../../../messages/ko.json';
+import es from '../../../messages/es.json';
 import { PlatformAccounts } from './platform-accounts';
 
 /**
@@ -20,12 +20,12 @@ import { PlatformAccounts } from './platform-accounts';
  * data-layer tests and the tenant-isolation suite.
  */
 
-function render(locale: 'en' | 'ko'): string {
+function render(locale: 'en' | 'es'): string {
   return renderToStaticMarkup(
     <NextIntlClientProvider
       locale={locale}
       timeZone="UTC"
-      messages={locale === 'en' ? en : ko}
+      messages={locale === 'en' ? en : es}
     >
       <PlatformAccounts />
     </NextIntlClientProvider>
@@ -59,7 +59,7 @@ function resolve(messages: Record<string, unknown>, dotted: string): unknown {
 
 describe('the platform panel is translated (CP6)', () => {
   it.each(['platform-accounts.tsx', 'platform-account-detail.tsx'])(
-    'every key %s asks for exists in en AND ko',
+    'every key %s asks for exists in en AND es',
     (file) => {
       const keys = keysUsedBy(file);
       // A guard against the regex quietly matching nothing and the test
@@ -72,8 +72,8 @@ describe('the platform panel is translated (CP6)', () => {
           `messages/en.json is missing Platform.${key}`
         ).toBeTypeOf('string');
         expect(
-          resolve(ko.Platform as Record<string, unknown>, key),
-          `messages/ko.json is missing Platform.${key}`
+          resolve(es.Platform as Record<string, unknown>, key),
+          `messages/es.json is missing Platform.${key}`
         ).toBeTypeOf('string');
       }
     }
@@ -82,16 +82,16 @@ describe('the platform panel is translated (CP6)', () => {
   it('the manual-hold notice exists in both catalogues', () => {
     // The tenant-facing half of fase 4 §2: a company suspended by hand
     // has to be told so, and told that paying will not lift it.
-    for (const catalogue of [en, ko]) {
+    for (const catalogue of [en, es]) {
       expect(catalogue.Billing.heldTitle).toBeTypeOf('string');
       expect(catalogue.Billing.heldBody).toBeTypeOf('string');
     }
-    expect(en.Billing.heldBody).not.toBe(ko.Billing.heldBody);
+    expect(en.Billing.heldBody).not.toBe(es.Billing.heldBody);
   });
 
   it('the sidebar entry exists in both catalogues', () => {
     expect(en.Sidebar.platform).toBeTypeOf('string');
-    expect(ko.Sidebar.platform).toBeTypeOf('string');
+    expect(es.Sidebar.platform).toBeTypeOf('string');
   });
 });
 
@@ -103,9 +103,9 @@ describe('PlatformAccounts, first paint', () => {
     expect(html).toContain(en.Platform.searchPlaceholder);
   });
 
-  it('is translated, not English with a Korean shell (CP6)', () => {
-    const html = render('ko');
-    expect(html).toContain(ko.Platform.title);
+  it('is translated, not English with a Spanish shell (CP6)', () => {
+    const html = render('es');
+    expect(html).toContain(es.Platform.title);
     expect(html).not.toContain(en.Platform.title);
   });
 
