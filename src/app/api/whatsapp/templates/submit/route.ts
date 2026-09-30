@@ -139,10 +139,9 @@ export async function POST(request: Request) {
     // unique index. If THIS user already has a template with that name and
     // language in ANOTHER account, the upsert would take that row and move
     // it into this one. Inside a support session (s9.5) that is the
-    // operator's own company's template, rewritten into the customer's;
-    // for anybody who changed accounts through an invitation it is their
-    // old one. Refuse before anything is sent to Meta.
-    const { data: elsewhere } = await supabase
+    // operator's own company's template, rewritten into the customer's.
+    // Refuse before anything is sent to Meta.
+    const { data: elsewhere, error: elsewhereErr } = await supabase
       .from('message_templates')
       .select('id')
       .eq('user_id', userId)
@@ -150,6 +149,14 @@ export async function POST(request: Request) {
       .eq('language', payload.language)
       .neq('account_id', accountId)
       .limit(1);
+    if (elsewhereErr) {
+      // Fail closed: without the answer the upsert could be the move.
+      console.error('[templates/submit] cross-account lookup:', elsewhereErr);
+      return NextResponse.json(
+        { error: 'Could not check existing templates. Try again.' },
+        { status: 500 }
+      );
+    }
     if (elsewhere && elsewhere.length > 0) {
       return NextResponse.json(
         {

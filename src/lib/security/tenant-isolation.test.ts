@@ -1121,6 +1121,19 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
       'one named session — filters by `account_id` and is not waived.',
   },
   {
+    table: 'impersonation_log',
+    op: 'update',
+    by: ['actor_user_id', 'action', 'ended_at'],
+    reason:
+      'supersedeOpenSupportSessions (s9.5): opening a support session ' +
+      'closes every OTHER session the same operator still has open, in ' +
+      'any browser, so there is never more than one (migration 072 ' +
+      'enforces it with a UNIQUE partial index). Scoped by the actor — the ' +
+      "caller's own authenticated uid, never the request body — and it " +
+      'writes only `ended_at` / `ended_reason` on audit rows, moving no ' +
+      'customer data.',
+  },
+  {
     table: 'rpc:platform_account_list',
     by: [],
     reason:

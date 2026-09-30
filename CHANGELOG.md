@@ -995,11 +995,13 @@ behaviour changes**; nothing is limited by plan yet.
 - A support session is no longer read-only: the operator acts in the
   customer's account with the **admin** role — contacts, tags, pipelines
   and deals, inbox, broadcasts, automations and flows, templates, WhatsApp
-  numbers, AI settings and outbound webhooks.
+  numbers and AI settings.
 - Still off-limits during a session, whatever the role: checkout and the
   customer's PayPal subscription, transferring ownership, renaming the
-  account, members and invitations, API keys, redeeming an invitation, and
-  opening a second session. Those requests answer 403.
+  account, members and invitations, API keys, outbound webhooks, redeeming
+  an invitation, and moving a row from the customer's company to another.
+  Those requests answer 403. Opening a session closes any other session the
+  operator had open in another browser: there is only ever one.
 - Every change is recorded in the new `impersonation_actions` table — one
   row per request that reached the app and one per row written from the
   browser — and the account's file (`/platform/<id>`) gains a **Support

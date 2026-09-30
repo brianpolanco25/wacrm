@@ -2294,7 +2294,9 @@
       "sourceHttp": "Petición",
       "sourceDb": "Fila",
       "refused": "Rechazada ({status})",
-      "truncated": "Se muestran las {count} acciones más recientes."
+      "truncated": "Se muestran las {count} acciones más recientes.",
+      "olderActionsHidden": "Sus cambios, si los hubo, quedan fuera del listado (demasiadas acciones recientes).",
+      "statusUnknown": "resultado desconocido"
     }
   },
   "Developers": {

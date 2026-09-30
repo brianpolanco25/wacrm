@@ -12,7 +12,11 @@
 
 import { NextResponse } from 'next/server';
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import {
+  assertNotSupportSession,
+  requireRole,
+  toErrorResponse,
+} from '@/lib/auth/account';
 import { normalizeEvents } from '@/lib/webhooks/events';
 import {
   WEBHOOK_PUBLIC_COLUMNS,
@@ -26,6 +30,8 @@ export async function PATCH(
 ) {
   try {
     const ctx = await requireRole('admin');
+    // s9.5: an outbound webhook outlives the support session.
+    await assertNotSupportSession(ctx);
     const { id } = await params;
 
     const body = (await request.json().catch(() => null)) as Record<
@@ -116,6 +122,8 @@ export async function DELETE(
 ) {
   try {
     const ctx = await requireRole('admin');
+    // s9.5: an outbound webhook outlives the support session.
+    await assertNotSupportSession(ctx);
     const { id } = await params;
 
     const { data, error } = await ctx.supabase

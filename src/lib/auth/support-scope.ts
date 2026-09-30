@@ -19,7 +19,7 @@
 
 /**
  * Tables a support session writes, exactly the ones whose write policies
- * migration 072 moved to `can_write_account` (25 at the time of writing;
+ * migration 072 moved to `can_write_account` (24 at the time of writing;
  * `support-session-view.test.ts` ties this list to the migration).
  */
 export const SUPPORT_WRITABLE_TABLES: ReadonlySet<string> = new Set([
@@ -46,7 +46,6 @@ export const SUPPORT_WRITABLE_TABLES: ReadonlySet<string> = new Set([
   'pipelines',
   'quick_replies',
   'tags',
-  'webhook_endpoints',
   'whatsapp_config',
 ]);
 
@@ -58,6 +57,9 @@ export const SUPPORT_WRITABLE_TABLES: ReadonlySet<string> = new Set([
  *                             an `admin`-for-support matter.
  *   account_invitations       an invitation outlives the 30-minute session.
  *   api_keys                  a permanent credential the operator would see.
+ *   webhook_endpoints         a permanent outbound channel for the
+ *                             customer's events, with a signing secret
+ *                             shown once: same reason as api_keys.
  *   subscriptions,
  *   checkout_intents          the customer's billing and PayPal.
  *   platform_admins,
@@ -71,6 +73,7 @@ export const SUPPORT_REFUSED_TABLES: ReadonlySet<string> = new Set([
   'accounts',
   'account_invitations',
   'api_keys',
+  'webhook_endpoints',
   'subscriptions',
   'checkout_intents',
   'platform_admins',
@@ -149,6 +152,9 @@ const SUPPORT_SESSION_EXEMPT = [
  *                                    is the OPERATOR'S company.
  *   /api/account/invitations         access that outlives the session.
  *   /api/account/api-keys            a permanent credential.
+ *   /api/account/webhooks            a permanent outbound channel (and its
+ *                                    signing secret) that outlives the
+ *                                    session.
  *   /api/invitations/                redeeming moves the OPERATOR'S own
  *                                    profile into another company.
  *   /api/platform/impersonate (exact) no nested sessions: exit first.
@@ -161,6 +167,7 @@ const SUPPORT_SESSION_BLOCKED: readonly { path: string; exact?: boolean }[] = [
   { path: '/api/account/members' },
   { path: '/api/account/invitations' },
   { path: '/api/account/api-keys' },
+  { path: '/api/account/webhooks' },
   { path: '/api/invitations/' },
   { path: '/api/platform/impersonate', exact: true },
 ];

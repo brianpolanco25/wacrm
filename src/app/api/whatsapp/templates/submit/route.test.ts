@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   existingElsewhere: [] as { id: string }[],
+  lookupError: null as unknown,
   lookups: [] as [string, string, unknown][][],
   upserts: [] as { row: Record<string, unknown>; onConflict: string }[],
 }));
@@ -30,10 +31,15 @@ function fakeClient() {
         },
         limit() {
           h.lookups.push(filters);
-          return Promise.resolve({
-            data: table === 'message_templates' ? h.existingElsewhere : [],
-            error: null,
-          });
+          return Promise.resolve(
+            h.lookupError
+              ? { data: null, error: h.lookupError }
+              : {
+                  data:
+                    table === 'message_templates' ? h.existingElsewhere : [],
+                  error: null,
+                }
+          );
         },
         upsert(row: Record<string, unknown>, opts: { onConflict: string }) {
           h.upserts.push({ row, onConflict: opts.onConflict });
@@ -81,6 +87,7 @@ function submit() {
 beforeEach(() => {
   process.env.WHATSAPP_TEMPLATES_DRY_RUN = 'true';
   h.existingElsewhere = [];
+  h.lookupError = null;
   h.lookups = [];
   h.upserts = [];
 });
@@ -98,6 +105,13 @@ describe('POST /api/whatsapp/templates/submit', () => {
       ['eq', 'language', 'en_US'],
       ['neq', 'account_id', 'customer-account'],
     ]);
+  });
+
+  it('fails closed when the lookup itself fails', async () => {
+    h.lookupError = { message: 'db down' };
+    const res = await submit();
+    expect(res.status).toBe(500);
+    expect(h.upserts).toEqual([]);
   });
 
   it('saves into the effective account otherwise', async () => {

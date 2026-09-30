@@ -279,6 +279,8 @@ describe("middleware — support sessions write, and are recorded", () => {
     ["DELETE", "/api/account/invitations/i-1"],
     ["POST", "/api/account/api-keys"],
     ["POST", "/api/account/api-keys/k-1/rotate"],
+    ["POST", "/api/account/webhooks"],
+    ["DELETE", "/api/account/webhooks/w-1"],
     ["POST", "/api/invitations/tok/redeem"],
     ["POST", "/api/platform/impersonate"],
   ])("still refuses %s %s during a support session", async (method, path) => {
@@ -299,10 +301,19 @@ describe("middleware — support sessions write, and are recorded", () => {
   })
 
   it("does not mistake a sibling path for a blocked one", async () => {
-    // `/api/account` is blocked exactly; its webhooks are support's to fix.
-    const res = await middleware(request("https://app.test/api/account/webhooks"))
+    // `/api/account` is blocked exactly, not as a prefix of every path
+    // that happens to start with those letters.
+    const res = await middleware(request("https://app.test/api/accounting"))
     expect(res.status).not.toBe(403)
-    expect(forwarded(res, "x-wacrm-support-path")).toBe("/api/account/webhooks")
+    expect(forwarded(res, "x-wacrm-support-path")).toBe("/api/accounting")
+  })
+
+  it("runs on every /api path, image-looking ones included", async () => {
+    // The page matcher skips `*.png` & co. for static assets; an API route
+    // ending like that would reach the server untagged and leave no
+    // `http` row (review of s9.5). `/api/:path*` is matched on its own.
+    const { config } = await import("./middleware")
+    expect(config.matcher).toContain("/api/:path*")
   })
 
   it("refuses a mutating page request, which nothing would record", async () => {

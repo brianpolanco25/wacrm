@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
@@ -10,15 +9,21 @@ import {
 } from '@/lib/automations/validate'
 
 export async function GET() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // The effective account, filtered explicitly (s9.5): RLS alone stopped
+  // being a one-account filter in migration 057 — inside a support session
+  // it answers "the operator's company OR the customer's", and an
+  // unfiltered list came back with both merged.
+  let ctx: Awaited<ReturnType<typeof getCurrentAccount>>
+  try {
+    ctx = await getCurrentAccount()
+  } catch (err) {
+    return toErrorResponse(err)
+  }
 
-  const { data, error } = await supabase
+  const { data, error } = await ctx.supabase
     .from('automations')
     .select('*')
+    .eq('account_id', ctx.accountId)
     .order('created_at', { ascending: false })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ automations: data ?? [] })

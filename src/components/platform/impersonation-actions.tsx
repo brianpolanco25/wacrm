@@ -75,7 +75,11 @@ export function SupportSessionList({
               {t('reason', { reason: session.reason })}
             </p>
             {session.actions.length === 0 ? (
-              <p className="text-muted-foreground text-xs">{t('noActions')}</p>
+              <p className="text-muted-foreground text-xs">
+                {/* With the list cut off, an empty session may just be an
+                    older one whose actions fell past the limit. */}
+                {activity.truncated ? t('olderActionsHidden') : t('noActions')}
+              </p>
             ) : (
               <details className="group">
                 <summary className="text-primary w-fit cursor-pointer text-xs select-none">
@@ -104,6 +108,12 @@ export function SupportSessionList({
                         <Badge variant="destructive">
                           {t('refused', { status: action.status })}
                         </Badge>
+                      ) : action.source === 'http' && action.status === null ? (
+                        // Written before the route answered: whether it
+                        // succeeded is not known here (see the db rows).
+                        <span className="text-muted-foreground">
+                          {t('statusUnknown')}
+                        </span>
                       ) : null}
                     </li>
                   ))}

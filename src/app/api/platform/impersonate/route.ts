@@ -17,7 +17,10 @@ import {
   sessionView,
 } from '@/lib/auth/impersonation-log';
 import { requirePlatformAdmin } from '@/lib/auth/platform';
-import { sweepExpiredSupportSessions } from '@/lib/auth/support-session-store';
+import {
+  supersedeOpenSupportSessions,
+  sweepExpiredSupportSessions,
+} from '@/lib/auth/support-session-store';
 
 // ============================================================
 // /api/platform/impersonate — open and inspect a support session.
@@ -148,6 +151,17 @@ export async function POST(request: Request) {
     await closeImpersonationLog(previous, 'superseded');
   } else if (expired && expired.actorUserId === ctx.userId) {
     await closeImpersonationLog(expired, 'expired');
+  }
+
+  // …and every other session this operator still has open, in ANY browser
+  // (s9.5). With two open rows the audit could not tell which session a
+  // write belonged to, and migration 072 now refuses a second open row
+  // outright. No clean slate, no new session.
+  if (!(await supersedeOpenSupportSessions(ctx.userId))) {
+    return NextResponse.json(
+      { error: 'Failed to start session' },
+      { status: 500 }
+    );
   }
 
   const now = Date.now();

@@ -64,6 +64,7 @@ describe('the tables a support session writes', () => {
       'accounts',
       'account_invitations',
       'api_keys',
+      'webhook_endpoints',
       'platform_admins',
       'impersonation_log',
       'impersonation_actions',
@@ -79,7 +80,6 @@ describe('supportWriteVerdict — what the middleware does with a support cookie
     ['PATCH', '/api/conversations/c-1'],
     ['DELETE', '/api/whatsapp/config'],
     ['PUT', '/api/flows/f-1'],
-    ['POST', '/api/account/webhooks'],
     ['POST', '/api/accounting'],
   ])('records %s %s', (method, p) => {
     expect(supportWriteVerdict(method, p)).toBe('record');
@@ -96,6 +96,9 @@ describe('supportWriteVerdict — what the middleware does with a support cookie
     ['DELETE', '/api/account/invitations/i-1'],
     ['POST', '/api/account/api-keys'],
     ['POST', '/api/account/api-keys/k-1/rotate'],
+    ['POST', '/api/account/webhooks'],
+    ['PATCH', '/api/account/webhooks/w-1'],
+    ['POST', '/api/account/webhooks/w-1/rotate-secret'],
     ['POST', '/api/invitations/t/redeem'],
     ['POST', '/api/platform/impersonate'],
     ['POST', '/contacts'],

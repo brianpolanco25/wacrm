@@ -2294,7 +2294,9 @@
       "sourceHttp": "Request",
       "sourceDb": "Row",
       "refused": "Refused ({status})",
-      "truncated": "Showing the {count} most recent actions."
+      "truncated": "Showing the {count} most recent actions.",
+      "olderActionsHidden": "Its changes, if any, fall outside the list (too many recent actions).",
+      "statusUnknown": "outcome unknown"
     }
   },
   "Developers": {

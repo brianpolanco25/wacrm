@@ -130,6 +130,24 @@ describe('SupportSessionList', () => {
     expect(html).toContain(en.Platform.support.none);
   });
 
+  it('does not claim "nothing changed" for a session whose actions were cut off', () => {
+    const html = render(
+      <SupportSessionList
+        activity={{ ...ACTIVITY, truncated: true }}
+        actionLimit={500}
+      />
+    );
+    expect(html).toContain(en.Platform.support.olderActionsHidden);
+    expect(html).not.toContain(en.Platform.support.noActions);
+  });
+
+  it('says a request row does not know its outcome', () => {
+    const html = render(
+      <SupportSessionList activity={ACTIVITY} actionLimit={500} />
+    );
+    expect(html).toContain(en.Platform.support.statusUnknown);
+  });
+
   it('warns when older actions were cut off', () => {
     const html = render(
       <SupportSessionList

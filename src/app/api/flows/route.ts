@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { getFlowTemplate } from '@/lib/flows/templates'
 
@@ -14,30 +13,21 @@ import { getFlowTemplate } from '@/lib/flows/templates'
  * routes themselves are open.
  */
 
-async function requireUser(): Promise<
-  | { ok: true; userId: string; supabase: Awaited<ReturnType<typeof createClient>> }
-  | { ok: false; status: number; body: { error: string } }
-> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) {
-    return { ok: false, status: 401, body: { error: 'Unauthorized' } }
-  }
-  return { ok: true, userId: user.id, supabase }
-}
-
 export async function GET() {
-  const guard = await requireUser()
-  if (!guard.ok) {
-    return NextResponse.json(guard.body, { status: guard.status })
+  // The effective account, filtered explicitly (s9.5): inside a support
+  // session RLS answers "the operator's company OR the customer's", and an
+  // unfiltered list came back with both merged.
+  let ctx: Awaited<ReturnType<typeof getCurrentAccount>>
+  try {
+    ctx = await getCurrentAccount()
+  } catch (err) {
+    return toErrorResponse(err)
   }
-  const { supabase } = guard
 
-  const { data, error } = await supabase
+  const { data, error } = await ctx.supabase
     .from('flows')
     .select('*')
+    .eq('account_id', ctx.accountId)
     .order('created_at', { ascending: false })
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

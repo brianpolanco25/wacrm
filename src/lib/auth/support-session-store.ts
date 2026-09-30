@@ -105,3 +105,36 @@ export async function sweepExpiredSupportSessions(): Promise<number> {
   }
   return data?.length ?? 0;
 }
+
+/**
+ * Close EVERY support session this operator still has open, whichever
+ * browser opened it (s9.5, H2 of the review). `false` when the database
+ * would not do it — the caller must then not open a new one.
+ *
+ * Opening a session used to close only the one named by the cookie of the
+ * same browser, so a second browser (or an incognito window) left two rows
+ * open, and the audit trigger could not tell which session a write
+ * belonged to. Migration 072 makes a second open row impossible
+ * (`uq_impersonation_log_one_open_session`); this is what keeps the route
+ * from tripping over it.
+ *
+ * Scoped by the ACTOR, not by an account: the sessions are the operator's,
+ * spread over whichever customers they opened them on, and the only thing
+ * written is `ended_at` / `ended_reason` (see the tenant-isolation waiver).
+ */
+export async function supersedeOpenSupportSessions(
+  actorUserId: string
+): Promise<boolean> {
+  const { error } = await supabaseAdmin()
+    .from('impersonation_log')
+    .update({ ended_at: new Date().toISOString(), ended_reason: 'superseded' })
+    .eq('actor_user_id', actorUserId)
+    .eq('action', 'impersonation')
+    .is('ended_at', null);
+
+  if (error) {
+    console.error('[impersonation] could not supersede open sessions:', error);
+    return false;
+  }
+  return true;
+}

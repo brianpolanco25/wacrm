@@ -187,5 +187,10 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Every API path, including one whose last segment looks like an
+    // image: the pattern above skips those for static assets, and a
+    // mutating API request that skipped the middleware would reach the
+    // route with no support tag — and leave no `http` row (s9.5).
+    '/api/:path*',
   ],
 }
