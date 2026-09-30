@@ -2073,6 +2073,45 @@
       "usage": "Mensajes / IA / difusión",
       "createdAt": "Registro",
       "lastActivity": "Última actividad"
+    },
+    "shell": {
+      "title": "Panel de plataforma",
+      "badge": "Modo operador",
+      "navLabel": "Navegación de la plataforma",
+      "nav": {
+        "overview": "Resumen",
+        "accounts": "Cuentas",
+        "plans": "Planes",
+        "operators": "Operadores"
+      },
+      "openMenu": "Abrir menú",
+      "closeMenu": "Cerrar menú",
+      "openAccountMenu": "Abrir menú de la cuenta",
+      "goToCrm": "Ir al CRM",
+      "signOut": "Cerrar sesión",
+      "defaultUser": "Operador"
+    },
+    "placeholder": {
+      "comingSoon": "Próximamente",
+      "body": "Esta sección llega en una próxima versión del panel.",
+      "overview": {
+        "title": "Resumen",
+        "subtitle": "Métricas del servicio: cuentas, ingresos recurrentes, altas y morosos."
+      },
+      "plans": {
+        "title": "Planes",
+        "subtitle": "Catálogo de planes, límites y sincronización con PayPal."
+      },
+      "operators": {
+        "title": "Operadores",
+        "subtitle": "Quién puede administrar la plataforma."
+      },
+      "cards": {
+        "accounts": "Cuentas",
+        "mrr": "Ingresos recurrentes (MRR)",
+        "signups": "Altas recientes",
+        "delinquent": "Morosos"
+      }
     }
   },
   "Developers": {

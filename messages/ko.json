@@ -2073,6 +2073,45 @@
       "usage": "메시지 / AI / 브로드캐스트",
       "createdAt": "가입",
       "lastActivity": "마지막 활동"
+    },
+    "shell": {
+      "title": "플랫폼 콘솔",
+      "badge": "운영자 모드",
+      "navLabel": "플랫폼 탐색",
+      "nav": {
+        "overview": "개요",
+        "accounts": "계정",
+        "plans": "요금제",
+        "operators": "운영자"
+      },
+      "openMenu": "메뉴 열기",
+      "closeMenu": "메뉴 닫기",
+      "openAccountMenu": "계정 메뉴 열기",
+      "goToCrm": "CRM으로 이동",
+      "signOut": "로그아웃",
+      "defaultUser": "운영자"
+    },
+    "placeholder": {
+      "comingSoon": "곧 제공 예정",
+      "body": "이 섹션은 콘솔의 다음 버전에서 제공됩니다.",
+      "overview": {
+        "title": "개요",
+        "subtitle": "서비스 지표: 계정, 반복 매출, 신규 가입, 연체 계정."
+      },
+      "plans": {
+        "title": "요금제",
+        "subtitle": "요금제 카탈로그, 한도, PayPal 동기화."
+      },
+      "operators": {
+        "title": "운영자",
+        "subtitle": "플랫폼을 관리할 수 있는 사람."
+      },
+      "cards": {
+        "accounts": "계정",
+        "mrr": "반복 매출(MRR)",
+        "signups": "최근 가입",
+        "delinquent": "연체"
+      }
     }
   },
   "Developers": {

@@ -206,7 +206,7 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
     return (
       <div className="flex flex-col gap-4">
         <Link
-          href="/platform"
+          href="/platform/accounts"
           className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm"
         >
           <ArrowLeft className="size-4" />
@@ -224,7 +224,7 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
         <Link
-          href="/platform"
+          href="/platform/accounts"
           className="text-muted-foreground hover:text-foreground inline-flex w-fit items-center gap-1 text-sm"
         >
           <ArrowLeft className="size-4" />

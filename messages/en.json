@@ -2073,6 +2073,45 @@
       "usage": "Messages / AI / broadcast",
       "createdAt": "Signed up",
       "lastActivity": "Last activity"
+    },
+    "shell": {
+      "title": "Platform console",
+      "badge": "Operator mode",
+      "navLabel": "Platform navigation",
+      "nav": {
+        "overview": "Overview",
+        "accounts": "Accounts",
+        "plans": "Plans",
+        "operators": "Operators"
+      },
+      "openMenu": "Open menu",
+      "closeMenu": "Close menu",
+      "openAccountMenu": "Open account menu",
+      "goToCrm": "Go to the CRM",
+      "signOut": "Sign out",
+      "defaultUser": "Operator"
+    },
+    "placeholder": {
+      "comingSoon": "Coming soon",
+      "body": "This section arrives in an upcoming version of the console.",
+      "overview": {
+        "title": "Overview",
+        "subtitle": "Service metrics: accounts, recurring revenue, signups and delinquent accounts."
+      },
+      "plans": {
+        "title": "Plans",
+        "subtitle": "Plan catalogue, limits and PayPal sync."
+      },
+      "operators": {
+        "title": "Operators",
+        "subtitle": "Who can administer the platform."
+      },
+      "cards": {
+        "accounts": "Accounts",
+        "mrr": "Recurring revenue (MRR)",
+        "signups": "Recent signups",
+        "delinquent": "Delinquent"
+      }
     }
   },
   "Developers": {
