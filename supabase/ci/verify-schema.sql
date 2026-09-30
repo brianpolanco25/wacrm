@@ -1351,6 +1351,93 @@ BEGIN
       'platform_metrics() is not executable by service_role (migration 069)';
   END IF;
 
+  -- 071
+  -- ---- 071: el panel crea recursos (s9.4) ----------------------
+  -- La bitácora admite los cinco actos nuevos, sin perder los de la 058.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_action_check'
+      AND conrelid = 'public.impersonation_log'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%impersonation%'
+      AND pg_get_constraintdef(oid) LIKE '%suspend%'
+      AND pg_get_constraintdef(oid) LIKE '%reactivate%'
+      AND pg_get_constraintdef(oid) LIKE '%plan_override%'
+      AND pg_get_constraintdef(oid) LIKE '%account_create%'
+      AND pg_get_constraintdef(oid) LIKE '%member_invite%'
+      AND pg_get_constraintdef(oid) LIKE '%operator_grant%'
+      AND pg_get_constraintdef(oid) LIKE '%operator_revoke%'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log.action does not allow the s9.4 actions (migration 071)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'impersonation_log'
+      AND column_name = 'details' AND data_type = 'jsonb'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_log.details jsonb is missing (migration 071)';
+  END IF;
+
+  -- account_id es opcional SOLO para los actos que aún no tienen cuenta.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_account_required'
+      AND conrelid = 'public.impersonation_log'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%account_id IS NOT NULL%'
+  ) THEN
+    RAISE EXCEPTION
+      'impersonation_log rows other than account_create/operator_* could lose their account (migration 071)';
+  END IF;
+
+  IF to_regclass('public.idx_impersonation_log_operator_target') IS NULL THEN
+    RAISE EXCEPTION
+      'idx_impersonation_log_operator_target is missing (migration 071)';
+  END IF;
+
+  -- Las dos funciones de operadores: existen, no son SECURITY DEFINER y
+  -- solo service_role las ejecuta.
+  IF (
+    SELECT count(*) FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname IN ('platform_grant_operator', 'platform_revoke_operator')
+      AND p.prosecdef = false
+  ) <> 2 THEN
+    RAISE EXCEPTION
+      'platform_grant_operator/platform_revoke_operator missing or SECURITY DEFINER (migration 071)';
+  END IF;
+  IF has_function_privilege('authenticated',
+       'public.platform_grant_operator(uuid, uuid, text)', 'EXECUTE')
+     OR has_function_privilege('anon',
+       'public.platform_grant_operator(uuid, uuid, text)', 'EXECUTE')
+     OR has_function_privilege('authenticated',
+       'public.platform_revoke_operator(uuid, uuid, text)', 'EXECUTE')
+     OR has_function_privilege('anon',
+       'public.platform_revoke_operator(uuid, uuid, text)', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'an operator function is executable by a client role (migration 071)';
+  END IF;
+  IF NOT has_function_privilege('service_role',
+       'public.platform_grant_operator(uuid, uuid, text)', 'EXECUTE')
+     OR NOT has_function_privilege('service_role',
+       'public.platform_revoke_operator(uuid, uuid, text)', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'the operator functions are not executable by service_role (migration 071)';
+  END IF;
+
+  -- has_open_support_session sigue contando solo sesiones de soporte:
+  -- una fila de plan manual no puede conceder la lectura de una cuenta.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'has_open_support_session'
+      AND p.prosrc LIKE '%action = ''impersonation''%'
+  ) THEN
+    RAISE EXCEPTION
+      'has_open_support_session no longer restricts itself to impersonation rows (migration 071)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
