@@ -366,9 +366,18 @@ stay as they are:
   there — without it a member invited to a team would not reach `/join/<token>`
   — and the app always sends a query string on these two emails, so the `&` is
   safe. Leave **Confirm signup** on the default template: its redirect may have
-  no query string, and the PKCE `code` already covers it. This template
-  depends on the Redirect URLs above: a rejected `redirectTo` becomes the bare
-  Site URL and the link breaks.
+  no query string, and the PKCE `code` already covers it.
+
+  **Only switch to this template when every sender uses `authCallbackUrl()`.**
+  It works only when the app's `redirectTo` already carries a query string
+  (`/auth/callback?next=…`), which is the case for `/forgot-password` and — once
+  the operator-panel provisioning (s9.4) builds its invitations with
+  `authCallbackUrl()` — for invitations. It does **not** work for emails sent
+  from the Supabase dashboard (Authentication → Users → "Invite user" / "Send
+  password recovery"): there `{{ .RedirectTo }}` is the bare Site URL, so the
+  link comes out as `https://site&token_hash=…` and breaks. The same happens if
+  a `redirectTo` is rejected by the Redirect URLs above. If you need those
+  emails too, keep the default template.
 
 An expired or reused link shows "This link no longer works" with a button to
 `/forgot-password`.
