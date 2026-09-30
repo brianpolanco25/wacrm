@@ -2163,14 +2163,15 @@
       "syncDone": {
         "noop": "Ya estaba sincronizado: no cambió nada en PayPal.",
         "created": "Plan publicado en PayPal.",
-        "replaced": "Se creó un plan nuevo en PayPal con el precio nuevo."
+        "replaced": "Se creó un plan nuevo en PayPal con el precio nuevo.",
+        "unpublished": "Ciclo despublicado: el checkout ya no lo ofrece."
       },
       "confirm": {
         "title": "Sincronizar {plan} ({cycle}) con PayPal",
         "env": "Entorno: {env}.",
         "price": "Precio que se publica: {price}.",
         "newPlanRule": "PayPal no permite cambiar el precio de un plan con suscriptores. Si el precio cambió, se crea un plan NUEVO en PayPal y los clientes nuevos pagan el precio nuevo; los clientes actuales siguen en el plan anterior al precio anterior. No se puede deshacer.",
-        "verifyRule": "No consta con qué precio se creó este plan de PayPal: primero se lee de PayPal y solo se crea un plan nuevo si no coincide.",
+        "verifyRule": "No consta con qué precio se creó este plan de PayPal: primero se lee de PayPal y solo se crea un plan nuevo si no coincide o si ya no está activo en PayPal.",
         "action": "Sincronizar"
       },
       "history": {
@@ -2224,6 +2225,17 @@
         "sortOrder": "El orden de aparición debe ser un número entero.",
         "limit": "{metric}: escribe un número entero o marca «Ilimitado».",
         "duplicate": "Ya existe un plan con ese identificador."
+      },
+      "hint": {
+        "priceMismatch": "El checkout ya muestra el precio nuevo, pero PayPal sigue cobrando el anterior hasta que sincronices.",
+        "freeButPublished": "Publicado en PayPal, pero su precio ahora está vacío o a 0: un ciclo gratis no se vende por PayPal. Despublícalo o ponle precio."
+      },
+      "unpublish": {
+        "month": "Despublicar mes",
+        "year": "Despublicar año",
+        "title": "Despublicar {plan} ({cycle}) de PayPal",
+        "body": "Este ciclo deja de venderse por PayPal: el checkout ya no lo ofrecerá. En PayPal no cambia nada, los clientes suscritos siguen en su plan y el historial se conserva.",
+        "action": "Despublicar"
       }
     }
   },

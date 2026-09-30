@@ -2163,14 +2163,15 @@
       "syncDone": {
         "noop": "이미 동기화되어 있습니다. PayPal에서 변경된 것이 없습니다.",
         "created": "요금제를 PayPal에 게시했습니다.",
-        "replaced": "새 가격으로 PayPal에 새 요금제를 만들었습니다."
+        "replaced": "새 가격으로 PayPal에 새 요금제를 만들었습니다.",
+        "unpublished": "주기 게시를 취소했습니다. 결제 화면에서 더 이상 제공되지 않습니다."
       },
       "confirm": {
         "title": "{plan} ({cycle}) 요금제를 PayPal과 동기화",
         "env": "환경: {env}.",
         "price": "게시할 가격: {price}.",
         "newPlanRule": "PayPal은 구독자가 있는 요금제의 가격 변경을 허용하지 않습니다. 가격이 바뀐 경우 PayPal에 새 요금제가 만들어지고 신규 고객은 새 가격을 냅니다. 기존 고객은 이전 요금제의 이전 가격을 유지합니다. 되돌릴 수 없습니다.",
-        "verifyRule": "이 PayPal 요금제가 어떤 가격으로 만들어졌는지 기록이 없습니다. 먼저 PayPal에서 가격을 읽고, 다를 때만 새 요금제를 만듭니다.",
+        "verifyRule": "이 PayPal 요금제가 어떤 가격으로 만들어졌는지 기록이 없습니다. 먼저 PayPal에서 가격을 읽고, 다르거나 PayPal에서 더 이상 활성 상태가 아닐 때만 새 요금제를 만듭니다.",
         "action": "동기화"
       },
       "history": {
@@ -2224,6 +2225,17 @@
         "sortOrder": "표시 순서는 정수여야 합니다.",
         "limit": "{metric}: 정수를 입력하거나 «무제한»을 선택하세요.",
         "duplicate": "같은 식별자의 요금제가 이미 있습니다."
+      },
+      "hint": {
+        "priceMismatch": "결제 화면에는 이미 새 가격이 표시되지만, 동기화할 때까지 PayPal은 이전 가격을 계속 청구합니다.",
+        "freeButPublished": "PayPal에 게시되어 있지만 가격이 비어 있거나 0입니다. 무료 주기는 PayPal로 판매하지 않습니다. 게시를 취소하거나 가격을 설정하세요."
+      },
+      "unpublish": {
+        "month": "월간 게시 취소",
+        "year": "연간 게시 취소",
+        "title": "{plan} ({cycle}) PayPal 게시 취소",
+        "body": "이 주기는 더 이상 PayPal로 판매되지 않으며 결제 화면에서도 제공되지 않습니다. PayPal에서는 아무것도 바뀌지 않고, 기존 구독 고객은 요금제를 유지하며 이력은 보존됩니다.",
+        "action": "게시 취소"
       }
     }
   },

@@ -324,7 +324,10 @@ export type PlanSyncErrorCode =
   | 'paypal_not_configured'
   | 'paypal_unknown_plan'
   | 'paypal_unreadable'
-  | 'paypal_failed';
+  | 'paypal_id_in_use'
+  | 'paypal_failed'
+  | 'not_published'
+  | 'unverified';
 
 export class PlanSyncError extends Error {
   readonly status: number;
@@ -345,6 +348,11 @@ export interface PlanSyncResult {
   previousProviderPlanId?: string;
   /** True when an «unknown» id was read back from PayPal and recorded. */
   verified?: boolean;
+  /**
+   * True when the «unknown» id turned out not to be ACTIVE at PayPal: it
+   * was archived (closed) and a new plan published in its place.
+   */
+  inactive?: boolean;
 }
 
 export interface SyncPayPal extends PayPalCatalogueClient {
@@ -411,7 +419,10 @@ function isUniqueViolation(error: unknown): boolean {
  * Record a PayPal id in the history and close every other open row of
  * the plan and cycle. A unique violation means a concurrent sync already
  * recorded this very id (same PayPal-Request-Id → same plan): that row
- * is the one to keep.
+ * is the one to keep. If the id is recorded for ANOTHER plan or cycle,
+ * that is a 409: one PayPal plan cannot sell two of ours.
+ *
+ * Returns the id of the history row that is now current.
  */
 async function recordCurrent(args: {
   planId: string;
@@ -420,7 +431,7 @@ async function recordCurrent(args: {
   priceUsd: string;
   env: PayPalEnv;
   actorUserId: string;
-}): Promise<void> {
+}): Promise<string> {
   const db = supabaseAdmin();
   const { data, error } = await db
     .from('plan_provider_history')
@@ -463,7 +474,13 @@ async function recordCurrent(args: {
       if (reopenError) throw reopenError;
     }
   }
-  if (!currentId) return;
+  if (!currentId) {
+    throw new PlanSyncError(
+      409,
+      'paypal_id_in_use',
+      `PayPal plan ${args.providerPlanId} is already recorded for another plan or billing cycle; fix provider_plan_id_${args.cycle} of plan '${args.planId}' before syncing`
+    );
+  }
 
   const { error: closeError } = await db
     .from('plan_provider_history')
@@ -473,6 +490,38 @@ async function recordCurrent(args: {
     .is('replaced_at', null)
     .neq('id', currentId);
   if (closeError) throw closeError;
+  return currentId;
+}
+
+/**
+ * Keep a PayPal id in the history as already replaced — for an id that
+ * is not ACTIVE at PayPal but may still carry subscribers, so the
+ * webhook can resolve their events (it looks ids up here too).
+ */
+async function recordArchived(args: {
+  planId: string;
+  cycle: BillingCycle;
+  providerPlanId: string;
+  priceUsd: string;
+  env: PayPalEnv;
+  actorUserId: string;
+  replacedBy: string;
+}): Promise<void> {
+  const { error } = await supabaseAdmin()
+    .from('plan_provider_history')
+    .insert({
+      plan_id: args.planId,
+      cycle: args.cycle,
+      provider: 'paypal',
+      provider_plan_id: args.providerPlanId,
+      price_usd: Number(args.priceUsd),
+      provider_env: args.env,
+      replaced_at: new Date().toISOString(),
+      replaced_by: args.replacedBy,
+      created_by: args.actorUserId,
+    });
+  // Already recorded (a retry): nothing to add.
+  if (error && !isUniqueViolation(error)) throw error;
 }
 
 /**
@@ -512,6 +561,7 @@ export async function syncPlanCycle({
   const currentId = providerIdOf(plan, cycle);
   let historyCount = history.length;
   let verified = false;
+  let inactiveRemote: { priceUsd: string } | null = null;
 
   if (currentId) {
     const open = openRowFor(history, planId, cycle, currentId);
@@ -527,27 +577,36 @@ export async function syncPlanCycle({
       } catch (err) {
         fromPayPal(err, currentId);
       }
-      if (!remote.priceUsd || (remote.cycle && remote.cycle !== cycle)) {
+      // The interval must be present AND be this cycle, and the price a
+      // USD fixed price: anything else is not something we can vouch for.
+      if (!remote.priceUsd || remote.cycle !== cycle) {
         throw new PlanSyncError(
           502,
           'paypal_unreadable',
           `Could not read a USD ${cycle === 'year' ? 'yearly' : 'monthly'} price for PayPal plan ${currentId}`
         );
       }
-      knownPrice = money(remote.priceUsd);
-      await recordCurrent({
-        planId,
-        cycle,
-        providerPlanId: currentId,
-        priceUsd: knownPrice,
-        env,
-        actorUserId,
-      });
-      historyCount += 1;
       verified = true;
+      if (remote.status !== 'ACTIVE') {
+        // INACTIVE / CREATED: PayPal will not take new subscribers on it,
+        // whatever its price. It is never recorded as current; a new plan
+        // is published below and this one archived after it.
+        inactiveRemote = { priceUsd: money(remote.priceUsd) };
+      } else {
+        knownPrice = money(remote.priceUsd);
+        await recordCurrent({
+          planId,
+          cycle,
+          providerPlanId: currentId,
+          priceUsd: knownPrice,
+          env,
+          actorUserId,
+        });
+        historyCount += 1;
+      }
     }
 
-    if (knownPrice === price) {
+    if (!inactiveRemote && knownPrice === price) {
       return {
         synced: true,
         action: 'noop',
@@ -586,7 +645,7 @@ export async function syncPlanCycle({
     .eq('id', planId);
   if (updateError) throw updateError;
 
-  await recordCurrent({
+  const currentRow = await recordCurrent({
     planId,
     cycle,
     providerPlanId: newId,
@@ -595,6 +654,18 @@ export async function syncPlanCycle({
     actorUserId,
   });
 
+  if (currentId && inactiveRemote) {
+    await recordArchived({
+      planId,
+      cycle,
+      providerPlanId: currentId,
+      priceUsd: inactiveRemote.priceUsd,
+      env,
+      actorUserId,
+      replacedBy: currentRow,
+    });
+  }
+
   return currentId
     ? {
         synced: true,
@@ -602,6 +673,73 @@ export async function syncPlanCycle({
         providerPlanId: newId,
         previousProviderPlanId: currentId,
         ...(verified ? { verified } : {}),
+        ...(inactiveRemote ? { inactive: true } : {}),
       }
     : { synced: true, action: 'created', providerPlanId: newId };
+}
+
+/**
+ * Stop selling one cycle through PayPal: `provider_plan_id_<cycle>` goes
+ * back to NULL (checkout answers 400 for it again) and its open history
+ * row is closed. The history is kept — the webhook still resolves the
+ * events of anyone subscribed to it — and nothing is changed at PayPal
+ * nor in any subscription (decision 5).
+ *
+ * The way out of «precio desincronizado» for a cycle whose price was set
+ * to 0 or emptied after publishing. An id with no history («verificar»)
+ * is refused: unpublishing it would lose the only record of it; sync it
+ * first.
+ */
+export async function unpublishPlanCycle({
+  planId,
+  cycle,
+}: {
+  planId: string;
+  cycle: BillingCycle;
+}): Promise<{ unpublished: true; previousProviderPlanId: string }> {
+  const db = supabaseAdmin();
+  const { data: planData, error: planError } = await db
+    .from('plans')
+    .select(PLAN_COLUMNS)
+    .eq('id', planId)
+    .maybeSingle();
+  if (planError) throw planError;
+  const plan = planData as PlanRow | null;
+  if (!plan) throw new PlanSyncError(404, 'not_found', 'Plan not found');
+
+  const currentId = providerIdOf(plan, cycle);
+  if (!currentId) {
+    throw new PlanSyncError(
+      409,
+      'not_published',
+      'This billing cycle is not published to PayPal'
+    );
+  }
+  const history = await loadHistory(planId, cycle);
+  const open = openRowFor(history, planId, cycle, currentId);
+  if (!open) {
+    throw new PlanSyncError(
+      409,
+      'unverified',
+      `PayPal plan ${currentId} has no recorded price; sync it once before unpublishing`
+    );
+  }
+
+  const column =
+    cycle === 'year' ? 'provider_plan_id_year' : 'provider_plan_id_month';
+  const { error: updateError } = await db
+    .from('plans')
+    .update({ [column]: null })
+    .eq('id', planId);
+  if (updateError) throw updateError;
+
+  const { error: closeError } = await db
+    .from('plan_provider_history')
+    .update({ replaced_at: new Date().toISOString() })
+    .eq('plan_id', planId)
+    .eq('cycle', cycle)
+    .is('replaced_at', null);
+  if (closeError) throw closeError;
+
+  return { unpublished: true, previousProviderPlanId: currentId };
 }

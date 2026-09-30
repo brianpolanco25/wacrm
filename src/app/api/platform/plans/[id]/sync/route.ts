@@ -9,6 +9,9 @@
 //   price empty or 0       → 400 (nothing free is published)
 //   no PayPal credentials  → 503
 //
+// `{ cycle, action: 'unpublish' }` stops selling that cycle: the id goes
+// back to NULL, the history is kept, PayPal is not called.
+//
 // Subscribers already on the old PayPal plan stay there at the old
 // price (decision 5): this route never touches a subscription. The rules
 // live in `src/lib/billing/plan-sync.ts`.
@@ -27,6 +30,7 @@ import {
   loadPlatformPlan,
   PlanSyncError,
   syncPlanCycle,
+  unpublishPlanCycle,
 } from '@/lib/billing/plan-sync';
 import {
   checkRateLimit,
@@ -62,6 +66,7 @@ export async function POST(
 
     const body = (await request.json().catch(() => null)) as {
       cycle?: unknown;
+      action?: unknown;
     } | null;
     const cycle = body?.cycle;
     if (cycle !== 'month' && cycle !== 'year') {
@@ -69,6 +74,20 @@ export async function POST(
         { error: "'cycle' must be 'month' or 'year'" },
         { status: 400 }
       );
+    }
+
+    const action = body?.action ?? 'sync';
+    if (action !== 'sync' && action !== 'unpublish') {
+      return NextResponse.json(
+        { error: "'action' must be 'sync' or 'unpublish'" },
+        { status: 400 }
+      );
+    }
+
+    if (action === 'unpublish') {
+      const result = await unpublishPlanCycle({ planId: id, cycle });
+      const plan = await loadPlatformPlan(id);
+      return NextResponse.json({ ...result, plan });
     }
 
     const result = await syncPlanCycle({

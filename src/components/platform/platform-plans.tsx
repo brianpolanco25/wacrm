@@ -145,6 +145,7 @@ export function PlatformPlans({
   const [confirm, setConfirm] = useState<{
     plan: PlatformPlanView;
     cycle: Cycle;
+    action: 'sync' | 'unpublish';
   } | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -246,11 +247,15 @@ export function PlatformPlans({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cycle: confirm.cycle }),
+          body: JSON.stringify({
+            cycle: confirm.cycle,
+            action: confirm.action,
+          }),
         }
       );
       const body = (await res.json().catch(() => null)) as {
         action?: 'noop' | 'created' | 'replaced';
+        unpublished?: boolean;
         plan?: PlatformPlanView | null;
         error?: string;
       } | null;
@@ -263,7 +268,11 @@ export function PlatformPlans({
         return;
       }
       if (body?.plan) replacePlan(body.plan);
-      toast.success(t(`syncDone.${body?.action ?? 'noop'}`));
+      toast.success(
+        body?.unpublished
+          ? t('syncDone.unpublished')
+          : t(`syncDone.${body?.action ?? 'noop'}`)
+      );
       setConfirm(null);
     } catch {
       toast.error(t('syncFailed'));
@@ -368,7 +377,12 @@ export function PlatformPlans({
                   onEdit={() =>
                     setEditor({ mode: 'edit', form: planToForm(plan) })
                   }
-                  onSync={(cycle) => setConfirm({ plan, cycle })}
+                  onSync={(cycle) =>
+                    setConfirm({ plan, cycle, action: 'sync' })
+                  }
+                  onUnpublish={(cycle) =>
+                    setConfirm({ plan, cycle, action: 'unpublish' })
+                  }
                 />
               ))}
             </TableBody>
@@ -392,17 +406,26 @@ export function PlatformPlans({
           <DialogHeader>
             <DialogTitle>
               {confirm
-                ? t('confirm.title', {
-                    plan: confirm.plan.name,
-                    cycle: t(`cycle.${confirm.cycle}`),
-                  })
+                ? t(
+                    confirm.action === 'unpublish'
+                      ? 'unpublish.title'
+                      : 'confirm.title',
+                    {
+                      plan: confirm.plan.name,
+                      cycle: t(`cycle.${confirm.cycle}`),
+                    }
+                  )
                 : null}
             </DialogTitle>
             <DialogDescription>
               {t('confirm.env', { env: t(`envName.${env}`) })}
             </DialogDescription>
           </DialogHeader>
-          {confirm ? (
+          {confirm?.action === 'unpublish' ? (
+            <p className="text-muted-foreground text-sm">
+              {t('unpublish.body')}
+            </p>
+          ) : confirm ? (
             <div className="flex flex-col gap-2 text-sm">
               <p>
                 {t('confirm.price', {
@@ -437,7 +460,9 @@ export function PlatformPlans({
               ) : (
                 <RefreshCw className="size-4" />
               )}
-              {t('confirm.action')}
+              {confirm?.action === 'unpublish'
+                ? t('unpublish.action')
+                : t('confirm.action')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -452,12 +477,14 @@ function PlanRows({
   onToggle,
   onEdit,
   onSync,
+  onUnpublish,
 }: {
   plan: PlatformPlanView;
   expanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onSync: (cycle: Cycle) => void;
+  onUnpublish: (cycle: Cycle) => void;
 }) {
   const t = useTranslations('Platform.plans');
   return (
@@ -485,22 +512,56 @@ function PlanRows({
         <TableCell className="text-right tabular-nums">
           {plan.sortOrder}
         </TableCell>
-        {CYCLES.map((cycle) => (
-          <TableCell key={cycle}>
-            <div className="flex flex-col items-start gap-1">
-              <SyncBadge state={plan.sync[cycle].state} />
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() => onSync(cycle)}
-                data-sync-cycle={cycle}
-              >
-                <RefreshCw className="size-3" />
-                {t(`sync.${cycle}`)}
-              </Button>
-            </div>
-          </TableCell>
-        ))}
+        {CYCLES.map((cycle) => {
+          const sync = plan.sync[cycle];
+          const price = cycle === 'year' ? plan.priceYear : plan.priceMonth;
+          // Published, but the price is now empty or 0: syncing cannot
+          // publish it (nothing free goes to PayPal); unpublishing can.
+          const freeButPublished =
+            sync.providerPlanId !== null && !(Number(price) > 0);
+          return (
+            <TableCell key={cycle}>
+              <div className="flex max-w-48 flex-col items-start gap-1">
+                <SyncBadge state={sync.state} />
+                {freeButPublished ? (
+                  <>
+                    <p className="text-muted-foreground text-xs">
+                      {t('hint.freeButPublished')}
+                    </p>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => onUnpublish(cycle)}
+                      data-unpublish-cycle={cycle}
+                    >
+                      {t(`unpublish.${cycle}`)}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {sync.state === 'price_mismatch' ? (
+                      <p
+                        className="text-destructive text-xs"
+                        data-mismatch-hint={cycle}
+                      >
+                        {t('hint.priceMismatch')}
+                      </p>
+                    ) : null}
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => onSync(cycle)}
+                      data-sync-cycle={cycle}
+                    >
+                      <RefreshCw className="size-3" />
+                      {t(`sync.${cycle}`)}
+                    </Button>
+                  </>
+                )}
+              </div>
+            </TableCell>
+          );
+        })}
         <TableCell className="text-right">
           <div className="flex justify-end gap-1">
             <Button size="sm" variant="outline" onClick={onEdit}>

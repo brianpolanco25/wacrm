@@ -81,8 +81,16 @@ export interface PayPalRequest {
 
 export interface PayPalFakeOptions {
   products?: { id: string; name: string }[];
-  /** What `GET /v1/billing/plans/:id` answers, by id. */
-  remotePlans?: Record<string, { unit: 'MONTH' | 'YEAR'; value: string }>;
+  /**
+   * What `GET /v1/billing/plans/:id` answers, by id: a REGULAR cycle with
+   * this interval and USD price, and this `status` (default ACTIVE). Leave
+   * `unit` or `value` out to drop `interval_unit` / `pricing_scheme`, or
+   * give `raw` to answer that body verbatim.
+   */
+  remotePlans?: Record<
+    string,
+    { unit?: 'MONTH' | 'YEAR'; value?: string; status?: string; raw?: unknown }
+  >;
   /** Force an HTTP status on plan creation. */
   createPlanStatus?: number;
 }
@@ -136,17 +144,24 @@ export function paypalFake(options: PayPalFakeOptions = {}) {
     if (planMatch && method === 'GET') {
       const remote = options.remotePlans?.[decodeURIComponent(planMatch[1])];
       if (!remote) return json({ name: 'RESOURCE_NOT_FOUND' }, 404);
+      if (remote.raw !== undefined) return json(remote.raw);
       return json({
         id: planMatch[1],
-        status: 'ACTIVE',
+        status: remote.status ?? 'ACTIVE',
         billing_cycles: [
           {
             tenure_type: 'REGULAR',
             sequence: 1,
-            frequency: { interval_unit: remote.unit, interval_count: 1 },
-            pricing_scheme: {
-              fixed_price: { value: remote.value, currency_code: 'USD' },
-            },
+            frequency: remote.unit
+              ? { interval_unit: remote.unit, interval_count: 1 }
+              : { interval_count: 1 },
+            ...(remote.value
+              ? {
+                  pricing_scheme: {
+                    fixed_price: { value: remote.value, currency_code: 'USD' },
+                  },
+                }
+              : {}),
           },
         ],
       });

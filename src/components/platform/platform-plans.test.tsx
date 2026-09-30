@@ -141,6 +141,41 @@ describe('PlatformPlans', () => {
   });
 });
 
+describe('PlatformPlans — round 2 hints', () => {
+  it('warns next to the sync button that checkout already shows the new price', () => {
+    const html = render('es');
+    // Pro/month is price_mismatch.
+    expect(html).toContain('data-mismatch-hint="month"');
+    expect(html).toContain(es.Platform.plans.hint.priceMismatch);
+  });
+
+  it('offers «Despublicar» instead of sync for a published cycle whose price is now 0', () => {
+    const plans = PLANS.map((p) =>
+      p.id === 'ilimitado'
+        ? {
+            ...p,
+            sync: {
+              ...p.sync,
+              month: SYNC('price_mismatch', 'P-FREE') as never,
+            },
+          }
+        : p
+    );
+    const html = renderToStaticMarkup(
+      <NextIntlClientProvider locale="es" timeZone="UTC" messages={es}>
+        <PlatformPlans
+          initial={{ providerEnv: 'sandbox', paypalConfigured: true, plans }}
+        />
+      </NextIntlClientProvider>
+    );
+    expect(html).toContain('data-unpublish-cycle="month"');
+    expect(html).toContain(es.Platform.plans.unpublish.month);
+    expect(html).toContain(es.Platform.plans.hint.freeButPublished);
+    // …and no longer a sync button for that cell: 3 plans × 2 − 1.
+    expect(html.match(/data-sync-cycle=/g)).toHaveLength(5);
+  });
+});
+
 describe('Platform.plans catalogue (CP6)', () => {
   function keysUsedBy(file: string): string[] {
     const source = readFileSync(

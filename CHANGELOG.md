@@ -958,7 +958,16 @@ behaviour changes**; nothing is limited by plan yet.
   history of PayPal plans of each plan is shown under it.
 - A PayPal plan id with no recorded price (created by
   `scripts/paypal-bootstrap-catalog.ts`) is read back from PayPal on the
-  first sync instead of being guessed.
+  first sync instead of being guessed; if PayPal no longer has it active,
+  a new plan is published in its place.
+- A published cycle whose price is set to 0 or emptied can be
+  **unpublished** from the same page (checkout stops offering it; history
+  and subscribers are kept). A price edit that is not synced yet is
+  flagged next to the sync button: checkout shows the new price while
+  PayPal still charges the old one.
+- The PayPal webhook now recognises subscribers who stay on a PayPal plan
+  the panel superseded, instead of dropping their plan updates as
+  "not in our catalogue".
 
 ## [0.8.1] — 2026-07-10
 

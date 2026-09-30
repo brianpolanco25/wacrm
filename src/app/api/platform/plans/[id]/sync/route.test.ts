@@ -15,11 +15,40 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
-vi.mock('@/lib/auth/admin-client', async () => {
-  const mod = await import('@/lib/security/fake-supabase');
-  const forward = mod.forwardingClient(() => h.db.admin);
-  return { supabaseAdmin: () => forward };
-});
+// The fake does not enforce indexes; the one that matters here is 070's
+// UNIQUE (provider, provider_env, provider_plan_id), so inserts into the
+// history answer 23505 on a collision, like PostgREST.
+vi.mock('@/lib/auth/admin-client', () => ({
+  supabaseAdmin: () => ({
+    from: (table: string) => {
+      const query = h.db.admin.from(table);
+      if (table !== 'plan_provider_history') return query;
+      return new Proxy(query, {
+        get(target, prop, receiver) {
+          if (prop !== 'insert') return Reflect.get(target, prop, receiver);
+          return (row: Record<string, unknown>) => {
+            const clash = h.db
+              .rows('plan_provider_history')
+              .some(
+                (r) =>
+                  r.provider === (row.provider ?? 'paypal') &&
+                  r.provider_env === row.provider_env &&
+                  r.provider_plan_id === row.provider_plan_id
+              );
+            if (!clash) return target.insert(row);
+            const failed = { data: null, error: { code: '23505' } };
+            const chain = {
+              select: () => chain,
+              single: async () => failed,
+              then: (resolve: (v: unknown) => unknown) => resolve(failed),
+            };
+            return chain;
+          };
+        },
+      });
+    },
+  }),
+}));
 
 const { FakeDatabase } = await import('@/lib/security/fake-supabase');
 const { __resetPayPalForTests } = await import('@/lib/billing/paypal');
@@ -362,5 +391,143 @@ describe('cycle with an id and no history → «verificar»', () => {
     const res = await call('pro');
     expect(res.status).toBe(502);
     expect((await res.json()).code).toBe('paypal_unreadable');
+  });
+});
+
+describe('«verificar» must not vouch for what PayPal will not sell (round 2)', () => {
+  beforeEach(() => {
+    planRow('pro').provider_plan_id_month = 'P-BOOT';
+  });
+
+  it.each(['INACTIVE', 'CREATED'])(
+    'a %s PayPal plan at the same price is archived and replaced, never recorded as current',
+    async (status) => {
+      usePayPal({
+        products: [{ id: 'PROD-CAB', name: 'Cabbity CRM' }],
+        remotePlans: { 'P-BOOT': { unit: 'MONTH', value: '100.00', status } },
+      });
+      const res = await call('pro');
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toMatchObject({
+        synced: true,
+        action: 'replaced',
+        previousProviderPlanId: 'P-BOOT',
+        providerPlanId: 'P-NEW-1',
+        verified: true,
+        inactive: true,
+      });
+      expect(paypal.apiCalls()).toEqual([
+        'GET /v1/billing/plans/P-BOOT',
+        'GET /v1/catalogs/products',
+        'POST /v1/billing/plans',
+      ]);
+      expect(planRow('pro').provider_plan_id_month).toBe('P-NEW-1');
+      const boot = history().find((r) => r.provider_plan_id === 'P-BOOT')!;
+      const fresh = history().find((r) => r.provider_plan_id === 'P-NEW-1')!;
+      // Kept for the webhook (its subscribers may still be on it), closed.
+      expect(boot).toMatchObject({ price_usd: 100, replaced_by: fresh.id });
+      expect(boot.replaced_at).toEqual(expect.any(String));
+      expect(fresh.replaced_at).toBeNull();
+      expect(body.plan.sync.month.state).toBe('synced');
+    }
+  );
+
+  it.each([
+    ['no pricing_scheme', { unit: 'MONTH' as const }],
+    ['no interval_unit', { value: '100.00' }],
+    ['no billing_cycles at all', { raw: { id: 'P-BOOT', status: 'ACTIVE' } }],
+  ])('502s paypal_unreadable on %s, touching nothing', async (_l, remote) => {
+    usePayPal({ remotePlans: { 'P-BOOT': remote } });
+    const res = await call('pro');
+    expect(res.status).toBe(502);
+    expect((await res.json()).code).toBe('paypal_unreadable');
+    expect(history()).toEqual([]);
+    expect(planRow('pro').provider_plan_id_month).toBe('P-BOOT');
+    expect(paypal.apiCalls()).toEqual(['GET /v1/billing/plans/P-BOOT']);
+  });
+});
+
+describe('a PayPal id recorded for another plan or cycle (round 2)', () => {
+  it('409s paypal_id_in_use instead of silently leaving «verificar»', async () => {
+    // Inicio's monthly id was pasted into Pro by hand.
+    history().push({
+      id: 'h-ini',
+      plan_id: 'inicio',
+      cycle: 'month',
+      provider: 'paypal',
+      provider_plan_id: 'P-INICIO-M',
+      price_usd: '35.00',
+      provider_env: 'sandbox',
+      created_at: '2026-02-01T00:00:00.000Z',
+      replaced_at: null,
+      replaced_by: null,
+      created_by: null,
+    });
+    planRow('pro').provider_plan_id_month = 'P-INICIO-M';
+    usePayPal({
+      remotePlans: { 'P-INICIO-M': { unit: 'MONTH', value: '100.00' } },
+    });
+
+    const res = await call('pro');
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe('paypal_id_in_use');
+    expect(body.error).toMatch(/P-INICIO-M/);
+    expect(history()).toHaveLength(1);
+  });
+});
+
+describe('unpublish a cycle (round 2)', () => {
+  function unpublish(id = 'pro', cycle = 'month') {
+    return call(id, { cycle, action: 'unpublish' });
+  }
+
+  it('puts the id back to NULL, closes the row, keeps the history, no PayPal call', async () => {
+    planRow('pro').provider_plan_id_month = 'P-OLD';
+    planRow('pro').price_usd_month = 0;
+    history().push({
+      id: 'h-1',
+      plan_id: 'pro',
+      cycle: 'month',
+      provider: 'paypal',
+      provider_plan_id: 'P-OLD',
+      price_usd: '100.00',
+      provider_env: 'sandbox',
+      created_at: '2026-02-01T00:00:00.000Z',
+      replaced_at: null,
+      replaced_by: null,
+      created_by: null,
+    });
+
+    const res = await unpublish();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      unpublished: true,
+      previousProviderPlanId: 'P-OLD',
+    });
+    expect(body.plan.sync.month.state).toBe('unpublished');
+    expect(planRow('pro').provider_plan_id_month).toBeNull();
+    expect(history()[0].replaced_at).toEqual(expect.any(String));
+    expect(history()).toHaveLength(1);
+    expect(paypal.requests).toEqual([]);
+  });
+
+  it('409s a cycle that is not published, and an id with no recorded price', async () => {
+    expect((await unpublish()).status).toBe(409);
+    planRow('pro').provider_plan_id_month = 'P-BOOT';
+    const res = await unpublish();
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('unverified');
+    expect(planRow('pro').provider_plan_id_month).toBe('P-BOOT');
+  });
+
+  it('400s an unknown action and 403s an owner', async () => {
+    expect((await call('pro', { cycle: 'month', action: 'drop' })).status).toBe(
+      400
+    );
+    h.user = { id: PLAIN_OWNER };
+    expect((await unpublish()).status).toBe(403);
   });
 });

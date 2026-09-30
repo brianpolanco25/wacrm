@@ -2163,14 +2163,15 @@
       "syncDone": {
         "noop": "Already in sync: nothing changed at PayPal.",
         "created": "Plan published to PayPal.",
-        "replaced": "New PayPal plan created with the new price."
+        "replaced": "New PayPal plan created with the new price.",
+        "unpublished": "Cycle unpublished: checkout no longer offers it."
       },
       "confirm": {
         "title": "Sync {plan} ({cycle}) with PayPal",
         "env": "Environment: {env}.",
         "price": "Price to publish: {price}.",
         "newPlanRule": "PayPal does not allow changing the price of a plan that has subscribers. If the price changed, a NEW plan is created at PayPal and new customers pay the new price; current customers stay on the previous plan at the previous price. This cannot be undone.",
-        "verifyRule": "There is no record of the price this PayPal plan was created with: it will be read from PayPal first, and a new plan is created only if it differs.",
+        "verifyRule": "There is no record of the price this PayPal plan was created with: it will be read from PayPal first, and a new plan is created only if it differs or is no longer active at PayPal.",
         "action": "Sync"
       },
       "history": {
@@ -2224,6 +2225,17 @@
         "sortOrder": "The display order must be a whole number.",
         "limit": "{metric}: enter a whole number or tick «Unlimited».",
         "duplicate": "A plan with that identifier already exists."
+      },
+      "hint": {
+        "priceMismatch": "Checkout already shows the new price, but PayPal keeps charging the old one until you sync.",
+        "freeButPublished": "Published at PayPal, but its price is now empty or 0: a free cycle is not sold through PayPal. Unpublish it or set a price."
+      },
+      "unpublish": {
+        "month": "Unpublish month",
+        "year": "Unpublish year",
+        "title": "Unpublish {plan} ({cycle}) from PayPal",
+        "body": "This cycle stops being sold through PayPal: checkout will no longer offer it. Nothing changes at PayPal, customers already subscribed stay on their plan, and the history is kept.",
+        "action": "Unpublish"
       }
     }
   },
