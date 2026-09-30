@@ -2112,6 +2112,119 @@
         "signups": "Altas recientes",
         "delinquent": "Morosos"
       }
+    },
+    "plans": {
+      "title": "Planes",
+      "subtitle": "Todos los planes, públicos u ocultos, sus límites y su sincronización con PayPal.",
+      "env": "Entorno de PayPal: {env}",
+      "envName": {
+        "sandbox": "Sandbox (pruebas)",
+        "live": "Producción (cobros reales)"
+      },
+      "paypalMissing": "Este servidor no tiene credenciales de PayPal: los planes se pueden editar, pero no publicar en PayPal.",
+      "newPlan": "Nuevo plan",
+      "loading": "Cargando planes…",
+      "loadFailed": "No se pudieron cargar los planes. Recarga la página para reintentar.",
+      "empty": "Todavía no hay planes.",
+      "columns": {
+        "plan": "Nombre del plan",
+        "priceMonth": "Mensual",
+        "priceYear": "Anual",
+        "public": "Visibilidad",
+        "order": "Orden",
+        "syncMonth": "PayPal (mes)",
+        "syncYear": "PayPal (año)",
+        "actions": "Acciones"
+      },
+      "public": "Público",
+      "hidden": "Oculto",
+      "edit": "Editar",
+      "cancel": "Cancelar",
+      "save": "Guardar",
+      "saved": "Plan guardado.",
+      "saveFailed": "No se pudo guardar el plan.",
+      "saveFailedWith": "No se pudo guardar el plan: {error}",
+      "state": {
+        "unpublished": "Sin publicar",
+        "synced": "Sincronizado",
+        "price_mismatch": "Precio desincronizado",
+        "unknown": "Verificar"
+      },
+      "cycle": {
+        "month": "mensual",
+        "year": "anual"
+      },
+      "sync": {
+        "month": "Sincronizar mes",
+        "year": "Sincronizar año"
+      },
+      "syncFailed": "No se pudo sincronizar con PayPal.",
+      "syncFailedWith": "No se pudo sincronizar con PayPal: {error}",
+      "syncDone": {
+        "noop": "Ya estaba sincronizado: no cambió nada en PayPal.",
+        "created": "Plan publicado en PayPal.",
+        "replaced": "Se creó un plan nuevo en PayPal con el precio nuevo."
+      },
+      "confirm": {
+        "title": "Sincronizar {plan} ({cycle}) con PayPal",
+        "env": "Entorno: {env}.",
+        "price": "Precio que se publica: {price}.",
+        "newPlanRule": "PayPal no permite cambiar el precio de un plan con suscriptores. Si el precio cambió, se crea un plan NUEVO en PayPal y los clientes nuevos pagan el precio nuevo; los clientes actuales siguen en el plan anterior al precio anterior. No se puede deshacer.",
+        "verifyRule": "No consta con qué precio se creó este plan de PayPal: primero se lee de PayPal y solo se crea un plan nuevo si no coincide.",
+        "action": "Sincronizar"
+      },
+      "history": {
+        "toggle": "Historial",
+        "note": "Planes de PayPal que ha tenido este plan. Los clientes suscritos a un plan sustituido siguen pagando su precio.",
+        "empty": "Todavía no hay planes de PayPal registrados.",
+        "current": "vigente desde {from}",
+        "replaced": "{from} – {to}, sustituido"
+      },
+      "editor": {
+        "createTitle": "Nuevo plan",
+        "editTitle": "Editar plan",
+        "priceNote": "Guardar no cambia nada en PayPal: tras un cambio de precio, sincroniza el ciclo para publicarlo.",
+        "id": "Identificador",
+        "idHelp": "Minúsculas, dígitos, - o _. No se puede cambiar después.",
+        "name": "Nombre",
+        "description": "Descripción",
+        "priceMonth": "Precio mensual (USD)",
+        "priceYear": "Precio anual (USD)",
+        "priceYearEmpty": "Sin cobro anual",
+        "sortOrder": "Orden de aparición",
+        "isPublic": "Visible en el catálogo público",
+        "limits": "Límites",
+        "unlimited": "Ilimitado",
+        "features": "Funciones"
+      },
+      "limits": {
+        "operators": "Operadores",
+        "contacts": "Contactos",
+        "messages_out": "Mensajes salientes al mes",
+        "ai_replies": "Respuestas de IA al mes",
+        "broadcast_recipients": "Destinatarios de difusión al mes",
+        "knowledge_documents": "Documentos de la base de conocimiento",
+        "numbers": "Números de WhatsApp",
+        "retention_months": "Retención (meses)"
+      },
+      "features": {
+        "ai_autoreply": "Respuesta automática con IA",
+        "ai_knowledge": "Base de conocimiento de IA",
+        "auto_assign": "Asignación automática",
+        "api": "API pública",
+        "webhooks": "Webhooks salientes",
+        "multi_number": "Varios números de WhatsApp",
+        "priority_support": "Soporte prioritario"
+      },
+      "errors": {
+        "id": "El identificador debe empezar por una minúscula y tener de 2 a 32 caracteres (a-z, 0-9, - o _).",
+        "name": "El nombre es obligatorio.",
+        "priceMonth": "El precio mensual debe ser un número con hasta 2 decimales.",
+        "priceYear": "El precio anual debe estar vacío o ser un número con hasta 2 decimales.",
+        "sortOrder": "El orden de aparición debe ser un número entero.",
+        "limit": "{metric}: escribe un número entero o marca «Ilimitado».",
+        "duplicate": "Ya existe un plan con ese identificador."
+      }
     }
   },
   "Developers": {

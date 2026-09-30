@@ -939,6 +939,27 @@ behaviour changes**; nothing is limited by plan yet.
   the deal cards now follow the reader's locale instead of being pinned
   to US English.
 
+### Platform console: plans and PayPal sync
+
+> **Migration required:** apply
+> `supabase/migrations/070_plan_provider_history.sql`.
+
+- **Plans** (`/platform/plans`) lists every plan, public or hidden, with
+  its prices, visibility, order and, per billing cycle, where it stands at
+  PayPal: «Not published», «Synced», «Price out of sync» or «Verify». The
+  page says which PayPal environment (`PAYPAL_ENV`) it talks to.
+- Operators can create a plan (with a permanent slug id) and edit its
+  name, description, prices, limits per metric («Unlimited» = no cap),
+  features, visibility and order. Plans are never deleted: an unwanted
+  plan is hidden instead.
+- **Sync month / Sync year** publishes the cycle to PayPal after a
+  confirmation. A price change creates a **new** PayPal plan; customers
+  already subscribed stay on the previous plan at the previous price. The
+  history of PayPal plans of each plan is shown under it.
+- A PayPal plan id with no recorded price (created by
+  `scripts/paypal-bootstrap-catalog.ts`) is read back from PayPal on the
+  first sync instead of being guessed.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same
