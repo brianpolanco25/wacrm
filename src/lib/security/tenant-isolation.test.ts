@@ -286,6 +286,7 @@ import * as platformImpersonateStop from '@/app/api/platform/impersonate/stop/ro
 import * as platformAccounts from '@/app/api/platform/accounts/route';
 import * as platformAccountById from '@/app/api/platform/accounts/[id]/route';
 import * as platformAccountHold from '@/app/api/platform/accounts/[id]/hold/route';
+import * as platformMetrics from '@/app/api/platform/metrics/route';
 // Etiquetas (fase 7 §2) y plantillas (fase 7 §3) de la API pública. Al
 // final de la lista a propósito: las dos mitades de la fase crecían por
 // el mismo sitio en paralelo.
@@ -809,6 +810,34 @@ function seed(): FakeDatabase {
           };
         });
       },
+      // Migration 069: the Resumen of the platform panel. Aggregates of
+      // the whole service, granted to `service_role` alone. Modelled
+      // thinly: the counts the suite can check, no ids at all.
+      platform_metrics: (_args, db) => {
+        const accounts = db.rows('accounts');
+        const subs = db.rows('subscriptions');
+        const byStatus: Record<string, number> = {};
+        for (const a of accounts) {
+          const status =
+            (subs.find((r) => r.account_id === a.id)?.status as string) ??
+            'none';
+          byStatus[status] = (byStatus[status] ?? 0) + 1;
+        }
+        return {
+          generated_at: PAST,
+          accounts: { total: accounts.length, by_status: byStatus },
+          signups: { last_7_days: 0, last_30_days: 0, weekly: [] },
+          revenue: { mrr_usd: 0, arr_usd: 0, paying_accounts: 0 },
+          comped: 0,
+          delinquent: { past_due: 0, suspended: 0, total: 0 },
+          whatsapp: {
+            connected: db
+              .rows('whatsapp_config')
+              .filter((r) => r.status === 'connected').length,
+          },
+          messages_month: { period_start: null, inbound: 0, outbound: 0 },
+        };
+      },
     }
   );
 }
@@ -1100,6 +1129,19 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
       'its only caller is GET /api/platform/accounts, which starts with ' +
       'requirePlatformAdmin(). A company owner gets 403 before it runs — ' +
       'and there is a test below that says so.',
+  },
+  {
+    table: 'rpc:platform_metrics',
+    by: [],
+    reason:
+      'The Resumen of the platform panel (s9.2): how many companies the ' +
+      'service has, in which state, and what they pay. Cross-account by ' +
+      'definition, like the census above, and bounded the same way: ' +
+      'granted to `service_role` and to NO client role (migration 069, ' +
+      'asserted in verify-schema.sql), not SECURITY DEFINER, and called ' +
+      'only from GET /api/platform/metrics behind requirePlatformAdmin(). ' +
+      'It returns counts and sums, never an account id or a name — the ' +
+      'tests below check both halves.',
   },
   {
     table: 'billing_events',
@@ -3134,6 +3176,39 @@ describe('/api/platform/accounts (the panel, service role)', () => {
     expectBUnchanged(beforeB);
     // Two lines in the trail: suspending and lifting are both acts.
     expect(h.db.rows('impersonation_log')).toHaveLength(2);
+  });
+});
+
+describe('/api/platform/metrics (the Resumen, service role)', () => {
+  it('403s the owner of A, and tells him nothing about the service', async () => {
+    const before = h.db.snapshot(B);
+
+    const res = await platformMetrics.GET();
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expectNoBIds(body);
+    expect(JSON.stringify(body)).not.toMatch(/mrr|revenue|accounts/i);
+    expectBUnchanged(before);
+  });
+
+  it('gives a platform admin the whole service in aggregate, with no ids', async () => {
+    makePlatformAdmin(USER_A);
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await platformMetrics.GET();
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Both companies are counted…
+    expect(body.accounts.total).toBe(h.db.rows('accounts').length);
+    // …and neither is named: counts and sums only.
+    expectNoBIds(body);
+    expect(JSON.stringify(body)).not.toContain(A);
+    // Read-only: nothing moved on either side.
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
   });
 });
 
