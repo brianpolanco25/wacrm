@@ -291,6 +291,49 @@ export async function createPlan(
   return { id: providerId(data, 'plan') };
 }
 
+export interface PayPalPlanPrice {
+  /** PayPal's plan status: 'ACTIVE', 'INACTIVE', 'CREATED'. */
+  status: string;
+  /** Interval of the REGULAR cycle, or null if PayPal sent none. */
+  cycle: BillingCycle | null;
+  /** Price of the REGULAR cycle as PayPal's decimal string, or null. */
+  priceUsd: string | null;
+}
+
+/**
+ * Read back what a billing plan actually charges (s9.3). The operator's
+ * sync uses it for a plan id our history has no record of — one the CLI
+ * bootstrap created before `plan_provider_history` existed — instead of
+ * guessing its price. Only the REGULAR cycle is read; a trial cycle is
+ * not what a subscriber pays.
+ */
+export async function getPlan(planId: string): Promise<PayPalPlanPrice> {
+  const { data } = await paypalFetch<{
+    status?: unknown;
+    billing_cycles?: Array<{
+      tenure_type?: unknown;
+      frequency?: { interval_unit?: unknown };
+      pricing_scheme?: {
+        fixed_price?: { value?: unknown; currency_code?: unknown };
+      };
+    }>;
+  }>(`/v1/billing/plans/${encodeURIComponent(planId)}`);
+
+  const regular = Array.isArray(data?.billing_cycles)
+    ? data.billing_cycles.find((c) => c?.tenure_type === 'REGULAR')
+    : undefined;
+  const unit = regular?.frequency?.interval_unit;
+  const price = regular?.pricing_scheme?.fixed_price;
+  return {
+    status: typeof data?.status === 'string' ? data.status : 'UNKNOWN',
+    cycle: unit === 'MONTH' ? 'month' : unit === 'YEAR' ? 'year' : null,
+    priceUsd:
+      typeof price?.value === 'string' && price.currency_code === 'USD'
+        ? price.value
+        : null,
+  };
+}
+
 function providerId(data: unknown, resource: string): string {
   const id = (data as { id?: unknown } | null)?.id;
   if (typeof id !== 'string' || !id) {

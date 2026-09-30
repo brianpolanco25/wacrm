@@ -1351,6 +1351,102 @@ BEGIN
       'platform_metrics() is not executable by service_role (migration 069)';
   END IF;
 
+  -- 070 ------------------------------------------------------------
+  -- Planes desde el panel (s9.3): historial de ids de PayPal por plan y
+  -- ciclo, y los metadatos del editor en `plans`.
+  IF to_regclass('public.plan_provider_history') IS NULL THEN
+    RAISE EXCEPTION 'public.plan_provider_history is missing (migration 070)';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.plan_provider_history'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on plan_provider_history (migration 070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'plan_provider_history'
+      AND policyname = 'plan_provider_history_select' AND cmd = 'SELECT'
+      AND qual ILIKE '%is_platform_admin%'
+  ) THEN
+    RAISE EXCEPTION 'the plan_provider_history read policy is missing (migration 070)';
+  END IF;
+  -- Escribe solo el rol de servicio: ninguna política de escritura.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'plan_provider_history'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'plan_provider_history must have no write policy (migration 070)';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'plans' AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'plans must keep having no write policy (migrations 041/070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'plan_provider_history_plan_id_fkey'
+      AND conrelid = 'public.plan_provider_history'::regclass
+      AND contype = 'f' AND confdeltype = 'r'
+  ) THEN
+    RAISE EXCEPTION
+      'plan_provider_history_plan_id_fkey is missing or not ON DELETE RESTRICT (migration 070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'plan_provider_history_replaced_by_fkey'
+      AND conrelid = 'public.plan_provider_history'::regclass
+      AND contype = 'f' AND confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION
+      'plan_provider_history_replaced_by_fkey is missing or not ON DELETE SET NULL (migration 070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'plan_provider_history_cycle_check'
+      AND conrelid = 'public.plan_provider_history'::regclass
+  ) THEN
+    RAISE EXCEPTION 'plan_provider_history_cycle_check is missing (migration 070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'plan_provider_history_provider_env_check'
+      AND conrelid = 'public.plan_provider_history'::regclass
+  ) THEN
+    RAISE EXCEPTION 'plan_provider_history_provider_env_check is missing (migration 070)';
+  END IF;
+  IF to_regclass('public.plan_provider_history_provider_id_key') IS NULL THEN
+    RAISE EXCEPTION 'plan_provider_history_provider_id_key is missing (migration 070)';
+  END IF;
+  IF to_regclass('public.idx_plan_provider_history_plan_cycle') IS NULL THEN
+    RAISE EXCEPTION 'idx_plan_provider_history_plan_cycle is missing (migration 070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans' AND column_name = 'created_at'
+  ) THEN
+    RAISE EXCEPTION 'plans.created_at is missing (migration 070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans' AND column_name = 'updated_at'
+  ) THEN
+    RAISE EXCEPTION 'plans.updated_at is missing (migration 070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans' AND column_name = 'description'
+  ) THEN
+    RAISE EXCEPTION 'plans.description is missing (migration 070)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public.plans'::regclass AND tgname = 'set_updated_at'
+  ) THEN
+    RAISE EXCEPTION 'the set_updated_at trigger on plans is missing (migration 070)';
+  END IF;
+  -- /070 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

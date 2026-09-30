@@ -957,6 +957,36 @@ behaviour changes**; nothing is limited by plan yet.
   they load the page says so, and a failed load is shown as an error, never
   as zeros.
 
+### Platform console: plans and PayPal sync
+
+> **Migration required:** apply
+> `supabase/migrations/070_plan_provider_history.sql`.
+
+- **Plans** (`/platform/plans`) lists every plan, public or hidden, with
+  its prices, visibility, order and, per billing cycle, where it stands at
+  PayPal: «Not published», «Synced», «Price out of sync» or «Verify». The
+  page says which PayPal environment (`PAYPAL_ENV`) it talks to.
+- Operators can create a plan (with a permanent slug id) and edit its
+  name, description, prices, limits per metric («Unlimited» = no cap),
+  features, visibility and order. Plans are never deleted: an unwanted
+  plan is hidden instead.
+- **Sync month / Sync year** publishes the cycle to PayPal after a
+  confirmation. A price change creates a **new** PayPal plan; customers
+  already subscribed stay on the previous plan at the previous price. The
+  history of PayPal plans of each plan is shown under it.
+- A PayPal plan id with no recorded price (created by
+  `scripts/paypal-bootstrap-catalog.ts`) is read back from PayPal on the
+  first sync instead of being guessed; if PayPal no longer has it active,
+  a new plan is published in its place.
+- A published cycle whose price is set to 0 or emptied can be
+  **unpublished** from the same page (checkout stops offering it; history
+  and subscribers are kept). A price edit that is not synced yet is
+  flagged next to the sync button: checkout shows the new price while
+  PayPal still charges the old one.
+- The PayPal webhook now recognises subscribers who stay on a PayPal plan
+  the panel superseded, instead of dropping their plan updates as
+  "not in our catalogue".
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

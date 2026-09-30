@@ -2151,6 +2151,131 @@
       "weekTooltip": "Week of {week}: {count, plural, one {# signup} other {# signups}}",
       "weekColumn": "Week",
       "countColumn": "Signups"
+    },
+    "plans": {
+      "title": "Plans",
+      "subtitle": "Every plan, public or hidden, its limits and its PayPal sync.",
+      "env": "PayPal environment: {env}",
+      "envName": {
+        "sandbox": "Sandbox (tests)",
+        "live": "Live (real charges)"
+      },
+      "paypalMissing": "PayPal credentials are not configured on this server: plans can be edited, but not published to PayPal.",
+      "newPlan": "New plan",
+      "loading": "Loading plans…",
+      "loadFailed": "Could not load the plans. Reload the page to try again.",
+      "empty": "There are no plans yet.",
+      "columns": {
+        "plan": "Plan",
+        "priceMonth": "Monthly",
+        "priceYear": "Yearly",
+        "public": "Visibility",
+        "order": "Order",
+        "syncMonth": "PayPal (month)",
+        "syncYear": "PayPal (year)",
+        "actions": "Actions"
+      },
+      "public": "Public",
+      "hidden": "Hidden",
+      "edit": "Edit",
+      "cancel": "Cancel",
+      "save": "Save",
+      "saved": "Plan saved.",
+      "saveFailed": "Could not save the plan.",
+      "saveFailedWith": "Could not save the plan: {error}",
+      "state": {
+        "unpublished": "Not published",
+        "synced": "Synced",
+        "price_mismatch": "Price out of sync",
+        "unknown": "Verify"
+      },
+      "cycle": {
+        "month": "monthly",
+        "year": "yearly"
+      },
+      "sync": {
+        "month": "Sync month",
+        "year": "Sync year"
+      },
+      "syncFailed": "Could not sync with PayPal.",
+      "syncFailedWith": "Could not sync with PayPal: {error}",
+      "syncDone": {
+        "noop": "Already in sync: nothing changed at PayPal.",
+        "created": "Plan published to PayPal.",
+        "replaced": "New PayPal plan created with the new price.",
+        "unpublished": "Cycle unpublished: checkout no longer offers it."
+      },
+      "confirm": {
+        "title": "Sync {plan} ({cycle}) with PayPal",
+        "env": "Environment: {env}.",
+        "price": "Price to publish: {price}.",
+        "newPlanRule": "PayPal does not allow changing the price of a plan that has subscribers. If the price changed, a NEW plan is created at PayPal and new customers pay the new price; current customers stay on the previous plan at the previous price. This cannot be undone.",
+        "verifyRule": "There is no record of the price this PayPal plan was created with: it will be read from PayPal first, and a new plan is created only if it differs or is no longer active at PayPal.",
+        "action": "Sync"
+      },
+      "history": {
+        "toggle": "History",
+        "note": "PayPal plans this plan has had. Customers subscribed to a replaced plan keep paying its price.",
+        "empty": "No PayPal plans recorded yet.",
+        "current": "current since {from}",
+        "replaced": "{from} – {to}, replaced"
+      },
+      "editor": {
+        "createTitle": "New plan",
+        "editTitle": "Edit plan",
+        "priceNote": "Saving does not change anything at PayPal: after a price change, sync the cycle to publish it.",
+        "id": "Identifier",
+        "idHelp": "Lowercase letters, digits, - or _. It cannot be changed later.",
+        "name": "Name",
+        "description": "Description",
+        "priceMonth": "Monthly price (USD)",
+        "priceYear": "Yearly price (USD)",
+        "priceYearEmpty": "No yearly billing",
+        "sortOrder": "Display order",
+        "isPublic": "Shown in the public catalogue",
+        "limits": "Limits",
+        "unlimited": "Unlimited",
+        "features": "Features"
+      },
+      "limits": {
+        "operators": "Operators",
+        "contacts": "Contacts",
+        "messages_out": "Outgoing messages per month",
+        "ai_replies": "AI replies per month",
+        "broadcast_recipients": "Broadcast recipients per month",
+        "knowledge_documents": "Knowledge base documents",
+        "numbers": "WhatsApp numbers",
+        "retention_months": "Retention (months)"
+      },
+      "features": {
+        "ai_autoreply": "AI auto-reply",
+        "ai_knowledge": "AI knowledge base",
+        "auto_assign": "Automatic assignment",
+        "api": "Public API",
+        "webhooks": "Outgoing webhooks",
+        "multi_number": "Several WhatsApp numbers",
+        "priority_support": "Priority support"
+      },
+      "errors": {
+        "id": "The identifier must start with a lowercase letter and have 2 to 32 characters (a-z, 0-9, - or _).",
+        "name": "The name is required.",
+        "priceMonth": "The monthly price must be a number with up to 2 decimals.",
+        "priceYear": "The yearly price must be empty or a number with up to 2 decimals.",
+        "sortOrder": "The display order must be a whole number.",
+        "limit": "{metric}: enter a whole number or tick «Unlimited».",
+        "duplicate": "A plan with that identifier already exists."
+      },
+      "hint": {
+        "priceMismatch": "Checkout already shows the new price, but PayPal keeps charging the old one until you sync.",
+        "freeButPublished": "Published at PayPal, but its price is now empty or 0: a free cycle is not sold through PayPal. Unpublish it or set a price."
+      },
+      "unpublish": {
+        "month": "Unpublish month",
+        "year": "Unpublish year",
+        "title": "Unpublish {plan} ({cycle}) from PayPal",
+        "body": "This cycle stops being sold through PayPal: checkout will no longer offer it. Nothing changes at PayPal, customers already subscribed stay on their plan, and the history is kept.",
+        "action": "Unpublish"
+      }
     }
   },
   "Developers": {
