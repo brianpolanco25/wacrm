@@ -1,11 +1,11 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata, Viewport } from 'next';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages } from 'next-intl/server';
-import { Inter } from "next/font/google";
-import Script from "next/script";
-import "./globals.css";
-import { ThemeProvider } from "@/hooks/use-theme";
-import { ThemedToaster } from "@/components/themed-toaster";
+import localFont from 'next/font/local';
+import Script from 'next/script';
+import './globals.css';
+import { ThemeProvider } from '@/hooks/use-theme';
+import { ThemedToaster } from '@/components/themed-toaster';
 import {
   DEFAULT_MODE,
   DEFAULT_THEME,
@@ -14,25 +14,81 @@ import {
   MODES,
   STORAGE_KEY,
   THEME_IDS,
-} from "@/lib/themes";
+} from '@/lib/themes';
 
-const inter = Inter({
-  variable: "--font-sans",
-  subsets: ["latin"],
+// Inter is served from the repository (`./fonts`, SIL OFL 1.1 in
+// `./fonts/LICENSE-Inter.txt`) so `next build` never reaches Google Fonts.
+//
+// Two families, because `next/font/local` applies `declarations` (and so
+// `unicode-range`) to every file of a call, never per file:
+//   - `inter`: the faces the UI renders with — Latin subset at 400/600
+//     plus full-coverage static 500/700. `preload` is per call, not per
+//     file, so all four are preloaded; every route uses them. Tailwind's
+//     `font-extrabold` (800) resolves to the 700 face.
+//   - `interLatinExt`: Latin Extended glyphs (č, ő, ł, …) at 400/600,
+//     restricted by `unicode-range` so the browser only downloads it when a
+//     page contains one of those characters. It goes first in the stack
+//     (`globals.css`) and carries no metric fallback of its own; anything
+//     outside its range falls through to `inter`.
+const inter = localFont({
+  src: [
+    {
+      path: './fonts/inter-latin-400-normal.woff2',
+      weight: '400',
+      style: 'normal',
+    },
+    { path: './fonts/inter-500-normal.woff2', weight: '500', style: 'normal' },
+    {
+      path: './fonts/inter-latin-600-normal.woff2',
+      weight: '600',
+      style: 'normal',
+    },
+    { path: './fonts/inter-700-normal.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-inter',
+  display: 'swap',
+  preload: true,
+  adjustFontFallback: 'Arial',
+});
+
+const interLatinExt = localFont({
+  src: [
+    {
+      path: './fonts/inter-latin-ext-400-normal.woff2',
+      weight: '400',
+      style: 'normal',
+    },
+    {
+      path: './fonts/inter-latin-ext-600-normal.woff2',
+      weight: '600',
+      style: 'normal',
+    },
+  ],
+  variable: '--font-inter-latin-ext',
+  display: 'swap',
+  preload: false,
+  adjustFontFallback: false,
+  declarations: [
+    {
+      prop: 'unicode-range',
+      value:
+        'U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF',
+    },
+  ],
 });
 
 export const metadata: Metadata = {
   title: {
-    default: "Cabbity CRM",
-    template: "%s — Cabbity CRM",
+    default: 'Cabbity CRM',
+    template: '%s — Cabbity CRM',
   },
-  description: "Self-hostable CRM template for WhatsApp.",
+  description: 'Self-hostable CRM template for WhatsApp.',
   robots: {
     index: false,
     follow: false,
   },
   icons: {
-    icon: [{ url: "/icon" }],
+    icon: [{ url: '/icon' }],
   },
   formatDetection: {
     email: false,
@@ -42,8 +98,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#020617",
-  colorScheme: "dark light",
+  themeColor: '#020617',
+  colorScheme: 'dark light',
 };
 
 // Inline boot script — runs before React hydrates so the user's
@@ -93,7 +149,7 @@ export default async function RootLayout({
       lang={locale}
       data-theme={DEFAULT_THEME}
       data-mode={DEFAULT_MODE}
-      className={`${inter.variable} h-full antialiased`}
+      className={`${inter.variable} ${interLatinExt.variable} h-full antialiased`}
       // The `theme-boot` script below rewrites `data-theme` and
       // `data-mode` on <html> from localStorage before React hydrates,
       // so for any non-default choice the client DOM intentionally
@@ -110,7 +166,7 @@ export default async function RootLayout({
           dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
         />
       </head>
-      <body className="min-h-full bg-background text-foreground font-sans">
+      <body className="bg-background text-foreground min-h-full font-sans">
         <NextIntlClientProvider messages={messages} locale={locale}>
           <ThemeProvider>
             {children}
