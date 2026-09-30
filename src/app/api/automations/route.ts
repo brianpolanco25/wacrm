@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
@@ -10,15 +9,21 @@ import {
 } from '@/lib/automations/validate'
 
 export async function GET() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // The effective account, filtered explicitly (s9.5): RLS alone stopped
+  // being a one-account filter in migration 057 — inside a support session
+  // it answers "the operator's company OR the customer's", and an
+  // unfiltered list came back with both merged.
+  let ctx: Awaited<ReturnType<typeof getCurrentAccount>>
+  try {
+    ctx = await getCurrentAccount()
+  } catch (err) {
+    return toErrorResponse(err)
+  }
 
-  const { data, error } = await supabase
+  const { data, error } = await ctx.supabase
     .from('automations')
     .select('*')
+    .eq('account_id', ctx.accountId)
     .order('created_at', { ascending: false })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ automations: data ?? [] })
@@ -28,33 +33,19 @@ export async function POST(request: Request) {
   // Creating an automation is a write — the RLS automations_insert policy
   // requires `agent`, but this route inserts via the service-role client
   // which bypasses RLS, so the role must be enforced here.
+  //
+  // The account comes from the same context (s9.5): inside a support
+  // session it is the impersonated company. Reading the caller's own
+  // profile here would create the automation in the OPERATOR'S company
+  // under the customer's banner.
+  let ctx: Awaited<ReturnType<typeof requireRole>>
   try {
-    await requireRole('agent')
+    ctx = await requireRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }
-
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  // Resolve the caller's account_id — `automations.account_id` is NOT
-  // NULL post-017, so an INSERT without it trips the not-null constraint
-  // even though the admin client bypasses RLS.
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', user.id)
-    .single()
-  const accountId = profile?.account_id as string | undefined
-  if (!accountId) {
-    return NextResponse.json(
-      { error: 'Your profile is not linked to an account.' },
-      { status: 403 },
-    )
-  }
+  const accountId = ctx.accountId
+  const user = { id: ctx.userId }
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })

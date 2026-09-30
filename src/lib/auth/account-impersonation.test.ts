@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The contract the spec asks for, in one place:
 //   - the account context resolves to the IMPERSONATED account, and only
 //     while the session is valid and the actor really is a platform admin;
-//   - the effective role is `viewer`, so every write guard refuses;
+//   - the effective role is `admin` (s9.5): the session writes, but
+//     nothing that asks for `owner`, and nothing on the short list
+//     `assertNotSupportSession` guards (billing, ownership, members,
+//     invitations, API keys);
 //   - the operator's own `profiles.account_id` is never read, let alone
 //     written — nothing about the actor's own company moves;
 //   - when the session expires, the very next request is back in their
@@ -29,6 +32,8 @@ const h = vi.hoisted(() => ({
   adminQueries: [] as { table: string; eq: [string, unknown][] }[],
   /** Accounts the fase 3 billing gate was asked about, in order. */
   writableChecks: [] as string[],
+  /** Status stamps on the request's `impersonation_actions` row. */
+  stamps: [] as { accountId: string; status: number }[],
 }));
 
 function builderFor(
@@ -99,8 +104,26 @@ vi.mock('./impersonation', async (importOriginal) => ({
   },
 }));
 
-const { getCurrentAccount, requireRole, ForbiddenError } =
-  await import('./account');
+vi.mock('./support-actions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./support-actions')>()),
+  markSupportActionStatus: async (
+    session: { accountId: string },
+    status: number
+  ) => {
+    h.stamps.push({ accountId: session.accountId, status });
+  },
+}));
+
+const {
+  getCurrentAccount,
+  requireRole,
+  ForbiddenError,
+  assertNotSupportSession,
+  resolveEffectiveAccountId,
+  toErrorResponse,
+  IMPERSONATED_ROLE,
+} = await import('./account');
+const { SupportAuditError } = await import('./support-actions');
 
 const OPERATOR = '11111111-1111-4111-8111-111111111111';
 const TARGET_ACCOUNT = 'aaaaaaaa-0000-4000-8000-000000000001';
@@ -113,6 +136,7 @@ beforeEach(() => {
   h.sessionQueries = [];
   h.adminQueries = [];
   h.writableChecks = [];
+  h.stamps = [];
   h.profiles = new Map([
     [OPERATOR, { account_id: OWN_ACCOUNT, account_role: 'owner' }],
   ]);
@@ -153,11 +177,12 @@ describe('getCurrentAccount inside a support session', () => {
     expect(ctx.account).toEqual({ id: TARGET_ACCOUNT, name: 'Customer Co' });
   });
 
-  it('downgrades the effective role to viewer, whatever the operator really is', async () => {
+  it('acts as admin, never owner, whatever the operator really is (s9.5)', async () => {
     // The operator is an `owner` of their own company. Inside a support
-    // session that counts for nothing.
+    // session that counts for nothing: the effective role is `admin`.
     openSession();
-    expect((await getCurrentAccount()).role).toBe('viewer');
+    expect((await getCurrentAccount()).role).toBe('admin');
+    expect(IMPERSONATED_ROLE).toBe('admin');
   });
 
   it('exposes the session so the UI can say so out loud', async () => {
@@ -209,20 +234,31 @@ describe('requireRole inside a support session', () => {
     expect(ctx.accountId).toBe(TARGET_ACCOUNT);
   });
 
-  it.each(['agent', 'admin', 'owner'] as const)(
-    'refuses every write-level guard (%s)',
+  it.each(['agent', 'admin'] as const)(
+    'lets a %s-level guard through on the impersonated account (s9.5)',
     async (min) => {
       openSession();
-      await expect(requireRole(min)).rejects.toMatchObject({
-        status: 403,
-        message: expect.stringContaining('read-only'),
-      });
-      // And it is refused for being a support session, before the fase 3
-      // billing gate is ever consulted: whether the CUSTOMER'S bill is
-      // paid has nothing to do with whether an operator may write.
-      expect(h.writableChecks).toEqual([]);
+      const ctx = await requireRole(min);
+      expect(ctx.accountId).toBe(TARGET_ACCOUNT);
+      expect(ctx.role).toBe('admin');
+      // The fase 3 billing gate runs about the CUSTOMER'S account: a
+      // suspended customer stays read-only for support too.
+      expect(h.writableChecks).toEqual([TARGET_ACCOUNT]);
+      expect(h.stamps).toEqual([]);
     }
   );
+
+  it('refuses an owner-level guard, and says why', async () => {
+    openSession();
+    await expect(requireRole('owner')).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining('acts as an admin'),
+    });
+    // Refused for being a support session, before the billing gate is
+    // consulted, and the refusal is stamped on the request's action row.
+    expect(h.writableChecks).toEqual([]);
+    expect(h.stamps).toEqual([{ accountId: TARGET_ACCOUNT, status: 403 }]);
+  });
 
   it('goes back to the operator’s own account and role once the session is gone', async () => {
     openSession();
@@ -238,5 +274,65 @@ describe('requireRole inside a support session', () => {
     // Back to an ordinary request, the fase 3 gate runs again — and about
     // the operator's OWN account, never the one they were looking at.
     expect(h.writableChecks).toEqual([OWN_ACCOUNT]);
+  });
+});
+
+describe('assertNotSupportSession', () => {
+  it('refuses inside a session, whatever the role, and stamps the 403', async () => {
+    openSession();
+    const ctx = await requireRole('admin');
+    await expect(assertNotSupportSession(ctx)).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining('support session'),
+    });
+    expect(h.stamps).toEqual([{ accountId: TARGET_ACCOUNT, status: 403 }]);
+  });
+
+  it('is a no-op for an ordinary request', async () => {
+    const ctx = await requireRole('owner');
+    await expect(assertNotSupportSession(ctx)).resolves.toBeUndefined();
+    expect(h.stamps).toEqual([]);
+  });
+});
+
+describe('resolveEffectiveAccountId', () => {
+  const fakeClient = () =>
+    ({
+      from: builderFor(h.sessionQueries, (call) => {
+        const [, userId] = call.eq.find(([c]) => c === 'user_id') ?? [];
+        return h.profiles.get(userId as string) ?? null;
+      }),
+    }) as unknown as Parameters<typeof resolveEffectiveAccountId>[0];
+
+  it("is the impersonated account in a session, without reading the operator's profile", async () => {
+    // The bug it replaces: routes that read `profiles.account_id` wrote to
+    // the OPERATOR'S company under the customer's banner.
+    openSession();
+    expect(await resolveEffectiveAccountId(fakeClient(), OPERATOR)).toBe(
+      TARGET_ACCOUNT
+    );
+    expect(h.sessionQueries).toEqual([]);
+  });
+
+  it("is the caller's own account otherwise", async () => {
+    expect(await resolveEffectiveAccountId(fakeClient(), OPERATOR)).toBe(
+      OWN_ACCOUNT
+    );
+  });
+
+  it('is null for a user with no profile', async () => {
+    expect(
+      await resolveEffectiveAccountId(fakeClient(), 'no-such-user')
+    ).toBeNull();
+  });
+});
+
+describe('an unrecorded support write', () => {
+  it('answers 503 and says nothing was changed', async () => {
+    const res = toErrorResponse(new SupportAuditError());
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining('nothing was changed'),
+    });
   });
 });

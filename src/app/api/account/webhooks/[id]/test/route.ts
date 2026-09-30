@@ -7,7 +7,11 @@
 
 import { NextResponse } from 'next/server';
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import {
+  assertNotSupportSession,
+  requireRole,
+  toErrorResponse,
+} from '@/lib/auth/account';
 import { assertPlanFeature } from '@/lib/billing/enforce';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
@@ -23,6 +27,8 @@ export async function POST(
 ) {
   try {
     const ctx = await requireRole('admin');
+    // s9.5: an outbound webhook outlives the support session.
+    await assertNotSupportSession(ctx);
     await assertPlanFeature(ctx.accountId, 'webhooks');
     const { id } = await params;
 

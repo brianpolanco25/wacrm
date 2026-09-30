@@ -1164,6 +1164,19 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
       'one named session — filters by `account_id` and is not waived.',
   },
   {
+    table: 'impersonation_log',
+    op: 'update',
+    by: ['actor_user_id', 'action', 'ended_at'],
+    reason:
+      'supersedeOpenSupportSessions (s9.5): opening a support session ' +
+      'closes every OTHER session the same operator still has open, in ' +
+      'any browser, so there is never more than one (migration 072 ' +
+      'enforces it with a UNIQUE partial index). Scoped by the actor — the ' +
+      "caller's own authenticated uid, never the request body — and it " +
+      'writes only `ended_at` / `ended_reason` on audit rows, moving no ' +
+      'customer data.',
+  },
+  {
     table: 'rpc:platform_account_list',
     by: [],
     reason:
@@ -2970,7 +2983,7 @@ describe('/api/platform (support sessions, service role)', () => {
     expect(h.db.rows('impersonation_log')).toEqual([]);
   });
 
-  it('resolves the account context to the impersonated company, read-only', async () => {
+  it('resolves the account context to the impersonated company, acting as admin (s9.5)', async () => {
     makePlatformAdmin(USER_A);
     seedTargetAccount();
     const beforeA = h.db.snapshot(A);
@@ -2984,28 +2997,28 @@ describe('/api/platform (support sessions, service role)', () => {
 
     // Every route in the app resolves its account through this. During a
     // support session it names the company being looked at — and hands
-    // out `viewer`, whatever the operator is in their own company (owner).
+    // out `admin`, whatever the operator is in their own company (owner).
     const ctx = await getCurrentAccount();
     expect(ctx.accountId).toBe(TARGET);
     expect(ctx.account.name).toBe('Company T');
-    expect(ctx.role).toBe('viewer');
+    expect(ctx.role).toBe('admin');
     expect(ctx.impersonation?.accountId).toBe(TARGET);
 
-    // So a route that asks for a write-level role refuses…
+    // So a write-level route now writes — into the CUSTOMER'S company…
     const write = await quickReplies.POST(
       req('POST', '/api/quick-replies', {
         title: 'from a support session',
-        content_text: 'should never be stored',
+        content_text: 'stored for the customer',
       })
     );
-    expect(write.status).toBe(403);
-
-    // …and in particular it did not write into the operator's OWN company,
-    // which is the failure mode that makes impersonation dangerous.
-    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expect(write.status).toBeLessThan(300);
     expect(
       h.db.rows('quick_replies').filter((r) => r.account_id === TARGET)
-    ).toEqual([]);
+    ).toHaveLength(1);
+
+    // …and in particular NOT into the operator's own, which is the
+    // failure mode that makes impersonation dangerous.
+    expect(h.db.snapshot(A)).toEqual(beforeA);
   });
 
   it('reports the open session, and reports none once it is stopped', async () => {

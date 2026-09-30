@@ -649,3 +649,308 @@ describe('child tables', () => {
     }
   });
 });
+
+// ============================================================
+// s9.5 — the same net, for WRITES.
+//
+// A support session writes now (migration 072 opened the write policies of
+// the tenant tables to it, and the middleware lets mutations through). The
+// 403s that used to cover every write are gone, so what they were hiding is
+// not: a write keyed by the OPERATOR — their `user.id`, their profile's
+// `account_id` — lands in the operator's own company, or moves one of its
+// rows into the customer's, while the banner names the customer. RLS does
+// not stop that: the operator IS a member of their own company.
+//
+// The rule, for the browser and for the server alike: every write names
+// the EFFECTIVE account (`useAuth().accountId` / `getCurrentAccount()`),
+// or is keyed by the id of a row that came off a list naming it.
+// ============================================================
+
+import {
+  SUPPORT_REFUSED_TABLES,
+  SUPPORT_WRITABLE_TABLES,
+  supportWriteVerdict,
+} from '@/lib/auth/support-scope';
+import { effectiveAccountRole } from '@/hooks/use-auth';
+
+const WRITE_OP = /\.(insert|update|upsert|delete)\(/;
+
+interface WriteSite {
+  file: string;
+  line: number;
+  table: string;
+  op: string;
+  chain: string;
+  source: string;
+}
+
+function writes(
+  filter: (source: string, file: string) => boolean
+): WriteSite[] {
+  const found: WriteSite[] = [];
+  for (const file of walk(SRC)) {
+    const source = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(process.cwd(), file);
+    if (!filter(source, rel)) continue;
+    const re = /\.from\(\s*["'`]([a-z_]+)["'`]\s*\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source))) {
+      const chain = chainAt(source, m.index);
+      const op = WRITE_OP.exec(chain);
+      if (!op) continue;
+      found.push({
+        file: rel,
+        line: source.slice(0, m.index).split('\n').length,
+        table: m[1],
+        op: op[1],
+        chain,
+        source,
+      });
+    }
+  }
+  return found;
+}
+
+const isBrowser = (source: string) => source.includes('@/lib/supabase/client');
+
+// `src/lib/supabase/client.ts` quotes `.from('contacts').delete()` in its
+// comments; it is the guard, not a caller.
+const browserWrites = () =>
+  writes(
+    (source, file) => isBrowser(source) && file !== 'src/lib/supabase/client.ts'
+  );
+
+describe('every browser write during a support session (s9.5)', () => {
+  it('finds the writes at all', () => {
+    // Guards the assertions below from being vacuously true.
+    expect(browserWrites().length).toBeGreaterThan(40);
+  });
+
+  it('goes to a table whose support-session fate was decided', () => {
+    // Either migration 072 opened it (and the trigger records it), or it
+    // is on the closed list and the browser guard refuses it. A new table
+    // written from the browser has to pick one, here and in the migration.
+    const undecided = browserWrites()
+      .filter(
+        (w) =>
+          !SUPPORT_WRITABLE_TABLES.has(w.table) &&
+          !SUPPORT_REFUSED_TABLES.has(w.table)
+      )
+      .map((w) => `${w.file}:${w.line} — ${w.table}`);
+    expect(undecided).toEqual([]);
+  });
+
+  it('creates rows in the effective account, never the operator’s', () => {
+    // An insert into a tenant table must carry `account_id: accountId`,
+    // either in the chain or in the payload the file builds for it, and
+    // that `accountId` must be the one `useAuth()` hands out.
+    const offenders = browserWrites()
+      .filter((w) => w.op === 'insert' || w.op === 'upsert')
+      .filter(
+        (w) =>
+          SUPPORT_WRITABLE_TABLES.has(w.table) && ACCOUNT_SCOPED.has(w.table)
+      )
+      .filter(
+        (w) =>
+          !/account_id:\s*accountId\b/.test(w.chain) &&
+          !/account_id:\s*accountId\b/.test(w.source)
+      )
+      .map((w) => `${w.file}:${w.line} — ${w.table}.${w.op}`);
+    expect(offenders).toEqual([]);
+
+    const notFromUseAuth = [
+      ...new Set(
+        browserWrites()
+          .filter((w) => /account_id:\s*accountId\b/.test(w.source))
+          .filter(
+            (w) =>
+              !/\{[^}]*\baccountId\b[^}]*\}\s*=\s*useAuth\(\)/.test(w.source)
+          )
+          .map((w) => w.file)
+      ),
+    ];
+    expect(notFromUseAuth).toEqual([]);
+  });
+
+  it('never names the account from the profile or the user', () => {
+    const offenders = browserWrites()
+      .filter((w) =>
+        /account_id:\s*(profile|user|session)\b[?.]/.test(w.source)
+      )
+      .map((w) => w.file);
+    expect([...new Set(offenders)]).toEqual([]);
+  });
+
+  it('updates and deletes by row id (or account), never by the current user', () => {
+    // `.eq('user_id', user.id)` during a session is the OPERATOR. The only
+    // writes keyed that way are to `profiles` / `notifications`, which the
+    // browser guard refuses during a session.
+    const offenders = browserWrites()
+      .filter((w) => w.op === 'update' || w.op === 'delete')
+      .filter((w) => SUPPORT_WRITABLE_TABLES.has(w.table))
+      .filter((w) => !isKeyedRead(w.chain) && !FILTERS_BY_ACCOUNT.test(w.chain))
+      .map((w) => `${w.file}:${w.line} — ${w.table}.${w.op}`);
+    expect(offenders).toEqual([]);
+  });
+});
+
+// ------------------------------------------------------------
+// The server half.
+// ------------------------------------------------------------
+
+/** `.from('profiles').select('…account_id…').eq('user_id', …)` — "whose company am I?" asked of the profile. */
+function resolvesAccountFromProfile(chain: string): boolean {
+  return (
+    /\.select\(\s*["'`][^"'`]*account_id/.test(chain) &&
+    /\.eq\(\s*["'`]user_id["'`]/.test(chain)
+  );
+}
+
+/**
+ * The files allowed to ask the profile for the account. `account.ts` is
+ * where the effective account is decided (`getCurrentAccount`,
+ * `resolveEffectiveAccountId`) — it asks the support session first. The
+ * two browser files are the user's OWN row, pinned above.
+ */
+const PROFILE_ACCOUNT_READERS = [
+  'src/lib/auth/account.ts',
+  ...OWN_USER_ROW_READS,
+];
+
+describe('every server write during a support session (s9.5)', () => {
+  it("no server file resolves the account from the operator's profile", () => {
+    // The bug this closes: `/api/automations`, `/api/flows`,
+    // `/api/whatsapp/config`, `/api/whatsapp/templates/[id]` read
+    // `profiles.account_id` by hand and, during a session, created or
+    // edited rows in the OPERATOR'S company.
+    const offenders: string[] = [];
+    for (const file of walk(SRC)) {
+      const rel = path.relative(process.cwd(), file);
+      if (PROFILE_ACCOUNT_READERS.includes(rel)) continue;
+      const source = fs.readFileSync(file, 'utf8');
+      const re = /\.from\(\s*["'`]profiles["'`]\s*\)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(source))) {
+        if (resolvesAccountFromProfile(chainAt(source, m.index))) {
+          offenders.push(
+            `${rel}:${source.slice(0, m.index).split('\n').length}`
+          );
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('would catch the lookup the four routes used to make', () => {
+    const chain = chainAt(
+      `.from('profiles').select('account_id').eq('user_id', user.id).single();`,
+      0
+    );
+    expect(resolvesAccountFromProfile(chain)).toBe(true);
+    // …and not the member check that filters BY the account.
+    expect(
+      resolvesAccountFromProfile(
+        chainAt(
+          `.from('profiles').select('user_id').eq('user_id', agentId).eq('account_id', ctx.accountId);`,
+          0
+        )
+      )
+    ).toBe(false);
+  });
+
+  it('guards every upsert keyed by user_id against moving a row across accounts', () => {
+    // `message_templates` still has the legacy UNIQUE (user_id, name,
+    // language). An upsert on it would take the operator's own template and
+    // rewrite it into the customer's account. The one caller refuses first.
+    const keyedByUser = writes(() => true)
+      .filter((w) => w.op === 'upsert')
+      .filter((w) => /onConflict:\s*["'`]user_id/.test(w.chain));
+    expect(keyedByUser.map((w) => w.file)).toEqual([
+      'src/app/api/whatsapp/templates/submit/route.ts',
+    ]);
+    for (const w of keyedByUser) {
+      expect(w.source).toMatch(/\.neq\(\s*["'`]account_id["'`],\s*accountId\)/);
+    }
+  });
+});
+
+// ------------------------------------------------------------
+// Every mutating route either records its support writes or refuses them.
+// ------------------------------------------------------------
+
+const API = path.join(SRC, 'app/api');
+
+function routeFiles(): { file: string; route: string; source: string }[] {
+  return walk(API)
+    .filter((f) => f.endsWith(`${path.sep}route.ts`))
+    .map((f) => ({
+      file: path.relative(process.cwd(), f),
+      route:
+        '/api/' +
+        path
+          .relative(API, path.dirname(f))
+          .split(path.sep)
+          .map((seg) => (/^\[.*\]$/.test(seg) ? 'x' : seg))
+          .join('/'),
+      source: fs.readFileSync(f, 'utf8'),
+    }))
+    .filter(({ source }) =>
+      /export\s+async\s+function\s+(POST|PUT|PATCH|DELETE)\b/.test(source)
+    );
+}
+
+/** What puts a request through `resolveSupportSession`, which records it. */
+const RESOLVES_SESSION =
+  /\b(getCurrentAccount|requireRole|resolveEffectiveAccountId)\(/;
+
+/**
+ * Blocked routes that cannot refuse by themselves, and why that is fine.
+ * The middleware refuses them by path while the cookie is present.
+ */
+const BLOCKED_WITHOUT_CONTEXT: Record<string, string> = {
+  '/api/billing/webhook': 'PayPal calls it; there is never a browser cookie',
+  '/api/invitations/x/redeem':
+    "acts on the caller's own profile; the middleware refuses it during a session",
+  '/api/platform/impersonate':
+    'platform route (requirePlatformAdmin); the middleware refuses a nested session',
+};
+
+describe('every mutating route and the support session (s9.5)', () => {
+  it('finds the routes at all', () => {
+    expect(routeFiles().length).toBeGreaterThan(40);
+  });
+
+  it('records: every route the middleware lets through resolves the session', () => {
+    const offenders = routeFiles()
+      .filter(({ route }) => supportWriteVerdict('POST', route) === 'record')
+      .filter(({ source }) => !RESOLVES_SESSION.test(source))
+      .map(({ file }) => file);
+    expect(offenders).toEqual([]);
+  });
+
+  it('refuses: every route on the block list says no by itself too', () => {
+    const offenders = routeFiles()
+      .filter(({ route }) => supportWriteVerdict('POST', route) === 'block')
+      .filter(({ route }) => !(route in BLOCKED_WITHOUT_CONTEXT))
+      .filter(
+        ({ source }) =>
+          !/assertNotSupportSession\(ctx\)/.test(source) &&
+          !/requireRole\(\s*["'`]owner["'`]\s*\)/.test(source)
+      )
+      .map(({ file }) => file);
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('effectiveAccountRole — the browser acts as the server says (s9.5)', () => {
+  it('is admin during a support session, whatever the operator is at home', () => {
+    expect(effectiveAccountRole('owner', CUSTOMER_ACCOUNT)).toBe('admin');
+    expect(effectiveAccountRole('viewer', CUSTOMER_ACCOUNT)).toBe('admin');
+    expect(effectiveAccountRole(null, CUSTOMER_ACCOUNT)).toBe('admin');
+  });
+
+  it("is the operator's own role otherwise", () => {
+    expect(effectiveAccountRole('owner', null)).toBe('owner');
+    expect(effectiveAccountRole(null, null)).toBeNull();
+  });
+});

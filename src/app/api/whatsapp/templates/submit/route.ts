@@ -135,6 +135,38 @@ export async function POST(request: Request) {
       );
     }
 
+    // The upsert below is keyed by (user_id, name, language) — the legacy
+    // unique index. If THIS user already has a template with that name and
+    // language in ANOTHER account, the upsert would take that row and move
+    // it into this one. Inside a support session (s9.5) that is the
+    // operator's own company's template, rewritten into the customer's.
+    // Refuse before anything is sent to Meta.
+    const { data: elsewhere, error: elsewhereErr } = await supabase
+      .from('message_templates')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('name', payload.name)
+      .eq('language', payload.language)
+      .neq('account_id', accountId)
+      .limit(1);
+    if (elsewhereErr) {
+      // Fail closed: without the answer the upsert could be the move.
+      console.error('[templates/submit] cross-account lookup:', elsewhereErr);
+      return NextResponse.json(
+        { error: 'Could not check existing templates. Try again.' },
+        { status: 500 }
+      );
+    }
+    if (elsewhere && elsewhere.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            'You already have a template with this name and language in another account. Use a different name.',
+        },
+        { status: 409 }
+      );
+    }
+
     const dryRun =
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1';

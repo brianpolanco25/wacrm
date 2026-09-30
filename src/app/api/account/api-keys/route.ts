@@ -21,6 +21,7 @@
 import { NextResponse } from 'next/server';
 
 import {
+  assertNotSupportSession,
   getCurrentAccount,
   requireRole,
   toErrorResponse,
@@ -67,6 +68,8 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const ctx = await requireRole('admin');
+    // s9.5: never during a support session, whatever the role.
+    await assertNotSupportSession(ctx);
     // A key is only useful on a plan with the `api` feature (Pro and
     // Negocio, migration 065): `/api/v1` refuses it otherwise. Refuse
     // the mint too, so an Inicio admin learns it here with the upgrade

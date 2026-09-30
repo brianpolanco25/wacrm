@@ -14,6 +14,11 @@ const h = vi.hoisted(() => ({
   /** Bitácora rows that are still open (`logId`s). */
   openRows: new Set<string>(),
   rowLookups: [] as string[],
+  /** Request headers the middleware set (s9.5 support tags). */
+  requestHeaders: new Map<string, string>(),
+  /** What `recordSupportAction` was asked to write, and whether it may. */
+  recorded: [] as { session: Record<string, unknown>; write: unknown }[],
+  recordOk: true,
 }));
 
 vi.mock('next/headers', () => ({
@@ -25,6 +30,28 @@ vi.mock('next/headers', () => ({
       set: (name: string, value: string) => h.cookies.set(name, value),
       delete: (name: string) => h.cookies.delete(name),
     };
+  },
+}));
+
+vi.mock('./support-actions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./support-actions')>()),
+  readSupportWrite: async () => {
+    const method = h.requestHeaders.get('x-wacrm-support-method');
+    return method
+      ? {
+          method,
+          path: h.requestHeaders.get('x-wacrm-support-path'),
+          requestId: h.requestHeaders.get('x-wacrm-support-request'),
+        }
+      : null;
+  },
+  recordSupportAction: async (
+    session: Record<string, unknown>,
+    write: unknown
+  ) => {
+    if (!h.recordOk) return false;
+    h.recorded.push({ session, write });
+    return true;
   },
 }));
 
@@ -79,6 +106,9 @@ beforeEach(() => {
   h.throwOnCookies = false;
   h.openRows = new Set(['log-1']);
   h.rowLookups = [];
+  h.requestHeaders = new Map();
+  h.recorded = [];
+  h.recordOk = true;
 });
 
 describe('signSupportSession / verifySupportSession', () => {
@@ -273,6 +303,70 @@ describe('resolveSupportSession', () => {
     h.cookies.set(SUPPORT_COOKIE, 'not.a.token');
     expect(await resolveSupportSession(ACTOR)).toBeNull();
     expect(h.rowLookups).toEqual([]);
+  });
+});
+
+describe('resolveSupportSession records the writes it lets through (s9.5)', () => {
+  function tagWrite() {
+    h.requestHeaders.set('x-wacrm-support-method', 'PATCH');
+    h.requestHeaders.set('x-wacrm-support-path', '/api/conversations/c-1');
+    h.requestHeaders.set(
+      'x-wacrm-support-request',
+      '99999999-0000-4000-8000-000000000001'
+    );
+  }
+
+  it('records a tagged mutation under the signed session, before resolving', async () => {
+    h.admins.add(ACTOR);
+    h.cookies.set(SUPPORT_COOKIE, signSupportSession(session()));
+    tagWrite();
+
+    expect((await resolveSupportSession(ACTOR))?.accountId).toBe(TARGET);
+    expect(h.recorded).toEqual([
+      {
+        session: expect.objectContaining({
+          logId: 'log-1',
+          actorUserId: ACTOR,
+          accountId: TARGET,
+        }),
+        write: {
+          method: 'PATCH',
+          path: '/api/conversations/c-1',
+          requestId: '99999999-0000-4000-8000-000000000001',
+        },
+      },
+    ]);
+  });
+
+  it('records nothing for a read', async () => {
+    h.admins.add(ACTOR);
+    h.cookies.set(SUPPORT_COOKIE, signSupportSession(session()));
+    await resolveSupportSession(ACTOR);
+    expect(h.recorded).toEqual([]);
+  });
+
+  it('records nothing for a session that does not verify, tags or not', async () => {
+    // The tags are the middleware's word, and the middleware cannot check
+    // the signature. Nothing is recorded until all five checks passed.
+    h.admins.add(ACTOR);
+    h.cookies.set(SUPPORT_COOKIE, signSupportSession(session()));
+    h.openRows.clear();
+    tagWrite();
+    expect(await resolveSupportSession(ACTOR)).toBeNull();
+    expect(h.recorded).toEqual([]);
+  });
+
+  it("refuses — never falls back to the operator's own account — when it cannot record", async () => {
+    // null would resolve the OPERATOR'S company and the write would land
+    // there. The request has to fail instead.
+    h.admins.add(ACTOR);
+    h.cookies.set(SUPPORT_COOKIE, signSupportSession(session()));
+    h.recordOk = false;
+    tagWrite();
+    await expect(resolveSupportSession(ACTOR)).rejects.toMatchObject({
+      name: 'SupportAuditError',
+      status: 503,
+    });
   });
 });
 

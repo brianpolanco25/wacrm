@@ -33,6 +33,7 @@ import { ApiError } from "@/lib/api/v1/respond";
 import { assertWritable, billingErrorPayload } from "@/lib/billing/enforce";
 import { supabaseAdmin } from "./admin-client";
 import { resolveSupportSession, type SupportSession } from "./impersonation";
+import { markSupportActionStatus, SupportAuditError } from "./support-actions";
 import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
 
 // ------------------------------------------------------------
@@ -72,6 +73,10 @@ export class ForbiddenError extends Error {
  */
 export function toErrorResponse(err: unknown): NextResponse {
   if (err instanceof UnauthorizedError || err instanceof ForbiddenError) {
+    return NextResponse.json({ error: err.message }, { status: err.status });
+  }
+  // s9.5: a support write that could not be recorded is not performed.
+  if (err instanceof SupportAuditError) {
     return NextResponse.json({ error: err.message }, { status: err.status });
   }
   // Body-reading errors (413 / 415 / 400) from `readJsonBody`, which the
@@ -127,14 +132,18 @@ export interface AccountContext {
 }
 
 /**
- * Effective role inside a support session. Read-only, deliberately: the
- * operator is there to see what the customer sees. Acting as the customer
- * is a separate feature that needs its own conversation about consent,
- * and a `viewer` context plus the middleware write-block means that
- * decision cannot be made by accident. Every `requireRole('agent' |
- * 'admin' | 'owner')` in the app therefore 403s during impersonation.
+ * Effective role inside a support session: `admin` (s9.5, spec fase 9,
+ * decisión 1 del humano). The operator acts for the customer — edits
+ * contacts, fixes a pipeline, reconnects WhatsApp — and every mutation is
+ * recorded in `impersonation_actions`.
+ *
+ * `admin`, never `owner`. In this app `owner` alone may transfer ownership
+ * (`requireRole('owner')` + the RPC), and billing is closed to a support
+ * session on top of the role (`assertNotSupportSession`, the middleware
+ * block list and the RLS of migration 072), because an `admin` of the
+ * customer could otherwise start a checkout or cancel their PayPal plan.
  */
-const IMPERSONATED_ROLE: AccountRole = "viewer";
+export const IMPERSONATED_ROLE: AccountRole = "admin";
 
 /**
  * Resolve the caller's user + account + role in one round trip.
@@ -244,13 +253,15 @@ export async function getCurrentAccount(): Promise<AccountContext> {
  * because a cookie is present would be a far larger hole than the one
  * this feature opens.
  *
- * That client now sees the customer's data anyway, and from the only place
- * that could ever have granted it: RLS. Migration 057 extends every SELECT
- * policy with `has_open_support_session(account_id)` — and ONLY the SELECT
- * ones, so the same client still cannot write a single row of the
- * impersonated account. It had to be done there rather than here because
- * most of this panel queries Supabase straight from the browser, where no
- * TypeScript of ours runs at all.
+ * That client reaches the customer's data from the only place that could
+ * ever have granted it: RLS. Migration 057 extends every SELECT policy
+ * with `has_open_support_session(account_id)`; migration 072 extends the
+ * write policies of the tenant tables with `can_write_account()` (never
+ * `accounts`, `subscriptions`, invitations, API keys or the audit trail).
+ * It had to be done there rather than here because most of this panel
+ * talks to Supabase straight from the browser, where no TypeScript of
+ * ours runs at all. Routes must therefore write with `ctx.accountId` —
+ * the impersonated account — never with the operator's profile.
  */
 async function impersonatedContext(
   supabase: SupabaseClient,
@@ -331,10 +342,11 @@ export async function requireRole(
   if (!hasMinRole(ctx.role, min)) {
     if (ctx.impersonation) {
       // Say WHY rather than "insufficient role": the operator's real role
-      // has nothing to do with it, and "you are a viewer" would be a
-      // baffling thing to read when you are the owner of the platform.
+      // has nothing to do with it. Only `owner` is above the effective
+      // `admin`, so this is an owner-only action.
+      await markSupportActionStatus(ctx.impersonation, 403);
       throw new ForbiddenError(
-        "A support session is read-only; exit it before making changes",
+        `A support session acts as an admin; this action requires the '${min}' role`,
       );
     }
     throw new ForbiddenError(
@@ -345,4 +357,56 @@ export async function requireRole(
     await assertWritable(ctx.accountId);
   }
   return ctx;
+}
+
+/**
+ * Refuse outright when the request is inside a support session.
+ *
+ * For the routes a support session must never use whatever its role:
+ * billing (checkout, the customer's PayPal subscription), ownership,
+ * membership, invitations and API keys. The middleware already refuses
+ * them by path while the cookie is present; this is the same rule where
+ * the session is actually verified, so a route cannot lose it to a
+ * middleware refactor. Several of these call RPCs that resolve the
+ * account from `auth.uid()` — during a session, the OPERATOR'S company.
+ */
+export async function assertNotSupportSession(
+  ctx: AccountContext,
+): Promise<void> {
+  if (!ctx.impersonation) return;
+  await markSupportActionStatus(ctx.impersonation, 403);
+  throw new ForbiddenError(
+    "Not available during a support session: billing, ownership, team members and API keys stay with the customer",
+  );
+}
+
+/**
+ * The account a request acts on, for the few routes that resolve it by
+ * hand instead of through `getCurrentAccount()` (they want shaped 200s
+ * instead of throws): the impersonated account inside a verified support
+ * session, the caller's own profile otherwise. `null` when neither.
+ *
+ * Reading `profiles.account_id` directly was right before s9.5 — a support
+ * session could not write — and is the bug now: during a session it is the
+ * OPERATOR'S company, and a write keyed by it lands there under the
+ * customer's banner. `support-session-view.test.ts` fails on any server
+ * file that goes back to it.
+ *
+ * Throws `SupportAuditError` like `getCurrentAccount()` when the session's
+ * write cannot be recorded.
+ */
+export async function resolveEffectiveAccountId(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string | null> {
+  const support = await resolveSupportSession(userId);
+  if (support) return support.accountId;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("account_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !data?.account_id) return null;
+  return data.account_id as string;
 }

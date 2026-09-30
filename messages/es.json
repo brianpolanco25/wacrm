@@ -116,7 +116,7 @@
     "retry": "Reintentar"
   },
   "Impersonation": {
-    "viewing": "Estás viendo {account} como soporte. Nada de lo que hagas aquí se guarda.",
+    "acting": "Estás actuando como soporte en {account}. Cada cambio que hagas queda registrado.",
     "unknownAccount": "una cuenta que ya no está disponible",
     "exit": "Salir de la sesión de soporte",
     "exiting": "Saliendo…"
@@ -2354,6 +2354,27 @@
       "notRegistered": "Ese correo no tiene usuario: primero debe registrarse.",
       "alreadyOperator": "Esa persona ya es operador.",
       "failed": "No se pudo completar la acción. No se cambió nada."
+    },
+    "support": {
+      "title": "Sesiones de soporte",
+      "description": "Cada sesión de soporte abierta sobre esta cuenta y lo que se cambió en ella.",
+      "loading": "Cargando las sesiones…",
+      "loadFailed": "No se pudieron cargar las sesiones de soporte.",
+      "none": "Nadie ha abierto una sesión de soporte sobre esta cuenta.",
+      "session": "{start} · operador {actor}",
+      "open": "En curso",
+      "endedAt": "Terminó {date}",
+      "reason": "Motivo: {reason}",
+      "actionsCount": "{count, plural, =0 {Sin cambios} one {# cambio} other {# cambios}}",
+      "showActions": "Ver cambios",
+      "hideActions": "Ocultar cambios",
+      "noActions": "No se cambió nada en esta sesión.",
+      "sourceHttp": "Petición",
+      "sourceDb": "Fila",
+      "refused": "Rechazada ({status})",
+      "truncated": "Se muestran las {count} acciones más recientes.",
+      "olderActionsHidden": "Sus cambios, si los hubo, quedan fuera del listado (demasiadas acciones recientes).",
+      "statusUnknown": "resultado desconocido"
     }
   },
   "Developers": {

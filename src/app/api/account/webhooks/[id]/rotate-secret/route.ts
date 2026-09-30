@@ -10,7 +10,11 @@
 
 import { NextResponse } from 'next/server';
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import {
+  assertNotSupportSession,
+  requireRole,
+  toErrorResponse,
+} from '@/lib/auth/account';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -24,6 +28,8 @@ export async function POST(
 ) {
   try {
     const ctx = await requireRole('admin');
+    // s9.5: an outbound webhook outlives the support session.
+    await assertNotSupportSession(ctx);
     const { id } = await params;
 
     const limit = checkRateLimit(

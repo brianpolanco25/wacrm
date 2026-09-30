@@ -158,7 +158,7 @@ describe('PlatformFrame — during a support session', () => {
     // What the (platform) layout inherits from (dashboard): walking back to
     // the panel mid-session must not hide that a session is open.
     const html = frame('/platform/accounts', 'es', SESSION);
-    const viewing = es.Impersonation.viewing.replace('{account}', 'Acme');
+    const viewing = es.Impersonation.acting.replace('{account}', 'Acme');
     expect(html).toContain(viewing);
     expect(html.indexOf(viewing)).toBeLessThan(html.indexOf('<aside'));
   });

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
+import es from '../../../messages/es.json';
 import ko from '../../../messages/ko.json';
 import { ImpersonationBanner } from './impersonation-banner';
 
@@ -50,6 +51,26 @@ describe('ImpersonationBanner', () => {
     const html = render(SESSION);
     expect(html).toContain('Acme Foods');
     expect(html).toContain('as support');
+  });
+
+  it('says the session acts and is recorded, no longer that nothing is saved (s9.5)', () => {
+    const html = render(SESSION);
+    expect(html).toContain('acting as support in');
+    expect(html).toContain('Every change you make is recorded');
+    expect(html).not.toContain('Nothing you do here is saved');
+  });
+
+  it('says so in Spanish, the default locale (CP6)', () => {
+    const html = renderToStaticMarkup(
+      <NextIntlClientProvider locale="es" messages={es}>
+        <ImpersonationBanner session={SESSION} />
+      </NextIntlClientProvider>
+    );
+    expect(html).toContain('Estás actuando como soporte en');
+    expect(html).toContain('Acme Foods');
+    expect(html).toContain('queda registrado');
+    expect(html).toContain(es.Impersonation.exit);
+    expect(html).not.toContain('Impersonation.');
   });
 
   it('announces itself to assistive technology', () => {

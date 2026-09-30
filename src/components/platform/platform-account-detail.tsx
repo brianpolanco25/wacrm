@@ -39,6 +39,7 @@ import {
   usePlanOptions,
   type MemberInviteOutcome,
 } from './platform-provisioning';
+import { ImpersonationActions } from './impersonation-actions';
 
 interface UsageLine {
   metric: string;
@@ -532,6 +533,7 @@ export function PlatformAccountDetail({
           )}
         </CardContent>
       </Card>
+      <ImpersonationActions accountId={detail.accountId} />
     </div>
   );
 }

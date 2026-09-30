@@ -1534,6 +1534,192 @@ BEGIN
       'has_open_support_session no longer restricts itself to impersonation rows (migration 071)';
   END IF;
 
+
+  -- 072 -------------------------------------------------------------
+  -- Sesión de soporte con escritura (s9.5): la bitácora de acciones, el
+  -- predicado de escritura, qué tablas lo llevan y cuáles no.
+  IF to_regclass('public.impersonation_actions') IS NULL THEN
+    RAISE EXCEPTION 'impersonation_actions is missing (migration 072)';
+  END IF;
+  IF (SELECT count(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'impersonation_actions'
+        AND column_name IN ('id', 'log_id', 'actor_user_id', 'account_id', 'method',
+                            'path', 'status', 'source', 'request_id', 'occurred_at')) <> 10 THEN
+    RAISE EXCEPTION 'impersonation_actions is missing columns (migration 072)';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'impersonation_actions'
+      AND column_name IN ('log_id', 'actor_user_id', 'account_id', 'method', 'path')
+      AND is_nullable = 'YES'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_actions has a nullable key column (migration 072)';
+  END IF;
+  -- RESTRICT, nunca CASCADE: borrar la sesión no puede borrar lo que se
+  -- hizo en ella.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.impersonation_actions'::regclass
+      AND contype = 'f' AND confrelid = 'public.impersonation_log'::regclass
+      AND confdeltype = 'r'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_actions.log_id is not an ON DELETE RESTRICT FK to impersonation_log (migration 072)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.impersonation_actions'::regclass AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%POST%'
+      AND pg_get_constraintdef(oid) LIKE '%DELETE%'
+      AND pg_get_constraintdef(oid) LIKE '%method%'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_actions.method has no CHECK (migration 072)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.impersonation_actions'::regclass AND contype = 'u'
+      AND pg_get_constraintdef(oid) LIKE '%request_id%'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_actions.request_id is not UNIQUE — one row per request depends on it (migration 072)';
+  END IF;
+  IF to_regclass('public.idx_impersonation_actions_log') IS NULL
+     OR to_regclass('public.idx_impersonation_actions_account') IS NULL THEN
+    RAISE EXCEPTION 'impersonation_actions indexes are missing (migration 072)';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.impersonation_actions'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on impersonation_actions (migration 072)';
+  END IF;
+  -- Solo lectura para operadores; ninguna política de escritura.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'impersonation_actions'
+      AND cmd = 'SELECT' AND qual LIKE '%is_platform_admin%'
+  ) OR EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'impersonation_actions'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_actions must be readable by platform admins only and writable by nobody from the client (migration 072)';
+  END IF;
+
+  -- El predicado de escritura: DEFINER, STABLE, y sin rama de soporte
+  -- para lo que pida owner.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'can_write_account'
+      AND p.prosecdef AND p.provolatile = 's'
+      AND p.prosrc LIKE '%has_open_support_session%'
+      AND p.prosrc LIKE '%owner%'
+  ) THEN
+    RAISE EXCEPTION 'can_write_account() is missing, not SECURITY DEFINER/STABLE, or does not keep owner out of the support branch (migration 072)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'record_support_write' AND p.prosecdef
+  ) THEN
+    RAISE EXCEPTION 'record_support_write() is missing or not SECURITY DEFINER (migration 072)';
+  END IF;
+
+  -- Cuántas políticas de escritura abre la 072 (56 en 24 tablas al
+  -- escribirla). Un número menor significa que el bucle no corrió o se
+  -- quedó corto.
+  IF (SELECT count(*) FROM pg_policies
+      WHERE schemaname = 'public' AND cmd <> 'SELECT'
+        AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%can_write_account(%') < 56 THEN
+    RAISE EXCEPTION 'fewer than 56 write policies call can_write_account (migration 072)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'contacts'
+      AND policyname = 'contacts_insert' AND with_check LIKE '%can_write_account%'
+  ) THEN
+    RAISE EXCEPTION 'contacts_insert was not opened to support sessions (migration 072)';
+  END IF;
+
+  -- Al revés: fuera de las excluidas, ninguna política de escritura se
+  -- quedó llamando a is_account_member. Una tabla nueva tiene que decidir
+  -- si el soporte la escribe (can_write_account) o entrar en esta lista.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND cmd <> 'SELECT'
+      AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%is_account_member(%'
+      AND tablename NOT IN ('accounts', 'account_invitations', 'api_keys',
+                            'webhook_endpoints')
+  ) THEN
+    RAISE EXCEPTION 'a write policy still calls is_account_member() directly; use can_write_account() or exclude the table explicitly (migration 072)';
+  END IF;
+
+  -- Lo que NO se abre al soporte: ninguna política de estas tablas lleva
+  -- el predicado de soporte, en ninguna forma.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND cmd <> 'SELECT'
+      AND tablename IN ('accounts', 'account_invitations', 'api_keys',
+                        'webhook_endpoints', 'subscriptions', 'checkout_intents', 'platform_admins',
+                        'impersonation_log', 'impersonation_actions',
+                        'profiles', 'notifications')
+      AND (COALESCE(qual, '') || COALESCE(with_check, ''))
+          ~ '(can_write_account|has_open_support_session|can_read_account)'
+  ) THEN
+    RAISE EXCEPTION 'a support session gained write access to billing, ownership, membership, API keys or the audit trail (migration 072)';
+  END IF;
+
+  -- Toda tabla que el soporte escribe deja rastro: el trigger está en
+  -- cada una.
+  IF EXISTS (
+    SELECT DISTINCT tablename FROM pg_policies pol
+    WHERE schemaname = 'public' AND cmd <> 'SELECT'
+      AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%can_write_account(%'
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_trigger t
+        WHERE t.tgrelid = format('public.%I', pol.tablename)::regclass
+          AND t.tgname = 'record_support_write' AND NOT t.tgisinternal
+      )
+  ) THEN
+    RAISE EXCEPTION 'a support-writable table has no record_support_write trigger — its writes would go unaudited (migration 072)';
+  END IF;
+  -- …y ninguna deja que la sesión mueva filas entre empresas (H1 de la
+  -- revisión de s9.5).
+  IF EXISTS (
+    SELECT DISTINCT tablename FROM pg_policies pol
+    WHERE schemaname = 'public' AND cmd <> 'SELECT'
+      AND (COALESCE(qual, '') || COALESCE(with_check, '')) LIKE '%can_write_account(%'
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_trigger t
+        WHERE t.tgrelid = format('public.%I', pol.tablename)::regclass
+          AND t.tgname = 'forbid_support_account_move' AND NOT t.tgisinternal
+      )
+  ) THEN
+    RAISE EXCEPTION 'a support-writable table has no forbid_support_account_move trigger — a support session could move its rows to another account (migration 072)';
+  END IF;
+  -- El rastro mira la fila vieja Y la nueva, y busca la sesión por la
+  -- cuenta de la fila (H1/H2).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'record_support_write'
+      AND p.prosrc LIKE '%rec_old%' AND p.prosrc LIKE '%l.account_id = acc%'
+  ) THEN
+    RAISE EXCEPTION 'record_support_write() does not look at OLD or does not find the session by the row''s account (migration 072)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'forbid_support_account_move' AND p.prosecdef
+  ) THEN
+    RAISE EXCEPTION 'forbid_support_account_move() is missing or not SECURITY DEFINER (migration 072)';
+  END IF;
+  -- Una sola sesión abierta por operador (H2).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relname = 'uq_impersonation_log_one_open_session'
+      AND i.indrelid = 'public.impersonation_log'::regclass
+      AND i.indisunique
+      AND pg_get_expr(i.indpred, i.indrelid) LIKE '%ended_at IS NULL%'
+      AND pg_get_expr(i.indpred, i.indrelid) LIKE '%impersonation%'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_log allows two open support sessions per operator (migration 072)';
+  END IF;
+  -- /072 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

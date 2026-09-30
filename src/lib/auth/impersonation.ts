@@ -32,22 +32,26 @@
 // Anything less than all five resolves to `null` and the caller keeps
 // their own account. Fails closed.
 //
-// A support session is read-only, and that is enforced in three places
-// because there are three ways out of this application:
+// Since s9.5 a support session WRITES, with effective role `admin`, and
+// every write is recorded. The same three layers now say what it may
+// change instead of refusing everything:
 //
-//   - RLS (migration 057): only SELECT policies learned the support
-//     predicate, so the impersonated account cannot be written to AT ALL —
-//     including by requests the browser sends straight to Supabase;
-//   - `middleware.ts`: every mutating request that does reach Next gets a
-//     403, whatever route it was headed for;
-//   - `@/lib/supabase/client`: the browser client refuses to mutate
-//     anything while the session is open, which is what stops an operator
-//     from editing their OWN company by mistake under the customer's
-//     banner.
+//   - RLS (migration 072): `can_write_account()` opens the write policies
+//     of the tenant tables to an open session — never billing, ownership,
+//     membership, API keys or the audit trail — and the
+//     `record_support_write()` trigger logs every row written, including
+//     by requests the browser sends straight to Supabase;
+//   - `middleware.ts`: refuses the short list of routes a session never
+//     reaches and tags every other mutation, which `resolveSupportSession`
+//     below records (`impersonation_actions`, source 'http') before the
+//     route may act;
+//   - `@/lib/supabase/client`: the browser client refuses writes to the
+//     tables 072 keeps closed, rpc and storage, which is what stops an
+//     operator from editing their OWN profile or company by mistake under
+//     the customer's banner.
 //
-// The effective role is `viewer` on top of all that. Support is for seeing
-// what the customer sees; acting on their behalf is a different feature
-// with a different conversation about consent.
+// The effective role is `admin`, not `owner`: no transfer of ownership,
+// no checkout, no PayPal subscription, no nested session.
 // ============================================================
 
 import crypto from 'crypto';
@@ -62,6 +66,11 @@ import {
   SUPPORT_SESSION_TTL_MS,
 } from './support-cookie';
 import { isSupportSessionOpen } from './support-session-store';
+import {
+  readSupportWrite,
+  recordSupportAction,
+  SupportAuditError,
+} from './support-actions';
 
 export {
   MIN_REASON_LENGTH,
@@ -282,6 +291,17 @@ export async function resolveSupportSession(
   // saying the session ended. One extra query, only on the rare path where
   // a support cookie is actually present.
   if (!(await isSupportSessionOpen(session))) return null;
+
+  // s9.5: a support session writes, and every write is recorded BEFORE the
+  // route may perform it. The middleware tagged this request if it is a
+  // mutation (it cannot verify the cookie on Edge; this is where the
+  // session is known to be real). No row, no write: failing to record
+  // throws rather than returning null, because null would resolve the
+  // OPERATOR'S OWN account and the write would land there instead.
+  const write = await readSupportWrite();
+  if (write && !(await recordSupportAction(session, write))) {
+    throw new SupportAuditError();
+  }
 
   return session;
 }

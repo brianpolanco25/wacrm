@@ -8,15 +8,19 @@ import {
 } from '@/lib/whatsapp/meta-api';
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption';
 import { assertStockLimit, assertWritable } from '@/lib/billing/enforce';
-import { toErrorResponse } from '@/lib/auth/account';
+import { resolveEffectiveAccountId, toErrorResponse } from '@/lib/auth/account';
 import { promoteDefault } from '@/lib/whatsapp/default-number';
 
 /**
- * Resolve the caller's account_id from their profile. Inlined here
- * (rather than going through `@/lib/auth/account.getCurrentAccount`)
- * because the GET handler wants to return shaped 200s for every
- * non-auth failure mode, not throw — keeping the helper minimal lets
- * the existing response branches stay as-is.
+ * Resolve the account this request acts on. Inlined here (rather than
+ * going through `@/lib/auth/account.getCurrentAccount`) because the GET
+ * handler wants to return shaped 200s for every non-auth failure mode, not
+ * throw — keeping the helper minimal lets the existing response branches
+ * stay as-is.
+ *
+ * Inside a support session this is the impersonated account (s9.5): the
+ * operator is connecting the CUSTOMER'S number, and reading their own
+ * profile here would write it into their own company instead.
  *
  * Returns null if the user has no profile or no account; callers
  * should treat that the same as "not connected".
@@ -25,13 +29,7 @@ async function resolveAccountId(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string
 ): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (error || !data?.account_id) return null;
-  return data.account_id as string;
+  return resolveEffectiveAccountId(supabase, userId);
 }
 
 // Lazy-initialised service-role client. We need it to detect a

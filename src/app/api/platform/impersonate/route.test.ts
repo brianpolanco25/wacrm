@@ -402,9 +402,44 @@ describe('POST /api/platform/impersonate', () => {
       ) {
         return false;
       }
+      // Superseding (s9.5) is keyed by the ACTOR — the caller's own uid —
+      // and closes that operator's other open sessions, whatever account
+      // they were on. Audit columns only.
+      if (
+        q.table === 'impersonation_log' &&
+        q.op === 'update' &&
+        q.filters.some(([c, v]) => c === 'actor_user_id' && v === OPERATOR)
+      ) {
+        return false;
+      }
       return !q.filters.some(([c]) => c === 'account_id');
     });
     expect(unscoped).toEqual([]);
+  });
+
+  it('closes every other open session of the operator before opening one (s9.5)', async () => {
+    // Two browsers used to leave two rows open; migration 072 now refuses
+    // that, and the route has to clear the way first.
+    await POST(req({ account_id: ACCOUNT_A, reason: REASON }));
+    const supersede = h.queries.find(
+      (q) =>
+        q.table === 'impersonation_log' &&
+        q.op === 'update' &&
+        q.filters.some(([c]) => c === 'actor_user_id')
+    );
+    expect(supersede?.payload).toMatchObject({ ended_reason: 'superseded' });
+    expect(supersede?.filters).toEqual(
+      expect.arrayContaining([
+        ['actor_user_id', OPERATOR],
+        ['action', 'impersonation'],
+      ])
+    );
+    const supersedeAt = h.queries.indexOf(supersede!);
+    const insertAt = h.queries.findIndex(
+      (q) => q.table === 'impersonation_log' && q.op === 'insert'
+    );
+    expect(supersedeAt).toBeGreaterThan(-1);
+    expect(supersedeAt).toBeLessThan(insertAt);
   });
 });
 

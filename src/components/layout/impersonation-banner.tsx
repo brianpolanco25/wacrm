@@ -2,14 +2,16 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Eye, Loader2 } from 'lucide-react';
+import { Headset, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import type { SupportBanner } from '@/lib/auth/support-view';
 
 /**
- * Permanent notice that this browser is looking at somebody else's
- * company.
+ * Permanent notice that this browser is acting inside somebody else's
+ * company — and, since s9.5, changing things there: the operator acts with
+ * the customer's `admin` role and every change is recorded in the
+ * platform's audit trail (`impersonation_actions`). The banner says both.
  *
  * It sits ABOVE the header rather than inside the page area on purpose:
  * an operator scrolls, switches pages and gets interrupted, and the one
@@ -51,9 +53,9 @@ export function ImpersonationBanner({
       className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-sm text-amber-900 dark:text-amber-100"
     >
       <span className="flex items-center gap-2">
-        <Eye className="h-4 w-4 shrink-0" />
+        <Headset className="h-4 w-4 shrink-0" />
         <span>
-          {t('viewing', {
+          {t('acting', {
             // The name is absent when the impersonated account could not be
             // read (deleted mid-session). The banner still renders: it
             // carries the exit button.

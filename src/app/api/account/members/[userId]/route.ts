@@ -17,7 +17,7 @@
 import { NextResponse } from "next/server";
 import type { PostgrestError } from "@supabase/supabase-js";
 
-import { requireRole, toErrorResponse } from "@/lib/auth/account";
+import { assertNotSupportSession, requireRole, toErrorResponse } from "@/lib/auth/account";
 import { isAccountRole } from "@/lib/auth/roles";
 import {
   checkRateLimit,
@@ -48,6 +48,8 @@ export async function PATCH(
 ) {
   try {
     const ctx = await requireRole("admin");
+    // s9.5: never during a support session, whatever the role.
+    await assertNotSupportSession(ctx);
 
     const limit = checkRateLimit(
       `admin:memberRole:${ctx.userId}`,
@@ -100,6 +102,8 @@ export async function DELETE(
 ) {
   try {
     const ctx = await requireRole("admin");
+    // s9.5: never during a support session, whatever the role.
+    await assertNotSupportSession(ctx);
 
     const limit = checkRateLimit(
       `admin:memberRemove:${ctx.userId}`,

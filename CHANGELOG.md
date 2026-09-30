@@ -1012,6 +1012,30 @@ behaviour changes**; nothing is limited by plan yet.
 - `/platform` pages are now always sent with `Cache-Control: private,
 no-store`; before, a shared cache could keep them for five minutes.
 
+### Platform console: support sessions can make changes
+
+> **Migration required:** apply
+> `supabase/migrations/072_impersonation_actions.sql`.
+
+- A support session is no longer read-only: the operator acts in the
+  customer's account with the **admin** role — contacts, tags, pipelines
+  and deals, inbox, broadcasts, automations and flows, templates, WhatsApp
+  numbers and AI settings.
+- Still off-limits during a session, whatever the role: checkout and the
+  customer's PayPal subscription, transferring ownership, renaming the
+  account, members and invitations, API keys, outbound webhooks, redeeming
+  an invitation, and moving a row from the customer's company to another.
+  Those requests answer 403. Opening a session closes any other session the
+  operator had open in another browser: there is only ever one.
+- Every change is recorded in the new `impersonation_actions` table — one
+  row per request that reached the app and one per row written from the
+  browser — and the account's file (`/platform/<id>`) gains a **Support
+  sessions** card listing each session with its changes folded under it.
+- The banner now reads «You are acting as support in <account>. Every
+  change you make is recorded.» and keeps its exit button.
+- Uploading attachments and editing the operator's own profile stay
+  unavailable inside a session.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

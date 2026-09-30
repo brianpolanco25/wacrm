@@ -15,7 +15,7 @@
 
 import { NextResponse } from "next/server";
 
-import { requireRole, toErrorResponse } from "@/lib/auth/account";
+import { assertNotSupportSession, requireRole, toErrorResponse } from "@/lib/auth/account";
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -28,6 +28,8 @@ export async function DELETE(
 ) {
   try {
     const ctx = await requireRole("admin");
+    // s9.5: never during a support session, whatever the role.
+    await assertNotSupportSession(ctx);
 
     const limit = checkRateLimit(
       `admin:inviteRevoke:${ctx.userId}`,
