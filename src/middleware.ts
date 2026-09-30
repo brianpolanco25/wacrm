@@ -129,6 +129,10 @@ export async function middleware(request: NextRequest) {
   // they can accept the invitation in one click. Without this,
   // a forwarded invite link to someone who's already signed in
   // would silently drop them on /dashboard.
+  // NOT in this list, on purpose (s9.8): /auth/callback (and its
+  // /complete page) and /reset-password. Somebody who just opened an
+  // invitation or recovery link HAS a session by then, and still has to
+  // choose a password; bouncing them to /dashboard would skip it.
   if (user && (
     request.nextUrl.pathname === '/login' ||
     request.nextUrl.pathname === '/signup' ||

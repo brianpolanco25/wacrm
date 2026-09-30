@@ -407,3 +407,44 @@ describe("middleware — /developers se sirve sin sesión", () => {
     expect(res.headers.get("location")).toBeNull();
   });
 });
+
+// ----------------------------------------------------------------
+// s9.8 — aceptar invitación / fijar contraseña. Quien abre el enlace
+// del correo ya tiene sesión cuando llega a /reset-password (la acaba
+// de abrir /auth/callback) y todavía no tiene contraseña: mandarlo a
+// /dashboard como a cualquier sesión que visita /login le saltaría el
+// paso. Y sin sesión tampoco hay que mandarlo a /login: la página dice
+// ella misma que el enlace caducó y ofrece pedir otro.
+// ----------------------------------------------------------------
+
+describe("middleware — /auth/callback y /reset-password (s9.8)", () => {
+  const PATHS = [
+    "/auth/callback?code=abc",
+    "/auth/callback?token_hash=h&type=invite&next=/reset-password",
+    "/auth/callback/complete?next=/reset-password",
+    "/reset-password",
+    "/reset-password?invite=tok&welcome=1",
+  ];
+
+  it.each(PATHS)("no redirige a quien ya tiene sesión: %s", async (path) => {
+    mockUser = { id: "user-1" };
+    const res = await middleware(new NextRequest(`https://app.test${path}`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it.each(PATHS)("tampoco manda a /login sin sesión: %s", async (path) => {
+    mockUser = null;
+    const res = await middleware(new NextRequest(`https://app.test${path}`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("/forgot-password sigue mandando al dashboard a quien tiene sesión", async () => {
+    mockUser = { id: "user-1" };
+    const res = await middleware(
+      new NextRequest("https://app.test/forgot-password"),
+    );
+    expect(res.headers.get("location")).toContain("/dashboard");
+  });
+});

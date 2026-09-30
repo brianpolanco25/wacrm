@@ -186,6 +186,16 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // /auth/callback (s9.8) answers with a redirect that carries the
+        // freshly opened session in Set-Cookie. The route sets
+        // `private, no-store` itself, but this file's catch-all above
+        // wins over it (checked against a production build), so the
+        // override has to live here, AFTER the catch-all: for the same
+        // key the last matching rule wins.
+        source: '/auth/:path*',
+        headers: [{ key: 'Cache-Control', value: 'private, no-store' }],
+      },
+      {
         // Security headers on every response, including /_next/static
         // assets (nosniff matters there) and /api/* (HSTS + referrer-
         // policy don't hurt).

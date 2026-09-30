@@ -1,0 +1,88 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
+
+/**
+ * s9.8 — GET /auth/callback over a mocked SSR client: the redirect it
+ * answers with, on the host the request came in on, never cacheable.
+ */
+
+const h = vi.hoisted(() => ({
+  exchangeCodeForSession: vi.fn(),
+  verifyOtp: vi.fn(),
+}));
+
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: async () => ({
+    auth: {
+      exchangeCodeForSession: h.exchangeCodeForSession,
+      verifyOtp: h.verifyOtp,
+    },
+  }),
+}));
+
+import { GET } from './route';
+
+beforeEach(() => {
+  h.exchangeCodeForSession.mockResolvedValue({
+    data: { redirectType: null },
+    error: null,
+  });
+  h.verifyOtp.mockResolvedValue({ data: {}, error: null });
+});
+
+async function get(path: string) {
+  const res = await GET(new NextRequest(`https://app.test${path}`));
+  return { res, location: res.headers.get('location') };
+}
+
+describe('GET /auth/callback', () => {
+  it('code → exchanged, 307 to the dashboard, private', async () => {
+    const { res, location } = await get('/auth/callback?code=c1');
+    expect(res.status).toBe(307);
+    expect(location).toBe('https://app.test/dashboard');
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect(h.exchangeCodeForSession).toHaveBeenCalledWith('c1');
+  });
+
+  it('token_hash invite → /reset-password carrying the invite', async () => {
+    const { location } = await get(
+      '/auth/callback?token_hash=h1&type=invite&invite=tok'
+    );
+    expect(location).toBe(
+      'https://app.test/reset-password?invite=tok&welcome=1'
+    );
+    expect(h.verifyOtp).toHaveBeenCalledWith({
+      token_hash: 'h1',
+      type: 'invite',
+    });
+  });
+
+  it('nothing → the browser page, which will read the fragment', async () => {
+    const { location } = await get('/auth/callback?next=%2Freset-password');
+    expect(location).toBe(
+      'https://app.test/auth/callback/complete?next=%2Freset-password'
+    );
+    expect(h.exchangeCodeForSession).not.toHaveBeenCalled();
+    expect(h.verifyOtp).not.toHaveBeenCalled();
+  });
+
+  it('expired link → the browser page with the error', async () => {
+    h.verifyOtp.mockResolvedValue({
+      data: {},
+      error: { code: 'otp_expired' },
+    });
+    const { location } = await get(
+      '/auth/callback?token_hash=h1&type=recovery'
+    );
+    expect(location).toBe(
+      'https://app.test/auth/callback/complete?error_code=otp_expired'
+    );
+  });
+
+  it('an absolute next never leaves the host', async () => {
+    const { location } = await get(
+      '/auth/callback?code=c1&next=https%3A%2F%2Fevil.test%2Fx'
+    );
+    expect(location).toBe('https://app.test/dashboard');
+  });
+});
