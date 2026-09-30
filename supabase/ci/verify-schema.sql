@@ -76,11 +76,14 @@ BEGIN
     RAISE EXCEPTION 'increment_usage(uuid, text, bigint) is missing (migration 041)';
   END IF;
   -- The seed is an UPSERT, so a typo'd VALUES list would leave the
-  -- catalogue empty with a green run.
-  IF (SELECT count(*) FROM public.plans) <> 3 THEN
+  -- catalogue empty with a green run. The 074 adds a fourth, hidden
+  -- plan (`ilimitado`); the full count is asserted in its block.
+  IF (SELECT count(*) FROM public.plans
+      WHERE id IN ('inicio', 'pro', 'negocio')) <> 3 THEN
     RAISE EXCEPTION
-      'expected exactly 3 rows in plans (inicio/pro/negocio), found % (migration 041)',
-      (SELECT count(*) FROM public.plans);
+      'expected the 3 plans inicio/pro/negocio, found % (migration 041)',
+      (SELECT count(*) FROM public.plans
+       WHERE id IN ('inicio', 'pro', 'negocio'));
   END IF;
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.subscriptions'::regclass) THEN
     RAISE EXCEPTION 'RLS is not enabled on subscriptions (migration 041)';
@@ -1808,6 +1811,64 @@ BEGIN
     RAISE EXCEPTION 'accounts RLS was opened to deletes or to support sessions (migration 073)';
   END IF;
   -- /073 -----------------------------------------------------------
+
+  -- 074 -----------------------------------------------------------
+  -- Plan `ilimitado` (s9.7): oculto, precio 0, sin PayPal, sin límites
+  -- (las ocho claves presentes y todas null: una clave ausente también
+  -- es «ilimitado» para el código, pero el editor de s9.3 las exige) y
+  -- con todas las features del inventario de plan-catalog.ts.
+  IF NOT EXISTS (SELECT 1 FROM plans WHERE id = 'ilimitado') THEN
+    RAISE EXCEPTION 'plan ilimitado is missing (migration 074)';
+  END IF;
+
+  -- Catálogo de una base limpia: los tres de la 041 y el de la 074.
+  IF (SELECT count(*) FROM plans) <> 4 THEN
+    RAISE EXCEPTION 'expected exactly 4 rows in plans (inicio/pro/negocio/ilimitado), found % (migration 074)',
+      (SELECT count(*) FROM plans);
+  END IF;
+
+  -- Sólo `ilimitado` es oculto: ninguno de los que se venden cambió.
+  IF EXISTS (
+    SELECT 1 FROM plans
+    WHERE id IN ('inicio', 'pro', 'negocio') AND NOT is_public
+  ) THEN
+    RAISE EXCEPTION 'a sold plan became hidden (migration 074)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM plans
+    WHERE id = 'ilimitado'
+      AND (is_public OR sort_order <> 99 OR price_usd_month <> 0
+           OR coalesce(price_usd_year, 0) <> 0
+           OR provider_plan_id_month IS NOT NULL
+           OR provider_plan_id_year IS NOT NULL)
+  ) THEN
+    RAISE EXCEPTION 'plan ilimitado must be hidden, free, sort_order 99 and never published to PayPal (migration 074)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM plans p, jsonb_each(p.limits) l
+    WHERE p.id = 'ilimitado'
+      AND l.key IN ('operators', 'contacts', 'messages_out', 'ai_replies',
+                    'broadcast_recipients', 'knowledge_documents',
+                    'numbers', 'retention_months')
+      AND jsonb_typeof(l.value) = 'null'
+  ) <> 8 OR (
+    SELECT count(*) FROM plans p, jsonb_object_keys(p.limits) k
+    WHERE p.id = 'ilimitado'
+  ) <> 8 THEN
+    RAISE EXCEPTION 'plan ilimitado must carry the eight limit keys, all null (migration 074)';
+  END IF;
+
+  IF NOT (
+    SELECT features @> ARRAY['ai_autoreply', 'ai_knowledge', 'auto_assign',
+                             'api', 'webhooks', 'multi_number',
+                             'priority_support']::text[]
+    FROM plans WHERE id = 'ilimitado'
+  ) THEN
+    RAISE EXCEPTION 'plan ilimitado is missing a feature of the inventory (migration 074)';
+  END IF;
+  -- /074 -----------------------------------------------------------
 
   RAISE NOTICE 'schema verification passed';
 END
