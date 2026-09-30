@@ -58,8 +58,8 @@ jobs:
       # already exists. `db reset` drops and rebuilds unconditionally,
       # so this step, not the one above, is the guarantee that every
       # migration ran in filename order against nothing. It fails on the
-      # first statement Postgres rejects. --no-seed because there is no
-      # seed script and this is about schema, not data.
+      # first statement Postgres rejects. --no-seed because supabase/seed.sql is
+      # local-only lab data (s9.7) and this is about schema, not data.
       - name: Replay every migration from scratch
         run: supabase db reset --local --no-seed
 
