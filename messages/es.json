@@ -2197,7 +2197,8 @@
       "inviteLink": "No se envió correo (esa persona ya tiene usuario o el envío falló). Compártele este enlace de invitación:",
       "alreadyMember": "Esa persona ya es miembro de esta empresa.",
       "seatLimit": "La empresa no tiene puestos libres en su plan. Asígnale un plan mayor primero.",
-      "inviteFailed": "No se pudo invitar al miembro."
+      "inviteFailed": "No se pudo invitar al miembro.",
+      "refreshFailed": "No se pudo actualizar la ficha: lo que ves puede estar desactualizado."
     },
     "operators": {
       "title": "Operadores de la plataforma",

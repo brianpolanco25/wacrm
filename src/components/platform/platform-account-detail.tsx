@@ -37,6 +37,7 @@ import {
   AddMemberForm,
   PlanAssignment,
   usePlanOptions,
+  type MemberInviteOutcome,
 } from './platform-provisioning';
 
 interface UsageLine {
@@ -85,7 +86,7 @@ interface AuditEntry {
   endedReason: string | null;
 }
 
-interface Detail {
+export interface Detail {
   accountId: string;
   name: string;
   createdAt: string;
@@ -115,11 +116,37 @@ function moment(value: string | null): string {
   return Number.isFinite(d.getTime()) ? d.toLocaleString() : '—';
 }
 
-export function PlatformAccountDetail({ accountId }: { accountId: string }) {
+/**
+ * What the file shows. Once there is a file on screen, a reload (after
+ * suspending, assigning a plan, inviting…) keeps it: a full-screen
+ * spinner would unmount the forms and lose what they show — in
+ * particular the one-time invitation link (s9.4 review, finding 1).
+ */
+export function fileScreen(state: {
+  loading: boolean;
+  failed: 'notFound' | 'error' | null;
+  hasDetail: boolean;
+}): 'loading' | 'failed' | 'ready' {
+  if (state.hasDetail) return 'ready';
+  if (state.loading) return 'loading';
+  return 'failed';
+}
+
+export function PlatformAccountDetail({
+  accountId,
+  initial,
+}: {
+  accountId: string;
+  /** Pre-seeded state (server render, tests); normally absent. */
+  initial?: { detail: Detail; inviteLink?: string | null };
+}) {
   const t = useTranslations('Platform');
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(initial?.detail ?? null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState<'notFound' | 'error' | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(
+    initial?.inviteLink ?? null
+  );
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const { plans } = usePlanOptions();
@@ -147,6 +174,16 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  const onInvited = useCallback(
+    (outcome: MemberInviteOutcome) => {
+      setInviteLink(outcome.kind === 'link' ? outcome.url : null);
+      void load();
+    },
+    [load]
+  );
+
+  const screen = fileScreen({ loading, failed, hasDetail: detail !== null });
 
   const shortReason = reason.trim().length < MIN_REASON_LENGTH;
 
@@ -201,7 +238,7 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
     }
   }, [accountId, reason, shortReason, t]);
 
-  if (loading) {
+  if (screen === 'loading') {
     return (
       <div className="text-muted-foreground flex items-center gap-2 p-6 text-sm">
         <Loader2 className="size-4 animate-spin" />
@@ -210,7 +247,7 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
     );
   }
 
-  if (failed || !detail) {
+  if (screen === 'failed' || !detail) {
     return (
       <div className="flex flex-col gap-4">
         <Link
@@ -230,6 +267,12 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
 
   return (
     <div className="flex flex-col gap-6">
+      {failed ? (
+        <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-center gap-2 rounded-lg border p-3 text-sm">
+          <ShieldAlert className="size-4" />
+          {t('provisioning.refreshFailed')}
+        </div>
+      ) : null}
       <div className="flex flex-col gap-2">
         <Link
           href="/platform/accounts"
@@ -330,7 +373,11 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
         plans={plans}
         onChanged={load}
       />
-      <AddMemberForm accountId={detail.accountId} onInvited={load} />
+      <AddMemberForm
+        accountId={detail.accountId}
+        link={inviteLink}
+        onInvited={onInvited}
+      />
 
       {/* ---- consumption -------------------------------------------- */}
       <Card>

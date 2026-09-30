@@ -431,49 +431,81 @@ export function PlanAssignment({
 
 const MEMBER_ROLES = ['admin', 'agent', 'viewer'] as const;
 
+export type MemberInviteOutcome =
+  | { kind: 'emailed'; email: string }
+  /** No email went out: this URL is the ONLY delivery of the token. */
+  | { kind: 'link'; url: string }
+  | { kind: 'error'; reason: 'alreadyMember' | 'seatLimit' | 'failed' };
+
+/**
+ * POST the invitation and say what the operator has to do next. Pure of
+ * React so the flow can be tested without a DOM.
+ */
+export async function sendMemberInvite(
+  accountId: string,
+  email: string,
+  role: (typeof MEMBER_ROLES)[number],
+  doFetch: typeof fetch = fetch
+): Promise<MemberInviteOutcome> {
+  const res = await doFetch(`/api/platform/accounts/${accountId}/members`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, role }),
+  });
+  const json = (await res.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
+  if (res.status === 409) return { kind: 'error', reason: 'alreadyMember' };
+  if (res.status === 402) return { kind: 'error', reason: 'seatLimit' };
+  if (!res.ok) return { kind: 'error', reason: 'failed' };
+  if (json?.emailed) return { kind: 'emailed', email };
+  if (typeof json?.url === 'string' && json.url) {
+    return { kind: 'link', url: json.url };
+  }
+  return { kind: 'error', reason: 'failed' };
+}
+
+/**
+ * «Añadir miembro». The share link is NOT kept here: the file owns it
+ * (`link`), so reloading the file after an invite cannot unmount it away —
+ * for someone who already has a user it is the only way the invitation
+ * reaches them, and the token is never shown again.
+ */
 export function AddMemberForm({
   accountId,
+  link,
   onInvited,
 }: {
   accountId: string;
-  onInvited: () => void;
+  link: string | null;
+  onInvited: (outcome: MemberInviteOutcome) => void;
 }) {
   const t = useTranslations('Platform.provisioning');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<(typeof MEMBER_ROLES)[number]>('agent');
   const [busy, setBusy] = useState(false);
-  const [link, setLink] = useState<string | null>(null);
 
   const submit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
       if (!email.trim()) return;
       setBusy(true);
-      setLink(null);
       try {
-        const { res, json } = await postJson(
-          `/api/platform/accounts/${accountId}/members`,
-          { email: email.trim(), role }
-        );
-        if (res.status === 409) {
-          toast.error(t('alreadyMember'));
+        const outcome = await sendMemberInvite(accountId, email.trim(), role);
+        if (outcome.kind === 'error') {
+          toast.error(
+            t(outcome.reason === 'failed' ? 'inviteFailed' : outcome.reason)
+          );
           return;
         }
-        if (res.status === 402) {
-          toast.error(t('seatLimit'));
-          return;
-        }
-        if (!res.ok) {
-          toast.error(t('inviteFailed'));
-          return;
-        }
-        if (json?.emailed) {
-          toast.success(t('invited', { email: email.trim() }));
-        } else {
-          setLink((json?.url as string) ?? null);
+        if (outcome.kind === 'emailed') {
+          toast.success(t('invited', { email: outcome.email }));
         }
         setEmail('');
-        onInvited();
+        onInvited(outcome);
+      } catch {
+        toast.error(t('inviteFailed'));
       } finally {
         setBusy(false);
       }

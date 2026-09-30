@@ -13,8 +13,14 @@ import {
   CreateAccountForm,
   NewAccountButton,
   PlanAssignment,
+  sendMemberInvite,
   type PlanOption,
 } from './platform-provisioning';
+import {
+  fileScreen,
+  PlatformAccountDetail,
+  type Detail,
+} from './platform-account-detail';
 import { OperatorsTable, PlatformOperators } from './platform-operators';
 
 // s9.4 UI, rendered to static markup like the rest of the panel (no
@@ -138,7 +144,7 @@ describe('«Añadir miembro»', () => {
     'offers the three roles a member can have, never owner (%s)',
     (locale, messages) => {
       const html = render(
-        <AddMemberForm accountId="acc" onInvited={noop} />,
+        <AddMemberForm accountId="acc" link={null} onInvited={noop} />,
         locale,
         messages
       );
@@ -151,6 +157,110 @@ describe('«Añadir miembro»', () => {
       expect(html).not.toContain('value="owner"');
     }
   );
+});
+
+describe('«Añadir miembro»: the one-time link survives the reload (review s9.4, finding 1)', () => {
+  const URL_ = 'https://crm.test/join/tok_only_shown_once';
+
+  function fakeFetch(status: number, body: unknown) {
+    return (async () =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+  }
+
+  const DETAIL: Detail = {
+    accountId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    name: 'Acme',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    planId: 'pro',
+    planName: 'Pro',
+    subscriptionStatus: 'active',
+    provider: 'paypal',
+    readOnly: false,
+    manualHold: false,
+    manualHoldAt: null,
+    manualHoldReason: null,
+    trialEndsAt: null,
+    currentPeriodEnd: null,
+    usage: [],
+    limits: {},
+    members: [],
+    numbers: [],
+    lastActivityAt: null,
+    billingHistory: [],
+    audit: [],
+  };
+
+  it('a 201 with emailed:false comes back as the link to share', async () => {
+    const outcome = await sendMemberInvite(
+      DETAIL.accountId,
+      'bea@x.test',
+      'agent',
+      fakeFetch(201, { emailed: false, url: URL_ })
+    );
+    expect(outcome).toEqual({ kind: 'link', url: URL_ });
+  });
+
+  it('and the file, reloading after it, still shows that link', async () => {
+    const outcome = await sendMemberInvite(
+      DETAIL.accountId,
+      'bea@x.test',
+      'agent',
+      fakeFetch(201, { emailed: false, url: URL_ })
+    );
+    if (outcome.kind !== 'link') throw new Error('expected a link');
+
+    // First paint of the file is `loading` (the reload `onInvited` fires
+    // is in flight). Before the fix this was the full-screen spinner, the
+    // form unmounted and the link was gone.
+    const html = render(
+      <PlatformAccountDetail
+        accountId={DETAIL.accountId}
+        initial={{ detail: DETAIL, inviteLink: outcome.url }}
+      />
+    );
+    expect(html).toContain(URL_);
+    expect(html).toContain(es.Platform.provisioning.inviteLink);
+    expect(html).toContain(es.Platform.provisioning.memberTitle);
+    expect(html).not.toContain(es.Platform.loading);
+  });
+
+  it.each([
+    [
+      201,
+      { emailed: true, url: URL_ },
+      { kind: 'emailed', email: 'bea@x.test' },
+    ],
+    [
+      409,
+      { code: 'already_member' },
+      { kind: 'error', reason: 'alreadyMember' },
+    ],
+    [402, { code: 'plan_limit' }, { kind: 'error', reason: 'seatLimit' }],
+    [500, { error: 'x' }, { kind: 'error', reason: 'failed' }],
+  ])('HTTP %s → %j', async (status, body, expected) => {
+    expect(
+      await sendMemberInvite(
+        'acc',
+        'bea@x.test',
+        'agent',
+        fakeFetch(status, body)
+      )
+    ).toEqual(expected);
+  });
+
+  it.each([
+    [{ loading: true, failed: null, hasDetail: false }, 'loading'],
+    [{ loading: false, failed: 'error', hasDetail: false }, 'failed'],
+    [{ loading: false, failed: 'notFound', hasDetail: false }, 'failed'],
+    // A reload, or a failed reload, never takes the file off the screen.
+    [{ loading: true, failed: null, hasDetail: true }, 'ready'],
+    [{ loading: false, failed: 'error', hasDetail: true }, 'ready'],
+  ] as const)('fileScreen(%j) → %s', (state, screen) => {
+    expect(fileScreen(state)).toBe(screen);
+  });
 });
 
 describe('/platform/operators', () => {
