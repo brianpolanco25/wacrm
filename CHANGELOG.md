@@ -15,6 +15,11 @@ and polish.
 
 - The Korean interface (`messages/ko.json`) is gone: the product ships Spanish (default) and English. An instance built with `NEXT_PUBLIC_APP_LOCALE=ko` now falls back to Spanish, interface and `/developers` alike.
 
+### Self-hosted font
+
+- The Inter font is served from the repository; the build no longer
+  contacts Google Fonts, so it works without outbound network access.
+
 ### Platform console: its own shell for operators
 
 - The operator panel moves out of the CRM chrome into its own console

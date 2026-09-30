@@ -31,6 +31,15 @@ is included.
 > the healthcheck don't target. Compose pins it to 3000 for that
 > reason.
 
+### Fonts: no network needed at build time
+
+The UI font (Inter) ships in the repository, under `src/app/fonts/`
+(SIL Open Font License 1.1, see `LICENSE-Inter.txt` next to the files),
+and is loaded with `next/font/local`. `next build` — and so
+`docker compose ... up --build` — no longer downloads anything from
+Google Fonts, so the image builds on a machine or CI runner without
+outbound internet access. There is no font-related variable to set.
+
 ## Build-time vs runtime variables
 
 - `NEXT_PUBLIC_*` variables are **inlined into the client bundle at
