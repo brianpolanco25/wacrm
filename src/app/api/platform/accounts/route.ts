@@ -22,8 +22,8 @@ import {
   toErrorResponse,
   UnauthorizedError,
 } from '@/lib/auth/account';
+import { resolveInviteBaseUrl } from '@/lib/auth/invitations';
 import { requirePlatformAdmin } from '@/lib/auth/platform';
-import { resolveAppOrigin } from '@/lib/billing/checkout';
 import {
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
@@ -209,7 +209,9 @@ export async function POST(request: Request) {
     const invited = await inviteAuthUser({
       email,
       fullName: ownerName,
-      redirectTo: `${resolveAppOrigin(request)}/login`,
+      // Same origin rules as the invite links of the Team tab, with
+      // ALLOWED_INVITE_HOSTS.
+      redirectTo: `${resolveInviteBaseUrl(request)}/login`,
     });
     if (!invited.ok) {
       return invited.reason === 'exists'

@@ -241,7 +241,7 @@ async function loadCurrentSubscription(
 
 /**
  * The row a manual plan leaves behind. Everything the gateway owns is
- * reset — no id, no cycle, no trial, no grace — so no later reader can
+ * reset — no id, no cycle, no trial, no grace, no period end — so no later reader can
  * mistake it for a PayPal subscription. `manual_hold_*` is NOT here: a
  * suspension is a separate axis (058) and giving a plan does not lift it.
  */
@@ -255,6 +255,9 @@ export function manualPlanRow(accountId: string, planId: string) {
     cycle: null,
     trial_ends_at: null,
     grace_until: null,
+    // A manual plan has no renewal date; the one of a previous PayPal
+    // subscription would show as a stale "renews on" in billing.
+    current_period_end: null,
     cancel_at_period_end: false,
   };
 }

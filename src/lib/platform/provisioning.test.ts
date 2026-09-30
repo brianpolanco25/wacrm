@@ -160,6 +160,7 @@ describe('manualPlanRow', () => {
       cycle: null,
       trial_ends_at: null,
       grace_until: null,
+      current_period_end: null,
       cancel_at_period_end: false,
     });
     // A suspension is its own axis (058): giving a plan must not lift it.

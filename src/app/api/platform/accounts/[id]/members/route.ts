@@ -40,9 +40,9 @@ import {
   generateInviteToken,
   inviteExpiresAt,
   inviteUrl,
+  resolveInviteBaseUrl,
 } from '@/lib/auth/invitations';
 import { requirePlatformAdmin } from '@/lib/auth/platform';
-import { resolveAppOrigin } from '@/lib/billing/checkout';
 import {
   assertStockLimit,
   getEntitlements,
@@ -167,7 +167,7 @@ export async function POST(
       label: email,
       expiresAt: inviteExpiresAt(DEFAULT_INVITE_EXPIRY_DAYS),
     });
-    const url = inviteUrl(token, resolveAppOrigin(request));
+    const url = inviteUrl(token, resolveInviteBaseUrl(request));
 
     let emailed = false;
     if (!existing) {
