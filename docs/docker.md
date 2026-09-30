@@ -322,6 +322,57 @@ to yearly would be charged for a year and extended by a month. Existing rows are
 backfilled from the checkout that created them, so nothing changes for anyone
 who has not changed plan.
 
+## Auth email links (`/auth/callback`, `/reset-password`)
+
+**No new environment variables.** Every email Supabase Auth sends for this app
+(sign-up confirmation, password recovery, and the invitations from the operator
+panel or from Settings → Team) points at `<site>/auth/callback`, which opens the
+session and sends the person on: invitations and recoveries to
+`/reset-password` to choose a password, then to `/join/<token>` if there is a
+team invitation, to `/platform` for an operator, or to `/dashboard`. The URLs
+are built by `authCallbackUrl()` in `src/lib/auth/redirects.ts`.
+
+**Supabase Auth → URL Configuration.** Set **Site URL** to the deployment's
+origin (the same value as `NEXT_PUBLIC_SITE_URL`) and add these to **Redirect
+URLs**, for each origin the app is served from (production, staging,
+`http://localhost:3000`):
+
+| Redirect URL | Why |
+| --- | --- |
+| `<site>/auth/callback**` | Every auth email. The `**` covers the query string (`?next=/reset-password&invite=…`). |
+| `<site>/reset-password**` | Only if you point a custom template straight at it. |
+| `<site>/join/**` | Invitation links sent before this change, which pointed at `/join/<token>` directly. |
+
+A `redirectTo` that is not allowed is silently replaced by the Site URL, and the
+person lands on the home page with a link nobody reads.
+
+**Email templates.** The app accepts both link formats, so the templates can
+stay as they are:
+
+- **Default template** (`{{ .ConfirmationURL }}`): the link goes to Supabase
+  first, which then redirects to `/auth/callback`. For a sign-up or a recovery
+  requested from this app's pages (PKCE) it arrives as `?code=…`, exchanged on
+  the server — it only works in **the same browser** that asked for it. For an
+  invitation (`inviteUserByEmail`, which cannot use PKCE) it arrives with the
+  tokens in the fragment (`#access_token=…&type=invite`), which the server never
+  sees; `/auth/callback` passes it to `/auth/callback/complete`, which opens the
+  session in the browser.
+- **Token-hash template** (recommended for **Invite user** and **Reset
+  password** only): link straight to the app with
+  `{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=invite` (and
+  `type=recovery` in the reset template). The server verifies it with
+  `verifyOtp`; it works in any browser, and the tokens never appear in the URL.
+  `{{ .RedirectTo }}` keeps the `?next=/reset-password&invite=…` the app put
+  there — without it a member invited to a team would not reach `/join/<token>`
+  — and the app always sends a query string on these two emails, so the `&` is
+  safe. Leave **Confirm signup** on the default template: its redirect may have
+  no query string, and the PKCE `code` already covers it. This template
+  depends on the Redirect URLs above: a rejected `redirectTo` becomes the bare
+  Site URL and the link breaks.
+
+An expired or reused link shows "This link no longer works" with a button to
+`/forgot-password`.
+
 ## Plain Docker (no Compose)
 
 ```bash
