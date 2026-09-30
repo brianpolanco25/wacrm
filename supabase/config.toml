@@ -22,3 +22,12 @@ shadow_port = 54320
 # one failure mode this whole check exists to prevent. 17 is the CLI's
 # current default, not a reading of the live project.
 major_version = 17
+
+# Local-only seed (s9.7): lab users, the operator and the unlimited plan
+# for development. Written out rather than left to the CLI default so it
+# is visible. `supabase db reset --local` runs it; CI passes `--no-seed`
+# and scripts/replay-migrations.sh never reads it. Never point it at a
+# remote project: its passwords are public.
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]

@@ -2270,7 +2270,8 @@
       },
       "hint": {
         "priceMismatch": "결제 화면에는 이미 새 가격이 표시되지만, 동기화할 때까지 PayPal은 이전 가격을 계속 청구합니다.",
-        "freeButPublished": "PayPal에 게시되어 있지만 가격이 비어 있거나 0입니다. 무료 주기는 PayPal로 판매하지 않습니다. 게시를 취소하거나 가격을 설정하세요."
+        "freeButPublished": "PayPal에 게시되어 있지만 가격이 비어 있거나 0입니다. 무료 주기는 PayPal로 판매하지 않습니다. 게시를 취소하거나 가격을 설정하세요.",
+        "notForSale": "가격 없음: 이 주기는 판매되지 않으며 PayPal에 게시되지 않습니다. 계정 페이지에서 직접 할당하세요."
       },
       "unpublish": {
         "month": "월간 게시 취소",

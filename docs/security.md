@@ -330,10 +330,13 @@ total escalation.
 
 ### Granting the first operator
 
-There is no seed. Sowing an email or a uuid in a migration would put a
-back door in the repository, so the first operator is created by hand
-against the database — from the Supabase SQL editor or with the service
-role.
+Cabbity's own operator is granted by migration 074 by email (see
+[Operators and the unlimited plan](#operators-and-the-unlimited-plan)
+below): the human decided so (phase 9, decision 2), and the grant only
+matches a **confirmed** user with that exact address, so it is no back
+door on a project where nobody holds that inbox. Any other self-hosted
+deployment creates its first operator by hand against the database —
+from the Supabase SQL editor or with the service role.
 
 ```sql
 -- Substitute the address. Idempotent.
@@ -370,6 +373,74 @@ DELETE FROM platform_admins WHERE user_id = (
 Revoking also ends any support session that person had open: the server
 re-reads `platform_admins` on every request (`resolveSupportSession`) and
 so does the RLS predicate (`has_open_support_session`, migration 057).
+
+### Operators and the unlimited plan
+
+_(Operadores y plan ilimitado — phase 9, s9.7, migration 074.)_
+
+Migration `074_plan_ilimitado.sql` does three things, all idempotent:
+
+- creates the plan `ilimitado`: every limit `null`, every feature of
+  `src/lib/billing/plan-catalog.ts`, price 0, `is_public = false`
+  (never in `/api/billing/plans`, refused by the checkout) and
+  `sort_order 99`. It is never published to PayPal: the migration does
+  not write `provider_plan_id_*`, and the sync of `/platform/plans`
+  refuses a price of 0 (`no_price`); the page shows it as «not for
+  sale»;
+- gives it by hand (`provider = 'manual'`, `active`, no PayPal id, no
+  cycle or dates, `manual_hold_*` untouched) to the account owned by
+  `brianmpolanco@gmail.com`, with a `plan_override` row in
+  `impersonation_log` the first time. It will **not** overwrite a live
+  PayPal subscription (active/past_due with an id): it raises a NOTICE
+  and skips, as the panel does; cancel it in PayPal first;
+- grants `platform_admins` to `brianpolancodisenos@gmail.com`.
+
+Both lookups match only a **confirmed** user (`auth.users.confirmed_at`)
+with that address. A user that does not exist yet is 0 rows, not an
+error.
+
+**Production, in this order:**
+
+1. In the Supabase dashboard → Authentication → Users → _Add user_,
+   create `brianpolancodisenos@gmail.com` with a password of your own
+   and _Auto Confirm User_ ticked. (The owner `brianmpolanco@gmail.com`
+   already exists and is confirmed; if not, same step.) Never reuse the
+   password of the local seed.
+2. `supabase db push` (074 and whatever else is pending). The grant and
+   the plan land in that push.
+3. If the user was created **after** the push, grant it by hand — the
+   same statement the migration runs:
+
+   ```sql
+   INSERT INTO platform_admins (user_id, granted_by, note)
+   SELECT u.id, u.id, 'Operador de Cabbity (migración 074)'
+   FROM auth.users u
+   WHERE lower(btrim(u.email)) = 'brianpolancodisenos@gmail.com'
+     AND u.confirmed_at IS NOT NULL
+   ON CONFLICT (user_id) DO NOTHING;
+   ```
+
+   and give the plan from the panel (next point) rather than re-running
+   the migration by hand.
+
+The migration does **not** stamp `onboarding_completed_at`: the CHECK of
+073 requires the company profile first, and the onboarding gate reads
+the profile, not the stamp. With the manual plan active, the owner sees
+the company step of `/onboarding` once (no payment step); the team
+already gets in.
+
+**Giving the unlimited plan to another company**: `/platform/<id>` →
+_Assign plan_ → `Ilimitado`, with a reason (s9.4). It is a comped plan:
+counted apart in the Overview and never in the MRR. Taking it away is
+the same form with another plan, or a PayPal checkout by the customer.
+
+**The local seed** (`supabase/seed.sql`) creates those two users and a
+demo customer (`cliente.demo@example.com`, unpaid) with the password
+`bcmp1994`. It is **local development only**: the password is public
+because it is in the repository. It runs on `supabase db reset --local`
+(and `supabase start` on a fresh volume); CI passes `--no-seed` and
+`scripts/replay-migrations.sh` never reads it. Never run it against a
+remote project.
 
 ### What a support session is
 

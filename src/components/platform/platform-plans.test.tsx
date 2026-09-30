@@ -112,11 +112,12 @@ describe('PlatformPlans', () => {
     expect(html).toContain('data-sync-state="unknown"');
   });
 
-  it('offers «Nuevo plan» and a sync button per plan and cycle', () => {
+  it('offers «Nuevo plan» and a sync button per sellable plan and cycle', () => {
     const html = render('es');
     expect(html).toContain('Nuevo plan');
-    expect(html.match(/data-sync-cycle="month"/g)).toHaveLength(3);
-    expect(html.match(/data-sync-cycle="year"/g)).toHaveLength(3);
+    // `ilimitado` (074) has no price in either cycle: no sync button.
+    expect(html.match(/data-sync-cycle="month"/g)).toHaveLength(2);
+    expect(html.match(/data-sync-cycle="year"/g)).toHaveLength(2);
     expect(html).not.toMatch(/Eliminar|Borrar/);
   });
 
@@ -171,8 +172,21 @@ describe('PlatformPlans — round 2 hints', () => {
     expect(html).toContain('data-unpublish-cycle="month"');
     expect(html).toContain(es.Platform.plans.unpublish.month);
     expect(html).toContain(es.Platform.plans.hint.freeButPublished);
-    // …and no longer a sync button for that cell: 3 plans × 2 − 1.
-    expect(html.match(/data-sync-cycle=/g)).toHaveLength(5);
+    // …and no sync button for that cell nor for its unpriced year:
+    // 3 plans × 2 − 2.
+    expect(html.match(/data-sync-cycle=/g)).toHaveLength(4);
+  });
+
+  it('says «no se vende» for a never-published cycle without a price (ilimitado, 074)', () => {
+    const html = render('es');
+    expect(html).toContain('data-not-for-sale="month"');
+    expect(html).toContain('data-not-for-sale="year"');
+    expect(html.match(/data-not-for-sale=/g)).toHaveLength(2);
+    expect(html).toContain(es.Platform.plans.hint.notForSale);
+    // A priced cycle that is not published yet keeps its sync button.
+    expect(html).toMatch(
+      /data-plan-id="inicio"[\s\S]*?data-sync-cycle="year"[\s\S]*?data-plan-id="pro"/
+    );
   });
 });
 

@@ -2270,7 +2270,8 @@
       },
       "hint": {
         "priceMismatch": "El checkout ya muestra el precio nuevo, pero PayPal sigue cobrando el anterior hasta que sincronices.",
-        "freeButPublished": "Publicado en PayPal, pero su precio ahora está vacío o a 0: un ciclo gratis no se vende por PayPal. Despublícalo o ponle precio."
+        "freeButPublished": "Publicado en PayPal, pero su precio ahora está vacío o a 0: un ciclo gratis no se vende por PayPal. Despublícalo o ponle precio.",
+        "notForSale": "Sin precio: este ciclo no se vende ni se publica en PayPal. Se asigna a mano desde la ficha de la cuenta."
       },
       "unpublish": {
         "month": "Despublicar mes",

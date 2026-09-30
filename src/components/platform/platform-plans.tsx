@@ -519,11 +519,23 @@ function PlanRows({
           // publish it (nothing free goes to PayPal); unpublishing can.
           const freeButPublished =
             sync.providerPlanId !== null && !(Number(price) > 0);
+          // Never published and no price (a plan given by hand, like
+          // `ilimitado` of the 074): not for sale. The sync would only
+          // answer 400 `no_price`, so there is no button to press.
+          const notForSale =
+            sync.providerPlanId === null && !(Number(price) > 0);
           return (
             <TableCell key={cycle}>
               <div className="flex max-w-48 flex-col items-start gap-1">
                 <SyncBadge state={sync.state} />
-                {freeButPublished ? (
+                {notForSale ? (
+                  <p
+                    className="text-muted-foreground text-xs"
+                    data-not-for-sale={cycle}
+                  >
+                    {t('hint.notForSale')}
+                  </p>
+                ) : freeButPublished ? (
                   <>
                     <p className="text-muted-foreground text-xs">
                       {t('hint.freeButPublished')}

@@ -139,6 +139,24 @@ describe('GET /api/billing/plans', () => {
     expect(json.plans.map((p: { id: string }) => p.id)).not.toContain('oculto');
   });
 
+  it('never lists the unlimited plan of the 074 (hidden, free, no PayPal id)', async () => {
+    plans.push({
+      id: 'ilimitado',
+      name: 'Ilimitado',
+      is_public: false,
+      sort_order: 99,
+      limits: { operators: null, messages_out: null },
+      price_usd_month: '0.00',
+      price_usd_year: '0.00',
+      provider_plan_id_month: null,
+      provider_plan_id_year: null,
+    });
+    const json = await (await GET()).json();
+    const ids = json.plans.map((p: { id: string }) => p.id);
+    expect(ids).toEqual(['inicio', 'negocio']);
+    expect(JSON.stringify(json)).not.toContain('Ilimitado');
+  });
+
   it('is open to any member, not just admins', async () => {
     role = 'viewer';
     expect((await GET()).status).toBe(200);

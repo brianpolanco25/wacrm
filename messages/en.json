@@ -2270,7 +2270,8 @@
       },
       "hint": {
         "priceMismatch": "Checkout already shows the new price, but PayPal keeps charging the old one until you sync.",
-        "freeButPublished": "Published at PayPal, but its price is now empty or 0: a free cycle is not sold through PayPal. Unpublish it or set a price."
+        "freeButPublished": "Published at PayPal, but its price is now empty or 0: a free cycle is not sold through PayPal. Unpublish it or set a price.",
+        "notForSale": "No price: this cycle is not sold or published to PayPal. Assign it by hand from the account page."
       },
       "unpublish": {
         "month": "Unpublish month",

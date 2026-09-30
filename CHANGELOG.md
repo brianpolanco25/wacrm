@@ -1081,6 +1081,28 @@ no-store`; before, a shared cache could keep them for five minutes.
 - Accepting an invitation still dissolves the new user's empty personal
   account, now that it is born `incomplete` instead of on a trial.
 
+### Unlimited plan for the service owner, and a local seed
+
+> **Migration required:** apply `supabase/migrations/074_plan_ilimitado.sql`.
+> Create the operator user (`brianpolancodisenos@gmail.com`) in Supabase
+> Auth, confirmed and with a password of your own, **before** the push, or
+> grant it by hand afterwards (docs/security.md, «Operators and the
+> unlimited plan»).
+
+- New hidden plan **Ilimitado**: no limits and every feature, price 0,
+  never published to PayPal and never in the plan picker. Platform → Plans
+  shows its cycles as «not for sale» instead of a sync button.
+- The account owned by `brianmpolanco@gmail.com` (Cabbity) gets it by hand
+  (manual, active), recorded in the audit log; a live PayPal subscription is
+  never overwritten. It counts as comped in the Overview, not in the MRR.
+  Its owner fills the company step of `/onboarding` once.
+- `brianpolancodisenos@gmail.com` becomes a platform operator, once that user
+  exists and is confirmed.
+- `supabase/seed.sql` for **local development only**: the operator, the owner
+  of Cabbity on the unlimited plan, and a demo customer that has not paid
+  (`cliente.demo@example.com`), all with the public lab password `bcmp1994`.
+  It runs on `supabase db reset --local`; CI and the migration replay skip it.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same
