@@ -33,6 +33,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { MIN_REASON_LENGTH } from '@/lib/auth/support-cookie';
+import { ImpersonationActions } from './impersonation-actions';
 
 interface UsageLine {
   metric: string;
@@ -461,6 +462,7 @@ export function PlatformAccountDetail({ accountId }: { accountId: string }) {
           )}
         </CardContent>
       </Card>
+      <ImpersonationActions accountId={detail.accountId} />
     </div>
   );
 }

@@ -378,15 +378,34 @@ The reason is mandatory and has a minimum length — it is the column that
 makes the audit trail worth keeping. Every open and every close is a row
 in `impersonation_log`.
 
-A session lasts 30 minutes and is **read-only**, enforced in four places
-because there are four ways out of this application:
+A session lasts 30 minutes. Since s9.5 (migration 072) it **writes**: the
+operator acts for the customer with the effective role **`admin`** — never
+`owner` — and every change is recorded. Four layers agree on what that
+means, because there are four ways out of this application:
 
-| Layer                   | What it stops                                                                                                                                                                                                                     |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| RLS (057)               | Only SELECT policies learned the support predicate, so the impersonated account cannot be written to at all — including by requests the browser sends straight to Supabase.                                                       |
-| `middleware.ts`         | Any mutating request that reaches Next gets a 403, whatever route it was for.                                                                                                                                                     |
-| `@/lib/supabase/client` | The browser client refuses `insert/update/delete/upsert/rpc` and every writing `storage` operation (uploads included), which is what stops an operator from editing **their own** company by mistake under the customer's banner. |
-| Effective role `viewer` | Every `requireRole()` above `viewer` refuses.                                                                                                                                                                                     |
+| Layer                   | What it does                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RLS (057 + 072)         | 057 opened every SELECT policy to an open session. 072 opens the write policies of the tenant tables (`can_write_account()`: member **or** open session, and never for a policy that asks for `owner`) and hangs the `record_support_write()` trigger on each of them — the only thing that sees what the browser writes straight to Supabase. |
+| `middleware.ts`         | Lets mutating `/api` requests through and tags them (`x-wacrm-support-*`) so the server records them; refuses the short list below with 403, and every mutation outside `/api`.                                                                                                                                                                |
+| `@/lib/supabase/client` | Lets the browser write the tables 072 opened; refuses the rest (`profiles`, `notifications` — the **operator's own** rows —, `accounts`, …), every `rpc()` and every writing `storage` operation.                                                                                                                                              |
+| Effective role `admin`  | `requireRole('owner')` refuses; `assertNotSupportSession()` refuses billing, ownership, members, invitations and API keys whatever the role.                                                                                                                                                                                                   |
+
+**What a support session can never do**, and where each is stopped:
+
+| Action                                                     | Route                                                          | Stopped by                                                                                             |
+| ---------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Start a checkout, change or cancel the PayPal subscription | `POST /api/billing/checkout`, `POST /api/billing/subscription` | middleware, `assertNotSupportSession`, RLS (`subscriptions`/`checkout_intents` have no write policy)   |
+| Transfer ownership                                         | `POST /api/account/transfer-ownership`                         | middleware, `requireRole('owner')`, `assertNotSupportSession`                                          |
+| Rename the account / change its currency                   | `PATCH /api/account`, `accounts` from the browser              | middleware, `assertNotSupportSession`, browser guard, RLS (`accounts` not opened)                      |
+| Change a member's role, remove a member                    | `PATCH`/`DELETE /api/account/members/<id>`                     | middleware, `assertNotSupportSession` (the RPCs resolve the account from `auth.uid()`: the operator's) |
+| Invite someone (access that outlives the session)          | `POST /api/account/invitations`, `DELETE …/invitations/<id>`   | middleware, `assertNotSupportSession`, RLS (`account_invitations` not opened)                          |
+| Mint, rotate or revoke an API key (a permanent credential) | `/api/account/api-keys*`                                       | middleware, `assertNotSupportSession`, RLS (`api_keys` not opened)                                     |
+| Redeem an invitation (moves the operator's own profile)    | `POST /api/invitations/<token>/redeem`                         | middleware                                                                                             |
+| Open another support session                               | `POST /api/platform/impersonate`                               | middleware (exit first; `/stop` stays open)                                                            |
+| Delete the account                                         | — (no route exists)                                            | RLS: `accounts` has no DELETE policy                                                                   |
+
+Reads of those same screens (billing status, members, invitations) stay
+open: they are what support tickets are usually about.
 
 The operator never stops being themselves: `profiles.account_id` is never
 moved. The account swap is derived per request from a signed, `httpOnly`
@@ -421,6 +440,12 @@ Two things a support session deliberately does **not** show:
   the notification bell. They come back empty, which is the truth: those
   rows are the operator's, not the customer's.
 
+Two things a support session deliberately does **not** write, besides the
+table above: attachments (uploads stay refused — the bucket policies were
+not widened) and anything that goes through an `rpc()` from the browser
+(tag filtering on the contacts list included, which shows an error during
+a session).
+
 ### Auditing
 
 ```sql
@@ -428,13 +453,43 @@ Two things a support session deliberately does **not** show:
 SELECT actor_user_id, account_id, account_name, reason,
        started_at, expires_at, ended_at, ended_reason
 FROM impersonation_log
+WHERE action = 'impersonation'
 ORDER BY started_at DESC
 LIMIT 50;
 
 -- Sessions still open right now.
 SELECT * FROM impersonation_log
-WHERE ended_at IS NULL AND expires_at > now();
+WHERE action = 'impersonation' AND ended_at IS NULL AND expires_at > now();
+
+-- What was changed in one session (s9.5).
+SELECT occurred_at, source, method, path, status
+FROM impersonation_actions
+WHERE log_id = '<impersonation_log.id>'
+ORDER BY occurred_at;
 ```
+
+Every change made during a session lands in `impersonation_actions`
+(migration 072), from two writers:
+
+- `source = 'http'` — one row per mutating request that reached a Next
+  route with a verified session, written by `resolveSupportSession()`
+  **before** the route may act (`recordSupportAction`). A UNIQUE
+  `request_id` stamped by the middleware keeps it at one row per request.
+  If the row cannot be written the request is refused with 503 — never
+  resolved to the operator's own account. `status` is filled in when the
+  server itself refuses (403); otherwise it is null.
+- `source = 'db'` — one row per table row the operator's JWT wrote on the
+  impersonated account (`record_support_write()` trigger; `path` is
+  `db:<table>/<id>`). This is what records the writes the browser sends
+  straight to PostgREST. The trigger exits on its first line when
+  `auth.uid()` is null — the service role, the WhatsApp webhook, the crons
+  — so inbound traffic pays nothing.
+
+The panel shows both, per session, on the account's file (`/platform/<id>`,
+"Support sessions"; `GET /api/platform/accounts/<id>/support-actions`).
+`impersonation_actions` is readable by platform operators only and
+writable by nobody from the client; its `log_id` is `ON DELETE RESTRICT`
+to the session row.
 
 `impersonation_log` has no foreign keys on purpose: the trail has to
 survive deleting the audited account or the auditing user, which is

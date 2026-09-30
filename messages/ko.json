@@ -116,7 +116,7 @@
     "retry": "다시 시도"
   },
   "Impersonation": {
-    "viewing": "지원 담당자로서 {account} 계정을 보고 있습니다. 여기서 하는 작업은 저장되지 않습니다.",
+    "acting": "{account} 계정에서 지원 담당자로 작업하고 있습니다. 모든 변경 사항이 기록됩니다.",
     "unknownAccount": "더 이상 사용할 수 없는 계정",
     "exit": "지원 세션 종료",
     "exiting": "종료하는 중…"
@@ -2276,6 +2276,25 @@
         "body": "이 주기는 더 이상 PayPal로 판매되지 않으며 결제 화면에서도 제공되지 않습니다. PayPal에서는 아무것도 바뀌지 않고, 기존 구독 고객은 요금제를 유지하며 이력은 보존됩니다.",
         "action": "게시 취소"
       }
+    },
+    "support": {
+      "title": "지원 세션",
+      "description": "이 계정에서 열린 모든 지원 세션과 그 세션에서 변경된 내용입니다.",
+      "loading": "세션을 불러오는 중…",
+      "loadFailed": "지원 세션을 불러오지 못했습니다.",
+      "none": "이 계정에서 지원 세션을 연 사람이 없습니다.",
+      "session": "{start} · 운영자 {actor}",
+      "open": "진행 중",
+      "endedAt": "{date}에 종료됨",
+      "reason": "사유: {reason}",
+      "actionsCount": "{count, plural, =0 {변경 없음} other {변경 #건}}",
+      "showActions": "변경 내용 보기",
+      "hideActions": "변경 내용 숨기기",
+      "noActions": "이 세션에서는 아무것도 변경되지 않았습니다.",
+      "sourceHttp": "요청",
+      "sourceDb": "행",
+      "refused": "거부됨 ({status})",
+      "truncated": "최근 작업 {count}건을 표시합니다."
     }
   },
   "Developers": {

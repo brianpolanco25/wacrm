@@ -987,6 +987,28 @@ behaviour changes**; nothing is limited by plan yet.
   the panel superseded, instead of dropping their plan updates as
   "not in our catalogue".
 
+### Platform console: support sessions can make changes
+
+> **Migration required:** apply
+> `supabase/migrations/072_impersonation_actions.sql`.
+
+- A support session is no longer read-only: the operator acts in the
+  customer's account with the **admin** role — contacts, tags, pipelines
+  and deals, inbox, broadcasts, automations and flows, templates, WhatsApp
+  numbers, AI settings and outbound webhooks.
+- Still off-limits during a session, whatever the role: checkout and the
+  customer's PayPal subscription, transferring ownership, renaming the
+  account, members and invitations, API keys, redeeming an invitation, and
+  opening a second session. Those requests answer 403.
+- Every change is recorded in the new `impersonation_actions` table — one
+  row per request that reached the app and one per row written from the
+  browser — and the account's file (`/platform/<id>`) gains a **Support
+  sessions** card listing each session with its changes folded under it.
+- The banner now reads «You are acting as support in <account>. Every
+  change you make is recorded.» and keeps its exit button.
+- Uploading attachments and editing the operator's own profile stay
+  unavailable inside a session.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

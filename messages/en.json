@@ -116,7 +116,7 @@
     "retry": "Retry"
   },
   "Impersonation": {
-    "viewing": "You are viewing {account} as support. Nothing you do here is saved.",
+    "acting": "You are acting as support in {account}. Every change you make is recorded.",
     "unknownAccount": "an account that is no longer available",
     "exit": "Exit support session",
     "exiting": "Exiting…"
@@ -2276,6 +2276,25 @@
         "body": "This cycle stops being sold through PayPal: checkout will no longer offer it. Nothing changes at PayPal, customers already subscribed stay on their plan, and the history is kept.",
         "action": "Unpublish"
       }
+    },
+    "support": {
+      "title": "Support sessions",
+      "description": "Every support session opened on this account and what was changed in it.",
+      "loading": "Loading sessions…",
+      "loadFailed": "Could not load the support sessions.",
+      "none": "Nobody has opened a support session on this account.",
+      "session": "{start} · operator {actor}",
+      "open": "In progress",
+      "endedAt": "Ended {date}",
+      "reason": "Reason: {reason}",
+      "actionsCount": "{count, plural, =0 {No changes} one {# change} other {# changes}}",
+      "showActions": "Show changes",
+      "hideActions": "Hide changes",
+      "noActions": "Nothing was changed in this session.",
+      "sourceHttp": "Request",
+      "sourceDb": "Row",
+      "refused": "Refused ({status})",
+      "truncated": "Showing the {count} most recent actions."
     }
   },
   "Developers": {
