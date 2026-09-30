@@ -1720,6 +1720,95 @@ BEGIN
   END IF;
   -- /072 -----------------------------------------------------------
 
+  -- 073 -----------------------------------------------------------
+  -- s9.6: sin prueba gratis. `incomplete` existe, es la semilla de cada
+  -- cuenta nueva, no queda ninguna fila `trialing`, la invitación sabe
+  -- borrar la semilla nueva, y `accounts` lleva los datos de la empresa.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.subscriptions'::regclass
+      AND conname = 'subscriptions_status_check'
+      AND pg_get_constraintdef(oid) LIKE '%''incomplete''%'
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.status does not accept ''incomplete'' (migration 073)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM pg_constraint
+    WHERE conrelid = 'public.subscriptions'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%past_due%'
+  ) <> 1 THEN
+    RAISE EXCEPTION 'subscriptions has more than one status CHECK; the old one of 041 survived (migration 073)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'status'
+      AND column_default LIKE '%incomplete%'
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.status does not default to ''incomplete'' (migration 073)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE oid = 'public.seed_account_trial()'::regprocedure
+      AND prosrc LIKE '%''incomplete''%'
+      AND prosrc NOT LIKE '%''trialing''%'
+      AND prosrc NOT LIKE '%trial_period%'
+  ) THEN
+    RAISE EXCEPTION 'seed_account_trial() still seeds a trial (migration 073)';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM subscriptions WHERE status = 'trialing') THEN
+    RAISE EXCEPTION 'subscriptions still has trialing rows (migration 073)';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM plans WHERE id = 'inicio') THEN
+    RAISE EXCEPTION 'the seed plan ''inicio'' is missing from the catalogue (migration 073)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE oid = 'public.redeem_invitation(text)'::regprocedure
+      AND prosrc LIKE '%''incomplete''%'
+  ) THEN
+    RAISE EXCEPTION 'redeem_invitation() does not discard the incomplete seed; every invitation would fail (migration 073)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'accounts'
+      AND column_name IN ('country', 'phone', 'industry', 'team_size',
+                          'onboarding_completed_at')
+  ) <> 5 THEN
+    RAISE EXCEPTION 'accounts is missing the company profile columns (migration 073)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM pg_constraint
+    WHERE conrelid = 'public.accounts'::regclass
+      AND conname IN ('accounts_country_format', 'accounts_phone_length',
+                      'accounts_industry_length', 'accounts_team_size_check',
+                      'accounts_onboarding_needs_profile')
+  ) <> 5 THEN
+    RAISE EXCEPTION 'accounts is missing a company profile CHECK (migration 073)';
+  END IF;
+
+  -- La RLS de `accounts` no se abre: owner/admin actualizan, nadie borra,
+  -- y ninguna política llama a `can_write_account` (072, sin soporte).
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'accounts'
+      AND (cmd = 'DELETE'
+           OR coalesce(qual, '') LIKE '%can_write_account%'
+           OR coalesce(with_check, '') LIKE '%can_write_account%')
+  ) THEN
+    RAISE EXCEPTION 'accounts RLS was opened to deletes or to support sessions (migration 073)';
+  END IF;
+  -- /073 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
