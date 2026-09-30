@@ -957,6 +957,31 @@ behaviour changes**; nothing is limited by plan yet.
   they load the page says so, and a failed load is shown as an error, never
   as zeros.
 
+### Platform console: create companies, plans by hand, members and operators
+
+> **Migration required:** apply
+> `supabase/migrations/071_platform_provisioning.sql`.
+
+- **New company** on `/platform/accounts`: name, owner email and a
+  reason. The owner is invited by email through Supabase; the company is
+  created at once with that name and, optionally, a plan assigned by
+  hand. An email that already has a user is refused with a clear message.
+- **Plan by hand** on a company's file: pick any plan (private ones
+  included), confirm, give a reason. The subscription becomes active with
+  `provider = 'manual'`, no PayPal, out of the MRR, and the file shows it
+  as «Assigned by hand». A company whose PayPal subscription is still
+  billing is refused: cancel it at PayPal first.
+- **Add a member** from a company's file, with the same invitation link
+  as the Team tab. People without a user get an email; for people who
+  already have one, the operator gets the link to share.
+- **Operators** (`/platform/operators`): list who operates the platform,
+  grant the role to an existing user by email, revoke it — never your
+  own, never the last operator.
+- Every one of these acts is recorded in the platform log before it
+  happens, with its details (plan before and after, invited email, role).
+- `/platform` pages are now always sent with `Cache-Control: private,
+no-store`; before, a shared cache could keep them for five minutes.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same
