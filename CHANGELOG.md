@@ -11,6 +11,21 @@ and polish.
 
 ## [Unreleased]
 
+### Platform console: its own shell for operators
+
+- The operator panel moves out of the CRM chrome into its own console
+  (`/platform`): navy sidebar with **Overview**, **Accounts**, **Plans**
+  and **Operators**, no inbox/contacts/pipelines, and a user menu with
+  **Go to the CRM** and **Sign out**. Same URLs as before.
+- The account census now lives at `/platform/accounts`; `/platform` is the
+  Overview (cards marked «coming soon» for now). Plans and Operators are
+  placeholders. An account's file stays at `/platform/<id>`.
+- Signing in as a platform operator lands on `/platform` instead of
+  `/dashboard`; the operator's own CRM account is still one click away,
+  and the CRM sidebar keeps its **Platform** link.
+- Visiting any `/platform` page without a session now redirects to the
+  login; for signed-in users who are not operators it is still a 404.
+
 ### AI assistant: knowledge base can embed with Google Gemini
 
 > **Migration required:** apply
