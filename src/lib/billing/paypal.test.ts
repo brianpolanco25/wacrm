@@ -11,6 +11,7 @@ import {
   createProduct,
   createSubscription,
   getAccessToken,
+  getPlan,
   listProducts,
   paypalBaseUrl,
   PayPalError,
@@ -568,5 +569,66 @@ describe('reviseSubscription', () => {
         cancelUrl: 'https://app.example.com/billing',
       })
     ).rejects.toBeInstanceOf(PayPalError);
+  });
+});
+
+describe('getPlan (s9.3)', () => {
+  it('reads the REGULAR cycle price of a billing plan', async () => {
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(
+      jsonResponse({
+        id: 'P-1',
+        status: 'ACTIVE',
+        billing_cycles: [
+          {
+            tenure_type: 'TRIAL',
+            frequency: { interval_unit: 'MONTH' },
+            pricing_scheme: {
+              fixed_price: { value: '0.00', currency_code: 'USD' },
+            },
+          },
+          {
+            tenure_type: 'REGULAR',
+            frequency: { interval_unit: 'YEAR' },
+            pricing_scheme: {
+              fixed_price: { value: '790.00', currency_code: 'USD' },
+            },
+          },
+        ],
+      })
+    );
+
+    await expect(getPlan('P-1')).resolves.toEqual({
+      status: 'ACTIVE',
+      cycle: 'year',
+      priceUsd: '790.00',
+    });
+    const { url, init } = lastCall();
+    expect(url).toBe('https://api-m.sandbox.paypal.com/v1/billing/plans/P-1');
+    expect(init.method).toBe('GET');
+  });
+
+  it('gives a null price for a non-USD or missing price', async () => {
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ACTIVE',
+        billing_cycles: [
+          {
+            tenure_type: 'REGULAR',
+            frequency: { interval_unit: 'MONTH' },
+            pricing_scheme: {
+              fixed_price: { value: '10.00', currency_code: 'EUR' },
+            },
+          },
+        ],
+      })
+    );
+    expect((await getPlan('P-2')).priceUsd).toBeNull();
+  });
+
+  it('throws PayPalError on a 404', async () => {
+    fetchMock
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse({ name: 'RESOURCE_NOT_FOUND' }, 404));
+    await expect(getPlan('P-X')).rejects.toMatchObject({ status: 404 });
   });
 });

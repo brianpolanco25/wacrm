@@ -36,16 +36,21 @@ import {
   listProducts,
   paypalBaseUrl,
   type BillingCycle,
-  type CreatePlanArgs,
-  type PayPalProduct,
 } from '../src/lib/billing/paypal.ts';
+import {
+  ensureProduct,
+  money,
+  paypalPlanDescription,
+  paypalPlanName,
+  productNameFromEnv,
+  type PayPalCatalogueClient,
+} from '../src/lib/billing/paypal-catalog.ts';
 
-/**
- * Product name registered in PayPal's catalogue when `PAYPAL_PRODUCT_NAME`
- * is unset. It shows up on the subscriber's PayPal receipts and agreement
- * page, so it carries the product's visible brand, not the repo slug.
- */
-export const DEFAULT_PRODUCT_NAME = 'Cabbity CRM';
+// The naming, the product lookup and the default product name are shared
+// with the operator's sync in the panel (s9.3), so a plan created from
+// either place looks the same at PayPal.
+export { DEFAULT_PRODUCT_NAME } from '../src/lib/billing/paypal-catalog.ts';
+export type { PayPalCatalogueClient } from '../src/lib/billing/paypal-catalog.ts';
 
 export interface PlanRow {
   id: string;
@@ -65,12 +70,6 @@ export interface CatalogueStore {
   ): Promise<void>;
 }
 
-export interface PayPalCatalogueClient {
-  listProducts(): Promise<PayPalProduct[]>;
-  createProduct(name: string, description: string): Promise<PayPalProduct>;
-  createPlan(args: CreatePlanArgs): Promise<{ id: string }>;
-}
-
 export interface BootstrapCatalogOptions {
   store: CatalogueStore;
   paypal: PayPalCatalogueClient;
@@ -88,10 +87,6 @@ function requireEnv(name: string): string {
     process.exit(1);
   }
   return v;
-}
-
-function money(value: number | string): string {
-  return Number(value).toFixed(2);
 }
 
 export async function bootstrapCatalog({
@@ -125,17 +120,9 @@ export async function bootstrapCatalog({
   }
 
   // Product: reuse by name, create otherwise.
-  const existing = (await paypal.listProducts()).find(
-    (product) => product.name === productName
-  );
-  const product =
-    existing ??
-    (await paypal.createProduct(
-      productName,
-      'CRM for WhatsApp — subscription plans'
-    ));
+  const { product, reused } = await ensureProduct(paypal, productName);
   log(
-    `${existing ? 'Reusing' : 'Created'} product ${product.id} (${product.name})`
+    `${reused ? 'Reusing' : 'Created'} product ${product.id} (${product.name})`
   );
 
   for (const plan of plans) {
@@ -167,8 +154,8 @@ export async function bootstrapCatalog({
       }
       const created = await paypal.createPlan({
         productId: product.id,
-        name: `${plan.name} (${cycle === 'year' ? 'yearly' : 'monthly'})`,
-        description: `Cabbity CRM ${plan.name} plan, billed ${cycle === 'year' ? 'yearly' : 'monthly'}`,
+        name: paypalPlanName(plan.name, cycle),
+        description: paypalPlanDescription(plan.name, cycle),
         cycle,
         priceUsd: money(price),
         // Stable per env+plan+cycle so a crashed run can be re-run without
@@ -187,8 +174,7 @@ async function main(): Promise<void> {
   requireEnv('PAYPAL_CLIENT_SECRET');
   const supabaseUrl = requireEnv('NEXT_PUBLIC_SUPABASE_URL');
   const serviceKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
-  const productName =
-    process.env.PAYPAL_PRODUCT_NAME?.trim() || DEFAULT_PRODUCT_NAME;
+  const productName = productNameFromEnv();
   const env = process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox';
 
   console.log(`PayPal env: ${env} (${paypalBaseUrl()})`);

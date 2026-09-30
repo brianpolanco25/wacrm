@@ -286,6 +286,9 @@ import * as platformImpersonateStop from '@/app/api/platform/impersonate/stop/ro
 import * as platformAccounts from '@/app/api/platform/accounts/route';
 import * as platformAccountById from '@/app/api/platform/accounts/[id]/route';
 import * as platformAccountHold from '@/app/api/platform/accounts/[id]/hold/route';
+import * as platformPlans from '@/app/api/platform/plans/route';
+import * as platformPlanById from '@/app/api/platform/plans/[id]/route';
+import * as platformPlanSync from '@/app/api/platform/plans/[id]/sync/route';
 // Etiquetas (fase 7 §2) y plantillas (fase 7 §3) de la API pública. Al
 // final de la lista a propósito: las dos mitades de la fase crecían por
 // el mismo sitio en paralelo.
@@ -683,6 +686,8 @@ function seed(): FakeDatabase {
           sort_order: 2,
         },
       ],
+      // Migration 070: PayPal ids of the catalogue, no account_id either.
+      plan_provider_history: [],
       tags: [],
       contact_tags: [],
       // Migration 055. Seeded empty: nobody operates the platform until a
@@ -3463,5 +3468,107 @@ describe('/api/v1/templates (service role via API key)', () => {
     expect(body.data.status_changes[0].template_id).toBe(TPL_A);
     expectNoBIds(body);
     expectBUnchanged(before);
+  });
+});
+
+// ============================================================
+// /api/platform/plans (s9.3) — the price list is global, so the leak to
+// guard against is not A↔B but tenant → catalogue: an owner must not be
+// able to write `plans` (nor read the PayPal history) through the
+// operator's routes. And an operator's writes must not move any
+// company's rows.
+// ============================================================
+
+const NEW_PLAN = {
+  id: 'plus',
+  name: 'Plus',
+  price_usd_month: 49,
+  price_usd_year: null,
+  limits: {
+    operators: 5,
+    contacts: 5000,
+    messages_out: 5000,
+    ai_replies: 1000,
+    broadcast_recipients: 5000,
+    knowledge_documents: 20,
+    numbers: 1,
+    retention_months: null,
+  },
+  features: ['ai_autoreply'],
+};
+
+describe('/api/platform/plans (catalogue writes, service role)', () => {
+  it('403s the owner of account A on every plan route, and writes nothing', async () => {
+    const plansBefore = JSON.stringify(h.db.rows('plans'));
+    const params = { params: Promise.resolve({ id: 'pro' }) };
+
+    const responses = [
+      await platformPlans.GET(),
+      await platformPlans.POST(req('POST', '/api/platform/plans', NEW_PLAN)),
+      await platformPlanById.PATCH(
+        req('PATCH', '/api/platform/plans/pro', { price_usd_month: 1 }),
+        params
+      ),
+      await platformPlanSync.POST(
+        req('POST', '/api/platform/plans/pro/sync', { cycle: 'month' }),
+        params
+      ),
+    ];
+
+    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403]);
+    expect(JSON.stringify(h.db.rows('plans'))).toBe(plansBefore);
+    expect(h.db.rows('plan_provider_history')).toEqual([]);
+    // The guard ran first: nothing but the caller's own platform_admins
+    // lookup reached the service role.
+    expect(
+      h.db.log
+        .filter((e) => e.rls === null)
+        .every((e) => e.table === 'platform_admins')
+    ).toBe(true);
+  });
+
+  it("an operator's catalogue edits move nothing of either company", async () => {
+    makePlatformAdmin(USER_A);
+    extraWaivers.push(
+      {
+        table: 'plans',
+        op: 'insert',
+        reason:
+          'Creating a plan from the operator panel (s9.3): `plans` is the ' +
+          'global catalogue with no account_id; the route is behind ' +
+          'requirePlatformAdmin().',
+      },
+      {
+        table: 'plans',
+        op: 'update',
+        by: ['id'],
+        reason: 'Editing one plan by its id from the operator panel (s9.3).',
+      },
+      {
+        table: 'plan_provider_history',
+        op: 'select',
+        by: ['plan_id'],
+        reason:
+          'PayPal ids of one plan (070): catalogue data, no account_id, ' +
+          'keyed by the plan id.',
+      }
+    );
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const created = await platformPlans.POST(
+      req('POST', '/api/platform/plans', NEW_PLAN)
+    );
+    expect(created.status).toBe(201);
+    const edited = await platformPlanById.PATCH(
+      req('PATCH', '/api/platform/plans/plus', { is_public: false }),
+      { params: Promise.resolve({ id: 'plus' }) }
+    );
+    expect(edited.status).toBe(200);
+
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expect(h.db.snapshot(B)).toEqual(beforeB);
+    const body = JSON.stringify(await edited.json());
+    expectNoBIds(JSON.parse(body));
   });
 });
