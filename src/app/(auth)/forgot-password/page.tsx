@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AuthCard } from '@/components/auth/auth-card';
+import { authCallbackUrl, RESET_PASSWORD_PATH } from '@/lib/auth/redirects';
 import { CheckCircle, ArrowLeft } from 'lucide-react';
 
 export default function ForgotPasswordPage() {
@@ -22,7 +23,9 @@ export default function ForgotPasswordPage() {
     setLoading(true);
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+      redirectTo: authCallbackUrl(window.location.origin, {
+        next: RESET_PASSWORD_PATH,
+      }),
     });
 
     if (error) {

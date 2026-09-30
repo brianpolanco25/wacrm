@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AuthCard } from '@/components/auth/auth-card';
+import { authCallbackUrl } from '@/lib/auth/redirects';
 import { CheckCircle, UsersRound } from 'lucide-react';
 
 // `useSearchParams` opts the component out of static prerendering
@@ -28,8 +29,8 @@ function SignupPageInner() {
   // When the user lands here from `/join/<token>` we carry the
   // invite token in the query so it survives the signup → email
   // verification → redirect round-trip. `emailRedirectTo` below
-  // points back at /join/<token> so the user lands on the redeem
-  // step after verifying instead of being dropped on /dashboard.
+  // carries it through /auth/callback to /join/<token> so the user
+  // lands on the redeem step after verifying.
   const inviteToken = searchParams.get('invite');
 
   const [fullName, setFullName] = useState('');
@@ -57,13 +58,14 @@ function SignupPageInner() {
 
     setLoading(true);
 
-    // If we have an invite token, point Supabase's verification
-    // email back at the join page so the user can accept after
-    // verifying. Without a token, Supabase uses its default
-    // redirect (the app root).
-    const emailRedirectTo = inviteToken
-      ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
-      : undefined;
+    // The verification email comes back through /auth/callback (s9.8),
+    // which exchanges the PKCE code for a session and then sends the
+    // user to /join/<token> when there is an invite, or to the
+    // dashboard. Before, the link pointed straight at /join/<token>
+    // (or the Site URL) and arrived with a `?code=` nobody exchanged.
+    const emailRedirectTo = authCallbackUrl(window.location.origin, {
+      invite: inviteToken,
+    });
 
     const { error } = await supabase.auth.signUp({
       email,
@@ -72,7 +74,7 @@ function SignupPageInner() {
         data: {
           full_name: fullName,
         },
-        ...(emailRedirectTo ? { emailRedirectTo } : {}),
+        emailRedirectTo,
       },
     });
 
