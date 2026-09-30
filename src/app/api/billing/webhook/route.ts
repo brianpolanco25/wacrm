@@ -467,6 +467,29 @@ async function resolvePlanForEvent(
     const id = (data as { id?: unknown } | null)?.id;
     if (typeof id === 'string' && id) return { planId: id, cycle };
   }
+
+  // A PayPal plan the operator panel superseded after a price change
+  // (s9.3) is no longer in `plans`, but its subscribers stay on it
+  // (decision 5 of fase 9). `plan_provider_history` (070) keeps every id
+  // a plan has had, per cycle and PayPal environment — open or replaced.
+  const { data: archived, error: historyError } = await admin
+    .from('plan_provider_history')
+    .select('plan_id, cycle')
+    .eq('provider', PROVIDER)
+    .eq('provider_env', process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox')
+    .eq('provider_plan_id', providerPlanId)
+    .maybeSingle();
+  if (historyError) {
+    throw new TransientWebhookError('plan history lookup failed', historyError);
+  }
+  const row = archived as { plan_id?: unknown; cycle?: unknown } | null;
+  if (
+    typeof row?.plan_id === 'string' &&
+    row.plan_id &&
+    (row.cycle === 'month' || row.cycle === 'year')
+  ) {
+    return { planId: row.plan_id, cycle: row.cycle };
+  }
   return none;
 }
 

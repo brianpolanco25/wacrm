@@ -26,6 +26,7 @@ interface Db {
   subscriptions: Row[];
   checkout_intents: Row[];
   billing_events: Row[];
+  plan_provider_history: Row[];
 }
 
 interface QueryLog {
@@ -64,6 +65,8 @@ function freshDb(): Db {
     subscriptions: [],
     checkout_intents: [],
     billing_events: [],
+    // Migration 070: PayPal ids a plan has had (s9.3).
+    plan_provider_history: [],
   };
 }
 
@@ -863,6 +866,60 @@ describe('the other five events', () => {
     expect(accountOf(ACCOUNT_A)).toMatchObject({
       current_period_end: '2027-03-21T00:00:00.000Z',
     });
+  });
+
+  it('resolves a PayPal plan the panel superseded, through the history (s9.3)', async () => {
+    // After a price change the operator's sync points `plans` at a new
+    // PayPal plan; this subscriber stays on the old one (decision 5), and
+    // its events must still land.
+    db.plan_provider_history.push({
+      id: 'h-old',
+      plan_id: 'negocio',
+      cycle: 'year',
+      provider: 'paypal',
+      provider_env: 'sandbox',
+      provider_plan_id: 'P-NEGOCIO-YEAR-OLD',
+      price_usd: 1990,
+      replaced_at: '2026-03-01T00:00:00.000Z',
+    });
+
+    const res = await post({
+      id: 'WH-updated-archived',
+      event_type: 'BILLING.SUBSCRIPTION.UPDATED',
+      create_time: '2026-03-20T00:00:00Z',
+      resource: {
+        id: 'I-1',
+        status: 'ACTIVE',
+        plan_id: 'P-NEGOCIO-YEAR-OLD',
+        billing_info: { next_billing_time: '2027-03-20T00:00:00Z' },
+      },
+    });
+
+    expect(await res.json()).not.toMatchObject({ status: 'unmatched' });
+    expect(accountOf(ACCOUNT_A)).toMatchObject({
+      plan_id: 'negocio',
+      cycle: 'year',
+      current_period_end: '2027-03-20T00:00:00.000Z',
+    });
+  });
+
+  it('does not resolve a superseded id recorded for the other PayPal environment', async () => {
+    db.plan_provider_history.push({
+      id: 'h-live',
+      plan_id: 'negocio',
+      cycle: 'year',
+      provider: 'paypal',
+      provider_env: 'live',
+      provider_plan_id: 'P-LIVE-ONLY',
+    });
+    const res = await post({
+      id: 'WH-updated-live',
+      event_type: 'BILLING.SUBSCRIPTION.UPDATED',
+      create_time: '2026-03-20T00:00:00Z',
+      resource: { id: 'I-1', plan_id: 'P-LIVE-ONLY' },
+    });
+    expect(await res.json()).toMatchObject({ status: 'unmatched' });
+    expect(accountOf(ACCOUNT_A)).toMatchObject({ plan_id: 'pro' });
   });
 
   it('refuses an update naming a PayPal plan our catalogue does not have', async () => {
