@@ -112,6 +112,37 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
   });
 });
 
+describe("middleware — /platform is a protected page (s9.1)", () => {
+  it.each([
+    "/platform",
+    "/platform/accounts",
+    "/platform/plans",
+    "/platform/operators",
+    "/platform/aaaaaaaa-0000-4000-8000-000000000001",
+  ])("redirects %s to /login without a session", async (path) => {
+    mockUser = null;
+    const res = await middleware(new NextRequest(`https://app.test${path}`));
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/login");
+  });
+
+  it("lets a signed-in user through (the page decides, with a 404)", async () => {
+    mockUser = { id: "user-1" };
+    const res = await middleware(
+      new NextRequest("https://app.test/platform/accounts"),
+    );
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("does not turn /api/platform/* into a redirect", async () => {
+    mockUser = null;
+    const res = await middleware(
+      new NextRequest("https://app.test/api/platform/me"),
+    );
+    expect(res.headers.get("location")).toBeNull();
+  });
+});
+
 // ============================================================
 // A support session is read-only, everywhere.
 //

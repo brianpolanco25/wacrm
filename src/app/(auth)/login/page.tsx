@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AuthCard } from '@/components/auth/auth-card';
+import { postLoginDestination } from '@/lib/auth/post-login';
 
 // `useSearchParams` opts the component out of static prerendering
 // unless it sits under a Suspense boundary. We split the form into
@@ -74,10 +75,9 @@ function LoginPageInner() {
     // back to /login — which looks like the page "just refreshing"
     // instead of signing in (issue #365). Mirrors the deliberate full
     // reload the invite-accept flow already uses in join/[token].
-    const destination = inviteToken
-      ? `/join/${encodeURIComponent(inviteToken)}`
-      : '/dashboard';
-    window.location.href = destination;
+    // s9.1: a platform operator lands on their panel, not on the CRM of
+    // their own tenant account (which stays one click away).
+    window.location.href = await postLoginDestination(inviteToken);
   };
 
   return (
