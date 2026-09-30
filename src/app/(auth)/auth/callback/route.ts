@@ -25,19 +25,29 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams,
     supabase.auth
   );
-  // Same host the request came in on — as the middleware's own
-  // redirects do — because the cookies just written belong to it.
   // `path` is already a checked same-origin path; checked again here so
   // no future branch of resolveCallback can turn this into a way off
   // the site.
   const safe = isSameOriginPath(path) ? path : '/dashboard';
-  const target = new URL(safe, request.nextUrl.origin);
-  const url = request.nextUrl.clone();
-  url.pathname = target.pathname;
-  url.search = target.search;
-  const response = NextResponse.redirect(url);
-  // The response carries fresh session cookies: no shared cache may
-  // keep it, whatever the catch-all rule in next.config.ts says.
-  response.headers.set('Cache-Control', 'private, no-store');
+  // RELATIVE `Location`, built by hand. In a Route Handler
+  // `request.nextUrl` carries the host the server LISTENS on (the
+  // standalone server binds `HOSTNAME`), not the one the browser used,
+  // so an absolute URL built from it sent every email link to
+  // `localhost` behind the proxy — and the cookies just written, which
+  // belong to the real domain, with it. `NextResponse.redirect` only
+  // takes an absolute URL. A relative one trusts no Host or
+  // X-Forwarded-* header: the browser resolves it against the address
+  // it is on, keeping the fragment (Fetch standard). The session
+  // cookies written through `cookies()` are merged into this response
+  // by Next all the same.
+  const response = new NextResponse(null, {
+    status: 307,
+    headers: {
+      Location: safe,
+      // Fresh session cookies ride on this response: no shared cache
+      // may keep it (next.config.ts sets the same for /auth/*).
+      'Cache-Control': 'private, no-store',
+    },
+  });
   return response;
 }
