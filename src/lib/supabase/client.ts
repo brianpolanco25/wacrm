@@ -1,16 +1,19 @@
-import { createBrowserClient } from '@supabase/ssr'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import { createBrowserClient } from '@supabase/ssr';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
   supportFlagAccountId,
   supportFlagValue,
-} from '@/lib/auth/support-cookie'
-import { SUPPORT_WRITABLE_TABLES } from '@/lib/auth/support-scope'
+} from '@/lib/auth/support-cookie';
+import {
+  SUPPORT_READ_RPCS,
+  SUPPORT_WRITABLE_TABLES,
+} from '@/lib/auth/support-scope';
 
 // Singleton instance — one client shared across the whole browser session.
 // Creating multiple clients causes auth-lock contention ("Lock was released
 // because another request stole it") and intermittent fetch failures.
-let browserClient: SupabaseClient | undefined
+let browserClient: SupabaseClient | undefined;
 
 // ------------------------------------------------------------
 // What a support session may write from the browser
@@ -35,9 +38,10 @@ let browserClient: SupabaseClient | undefined
 //     …): the RLS refuses the customer's rows, but `profiles` and
 //     `notifications` are keyed by `auth.uid()` and would quietly write the
 //     OPERATOR'S OWN rows under the customer's banner;
-//   - `rpc()`: the functions in this schema are SECURITY DEFINER almost
-//     without exception and resolve the account from `auth.uid()` — the
-//     operator's company;
+//   - `rpc()`, except the read-only functions in `SUPPORT_READ_RPCS`
+//     (s9.13): the rest of the functions in this schema are SECURITY
+//     DEFINER almost without exception and resolve the account from
+//     `auth.uid()` — the operator's company;
 //   - `storage` writes: the bucket policies were not widened (057/072), so
 //     an upload would go to the operator's own prefix or fail half-way.
 //
@@ -48,12 +52,7 @@ let browserClient: SupabaseClient | undefined
 // ------------------------------------------------------------
 
 /** Query-builder methods that write. */
-const WRITE_OPS = new Set([
-  'insert',
-  'update',
-  'upsert',
-  'delete',
-])
+const WRITE_OPS = new Set(['insert', 'update', 'upsert', 'delete']);
 
 /**
  * Storage operations that only READ, and therefore stay open during a
@@ -79,20 +78,20 @@ const STORAGE_READS = new Set([
   'list',
   'exists',
   'info',
-])
+]);
 
 export const SUPPORT_REFUSED_ERROR = {
   message:
-    'Not available during a support session: it would change the operator\'s own profile, the account itself, or run outside the audit trail',
+    "Not available during a support session: it would change the operator's own profile, the account itself, or run outside the audit trail",
   code: 'support_session_forbidden',
   details: '',
   hint: 'Exit the support session from the banner at the top of the page.',
-}
+};
 
 /** True when the server has flagged this browser as inside a support session. */
 export function supportSessionActive(): boolean {
-  if (typeof document === 'undefined') return false
-  return supportFlagValue(document.cookie) !== null
+  if (typeof document === 'undefined') return false;
+  return supportFlagValue(document.cookie) !== null;
 }
 
 /**
@@ -105,8 +104,8 @@ export function supportSessionActive(): boolean {
  * operator's own account.
  */
 export function supportSessionAccountId(): string | null {
-  if (typeof document === 'undefined') return null
-  return supportFlagAccountId(document.cookie)
+  if (typeof document === 'undefined') return null;
+  return supportFlagAccountId(document.cookie);
 }
 
 /**
@@ -123,9 +122,9 @@ export function supportSessionAccountId(): string | null {
  * network is not a reason to keep somebody logged in.
  */
 export async function endSupportSession(): Promise<void> {
-  if (!supportSessionActive()) return
+  if (!supportSessionActive()) return;
   try {
-    await fetch('/api/platform/impersonate/stop', { method: 'POST' })
+    await fetch('/api/platform/impersonate/stop', { method: 'POST' });
   } catch {
     // Offline, or the session is already gone.
   }
@@ -142,25 +141,32 @@ export async function endSupportSession(): Promise<void> {
  * makes the refusal arrive through the path the code already handles.
  */
 function refusedQuery(): unknown {
-  const result = { data: null, error: SUPPORT_REFUSED_ERROR, count: null, status: 403, statusText: 'Forbidden' }
-  const target = function () {} as unknown as Record<string | symbol, unknown>
+  const result = {
+    data: null,
+    error: SUPPORT_REFUSED_ERROR,
+    count: null,
+    status: 403,
+    statusText: 'Forbidden',
+  };
+  const target = function () {} as unknown as Record<string | symbol, unknown>;
   const proxy: unknown = new Proxy(target, {
     get(_t, prop) {
       if (prop === 'then') {
-        return (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve)
+        return (resolve: (value: unknown) => unknown) =>
+          Promise.resolve(result).then(resolve);
       }
       if (prop === 'catch' || prop === 'finally') {
-        return () => proxy
+        return () => proxy;
       }
       // Every builder method (`.eq()`, `.in()`, `.select()`, …) keeps the
       // chain going and keeps refusing.
-      return () => proxy
+      return () => proxy;
     },
     apply() {
-      return proxy
+      return proxy;
     },
-  })
-  return proxy
+  });
+  return proxy;
 }
 
 /**
@@ -170,10 +176,12 @@ function refusedQuery(): unknown {
  * `from(table)` writes normally when `table` is in
  * `SUPPORT_WRITABLE_TABLES` and returns a refusing builder otherwise;
  * `storage` allows only the read operations (`createSignedUrl`,
- * `download`, …); and `rpc()` refuses outright. RPCs are blocked wholesale
- * rather than by name because they are `SECURITY DEFINER` almost without
- * exception in this schema — one would answer for the operator's own
- * account, which is the mislabelled view (or write) all over again.
+ * `download`, …); and `rpc()` runs only the functions named in
+ * `SUPPORT_READ_RPCS` and refuses every other one. It is an allow-list, not
+ * a block-list, because the functions in this schema are `SECURITY DEFINER`
+ * almost without exception — an unlisted one would answer for the
+ * operator's own account, which is the mislabelled view (or write) all
+ * over again. Only `STABLE`, `SECURITY INVOKER` reads go on the list (s9.13).
  *
  * The check runs per call, not once at construction: the client is a
  * singleton that outlives the session.
@@ -183,80 +191,85 @@ export function guardReadOnly<T extends SupabaseClient>(client: T): T {
     get(target, prop) {
       if (prop === 'from') {
         return (relation: string) => {
-          const builder = target.from(relation)
-          if (!supportSessionActive()) return builder
-          if (SUPPORT_WRITABLE_TABLES.has(relation)) return builder
+          const builder = target.from(relation);
+          if (!supportSessionActive()) return builder;
+          if (SUPPORT_WRITABLE_TABLES.has(relation)) return builder;
           return new Proxy(builder as object, {
             get(b, method, r) {
               if (typeof method === 'string' && WRITE_OPS.has(method)) {
-                return () => refusedQuery()
+                return () => refusedQuery();
               }
-              return Reflect.get(b, method, r)
+              return Reflect.get(b, method, r);
             },
-          })
-        }
+          });
+        };
       }
       if (prop === 'rpc') {
         return (...args: unknown[]) => {
-          if (!supportSessionActive()) {
-            return (target.rpc as (...a: unknown[]) => unknown)(...args)
+          if (
+            !supportSessionActive() ||
+            (typeof args[0] === 'string' && SUPPORT_READ_RPCS.has(args[0]))
+          ) {
+            return (target.rpc as (...a: unknown[]) => unknown)(...args);
           }
-          return refusedQuery()
-        }
+          return refusedQuery();
+        };
       }
       if (prop === 'storage') {
-        const storage = target.storage
+        const storage = target.storage;
         return new Proxy(storage as object, {
           get(s, member, r) {
             if (member === 'from') {
               return (bucket: string) => {
-                const api = (s as { from(b: string): object }).from(bucket)
-                if (!supportSessionActive()) return api
+                const api = (s as { from(b: string): object }).from(bucket);
+                if (!supportSessionActive()) return api;
                 return new Proxy(api, {
                   get(o, method, rr) {
                     if (
                       typeof method === 'string' &&
                       !STORAGE_READS.has(method)
                     ) {
-                      return () => refusedQuery()
+                      return () => refusedQuery();
                     }
-                    const value = Reflect.get(o, method, rr)
-                    return typeof value === 'function' ? value.bind(o) : value
+                    const value = Reflect.get(o, method, rr);
+                    return typeof value === 'function' ? value.bind(o) : value;
                   },
-                })
-              }
+                });
+              };
             }
-            const value = Reflect.get(s, member, r)
+            const value = Reflect.get(s, member, r);
             // Bucket administration (`createBucket`, `emptyBucket`, …) is
             // a write like any other, and nothing in this app calls it.
             if (typeof value === 'function') {
               return supportSessionActive()
                 ? () => refusedQuery()
-                : value.bind(s)
+                : value.bind(s);
             }
-            return value
+            return value;
           },
-        })
+        });
       }
       // Read off the real client, not through the proxy: `functions` is a
       // getter and `auth` / `realtime` reach for private state, both of
       // which want the original `this`. Methods are bound for the same
       // reason.
-      const value = (target as unknown as Record<string | symbol, unknown>)[prop]
-      return typeof value === 'function' ? value.bind(target) : value
+      const value = (target as unknown as Record<string | symbol, unknown>)[
+        prop
+      ];
+      return typeof value === 'function' ? value.bind(target) : value;
     },
-  }) as T
+  }) as T;
 }
 
 export function createClient() {
-  if (browserClient) return browserClient
+  if (browserClient) return browserClient;
 
   browserClient = guardReadOnly(
     createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
-  )
+  );
 
-  return browserClient
+  return browserClient;
 }

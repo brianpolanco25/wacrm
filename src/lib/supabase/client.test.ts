@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ============================================================
 // What the browser client may write during a support session.
@@ -49,9 +51,12 @@ vi.mock('@supabase/ssr', () => ({
         Promise.resolve({ data: [{ id: 'row-1' }], error: null }).then(resolve);
       return builder;
     },
-    rpc(name: string) {
-      h.reached.push(`rpc:${name}`);
-      return Promise.resolve({ data: null, error: null });
+    // Reads `this` like supabase-js does (`this.rest.rpc(…)`), so a guard
+    // that called it unbound would fail here and not only in a browser.
+    rpcTag: 'rpc',
+    rpc(this: { rpcTag: string }, name: string) {
+      h.reached.push(`${this.rpcTag}:${name}`);
+      return Promise.resolve({ data: [], error: null });
     },
     auth: {
       getUser: async () => ({ data: { user: { id: 'operator-1' } } }),
@@ -91,12 +96,24 @@ vi.mock('@supabase/ssr', () => ({
 }));
 
 const { SUPPORT_ACTIVE_COOKIE } = await import('@/lib/auth/support-cookie');
+const { SUPPORT_BLOCKED_RPCS, SUPPORT_READ_RPCS } =
+  await import('@/lib/auth/support-scope');
 const {
   createClient,
   endSupportSession,
   supportSessionAccountId,
   supportSessionActive,
 } = await import('./client');
+
+const SRC = path.join(process.cwd(), 'src');
+const MIGRATIONS = path.join(process.cwd(), 'supabase', 'migrations');
+const CONTACTS_PAGE = path.join(
+  SRC,
+  'app',
+  '(dashboard)',
+  'contacts',
+  'page.tsx'
+);
 
 /** The account a support session names — the flag cookie's value. */
 const CUSTOMER = 'bbbbbbbb-0000-4000-8000-00000000000b';
@@ -222,19 +239,76 @@ describe('the browser client during a support session', () => {
     expect(h.reached).toEqual([]);
   });
 
-  it('refuses rpc wholesale', async () => {
-    // Nearly every function in this schema is SECURITY DEFINER; a
-    // "read-only" one would still answer for the operator's own account,
-    // which is the mislabelled view all over again.
+  it('runs filter_contacts_by_tags — a STABLE, SECURITY INVOKER read (s9.13)', async () => {
+    const supabase = createClient();
+    const { data, error } = await (supabase.rpc('filter_contacts_by_tags', {
+      p_tag_ids: ['t1'],
+      p_search: null,
+      p_limit: 25,
+      p_offset: 0,
+    }) as unknown as PromiseLike<{ data: unknown; error: unknown }>);
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+    expect(h.reached).toEqual(['rpc:filter_contacts_by_tags']);
+  });
+
+  it.each(['touch_presence', 'some_function_nobody_listed'])(
+    'refuses rpc %s — only the read-only allow-list runs',
+    async (name) => {
+      // touch_presence is SECURITY DEFINER and upserts member_presence for
+      // auth.uid(): the OPERATOR'S own presence. An unlisted name is
+      // refused by default, whatever it does.
+      const supabase = createClient();
+      const { error } = await (supabase.rpc(name, {
+        p_status: 'online',
+      }) as unknown as PromiseLike<{ error: unknown }>);
+      expect(error).toMatchObject({ code: 'support_session_forbidden' });
+      expect(h.reached).toEqual([]);
+    }
+  );
+
+  it('keeps the allow-list and the block-list apart', () => {
+    for (const name of SUPPORT_READ_RPCS) {
+      expect(SUPPORT_BLOCKED_RPCS.has(name), name).toBe(false);
+    }
+  });
+
+  it('lets the tag filter of contacts/page.tsx through, with the call the page makes', async () => {
+    // The bug s9.13 fixes: filtering contacts by tag during a session
+    // used to land on "Failed to load contacts". No jsdom here, so the
+    // call is lifted off the page itself and replayed through the client.
+    const source = fs.readFileSync(CONTACTS_PAGE, 'utf8');
+    const call =
+      /supabase\.rpc\(\s*['"`]([a-z_0-9]+)['"`]\s*,\s*\{([^}]*)\}/.exec(source);
+    expect(call, 'contacts/page.tsx no longer calls an rpc').not.toBeNull();
+    const [, name, body] = call!;
+    expect(name).toBe('filter_contacts_by_tags');
+    const args = Object.fromEntries(
+      [...body.matchAll(/(p_[a-z_]+)\s*:/g)].map((m) => [m[1], null])
+    );
+    expect(Object.keys(args)).toEqual([
+      'p_tag_ids',
+      'p_search',
+      'p_limit',
+      'p_offset',
+    ]);
+
     const supabase = createClient();
     const { error } = await (supabase.rpc(
-      'filter_contacts_by_tags',
-      {}
+      name,
+      args
     ) as unknown as PromiseLike<{
       error: unknown;
     }>);
-    expect(error).toMatchObject({ code: 'support_session_forbidden' });
-    expect(h.reached).toEqual([]);
+    expect(error).toBeNull();
+    expect(h.reached).toEqual([`rpc:${name}`]);
+
+    // The RPC takes no account; during a session RLS answers with the
+    // operator's companies too. The page keeps only the effective
+    // account's rows (see checks_support-readonly-rpcs.sql, case 5).
+    expect(source).toMatch(
+      /\.map\(\(r\) => r\.contact\)\s*\.filter\(\(c\) => c\.account_id === accountId\)/
+    );
   });
 
   it('leaves reads alone — looking is the entire point', async () => {
@@ -318,6 +392,15 @@ describe('the browser client during a support session', () => {
 });
 
 describe('the browser client with no support session', () => {
+  it('runs any rpc exactly as before', async () => {
+    const supabase = createClient();
+    const { error } = await (supabase.rpc('touch_presence', {
+      p_status: 'online',
+    }) as unknown as PromiseLike<{ error: unknown }>);
+    expect(error).toBeNull();
+    expect(h.reached).toEqual(['rpc:touch_presence']);
+  });
+
   it('writes exactly as before', async () => {
     const supabase = createClient();
     const { error } = await supabase.from('contacts').delete().in('id', ['c1']);
@@ -366,4 +449,124 @@ describe('endSupportSession', () => {
     });
     await expect(endSupportSession()).resolves.toBeUndefined();
   });
+});
+
+// ============================================================
+// s9.13 — no browser rpc goes undecided.
+//
+// The guard is an allow-list, so a new `rpc('…')` in browser code would be
+// refused during a support session without anybody having chosen that.
+// These tests make the choice explicit: every name the browser calls is in
+// SUPPORT_READ_RPCS or SUPPORT_BLOCKED_RPCS, and every name allowed is,
+// in its latest migration, a STABLE, SECURITY INVOKER function that writes
+// nothing.
+// ============================================================
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full, out);
+    else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+/** Every `.rpc(` in a file that uses the browser client, by name. */
+function browserRpcCalls(): {
+  file: string;
+  line: number;
+  name: string | null;
+}[] {
+  const found: { file: string; line: number; name: string | null }[] = [];
+  for (const file of walk(SRC)) {
+    const source = fs.readFileSync(file, 'utf8');
+    if (!source.includes('@/lib/supabase/client')) continue;
+    if (file === path.join(SRC, 'lib', 'supabase', 'client.ts')) continue;
+    // Strip comments so a doc line mentioning `rpc('x')` is not a call.
+    const code = source
+      .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
+      .replace(
+        /(^|[^:])\/\/.*$/gm,
+        (c, p) => p + ' '.repeat(c.length - p.length)
+      );
+    const re = /\.rpc\(\s*(?:(['"`])([a-z_0-9]+)\1)?/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(code))) {
+      found.push({
+        file: path.relative(process.cwd(), file),
+        line: code.slice(0, m.index).split('\n').length,
+        name: m[2] ?? null,
+      });
+    }
+  }
+  return found;
+}
+
+/** The body of the LAST migration that (re)defines `public.<name>`. */
+function latestDefinition(name: string): { file: string; sql: string } | null {
+  let latest: { file: string; sql: string } | null = null;
+  const files = fs
+    .readdirSync(MIGRATIONS)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(MIGRATIONS, file), 'utf8');
+    const re = new RegExp(
+      `CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:public\\.)?${name}\\s*\\(`,
+      'gi'
+    );
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source))) {
+      const open = source.indexOf('$$', m.index);
+      const close = source.indexOf('$$', open + 2);
+      latest = { file, sql: source.slice(m.index, close + 2) };
+    }
+  }
+  return latest;
+}
+
+describe('every rpc the browser makes is decided (s9.13)', () => {
+  const calls = browserRpcCalls();
+
+  it('finds the calls it is meant to police', () => {
+    const names = calls.map((c) => c.name);
+    expect(names).toContain('filter_contacts_by_tags');
+    expect(names).toContain('touch_presence');
+  });
+
+  it('names each function literally, so it can be decided', () => {
+    const dynamic = calls.filter((c) => c.name === null);
+    expect(dynamic, JSON.stringify(dynamic)).toEqual([]);
+  });
+
+  it('puts each one in SUPPORT_READ_RPCS or SUPPORT_BLOCKED_RPCS', () => {
+    const undecided = calls.filter(
+      (c) =>
+        c.name !== null &&
+        !SUPPORT_READ_RPCS.has(c.name) &&
+        !SUPPORT_BLOCKED_RPCS.has(c.name)
+    );
+    expect(undecided, JSON.stringify(undecided)).toEqual([]);
+  });
+
+  it.each([...SUPPORT_READ_RPCS])(
+    'allows %s only because its latest migration is a STABLE, SECURITY INVOKER read',
+    (name) => {
+      const def = latestDefinition(name);
+      expect(
+        def,
+        `${name} is not defined in supabase/migrations`
+      ).not.toBeNull();
+      const header = def!.sql.slice(0, def!.sql.indexOf('$$'));
+      const body = def!.sql.slice(def!.sql.indexOf('$$'));
+      expect(header, def!.file).toMatch(/\bSTABLE\b/i);
+      expect(header, def!.file).toMatch(/\bSECURITY\s+INVOKER\b/i);
+      expect(header, def!.file).not.toMatch(/\bSECURITY\s+DEFINER\b/i);
+      expect(body, def!.file).not.toMatch(
+        /\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/i
+      );
+    }
+  );
 });

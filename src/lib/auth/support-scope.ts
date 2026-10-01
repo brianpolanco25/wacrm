@@ -84,6 +84,52 @@ export const SUPPORT_REFUSED_TABLES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Database functions the BROWSER may call during a support session (s9.13).
+ *
+ * The browser's `rpc()` goes straight to PostgREST with the OPERATOR'S own
+ * JWT, like every other browser query, so a function only belongs here
+ * when all of this holds in its latest migration:
+ *
+ *   - `STABLE` and only `SELECT`s — it writes nothing, so there is nothing
+ *     for the 072 audit trail to miss;
+ *   - `SECURITY INVOKER` — it runs under the caller's RLS, i.e. the SELECT
+ *     policies 057 widened to "my accounts OR the one I am supporting".
+ *     A `SECURITY DEFINER` function resolves the account from `auth.uid()`
+ *     (the operator's company) or from an argument it trusts, and would
+ *     answer for the wrong company under the customer's banner;
+ *   - its call site narrows the answer to the effective account.
+ *
+ *   filter_contacts_by_tags   025/060. `LANGUAGE sql STABLE SECURITY
+ *                             INVOKER`. Takes no account: RLS on `contacts`
+ *                             and `contact_tags` decides, and the contacts
+ *                             page only ever passes tag ids it loaded with
+ *                             `.eq('account_id', accountId)` (and prunes
+ *                             the rest), so a match has to carry one of the
+ *                             effective account's tags.
+ *
+ * `client.test.ts` checks every entry against its migration and requires
+ * every `rpc('…')` in browser code to be named here or in
+ * `SUPPORT_BLOCKED_RPCS`.
+ */
+export const SUPPORT_READ_RPCS: ReadonlySet<string> = new Set([
+  'filter_contacts_by_tags',
+]);
+
+/**
+ * Database functions the browser calls that stay refused during a support
+ * session. Anything not in `SUPPORT_READ_RPCS` is refused anyway; this list
+ * exists so that a NEW `rpc('…')` in browser code fails a test until
+ * somebody decides which side it goes on.
+ *
+ *   touch_presence   024. `plpgsql SECURITY DEFINER`, upserts
+ *                    `member_presence` for `auth.uid()`: the OPERATOR'S own
+ *                    presence, in the operator's own company.
+ */
+export const SUPPORT_BLOCKED_RPCS: ReadonlySet<string> = new Set([
+  'touch_presence',
+]);
+
+/**
  * Request headers the middleware sets on a mutating request that carries a
  * support cookie, so that `resolveSupportSession` can record it. The
  * middleware ALWAYS strips whatever the client sent under these names

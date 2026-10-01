@@ -35,7 +35,7 @@ export interface HeartbeatEnv {
  * known yet, or while a support session is open (s9.12). During a session
  * `touch_presence` would stamp the OPERATOR as present in their own
  * company (it resolves the account from `auth.uid()`), and the browser
- * client refuses every `rpc()` in a session anyway (`guardReadOnly`): the
+ * client refuses it in a session anyway (`SUPPORT_BLOCKED_RPCS`): the
  * only thing beating would achieve is a `console.error` every 30 seconds.
  */
 export function startPresenceHeartbeat(

@@ -164,7 +164,15 @@ export default function ContactsPage() {
         return;
       }
       const rows = (data ?? []) as { contact: Contact; total_count: number }[];
-      contactRows = rows.map((r) => r.contact);
+      // The RPC takes no account: RLS and the tag ids (all this
+      // account's, see fetchTags) narrow it. During a support session RLS
+      // also answers with the operator's own companies, and contact_tags
+      // only checks the contact's account, so a contact of theirs linked
+      // to one of these tag ids would come back too. Drop it here rather
+      // than show it under the customer's banner (s9.13).
+      contactRows = rows
+        .map((r) => r.contact)
+        .filter((c) => c.account_id === accountId);
       count = rows.length > 0 ? Number(rows[0].total_count) : 0;
     } else {
       let query = supabase

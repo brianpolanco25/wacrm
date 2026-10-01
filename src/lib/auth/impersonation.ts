@@ -46,7 +46,8 @@
 //     below records (`impersonation_actions`, source 'http') before the
 //     route may act;
 //   - `@/lib/supabase/client`: the browser client refuses writes to the
-//     tables 072 keeps closed, rpc and storage, which is what stops an
+//     tables 072 keeps closed, every rpc but the read-only ones in
+//     `SUPPORT_READ_RPCS`, and storage, which is what stops an
 //     operator from editing their OWN profile or company by mistake under
 //     the customer's banner.
 //
