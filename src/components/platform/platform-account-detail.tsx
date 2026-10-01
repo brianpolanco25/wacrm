@@ -6,12 +6,14 @@
 // impersonate for support.
 //
 // The impersonation button does NOT reimplement f4.4: it posts to
-// `/api/platform/impersonate` with the same mandatory reason and then
-// reloads, which is when the session banner takes over.
+// `/api/platform/impersonate` and then reloads, which is when the session
+// banner takes over.
 //
-// Both acts ask for a reason in the same prompt-and-refuse shape,
-// because both write the same line of the same bitácora and neither is
-// allowed to happen without one.
+// Both acts share the reason field, but only one of them requires it
+// (s9.12): suspending or reactivating stays disabled until the reason
+// reaches the minimum, while opening a support session is always
+// available — with the field empty the bitácora records the fixed
+// `DEFAULT_SUPPORT_REASON`, and a short reason is refused by the route.
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react';
@@ -218,13 +220,17 @@ export function PlatformAccountDetail({
   );
 
   const impersonate = useCallback(async () => {
-    if (shortReason) return;
     setBusy(true);
     try {
       const res = await fetch('/api/platform/impersonate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ account_id: accountId, reason: reason.trim() }),
+        // An empty reason is left out: the route records the default text.
+        body: JSON.stringify(
+          reason.trim()
+            ? { account_id: accountId, reason: reason.trim() }
+            : { account_id: accountId }
+        ),
       });
       const body = (await res.json().catch(() => null)) as {
         error?: string;
@@ -239,7 +245,7 @@ export function PlatformAccountDetail({
     } finally {
       setBusy(false);
     }
-  }, [accountId, reason, shortReason, t]);
+  }, [accountId, reason, t]);
 
   if (screen === 'loading') {
     return (
@@ -348,7 +354,7 @@ export function PlatformAccountDetail({
             <Button
               size="sm"
               variant="outline"
-              disabled={busy || shortReason}
+              disabled={busy}
               onClick={impersonate}
             >
               <UserRoundSearch className="size-4" />

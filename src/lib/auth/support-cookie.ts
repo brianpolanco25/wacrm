@@ -121,6 +121,20 @@ export const SUPPORT_SESSION_TTL_MS = 30 * 60 * 1000;
 export const MIN_REASON_LENGTH = 10;
 
 /**
+ * What `impersonation_log.reason` says when the operator opened a support
+ * session without writing one (s9.12). Opening a session no longer demands
+ * a reason — the row still records actor, account, moment and expiry, which
+ * is the part of the bitácora that cannot be faked — but the column keeps
+ * its CHECK (`char_length(btrim(reason)) >= 10`, migrations 055/058), so the
+ * route fills it with this fixed text instead of leaving it empty.
+ *
+ * Suspending, reactivating, assigning a plan, inviting members and
+ * granting or revoking operators still require a real reason.
+ */
+export const DEFAULT_SUPPORT_REASON =
+  'Acceso del operador desde la consola de plataforma';
+
+/**
  * The actor named inside a support token, WITHOUT verifying its signature,
  * or `null` if the token is not even shaped like one.
  *

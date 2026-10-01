@@ -112,6 +112,15 @@ interface AuthContextValue {
   /** Underlying message when `accountStatus` is 'error' / 'unlinked'. */
   accountStatusDetail: string | null;
   /**
+   * True while this browser is inside a support session (the server set
+   * the support flag cookie). Effects that write the OPERATOR'S own rows
+   * on their own — the presence heartbeat — check it and stand down: the
+   * browser client refuses those writes during a session anyway
+   * (`guardReadOnly`), and letting them try only fills the console with
+   * errors nobody can act on (s9.12).
+   */
+  supportSession: boolean;
+  /**
    * Account the panel is looking at. The current user's own, except
    * during a support session, when it is the impersonated one — every
    * browser query filters by this, because since migration 057 RLS no
@@ -593,6 +602,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canManageMembers: role ? canManageMembersFor(role) : false,
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
+      supportSession: supportFlag !== null,
     };
   }, [profile?.account_role, effectiveAccount, supportFlag]);
 
@@ -668,6 +678,7 @@ export function useAuth(): AuthContextValue {
       canManageMembers: false,
       canEditSettings: false,
       canSendMessages: false,
+      supportSession: false,
     };
   }
   return ctx;

@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { toErrorResponse } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/auth/admin-client';
 import {
+  DEFAULT_SUPPORT_REASON,
   MIN_REASON_LENGTH,
   SUPPORT_SESSION_TTL_MS,
   clearSupportCookie,
@@ -86,8 +87,12 @@ export async function GET() {
 /**
  * POST /api/platform/impersonate — open a support session.
  *
- * Body: `{ account_id, reason }`. The reason is mandatory and has a
- * minimum length: it is the column that makes the bitácora worth keeping.
+ * Body: `{ account_id, reason? }`. The reason is optional (s9.12): when it
+ * is missing or blank the row records `DEFAULT_SUPPORT_REASON`, so the
+ * bitácora still says who opened what, when, and until when. A reason that
+ * IS written must still reach the minimum length — three letters in that
+ * column read like an explanation and explain nothing, which is worse than
+ * the honest default.
  */
 export async function POST(request: Request) {
   let ctx;
@@ -110,15 +115,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
-  if (reason.length < MIN_REASON_LENGTH) {
+  const written = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (written.length > 0 && written.length < MIN_REASON_LENGTH) {
     return NextResponse.json(
       {
-        error: `reason is required and must be at least ${MIN_REASON_LENGTH} characters`,
+        error: `reason, when given, must be at least ${MIN_REASON_LENGTH} characters`,
       },
       { status: 400 }
     );
   }
+  const reason = written || DEFAULT_SUPPORT_REASON;
 
   const admin = supabaseAdmin();
 

@@ -11,6 +11,11 @@ and polish.
 
 ## [Unreleased]
 
+### Platform console: support sessions without a reason
+
+- Opening a support session from an account's file no longer requires a reason: left empty, the audit log records "Acceso del operador desde la consola de plataforma". A reason that is written must still be at least 10 characters. Suspending, reactivating and assigning a plan still require one.
+- During a support session the CRM no longer reports the operator's presence, so the console stops logging `touch_presence` errors every 30 seconds.
+
 ### Platform console: shell fixes
 
 - `/platform` no longer scrolls the whole page or clips the sidebar: the weekly sign-ups chart's screen-reader table stayed outside the shell.

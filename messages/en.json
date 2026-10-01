@@ -2051,7 +2051,7 @@
     "actions": "Operator actions",
     "reasonLabel": "Reason",
     "reasonPlaceholder": "Ticket 88: chargebacks on three invoices",
-    "reasonHelp": "Required, at least {min} characters. It is recorded with your name and the moment, and it cannot be edited afterwards.",
+    "reasonHelp": "Required to suspend or reactivate the account, at least {min} characters. Optional to open a support session: left empty, a fixed text is recorded. It is kept with your name and the moment, and it cannot be edited afterwards.",
     "suspend": "Suspend this account",
     "reactivate": "Lift the suspension",
     "impersonate": "Open a support session",

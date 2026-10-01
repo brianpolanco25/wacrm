@@ -60,6 +60,7 @@ import { unstable_rethrow } from 'next/navigation';
 
 import { isPlatformAdmin } from './platform-admins';
 import {
+  DEFAULT_SUPPORT_REASON,
   MIN_REASON_LENGTH,
   SUPPORT_ACTIVE_COOKIE,
   SUPPORT_COOKIE,
@@ -73,6 +74,7 @@ import {
 } from './support-actions';
 
 export {
+  DEFAULT_SUPPORT_REASON,
   MIN_REASON_LENGTH,
   SUPPORT_ACTIVE_COOKIE,
   SUPPORT_COOKIE,

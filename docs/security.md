@@ -444,10 +444,25 @@ remote project.
 
 ### What a support session is
 
-`POST /api/platform/impersonate` with `{ account_id, reason }` opens one.
-The reason is mandatory and has a minimum length — it is the column that
-makes the audit trail worth keeping. Every open and every close is a row
-in `impersonation_log`.
+`POST /api/platform/impersonate` with `{ account_id, reason? }` opens one.
+Every open and every close is a row in `impersonation_log`, with actor,
+account, moment and expiry.
+
+The reason is **optional** since s9.12. When the operator leaves it out
+(or sends it blank), the row records the fixed text
+`Acceso del operador desde la consola de plataforma`
+(`DEFAULT_SUPPORT_REASON` in `src/lib/auth/support-cookie.ts`), which
+satisfies the `char_length(btrim(reason)) >= 10` CHECK of migrations
+055/058 without touching them. A reason that **is** written must still
+reach the minimum length (`MIN_REASON_LENGTH`, 10): a three-letter
+reason reads like an explanation and explains nothing, so the route
+answers 400. Suspending or reactivating an account, assigning a plan by
+hand and granting or revoking operators still require a real reason.
+
+While a session is open the CRM's own background writes stand down:
+`PresenceHeartbeat` does not call `touch_presence` (it would mark the
+**operator** present in their own company, and the browser guard below
+refuses every `rpc()` anyway).
 
 A session lasts 30 minutes. Since s9.5 (migration 072) it **writes**: the
 operator acts for the customer with the effective role **`admin`** — never

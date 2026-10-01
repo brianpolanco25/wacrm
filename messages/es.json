@@ -2051,7 +2051,7 @@
     "actions": "Acciones del operador",
     "reasonLabel": "Motivo",
     "reasonPlaceholder": "Ticket 88: contracargos en tres facturas",
-    "reasonHelp": "Obligatorio, al menos {min} caracteres. Se guarda con tu nombre y el momento, y después no se puede editar.",
+    "reasonHelp": "Obligatorio para suspender o reactivar la cuenta, al menos {min} caracteres. Opcional para abrir una sesión de soporte: si lo dejas vacío se registra un texto fijo. Se guarda con tu nombre y el momento, y después no se puede editar.",
     "suspend": "Suspender esta cuenta",
     "reactivate": "Levantar la suspensión",
     "impersonate": "Abrir una sesión de soporte",

@@ -161,8 +161,13 @@ vi.mock('@/lib/auth/admin-client', () => ({
 
 const { GET, POST } = await import('./route');
 const { POST: STOP } = await import('./stop/route');
-const { SUPPORT_ACTIVE_COOKIE, SUPPORT_COOKIE, verifySupportSession } =
-  await import('@/lib/auth/impersonation');
+const {
+  DEFAULT_SUPPORT_REASON,
+  MIN_REASON_LENGTH,
+  SUPPORT_ACTIVE_COOKIE,
+  SUPPORT_COOKIE,
+  verifySupportSession,
+} = await import('@/lib/auth/impersonation');
 
 const OPERATOR = '11111111-1111-4111-8111-111111111111';
 const PLAIN_OWNER = '22222222-2222-4222-8222-222222222222';
@@ -241,21 +246,42 @@ describe('the platform prefix is closed to everyone but platform admins', () => 
 // ============================================================
 
 describe('POST /api/platform/impersonate', () => {
-  it('refuses without a reason', async () => {
+  it('opens a session without a reason and records the default text', async () => {
+    // s9.12: the reason is optional. The row still names actor, account,
+    // moment and expiry; the column gets the fixed text, which satisfies
+    // the CHECK of migrations 055/058.
     const res = await POST(req({ account_id: ACCOUNT_A }));
-    expect(res.status).toBe(400);
-    expect(h.log).toEqual([]);
+    expect(res.status).toBe(200);
+    expect(logRows()).toHaveLength(1);
+    expect(logRows()[0].reason).toBe(DEFAULT_SUPPORT_REASON);
+    expect(logRows()[0].actor_user_id).toBe(OPERATOR);
+    expect(h.cookies.has(SUPPORT_COOKIE)).toBe(true);
   });
 
-  it('refuses a reason too short to mean anything', async () => {
-    // "ok" in the reason column is the same as no audit trail at all.
+  it('treats a blank or null reason as no reason', async () => {
+    await POST(req({ account_id: ACCOUNT_A, reason: '          ' }));
+    await POST(req({ account_id: ACCOUNT_B, reason: null }));
+    expect(logRows().map((r) => r.reason)).toEqual([
+      DEFAULT_SUPPORT_REASON,
+      DEFAULT_SUPPORT_REASON,
+    ]);
+  });
+
+  it('keeps the default text long enough for the CHECK of migration 055', () => {
+    expect(DEFAULT_SUPPORT_REASON.trim().length).toBeGreaterThanOrEqual(
+      MIN_REASON_LENGTH
+    );
+  });
+
+  it('refuses a written reason too short to mean anything', async () => {
+    // "ok" in the reason column reads like an explanation and explains
+    // nothing: worse than the honest default.
     const res = await POST(req({ account_id: ACCOUNT_A, reason: 'ok' }));
     expect(res.status).toBe(400);
-    const res2 = await POST(
-      req({ account_id: ACCOUNT_A, reason: '          ' })
-    );
+    const res2 = await POST(req({ account_id: ACCOUNT_A, reason: '  abc  ' }));
     expect(res2.status).toBe(400);
     expect(h.log).toEqual([]);
+    expect(h.cookies.has(SUPPORT_COOKIE)).toBe(false);
   });
 
   it('refuses a missing or malformed account_id', async () => {
