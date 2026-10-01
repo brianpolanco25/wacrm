@@ -11,6 +11,12 @@ and polish.
 
 ## [Unreleased]
 
+### Pricing: what Cabbity charges and what Meta charges
+
+- New public page `/precios` (no sign-in, `?lang=es|en`), linked from the login page: the Inicio, Pro and Negocio plans with what each includes, what Cabbity charges (the plan) and what Meta charges separately and directly (each delivered WhatsApp message by category and country), Meta's free service messages (1,000 per number and month since 2026-10-01, so 3,000 with Negocio's 3 numbers), the 72-hour free window, the Dominican Republic example rate, the payment method Meta needs, and an FAQ.
+- The plan picker (`/billing` and onboarding) words messages, AI replies and broadcast recipients as included in the plan, lists the plan's WhatsApp numbers with Meta's free service messages for them, and notes that Meta charges separately, with a link to `/precios`.
+- The usage section of the subscription and the `quota_exceeded` API error now say what happens when the included amount is used up (that kind of send pauses until the next cycle; a bigger plan includes more). Nothing changes in what is blocked.
+
 ### WhatsApp: payment method in Meta
 
 - **Migration required: `079_meta_payment_status.sql`.** Adds `meta_payment_status` (`ok` | `missing` | `unknown`), `meta_payment_checked_at` and `meta_payment_error` to `whatsapp_config`, a partial index for the sweep, and a trigger that keeps a browser session from writing those columns (only the server does) and resets them when the WABA or the token is changed from Settings. On the hosted project it can be applied before 075–078 only with `supabase db push --include-all`.

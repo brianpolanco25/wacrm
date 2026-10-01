@@ -15,13 +15,19 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import Link from 'next/link';
+import { useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { Check, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { RequireRole } from '@/components/auth/require-role';
+import {
+  formatCount,
+  META_FREE_SERVICE_PER_NUMBER,
+  metaFreeServiceFor,
+} from '@/lib/billing/public-plans';
 import { cn } from '@/lib/utils';
 
 type Cycle = 'month' | 'year';
@@ -49,6 +55,54 @@ const LIMIT_KEY: Record<(typeof SHOWN_LIMITS)[number], string> = {
   ai_replies: 'limitAiReplies',
   broadcast_recipients: 'limitBroadcastRecipients',
 };
+
+/**
+ * The plan's WhatsApp numbers and, next to them, what Meta delivers free
+ * on that many numbers (p11.2): the allowance is per number, so Negocio's
+ * three numbers are three times Inicio's one. Meta's charges are not part
+ * of the plan — the note under the grid says so and links `/precios`.
+ */
+function NumbersLines({ value }: { value: number | null | undefined }) {
+  const t = useTranslations('Billing');
+  const locale = useLocale();
+  if (value === null || value === undefined) {
+    return (
+      <li className="flex items-start gap-2">
+        <Check
+          className="text-primary mt-0.5 h-4 w-4 flex-shrink-0"
+          aria-hidden
+        />
+        <span>{t('limitNumbersUnlimited')}</span>
+      </li>
+    );
+  }
+  return (
+    <>
+      <li className="flex items-start gap-2">
+        <Check
+          className="text-primary mt-0.5 h-4 w-4 flex-shrink-0"
+          aria-hidden
+        />
+        <span>{t('limitNumbers', { count: value })}</span>
+      </li>
+      {value > 0 && (
+        <li className="flex items-start gap-2">
+          <Check
+            className="text-primary mt-0.5 h-4 w-4 flex-shrink-0"
+            aria-hidden
+          />
+          <span>
+            {t('metaFreeService', {
+              numbers: value,
+              free: formatCount(metaFreeServiceFor(value), locale),
+              perNumber: formatCount(META_FREE_SERVICE_PER_NUMBER, locale),
+            })}
+          </span>
+        </li>
+      )}
+    </>
+  );
+}
 
 export function PlanPicker() {
   const t = useTranslations('Billing');
@@ -192,6 +246,7 @@ export function PlanPicker() {
                         </li>
                       );
                     })}
+                    <NumbersLines value={plan.limits?.numbers} />
                   </ul>
 
                   <RequireRole
@@ -220,6 +275,15 @@ export function PlanPicker() {
         </div>
       )}
 
+      <p className="text-muted-foreground text-xs">
+        {t('metaNote')}{' '}
+        <Link
+          href="/precios"
+          className="text-brand-ink hover:text-brand-ink/80 font-semibold"
+        >
+          {t('metaNoteLink')}
+        </Link>
+      </p>
       <p className="text-muted-foreground text-xs">{t('taxNote')}</p>
     </div>
   );

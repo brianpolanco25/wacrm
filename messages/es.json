@@ -57,7 +57,8 @@
         }
       }
     },
-    "developersLink": "API para desarrolladores"
+    "developersLink": "API para desarrolladores",
+    "pricingLink": "Precios"
   },
   "Sidebar": {
     "title": "Cabbity CRM",
@@ -1950,9 +1951,12 @@
     "priceMonth": "${price} / mes",
     "priceYear": "${price} / año",
     "limitOperators": "{count} operadores",
-    "limitMessagesOut": "{count} mensajes salientes al mes",
-    "limitAiReplies": "{count} respuestas de IA al mes",
-    "limitBroadcastRecipients": "{count} destinatarios de difusión al mes",
+    "limitMessagesOut": "{count} mensajes salientes incluidos al mes",
+    "limitAiReplies": "{count} respuestas de IA incluidas al mes",
+    "limitBroadcastRecipients": "{count} destinatarios de difusión incluidos al mes",
+    "limitNumbers": "{count, plural, one {# número de WhatsApp} other {# números de WhatsApp}}",
+    "limitNumbersUnlimited": "Números de WhatsApp sin límite",
+    "metaFreeService": "{numbers, plural, one {Meta no cobra los primeros {free} mensajes de servicio del mes} other {Meta no cobra los primeros {free} mensajes de servicio del mes: {perNumber} por cada uno de los # números}}",
     "unlimited": "Sin límite",
     "choose": "Elegir plan",
     "cycleUnavailable": "Todavía no está disponible en este ciclo",
@@ -1961,6 +1965,8 @@
     "checkoutFailed": "No se pudo iniciar el pago",
     "cancelledNotice": "Pago cancelado. No se cobró nada.",
     "taxNote": "Precios en USD, impuestos no incluidos. El cambio de plan se aplica en la siguiente renovación.",
+    "metaNote": "El plan lo cobra Cabbity CRM. Los mensajes de WhatsApp los cobra Meta aparte, directamente a tu empresa, según su categoría y el país del destinatario.",
+    "metaNoteLink": "Qué cobra cada uno",
     "lockedTitle": "Esta cuenta está en solo lectura",
     "lockedBody": "Tu suscripción no está al día, así que todo el mundo en esta cuenta puede leer, pero no escribir: no se envían mensajes ni difusiones, y la IA no responde. Los mensajes entrantes de WhatsApp siguen llegando y no se borra nada. Pon la suscripción al día y todo vuelve exactamente como estaba.",
     "pastDueTitle": "Un pago no se pudo cobrar",
@@ -2007,8 +2013,8 @@
       "changePlanApproval": "PayPal necesita que apruebes el importe nuevo. Te llevamos allí ahora.",
       "changePlanRequested": "Cambio solicitado. Aparecerá aquí en cuanto PayPal lo confirme.",
       "usageTitle": "Este ciclo",
-      "usageDesc": "Se cuenta desde el día uno del mes natural. Al llegar a un límite, esa acción se bloquea hasta el ciclo siguiente o hasta que subas de plan.",
-      "usageOf": "{used} de {limit}",
+      "usageDesc": "Se cuenta desde el día uno del mes natural. Cuando usas todo lo incluido en tu plan, esa acción se pausa hasta el ciclo siguiente; si se te queda corto, cambia a un plan con más incluido (el cambio se aplica en la siguiente renovación). Los mensajes que te escriben siguen llegando.",
+      "usageOf": "{used} de {limit} incluidos",
       "usageUnlimited": "{used} · sin límite",
       "metricMessagesOut": "Mensajes salientes",
       "metricAiReplies": "Respuestas de IA",
@@ -2614,5 +2620,78 @@
     "adminOnlyTitle": "Falta contratar un plan",
     "adminOnlyBody": "Un administrador o el propietario de la cuenta tiene que elegir el plan y pagarlo con PayPal. Cuando lo haga, podrás entrar.",
     "editCompany": "Corregir los datos de la empresa"
+  },
+  "Pricing": {
+    "seoTitle": "Precios de Cabbity CRM",
+    "seoDescription": "Planes de Cabbity CRM en USD, qué incluye cada uno y cómo cobra Meta los mensajes de WhatsApp.",
+    "title": "Precios",
+    "subtitle": "A Cabbity CRM le pagas el plan, con sus mensajes incluidos. Los mensajes de WhatsApp los cobra Meta aparte, directamente a tu empresa.",
+    "priceMonth": "{price} USD / mes",
+    "priceYear": "o {price} USD al año",
+    "operators": "{count} operadores",
+    "messagesOut": "{count} mensajes salientes incluidos al mes",
+    "aiReplies": "{count} respuestas de IA incluidas al mes",
+    "broadcastRecipients": "{count} destinatarios de difusión incluidos al mes",
+    "numbers": "{count, plural, one {# número de WhatsApp} other {# números de WhatsApp}}",
+    "freeService": "{numbers, plural, one {Meta: {free} mensajes de servicio gratis al mes} other {Meta: {free} mensajes de servicio gratis al mes ({perNumber} por número)}}",
+    "freePerNumberNote": "La cuota gratis de Meta es por número: con los {numbers} números del plan son {free} mensajes de servicio gratis al mes.",
+    "includedNote": "Los mensajes incluidos son los que cubre tu plan cada mes, sin cargos extra de Cabbity CRM. Si los usas todos, ese tipo de envío se pausa hasta el mes siguiente; si se te queda corto, cambia a un plan con más incluido. Los mensajes que te escriben siguen llegando.",
+    "taxNote": "Precios en USD, impuestos no incluidos. Lo que cobra Meta por los mensajes de WhatsApp no está incluido en el plan.",
+    "signup": "Crear cuenta",
+    "login": "Entrar",
+    "who": {
+      "title": "Qué cobra Cabbity CRM y qué cobra Meta",
+      "cabbityTitle": "Cabbity CRM",
+      "cabbityBody": "La suscripción del plan (Inicio, Pro o Negocio), mensual o anual, con PayPal. Incluye el CRM, los operadores y los mensajes salientes, las respuestas de IA y los destinatarios de difusión que trae cada plan.",
+      "metaTitle": "Meta",
+      "metaBody": "Los mensajes de WhatsApp. Meta los cobra aparte, directamente a tu empresa, con el método de pago de tu cuenta de WhatsApp Business: cada mensaje entregado según su categoría (marketing, utilidad, autenticación o servicio) y el país del destinatario, a la tarifa vigente de Meta para ese país."
+    },
+    "free": {
+      "title": "Mensajes que Meta no cobra",
+      "service": "Desde el 1 de octubre de 2026, Meta no cobra los primeros 1.000 mensajes de servicio entregados al mes por cada número. Los mensajes de servicio son las respuestas que envías cuando el cliente te ha escrito; a partir del 1.001, Meta los cobra a la tarifa de utilidad.",
+      "window": "Meta tampoco cobra los mensajes enviados dentro de la ventana gratuita de 72 horas que se abre cuando un cliente te escribe desde un anuncio o un botón de WhatsApp de tu página de Facebook.",
+      "perNumber": "La cuota gratis es por número: con los 3 números del plan Negocio son 3.000 mensajes de servicio gratis al mes."
+    },
+    "example": {
+      "title": "Ejemplo: República Dominicana",
+      "body": "La República Dominicana está en el mercado «Resto de Latinoamérica» de Meta. Con la tarifa vigente el 1 de octubre de 2026, un mensaje de utilidad, o de servicio pasados los 1.000 gratis, cuesta 0,0113 USD, y uno de marketing, 0,0740 USD. Meta puede cambiar sus tarifas: se aplica siempre la vigente de Meta para tu país."
+    },
+    "payment": {
+      "title": "Método de pago en Meta",
+      "body": "Para que Meta entregue tus mensajes, tu cuenta de WhatsApp Business necesita un método de pago en el Billing Hub de Meta. Si falta, Cabbity CRM te avisa con un banner en el panel. Los mensajes que te escriben siguen llegando."
+    },
+    "faq": {
+      "title": "Preguntas frecuentes",
+      "whoCharges": {
+        "q": "¿Qué me cobra Cabbity CRM y qué me cobra Meta?",
+        "a": "Cabbity CRM te cobra la suscripción del plan, con sus mensajes incluidos. Meta te cobra aparte, directamente, cada mensaje de WhatsApp entregado según su categoría y el país del destinatario. Son dos cobros distintos."
+      },
+      "metaIncluded": {
+        "q": "¿El precio del plan incluye lo que cobra Meta?",
+        "a": "No. El precio del plan es lo que cobra Cabbity CRM. Lo que cobra Meta por los mensajes de WhatsApp va aparte y lo pagas directamente a Meta."
+      },
+      "freeQuota": {
+        "q": "¿Cuántos mensajes de Meta son gratis?",
+        "a": "Desde el 1 de octubre de 2026, los primeros 1.000 mensajes de servicio entregados al mes por cada número de WhatsApp, y los que se envían dentro de la ventana gratuita de 72 horas. El resto, según la tarifa vigente de Meta para tu país."
+      },
+      "negocio": {
+        "q": "¿Cuántos mensajes gratis de Meta tengo con el plan Negocio?",
+        "a": "La cuota gratis de Meta es por número, y el plan Negocio incluye 3 números: con los 3 conectados son 3.000 mensajes de servicio gratis al mes (1.000 por número)."
+      },
+      "rates": {
+        "q": "¿Cuánto cobra Meta por mensaje?",
+        "a": "Depende de la categoría del mensaje y del país del destinatario, según la tarifa vigente de Meta para tu país. Por ejemplo, para la República Dominicana («Resto de Latinoamérica»), el 1 de octubre de 2026: 0,0113 USD por mensaje de utilidad o de servicio (pasados los gratis) y 0,0740 USD por mensaje de marketing."
+      },
+      "paymentMethod": {
+        "q": "¿Necesito un método de pago en Meta?",
+        "a": "Sí. Tu cuenta de WhatsApp Business necesita un método de pago en el Billing Hub de Meta; sin él, Meta no entrega tus mensajes. Cabbity CRM te avisa en el panel si no lo encuentra."
+      },
+      "usedUp": {
+        "q": "¿Qué pasa si uso todos los mensajes incluidos en mi plan?",
+        "a": "Cabbity CRM no te cobra extra. Ese tipo de envío se pausa hasta que empieza el mes siguiente. Si se te queda corto, cambia a un plan con más incluido: el cambio se aplica en la siguiente renovación. Los mensajes que te escriben siguen llegando y no se pierde nada."
+      }
+    },
+    "footerTerms": "Términos",
+    "footerPrivacy": "Privacidad"
   }
 }

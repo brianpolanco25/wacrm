@@ -403,6 +403,17 @@ describe('billingErrorPayload', () => {
     expect(p?.error).toMatch(/upgrade/i);
   });
 
+  it('p11.2: words the quota as what the plan includes and says the send pauses', () => {
+    const p = billingErrorPayload(
+      new QuotaExceededError('messages_out', 3000, 3000)
+    );
+    expect(p?.error).toContain(
+      "You have used the 3000 'messages_out' included in your plan this month"
+    );
+    expect(p?.error).toMatch(/pauses until the next cycle/);
+    expect(p?.error).not.toMatch(/allowance|raise this limit/i);
+  });
+
   it('renders a stock limit', () => {
     const p = billingErrorPayload(new PlanLimitError('operators', 3, 3));
     expect(p).toMatchObject({

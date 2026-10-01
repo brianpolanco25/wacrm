@@ -192,9 +192,10 @@ export function billingErrorPayload(err: unknown): BillingErrorPayload | null {
   }
   if (err instanceof QuotaExceededError) {
     return {
-      // The acceptance criterion of §4 in one sentence: which limit was
-      // hit, and how to raise it.
-      error: `You have used ${err.used} of your ${err.limit} '${err.metric}' allowance for this month. Upgrade the plan to raise this limit.`,
+      // The acceptance criterion of §4 in one sentence: what was used up,
+      // and what happens now. p11.2: worded as what the plan includes, not
+      // as a wall — and it says the pause ends with the cycle.
+      error: `You have used the ${err.limit} '${err.metric}' included in your plan this month (${err.used} so far). This kind of send pauses until the next cycle; to get more, upgrade to a plan that includes more.`,
       code: 'quota_exceeded',
       upgradeUrl: BILLING_UPGRADE_PATH,
       metric: err.metric,
