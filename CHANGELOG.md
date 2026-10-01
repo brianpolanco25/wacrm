@@ -11,6 +11,12 @@ and polish.
 
 ## [Unreleased]
 
+### WhatsApp: free service quota per number
+
+- **Migration required: `080_service_cap.sql`.** Adds `accounts.service_cap_action` (`warn` by default, or `pause_ai`) and the `service_quota_usage()` function, executable only by the service role, that counts each number's delivered service messages of the month from `message_charges`. It goes after 075–079; on the hosted project, if it lands before 077/078, apply it with `supabase db push --include-all`.
+- Since 2026-10-01 Meta gives 1,000 free service messages per number and month and charges the rest. The inbox now shows an amber notice naming each number that used them up; Settings → WhatsApp shows each number's usage this month and a «Free Meta quota» card where admins choose between only warning or pausing the AI on that number.
+- With «Pause the number's AI», the AI stops replying on its own from a spent number until the 1st of next month (UTC) and resumes by itself. Inbound messages, agents' replies, the API, broadcasts, flows and automations are never blocked; if the count cannot be read, the AI replies as usual. Nothing changes for accounts whose Meta bill Cabbity pays (`managed`).
+
 ### WhatsApp: payment method in Meta
 
 - **Migration required: `079_meta_payment_status.sql`.** Adds `meta_payment_status` (`ok` | `missing` | `unknown`), `meta_payment_checked_at` and `meta_payment_error` to `whatsapp_config`, a partial index for the sweep, and a trigger that keeps a browser session from writing those columns (only the server does) and resets them when the WABA or the token is changed from Settings. On the hosted project it can be applied before 075–078 only with `supabase db push --include-all`.
