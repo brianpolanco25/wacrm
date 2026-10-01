@@ -84,7 +84,12 @@ vi.mock('./admin-client', () => {
       }
       if (table === 'flow_nodes') return { data: st.nodes, error: null };
       if (table === 'flows') return { data: st.flow, error: null };
-      if (table === 'messages') return { data: { id: 'msg-x' }, error: null };
+      if (table === 'messages') {
+        // Internal id derived from the wamid, so a test can tell which
+        // prompt `last_prompt_message_id` points at.
+        const wamid = filters.find(([c]) => c === 'message_id')?.[2];
+        return { data: { id: `msg:${String(wamid)}` }, error: null };
+      }
       return { data: null, error: null };
     }
 
@@ -683,6 +688,31 @@ describe('flows — un solo envío por paso (p11.4)', () => {
     expect(send.buttons).toHaveBeenCalledTimes(1);
     expect(errorReasons()).toContain('lost_race_before_reprompt');
     expect(db.state.run!.reprompt_count).toBe(1);
+  });
+
+  it('R7 a valid tap and a free text at once: the old prompt is not re-sent', async () => {
+    send.buttons.mockImplementation((async (args: { bodyText: string }) => ({
+      whatsapp_message_id: `wamid.${args.bodyText}`,
+    })) as never);
+    const [a, b] = await race(
+      () => tap('precio', 'wamid.in1'),
+      () => typed('hola', 'wamid.in2')
+    );
+    expect(a).toMatchObject({ consumed: true, outcome: 'advanced' });
+    expect(b).toEqual({
+      consumed: true,
+      flow_run_id: 'run-1',
+      outcome: 'lost_race',
+    });
+    expect(send.text).toHaveBeenCalledTimes(1); // info
+    expect(send.buttons).toHaveBeenCalledTimes(1); // ask only
+    expect(errorReasons()).toContain('lost_race_before_reprompt');
+    expect(db.state.run).toMatchObject({
+      status: 'active',
+      current_node_key: 'ask',
+      reprompt_count: 0,
+      last_prompt_message_id: 'msg:wamid.¿Algo más?',
+    });
   });
 
   it('R8 send_buttons throwing after Meta accepted, on advance: consumed, one call, run failed', async () => {

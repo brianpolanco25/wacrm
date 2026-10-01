@@ -1116,14 +1116,25 @@ async function handleReplyForActiveRun(
     (await loadFlow(db, run.flow_id, run.account_id))?.fallback_policy
   );
   const newReprompts = run.reprompt_count + 1;
-  // p11.4 (R7): conditioned on the count we read, so two non-matching
-  // replies at once re-send the prompt (or apply the policy) only once.
-  const { data: bumped, error: bumpErr } = await db
+  // p11.4 (R7): conditioned on the run as we read it — still active, on
+  // the same step (`current_node_key` + `last_advanced_at`) and with the
+  // same count — so two non-matching replies at once re-send the prompt
+  // (or apply the policy) only once, and a valid reply that claimed the
+  // step concurrently (it rewrites `reprompt_count: 0`, so the count alone
+  // would still match) makes this reprompt lose instead of re-sending the
+  // old prompt or ending the run the winner is advancing.
+  let bumpQ = db
     .from('flow_runs')
     .update({ reprompt_count: newReprompts })
     .eq('id', run.id)
+    .eq('status', 'active')
     .eq('reprompt_count', run.reprompt_count)
-    .select('id');
+    .eq('last_advanced_at', run.last_advanced_at);
+  bumpQ =
+    run.current_node_key === null
+      ? bumpQ.is('current_node_key', null)
+      : bumpQ.eq('current_node_key', run.current_node_key);
+  const { data: bumped, error: bumpErr } = await bumpQ.select('id');
   if (bumpErr || !Array.isArray(bumped) || bumped.length === 0) {
     if (bumpErr) {
       console.error('[flows] reprompt_count update error:', bumpErr.message);
