@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   INTERACTIVE_LIMITS,
+  MetaApiError,
+  getWabaFundingInfo,
   sendInteractiveButtons,
   sendInteractiveList,
   sendMediaMessage,
@@ -381,5 +383,68 @@ describe('destinatario del envío', () => {
       expect(body.recipient).toBe(recipient);
       expect(body.to).toBeUndefined();
     }
+  });
+});
+
+// p11.1 — la fuente de pago del WABA (S-M1, sin verificar). Sin red:
+// fetch mockeado.
+describe('getWabaFundingInfo', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('pide id y primary_funding_id del nodo WABA con el token en Authorization', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'waba-1', primary_funding_id: 'f-9' }),
+        }) as unknown as Response
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const signal = new AbortController().signal;
+    const body = await getWabaFundingInfo({
+      wabaId: 'waba-1',
+      accessToken: 'tok',
+      signal,
+    });
+    expect(body).toEqual({ id: 'waba-1', primary_funding_id: 'f-9' });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(
+      'https://graph.facebook.com/v21.0/waba-1?fields=id,primary_funding_id'
+    );
+    expect(init.method).toBe('GET');
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      'Bearer tok'
+    );
+    expect(init.signal).toBe(signal);
+  });
+
+  it('un error de Meta sale como MetaApiError con code y status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 403,
+            json: async () => ({
+              error: { message: '(#200) Permissions error', code: 200 },
+            }),
+          }) as unknown as Response
+      )
+    );
+    const err = await getWabaFundingInfo({
+      wabaId: 'waba-1',
+      accessToken: 'tok',
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MetaApiError);
+    expect((err as MetaApiError).code).toBe(200);
+    expect((err as MetaApiError).status).toBe(403);
+    expect((err as MetaApiError).message).toBe('(#200) Permissions error');
   });
 });

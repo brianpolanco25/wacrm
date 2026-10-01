@@ -2080,6 +2080,31 @@ BEGIN
   END IF;
   -- /076 -----------------------------------------------------------
 
+  -- 079 — estado del método de pago del WABA (p11.1) ----------------
+  IF (SELECT count(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'whatsapp_config'
+        AND column_name IN ('meta_payment_status', 'meta_payment_checked_at',
+                            'meta_payment_error')) <> 3 THEN
+    RAISE EXCEPTION 'whatsapp_config.meta_payment_* columns are missing (migration 079)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'whatsapp_config_meta_payment_status_check'
+                   AND conrelid = 'public.whatsapp_config'::regclass) THEN
+    RAISE EXCEPTION 'whatsapp_config_meta_payment_status_check is missing (migration 079)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                 WHERE schemaname = 'public'
+                   AND indexname = 'whatsapp_config_meta_payment_checked_idx') THEN
+    RAISE EXCEPTION 'whatsapp_config_meta_payment_checked_idx is missing (migration 079)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                 WHERE tgname = 'whatsapp_config_guard_meta_payment'
+                   AND tgrelid = 'public.whatsapp_config'::regclass
+                   AND NOT tgisinternal) THEN
+    RAISE EXCEPTION 'trigger whatsapp_config_guard_meta_payment is missing (migration 079)';
+  END IF;
+  -- /079 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

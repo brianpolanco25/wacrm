@@ -319,6 +319,14 @@ export interface WhatsAppConfig {
   verified_name?: string | null;
   /** User-chosen name ("Sales", "Support"). Migration 053. */
   label?: string | null;
+  /**
+   * Does the WABA have a payment method in Meta? Written only by the
+   * server (migration 079, p11.1); NULL = not checked yet.
+   */
+  meta_payment_status?: 'ok' | 'missing' | 'unknown' | null;
+  meta_payment_checked_at?: string | null;
+  /** Meta's message when the last check came back `unknown`. */
+  meta_payment_error?: string | null;
   created_at?: string;
   updated_at?: string;
 }

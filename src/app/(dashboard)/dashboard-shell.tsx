@@ -8,6 +8,7 @@ import { Header } from '@/components/layout/header';
 import { AccountAccessAlert } from '@/components/layout/account-access-alert';
 import { ImpersonationBanner } from '@/components/layout/impersonation-banner';
 import { BillingStatusAlert } from '@/components/billing/billing-status-alert';
+import { MetaPaymentAlert } from '@/components/billing/meta-payment-alert';
 import { PresenceHeartbeat } from '@/components/presence/presence-heartbeat';
 import type { SupportBanner } from '@/lib/auth/support-view';
 
@@ -73,6 +74,11 @@ function DashboardShellInner({
                 on, and a button to settle it. Renders nothing while the
                 subscription is healthy. */}
             <BillingStatusAlert />
+            {/* p11.1: the WABA has no payment method in Meta (Meta stops
+                delivering from 2026-10-01). Separate from the dunning
+                banner above: a different debt, owed to Meta. Renders
+                nothing for `managed` accounts or when all is well. */}
+            <MetaPaymentAlert />
             {children}
           </main>
         </div>

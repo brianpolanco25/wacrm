@@ -55,6 +55,10 @@ import {
   subscribeWabaToApp,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api';
+import {
+  checkAndRecordPaymentStatus,
+  type MetaPaymentStatus,
+} from '@/lib/whatsapp/payment-method';
 
 // Service-role client, lazily built. It exists for exactly one query:
 // detecting a `phone_number_id` already claimed by a DIFFERENT account.
@@ -142,6 +146,9 @@ function asString(value: unknown): string | null {
  *   7. /register with a generated PIN — recorded, does NOT abort
  *   8. encrypt token + PIN
  *   9. one upsert on (account_id, phone_number_id)
+ *  10. does the WABA have a payment method in Meta? (p11.1) — recorded
+ *      with the service role, does NOT abort and does NOT change the
+ *      status code: a failed check is `unknown`
  *
  * Steps 2 and 3 are in that order on purpose: a number that belongs to
  * somebody else is not a number you can buy your way into, so answering
@@ -424,9 +431,33 @@ export async function POST(request: Request) {
       );
     }
 
+    // ---- 10. payment method on the WABA (p11.1) ---------------
+    // After the upsert, never before: the guard trigger of 079 would
+    // wipe the value if it travelled in the tenant's upsert, and the
+    // signup must not wait on Meta to save the number. Written with the
+    // service role, scoped by the row id AND this account. Never throws
+    // and never changes the answer of the signup; `null` when the check
+    // is switched off (META_PAYMENT_CHECK_DISABLED).
+    let paymentStatus: MetaPaymentStatus | null = null;
+    try {
+      const checked = await checkAndRecordPaymentStatus(
+        supabaseAdmin(),
+        { accountId, configId: saved[0].id },
+        { accessToken }
+      );
+      paymentStatus = checked?.status ?? null;
+    } catch (err) {
+      paymentStatus = 'unknown';
+      console.warn(
+        '[embedded-signup] payment method check failed:',
+        err instanceof Error ? err.message : 'Unknown error'
+      );
+    }
+
     return NextResponse.json({
       success: registrationError == null,
       config_id: saved[0].id,
+      payment_status: paymentStatus,
       registered: registeredAt != null,
       subscribed: subscribedAppsAt != null,
       registration_error: registrationError,

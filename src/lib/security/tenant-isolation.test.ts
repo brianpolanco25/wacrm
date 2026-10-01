@@ -181,6 +181,14 @@ vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
       alreadyRegistered: false,
     }),
     subscribeWabaToApp: record('subscribeWabaToApp', undefined),
+    // p11.1: the payment-method check after a save. Not recorded in
+    // `sends` (it is a read, and the A↔B assertions above are about what
+    // reaches Meta in a customer's name); answering here keeps the
+    // suite off the network.
+    getWabaFundingInfo: async (args: Record<string, unknown>) => ({
+      id: args.wabaId,
+      primary_funding_id: 'fund-1',
+    }),
     // Template lifecycle. Kept out of dry-run mode on purpose: the
     // dry-run short-circuit skips the header-handle step, which is the
     // one place those routes touch the service-role client.
@@ -300,6 +308,7 @@ import * as waWebhook from '@/app/api/whatsapp/webhook/route';
 import * as waConfig from '@/app/api/whatsapp/config/route';
 import * as waConfigById from '@/app/api/whatsapp/config/[id]/route';
 import * as waEmbeddedSignup from '@/app/api/whatsapp/embedded-signup/route';
+import * as waPaymentStatus from '@/app/api/whatsapp/config/payment-status/route';
 import * as waTemplateById from '@/app/api/whatsapp/templates/[id]/route';
 import * as waTemplateSubmit from '@/app/api/whatsapp/templates/submit/route';
 import * as automationsCron from '@/app/api/automations/cron/route';
@@ -2671,6 +2680,32 @@ describe('/api/whatsapp/config', () => {
     const res = await waConfig.DELETE(req('DELETE', '/api/whatsapp/config'));
     expect(res.status).toBe(400);
     expect(h.db.rows('whatsapp_config')).toHaveLength(2);
+  });
+
+  // p11.1: «Comprobar de nuevo». The id comes from the body and the
+  // write is service-role, so the account filter is all there is.
+  it("payment-status on B's number → 404 and B is untouched", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waPaymentStatus.POST(
+      req('POST', '/api/whatsapp/config/payment-status', {
+        config_id: 'cfg-b',
+      })
+    );
+    expect(res.status).toBe(404);
+    expectBUnchanged(before);
+  });
+
+  it("payment-status on A's own number writes only A's row", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waPaymentStatus.POST(
+      req('POST', '/api/whatsapp/config/payment-status', {
+        config_id: 'cfg-a',
+      })
+    );
+    expect(res.status).toBe(200);
+    const a = h.db.rows('whatsapp_config').find((r) => r.id === 'cfg-a');
+    expect(a?.meta_payment_status).toBe('ok');
+    expectBUnchanged(before);
   });
 });
 

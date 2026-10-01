@@ -1627,7 +1627,14 @@
       "manualSetup": "Manual connection (advanced)",
       "manualSetupHint": "You do not normally need this: use Connect WhatsApp above. Fill this in only to connect a number the dialog cannot reach, or when support asks you to.",
       "verifyTokenMissingTitle": "Webhook verification token not configured",
-      "verifyTokenMissingDesc": "This deployment offers the integrated sign-up but has no META_WEBHOOK_VERIFY_TOKEN. Meta cannot verify the app-level webhook without it, so no inbound message will arrive. Set it and restart the server."
+      "verifyTokenMissingDesc": "This deployment offers the integrated sign-up but has no META_WEBHOOK_VERIFY_TOKEN. Meta cannot verify the app-level webhook without it, so no inbound message will arrive. Set it and restart the server.",
+      "paymentOk": "Payment method in Meta: active",
+      "paymentMissing": "No payment method in Meta",
+      "paymentUnknown": "Could not check",
+      "paymentPending": "Not checked yet",
+      "paymentCheckedAt": "Checked on {date}",
+      "paymentRecheck": "Check again",
+      "paymentRecheckFailed": "Could not check the payment method. Try again in a moment."
     },
     "sections": {
       "overview": "Overview",
@@ -2030,6 +2037,13 @@
       "title": "Your sign-up is not finished",
       "body": "This account has no paid plan yet, so nothing can be saved. Fill in the company details and buy a plan to get started.",
       "action": "Finish signing up"
+    },
+    "metaPayment": {
+      "missingTitle": "Your WhatsApp account has no payment method in Meta",
+      "missingBody": "{count, plural, one {One number has} other {# numbers have}} no payment method in Meta. Since October 1, 2026 Meta does not deliver messages from {count, plural, one {that number} other {those numbers}} until you add a card in Meta's Billing Hub. Messages people send you still arrive.",
+      "unknownTitle": "We could not check your payment method in Meta",
+      "unknownBody": "Check in Meta's Billing Hub that your WhatsApp account has a card: without one, since October 1, 2026 Meta does not deliver your messages.",
+      "openBillingHub": "Open Meta Billing Hub"
     }
   },
   "Platform": {
@@ -2459,7 +2473,15 @@
         "saved": "Countries saved.",
         "invalid": "Two-letter country and a lowercase market (a-z, 0-9, _)."
       }
-    }
+    },
+    "paymentStatus": "Payment method in Meta",
+    "paymentOk": "Active",
+    "paymentMissing": "No payment method",
+    "paymentUnknown": "Could not check",
+    "paymentPending": "Pending",
+    "paymentCheckedAt": "Checked on {date}",
+    "paymentRecheck": "Check again",
+    "paymentRecheckFailed": "Could not check the payment method."
   },
   "Developers": {
     "ui": {

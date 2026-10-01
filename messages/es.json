@@ -1627,7 +1627,14 @@
       "manualSetup": "Conexión manual (avanzado)",
       "manualSetupHint": "Normalmente no te hace falta: usa «Conectar WhatsApp» de arriba. Rellena esto solo para conectar un número al que el diálogo no llega, o cuando te lo pida soporte.",
       "verifyTokenMissingTitle": "El token de verificación del webhook no está configurado",
-      "verifyTokenMissingDesc": "Esta instalación ofrece el registro integrado, pero no tiene META_WEBHOOK_VERIFY_TOKEN. Sin él, Meta no puede verificar el webhook de la aplicación, así que no llegará ningún mensaje entrante. Defínelo y reinicia el servidor."
+      "verifyTokenMissingDesc": "Esta instalación ofrece el registro integrado, pero no tiene META_WEBHOOK_VERIFY_TOKEN. Sin él, Meta no puede verificar el webhook de la aplicación, así que no llegará ningún mensaje entrante. Defínelo y reinicia el servidor.",
+      "paymentOk": "Método de pago en Meta: activo",
+      "paymentMissing": "Sin método de pago en Meta",
+      "paymentUnknown": "No se pudo comprobar",
+      "paymentPending": "Pendiente de comprobar",
+      "paymentCheckedAt": "Comprobado el {date}",
+      "paymentRecheck": "Comprobar de nuevo",
+      "paymentRecheckFailed": "No se pudo comprobar el método de pago. Inténtalo en un momento."
     },
     "sections": {
       "overview": "Resumen",
@@ -2030,6 +2037,13 @@
       "title": "Tu alta está incompleta",
       "body": "Esta cuenta aún no tiene un plan pagado, así que no se puede guardar nada. Completa los datos de la empresa y contrata un plan para empezar.",
       "action": "Completar el alta"
+    },
+    "metaPayment": {
+      "missingTitle": "Tu cuenta de WhatsApp no tiene método de pago en Meta",
+      "missingBody": "{count, plural, one {Un número} other {# números}} no {count, plural, one {tiene} other {tienen}} método de pago en Meta. Desde el 1 de octubre de 2026 Meta no entrega los mensajes de esos números hasta que añadas una tarjeta en el Billing Hub de Meta. Los mensajes que te escriben siguen llegando.",
+      "unknownTitle": "No pudimos comprobar tu método de pago en Meta",
+      "unknownBody": "Revisa en el Billing Hub de Meta que tu cuenta de WhatsApp tenga una tarjeta: sin ella, desde el 1 de octubre de 2026 Meta no entrega tus mensajes.",
+      "openBillingHub": "Abrir Billing Hub de Meta"
     }
   },
   "Platform": {
@@ -2459,7 +2473,15 @@
         "saved": "Países guardados.",
         "invalid": "País de dos letras y mercado en minúsculas (a-z, 0-9, _)."
       }
-    }
+    },
+    "paymentStatus": "Método de pago en Meta",
+    "paymentOk": "Activo",
+    "paymentMissing": "Sin método de pago",
+    "paymentUnknown": "No se pudo comprobar",
+    "paymentPending": "Pendiente",
+    "paymentCheckedAt": "Comprobado el {date}",
+    "paymentRecheck": "Comprobar de nuevo",
+    "paymentRecheckFailed": "No se pudo comprobar el método de pago."
   },
   "Developers": {
     "ui": {

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   sweepExportJobs: vi.fn(),
   purgeExpiredExports: vi.fn(),
   renewExpiringTokens: vi.fn(),
+  sweepPaymentStatus: vi.fn(),
 }));
 
 vi.mock('@/lib/flows/admin-client', () => ({
@@ -31,6 +32,12 @@ vi.mock('@/lib/exports/jobs', async (importOriginal) => ({
 vi.mock('@/lib/whatsapp/token-renewal', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/whatsapp/token-renewal')>()),
   renewExpiringTokens: mocks.renewExpiringTokens,
+}));
+
+// p11.1: y comprueba el método de pago de los WABA.
+vi.mock('@/lib/whatsapp/payment-method', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/whatsapp/payment-method')>()),
+  sweepPaymentStatus: mocks.sweepPaymentStatus,
 }));
 
 import { GET } from './route';
@@ -60,6 +67,15 @@ const TOKEN_SWEEP = {
   skipped: 0,
 };
 
+const PAYMENT_SWEEP = {
+  enabled: true,
+  scanned: 2,
+  checked: 2,
+  ok: 1,
+  missing: 1,
+  unknown: 0,
+};
+
 function req(secret?: string) {
   return new Request('https://crm.example.com/api/webhooks/cron', {
     headers: secret === undefined ? {} : { 'x-cron-secret': secret },
@@ -83,6 +99,7 @@ beforeEach(() => {
   });
   mocks.purgeExpiredExports.mockReset().mockResolvedValue(2);
   mocks.renewExpiringTokens.mockReset().mockResolvedValue(TOKEN_SWEEP);
+  mocks.sweepPaymentStatus.mockReset().mockResolvedValue(PAYMENT_SWEEP);
   vi.stubEnv('WEBHOOK_CRON_SECRET', 'cron-secret');
 });
 
@@ -131,6 +148,7 @@ describe('GET /api/webhooks/cron', () => {
         purged: 2,
       },
       tokens: TOKEN_SWEEP,
+      payments: PAYMENT_SWEEP,
     });
     expect(mocks.sweepDueDeliveries).toHaveBeenCalledTimes(1);
     expect(mocks.purgeOldDeliveries).toHaveBeenCalledTimes(1);
@@ -154,5 +172,40 @@ describe('GET /api/webhooks/cron', () => {
     expect(body.purged).toBe(7);
     expect(body.exports.purged).toBe(2);
     expect(body.tokens.renewed).toBe(1);
+  });
+
+  it('p11.1: el bloque payments es aditivo y las claves de siempre siguen igual', async () => {
+    const res = await GET(req('cron-secret'));
+    const body = await res.json();
+    expect(body.payments).toEqual(PAYMENT_SWEEP);
+    expect(body.delivered).toBe(1);
+    expect(body.tokens).toEqual(TOKEN_SWEEP);
+    expect(mocks.sweepPaymentStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('p11.1: sin el secreto no comprueba métodos de pago', async () => {
+    await GET(req());
+    expect(mocks.sweepPaymentStatus).not.toHaveBeenCalled();
+  });
+
+  it('p11.1: si el barrido de pagos lanza, el cron responde 200 con el resto intacto', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.sweepPaymentStatus.mockRejectedValue(new Error('boom'));
+    const res = await GET(req('cron-secret'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.delivered).toBe(1);
+    expect(body.purged).toBe(7);
+    expect(body.exports.purged).toBe(2);
+    expect(body.tokens).toEqual(TOKEN_SWEEP);
+    expect(body.payments).toEqual({
+      enabled: false,
+      scanned: 0,
+      checked: 0,
+      ok: 0,
+      missing: 0,
+      unknown: 0,
+    });
+    errorSpy.mockRestore();
   });
 });

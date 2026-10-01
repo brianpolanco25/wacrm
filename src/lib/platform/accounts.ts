@@ -37,6 +37,7 @@ import {
   type UsageLine,
 } from '@/lib/billing/subscription-view';
 import { loadAccountAudit, type PlatformAuditEntry } from './audit';
+import type { MetaPaymentStatus } from '@/lib/whatsapp/payment-method';
 
 const PROVIDER = 'paypal';
 
@@ -173,6 +174,11 @@ export interface AccountNumber {
   connectedAt: string | null;
   registeredAt: string | null;
   lastRegistrationError: string | null;
+  /** p11.1 (migración 079): método de pago del WABA en Meta; NULL = sin comprobar. */
+  metaPaymentStatus: MetaPaymentStatus | null;
+  metaPaymentCheckedAt: string | null;
+  /** Mensaje de Meta de la última comprobación `unknown`. */
+  metaPaymentError: string | null;
 }
 
 export interface BillingHistoryEntry {
@@ -298,6 +304,10 @@ async function loadMembers(accountId: string): Promise<AccountMember[]> {
   }));
 }
 
+function isMetaPaymentStatus(value: unknown): value is MetaPaymentStatus {
+  return value === 'ok' || value === 'missing' || value === 'unknown';
+}
+
 /**
  * Every WhatsApp number of the account (f4.2 made the relation
  * one-to-many).
@@ -312,7 +322,8 @@ async function loadNumbers(accountId: string): Promise<AccountNumber[]> {
     .select(
       'id, phone_number_id, display_phone_number, verified_name, label, ' +
         'waba_id, status, is_default, connected_at, registered_at, ' +
-        'last_registration_error'
+        'last_registration_error, meta_payment_status, ' +
+        'meta_payment_checked_at, meta_payment_error'
     )
     .eq('account_id', accountId)
     .order('is_default', { ascending: false })
@@ -335,6 +346,12 @@ async function loadNumbers(accountId: string): Promise<AccountNumber[]> {
     registeredAt: (row.registered_at as string | null) ?? null,
     lastRegistrationError:
       (row.last_registration_error as string | null) ?? null,
+    metaPaymentStatus: isMetaPaymentStatus(row.meta_payment_status)
+      ? row.meta_payment_status
+      : null,
+    metaPaymentCheckedAt:
+      (row.meta_payment_checked_at as string | null) ?? null,
+    metaPaymentError: (row.meta_payment_error as string | null) ?? null,
   }));
 }
 

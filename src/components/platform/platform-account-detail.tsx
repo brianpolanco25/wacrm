@@ -68,6 +68,12 @@ interface WhatsAppNumber {
   isDefault: boolean;
   registeredAt: string | null;
   lastRegistrationError: string | null;
+  /** Sent by the API since f4.2; used here only to hide the payment line. */
+  wabaId?: string | null;
+  /** p11.1: método de pago del WABA en Meta; NULL = sin comprobar. */
+  metaPaymentStatus?: 'ok' | 'missing' | 'unknown' | null;
+  metaPaymentCheckedAt?: string | null;
+  metaPaymentError?: string | null;
 }
 
 interface BillingEntry {
@@ -217,6 +223,35 @@ export function PlatformAccountDetail({
       }
     },
     [accountId, load, reason, shortReason, t]
+  );
+
+  // p11.1 (R21): ask Meta again about one number's WABA. The operator
+  // sees it in `managed` accounts too — there the WABA is Cabbity's.
+  const [checkingNumber, setCheckingNumber] = useState<string | null>(null);
+  const recheckPayment = useCallback(
+    async (configId: string) => {
+      setCheckingNumber(configId);
+      try {
+        const res = await fetch(
+          `/api/platform/accounts/${accountId}/payment-status`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ config_id: configId }),
+          }
+        );
+        if (!res.ok) {
+          toast.error(t('paymentRecheckFailed'));
+          return;
+        }
+        await load();
+      } catch {
+        toast.error(t('paymentRecheckFailed'));
+      } finally {
+        setCheckingNumber(null);
+      }
+    },
+    [accountId, load, t]
   );
 
   const impersonate = useCallback(async () => {
@@ -456,6 +491,57 @@ export function PlatformAccountDetail({
                   {number.lastRegistrationError ? (
                     <span className="text-destructive text-xs">
                       {number.lastRegistrationError}
+                    </span>
+                  ) : null}
+                  {number.wabaId ? (
+                    <span
+                      className="flex basis-full flex-wrap items-center gap-2 text-xs"
+                      data-payment-status={
+                        number.metaPaymentStatus ?? 'pending'
+                      }
+                    >
+                      <span className="text-muted-foreground">
+                        {t('paymentStatus')}
+                      </span>
+                      <Badge
+                        variant={
+                          number.metaPaymentStatus === 'missing'
+                            ? 'destructive'
+                            : number.metaPaymentStatus === 'ok'
+                              ? 'outline'
+                              : 'secondary'
+                        }
+                      >
+                        {number.metaPaymentStatus === 'ok'
+                          ? t('paymentOk')
+                          : number.metaPaymentStatus === 'missing'
+                            ? t('paymentMissing')
+                            : number.metaPaymentStatus === 'unknown'
+                              ? t('paymentUnknown')
+                              : t('paymentPending')}
+                      </Badge>
+                      {number.metaPaymentCheckedAt ? (
+                        <span className="text-muted-foreground">
+                          {t('paymentCheckedAt', {
+                            date: moment(number.metaPaymentCheckedAt),
+                          })}
+                        </span>
+                      ) : null}
+                      {number.metaPaymentStatus === 'unknown' &&
+                      number.metaPaymentError ? (
+                        <span className="text-muted-foreground">
+                          {number.metaPaymentError}
+                        </span>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs"
+                        disabled={checkingNumber !== null}
+                        onClick={() => recheckPayment(number.id)}
+                      >
+                        {t('paymentRecheck')}
+                      </Button>
                     </span>
                   ) : null}
                 </li>

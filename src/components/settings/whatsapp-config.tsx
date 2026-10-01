@@ -31,6 +31,8 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { SettingsPanelHead } from './settings-panel-head';
+import { PaymentStatusBadge } from './payment-status-badge';
+import { useBillingStatus } from '@/hooks/use-billing-status';
 import {
   Accordion,
   AccordionItem,
@@ -71,6 +73,9 @@ export function WhatsAppConfig() {
   // Nothing here sniffs the environment on its own.
   const signup = useEmbeddedSignup();
   const platformMode = signup?.enabled === true;
+  // p11.1: who pays Meta. Rides on the shared `/api/billing/status`
+  // read (no request of its own); `managed` hides the payment badge.
+  const metaBilling = useBillingStatus()?.metaBilling;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -254,6 +259,28 @@ export function WhatsAppConfig() {
     } catch (err) {
       console.error('Make default failed:', err);
       toast.error(t('defaultUpdateFailed'));
+    } finally {
+      setBusyRowId(null);
+    }
+  }
+
+  // p11.1 (R11): ask Meta again whether this number's WABA has a
+  // payment method. The server checks, stores and answers; the list is
+  // reloaded so the badge shows what was stored, not a local guess.
+  async function handleRecheckPayment(row: WhatsAppConfigType) {
+    if (busyRowId) return;
+    setBusyRowId(row.id);
+    try {
+      const res = await fetch('/api/whatsapp/config/payment-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config_id: row.id }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (accountId) await fetchConfig(accountId);
+    } catch (err) {
+      console.error('Payment method re-check failed:', err);
+      toast.error(t('paymentRecheckFailed'));
     } finally {
       setBusyRowId(null);
     }
@@ -795,6 +822,16 @@ export function WhatsAppConfig() {
                           <p className="mt-0.5 text-xs text-red-400">
                             {row.last_registration_error}
                           </p>
+                        )}
+                        {row.waba_id && (
+                          <PaymentStatusBadge
+                            status={row.meta_payment_status}
+                            checkedAt={row.meta_payment_checked_at}
+                            metaBilling={metaBilling}
+                            canRecheck={canEditSettings}
+                            busy={busyRowId === row.id}
+                            onRecheck={() => handleRecheckPayment(row)}
+                          />
                         )}
                       </div>
                       <div className="flex flex-wrap items-center gap-2">

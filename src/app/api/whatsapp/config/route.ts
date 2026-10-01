@@ -10,6 +10,10 @@ import { encrypt, decrypt } from '@/lib/whatsapp/encryption';
 import { assertStockLimit, assertWritable } from '@/lib/billing/enforce';
 import { resolveEffectiveAccountId, toErrorResponse } from '@/lib/auth/account';
 import { promoteDefault } from '@/lib/whatsapp/default-number';
+import {
+  checkAndRecordPaymentStatus,
+  type MetaPaymentStatus,
+} from '@/lib/whatsapp/payment-method';
 
 /**
  * Resolve the account this request acts on. Inlined here (rather than
@@ -69,6 +73,11 @@ function publicNumber(row: Record<string, unknown>) {
     last_registration_error: row.last_registration_error ?? null,
     mirror_inbound_media: row.mirror_inbound_media !== false,
     created_at: row.created_at ?? null,
+    // p11.1 (migración 079). `meta_payment_error` is Meta's message, no
+    // secrets in it (only `err.message` is ever stored).
+    meta_payment_status: row.meta_payment_status ?? null,
+    meta_payment_checked_at: row.meta_payment_checked_at ?? null,
+    meta_payment_error: row.meta_payment_error ?? null,
   };
 }
 
@@ -568,7 +577,9 @@ export async function POST(request: Request) {
     const wantsDefault =
       is_default === true || (!existing && (numberCount ?? 0) === 0);
 
+    let savedId: string;
     if (existing) {
+      savedId = existing.id;
       const { error: updateError } = await supabase
         .from('whatsapp_config')
         .update(baseRow)
@@ -619,6 +630,7 @@ export async function POST(request: Request) {
           { status: 500 }
         );
       }
+      savedId = insertedRows[0].id;
       if (wantsDefault && (numberCount ?? 0) > 0) {
         const promoted = await promoteDefault(
           supabase,
@@ -634,6 +646,27 @@ export async function POST(request: Request) {
       }
     }
 
+    // p11.1: does the WABA have a payment method in Meta? Same step 10
+    // as the Embedded Signup, with the token the form just sent in the
+    // clear. Service role, scoped by id + account; never throws and
+    // never changes the answer of the save. `null` = no WABA on the row
+    // or the check is switched off.
+    let paymentStatus: MetaPaymentStatus | null = null;
+    try {
+      const checked = await checkAndRecordPaymentStatus(
+        supabaseAdmin(),
+        { accountId, configId: savedId },
+        { accessToken: access_token }
+      );
+      paymentStatus = checked?.status ?? null;
+    } catch (err) {
+      paymentStatus = 'unknown';
+      console.warn(
+        'Payment method check failed (non-fatal):',
+        err instanceof Error ? err.message : 'Unknown error'
+      );
+    }
+
     if (registrationError) {
       // Save succeeded but the number isn't actually live. Return
       // 200 with a structured error so the UI can show the specific
@@ -644,6 +677,7 @@ export async function POST(request: Request) {
         registered: false,
         registration_error: registrationError,
         phone_info: phoneInfo,
+        payment_status: paymentStatus,
       });
     }
 
@@ -657,6 +691,7 @@ export async function POST(request: Request) {
       // rather than claiming the number is fully live.
       registration_skipped: registrationSkipped,
       phone_info: phoneInfo,
+      payment_status: paymentStatus,
     });
   } catch (error) {
     console.error('Error in WhatsApp config POST:', error);

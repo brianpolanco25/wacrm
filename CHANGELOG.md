@@ -11,6 +11,13 @@ and polish.
 
 ## [Unreleased]
 
+### WhatsApp: payment method in Meta
+
+- **Migration required: `079_meta_payment_status.sql`.** Adds `meta_payment_status` (`ok` | `missing` | `unknown`), `meta_payment_checked_at` and `meta_payment_error` to `whatsapp_config`, a partial index for the sweep, and a trigger that keeps a browser session from writing those columns (only the server does) and resets them when the WABA or the token is changed from Settings. On the hosted project it can be applied before 075–078 only with `supabase db push --include-all`.
+- Since 2026-10-01 Meta stops delivering messages from a WhatsApp Business account with no payment method. The CRM now checks it when a number is connected (Embedded Signup or manual setup), every few hours from `/api/webhooks/cron` (new `payments` block in its response) and on demand, and shows a red banner on every page while a number has none, with a link to Meta's Billing Hub. When the check could not be made, accounts connected through Embedded Signup see a softer notice; nothing is shown for accounts whose Meta bill Cabbity pays (`managed`).
+- Settings → WhatsApp shows the payment-method state of each number, when it was last checked and a «Check again» button for admins. The operator's account file shows the same per number, Meta's error when it could not be checked, and its own «Check again».
+- Nothing is blocked: inbound messages and sends work as before whatever the state. `META_PAYMENT_CHECK_DISABLED=1` switches the whole check off; the Meta field it relies on is still unverified (see `docs/docker.md`).
+
 ### Meta pricing captured per message
 
 - **Migration required: `075_message_charges.sql`.** The delivery-status webhook now records what Meta says it charges for every outbound message, conversation sends and broadcast recipients alike: category, billable flag, pricing type and model, plus when it was sent and delivered, the number that sent it and the recipient's phone. The data lands in a new `message_charges` table that account owners and admins can read, and is the basis for usage billing. Messages sent before the migration have no pricing and are not reconstructed.

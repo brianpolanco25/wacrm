@@ -34,6 +34,8 @@ const h = vi.hoisted(() => ({
     automationsCompletedAtAiDispatch: null as number | null,
     /** whatsapp_config.mirror_inbound_media for the matched row (#466). */
     mirrorInboundMedia: true as boolean | undefined,
+    /** whatsapp_config.meta_payment_status for the matched row (p11.1). */
+    metaPaymentStatus: null as string | null,
     /** Objects the inbound-media mirror pushed into chat-media. */
     storageUploads: [] as {
       bucket: string;
@@ -135,6 +137,7 @@ vi.mock('@supabase/supabase-js', () => ({
                   phone_number_id: phoneNumberId,
                   access_token: 'enc',
                   mirror_inbound_media: h.state.mirrorInboundMedia,
+                  meta_payment_status: h.state.metaPaymentStatus,
                 },
               ],
               error: null,
@@ -467,6 +470,7 @@ beforeEach(() => {
   h.state.automationCompleted = 0;
   h.state.automationsCompletedAtAiDispatch = null;
   h.state.mirrorInboundMedia = true;
+  h.state.metaPaymentStatus = null;
   h.state.storageUploads = [];
   h.state.storageUploadError = null;
   h.state.fromCalls = [];
@@ -1022,6 +1026,24 @@ describe('inbound webhook: billing never blocks what comes in (CP11)', () => {
     });
     expect(billingGates.assertWritable).not.toHaveBeenCalled();
   });
+
+  // p11.1 (R22): a WABA without a payment method in Meta stops
+  // DELIVERING what we send; what its customers send still has to land.
+  it.each(['missing', 'unknown'])(
+    'stores it when the number has meta_payment_status = %s (p11.1)',
+    async (status) => {
+      h.state.metaPaymentStatus = status;
+      await runWebhook();
+      expect(h.state.upsertCalls).toHaveLength(1);
+      expect(h.state.upsertCalls[0].row).toMatchObject({
+        conversation_id: 'conv-1',
+        sender_type: 'customer',
+      });
+      expect(h.state.rpcCalls[0]).toMatchObject({
+        name: 'bump_conversation_on_inbound',
+      });
+    }
+  );
 
   it('never asks the billing layer anything while storing an inbound', async () => {
     await runWebhook();

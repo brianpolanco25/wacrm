@@ -46,6 +46,17 @@ export interface BillingStatus {
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   /**
+   * p11.1: does Meta have a payment method on the account's WABAs?
+   * Read from what the server stored (migration 079) — the route never
+   * calls Meta. Optional so an older server simply shows no banner.
+   */
+  metaPayment?: {
+    banner: 'missing' | 'unknown' | null;
+    missingNumbers: number;
+  };
+  /** Who pays Meta: the customer (`direct`) or Cabbity (`managed`). */
+  metaBilling?: 'direct' | 'managed';
+  /**
    * Epoch ms at the moment this snapshot landed.
    *
    * A countdown needs a clock, and React 19 forbids reading one

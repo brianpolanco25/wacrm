@@ -32,6 +32,9 @@ const mocks = vi.hoisted(() => ({
   verifyPhoneNumber: vi.fn(),
   registerPhoneNumber: vi.fn(),
   subscribeWabaToApp: vi.fn(),
+  getWabaFundingInfo: vi.fn(),
+  checkPayment: vi.fn(),
+  order: [] as string[],
   state: {
     role: 'admin' as string,
     rows: [] as ConfigRow[],
@@ -57,6 +60,15 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   verifyPhoneNumber: mocks.verifyPhoneNumber,
   registerPhoneNumber: mocks.registerPhoneNumber,
   subscribeWabaToApp: mocks.subscribeWabaToApp,
+  getWabaFundingInfo: mocks.getWabaFundingInfo,
+}));
+
+// p11.1 step 10. The real `fetchWabaPaymentStatus` runs (against the
+// mocked `getWabaFundingInfo`); only the row read/write is stubbed, so
+// what is pinned is the token handed over, the scope and the order.
+vi.mock('@/lib/whatsapp/payment-method', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/whatsapp/payment-method')>()),
+  checkAndRecordPaymentStatus: mocks.checkPayment,
 }));
 
 // The service-role client exists for one query: "has another account
@@ -243,10 +255,32 @@ beforeEach(() => {
   });
   mocks.subscribeWabaToApp.mockReset();
   mocks.subscribeWabaToApp.mockResolvedValue(undefined);
+  mocks.order = [];
+  mocks.getWabaFundingInfo.mockReset();
+  mocks.getWabaFundingInfo.mockImplementation(async () => {
+    mocks.order.push('payment');
+    return { id: 'waba-new', primary_funding_id: 'fund-1' };
+  });
+  mocks.checkPayment.mockReset();
+  mocks.checkPayment.mockImplementation(
+    async (_db: unknown, _scope: unknown, opts: { accessToken: string }) => {
+      const { fetchWabaPaymentStatus } = await vi.importActual<
+        typeof import('@/lib/whatsapp/payment-method')
+      >('@/lib/whatsapp/payment-method');
+      const r = await fetchWabaPaymentStatus({
+        wabaId: 'waba-new',
+        accessToken: opts.accessToken,
+      });
+      return { ...r, checkedAt: '2026-10-01T00:00:00.000Z' };
+    }
+  );
 
   __resetRateLimitForTests();
 
-  fetchMock = vi.fn(async () => tokenResponse());
+  fetchMock = vi.fn(async () => {
+    mocks.order.push('exchange');
+    return tokenResponse();
+  });
   vi.stubGlobal('fetch', fetchMock);
 
   consoleSpies = [
@@ -639,5 +673,73 @@ describe('POST /api/whatsapp/embedded-signup — who may call it', () => {
     for (let i = 0; i < 10; i++) await post();
     const res = await post();
     expect(res.status).toBe(429);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// p11.1 — step 10: the payment method of the WABA (R7)
+// ---------------------------------------------------------------------------
+
+describe('POST /api/whatsapp/embedded-signup — payment method (p11.1)', () => {
+  it('ok: checks with the fresh token, scoped to the saved row, after the exchange', async () => {
+    const res = await post();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.payment_status).toBe('ok');
+    expect(body.success).toBe(true);
+    expect(mocks.checkPayment).toHaveBeenCalledTimes(1);
+    const [, scope, opts] = mocks.checkPayment.mock.calls[0] as [
+      unknown,
+      { accountId: string; configId: string },
+      { accessToken: string },
+    ];
+    expect(scope).toEqual({ accountId: 'acct-1', configId: 'cfg-saved' });
+    expect(opts.accessToken).toBe(TOKEN);
+    // Never before the code exchange (nor before the upsert).
+    expect(mocks.order).toEqual(['exchange', 'payment']);
+    expect(mocks.getWabaFundingInfo.mock.calls[0]?.[0]).toMatchObject({
+      wabaId: 'waba-new',
+      accessToken: TOKEN,
+    });
+  });
+
+  it('missing: 200 with payment_status missing', async () => {
+    mocks.getWabaFundingInfo.mockResolvedValue({ id: 'waba-new' });
+    const res = await post();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.payment_status).toBe('missing');
+    expect(body.success).toBe(true);
+  });
+
+  it("Meta's check rejected → still 200, same success, payment_status unknown", async () => {
+    mocks.getWabaFundingInfo.mockRejectedValue(new TypeError('fetch failed'));
+    const res = await post();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.config_id).toBe('cfg-saved');
+    expect(body.payment_status).toBe('unknown');
+    expect(consoleOutput()).not.toContain(TOKEN);
+  });
+
+  it('a check that throws outright does not change the signup answer', async () => {
+    mocks.checkPayment.mockRejectedValue(new Error('boom'));
+    const res = await post();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.payment_status).toBe('unknown');
+  });
+
+  it('no check at all when the signup fails before saving', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: { message: 'code expired' } }),
+    } as unknown as Response);
+    const res = await post();
+    expect(res.status).toBe(400);
+    expect(mocks.checkPayment).not.toHaveBeenCalled();
   });
 });

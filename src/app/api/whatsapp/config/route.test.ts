@@ -24,10 +24,13 @@ type ConfigRow = {
   phone_number_id: string;
   registered_at: string | null;
   is_default?: boolean;
+  [extra: string]: unknown;
 };
 
 const mocks = vi.hoisted(() => ({
   assertWritable: vi.fn(),
+  getWabaFundingInfo: vi.fn(),
+  checkPayment: vi.fn(),
   state: {
     /** The account's `whatsapp_config` rows. One at most, for now. */
     rows: [] as ConfigRow[],
@@ -54,6 +57,15 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   registerPhoneNumber: vi.fn(async () => ({ success: true })),
   subscribeWabaToApp: vi.fn(async () => ({ success: true })),
   verifyPhoneNumber: vi.fn(async () => ({ verified: true })),
+  getWabaFundingInfo: mocks.getWabaFundingInfo,
+}));
+
+// p11.1: the payment-method check after the save. The real
+// `fetchWabaPaymentStatus` runs against the mocked Meta helper; the row
+// read/write of `checkAndRecordPaymentStatus` is what is stubbed.
+vi.mock('@/lib/whatsapp/payment-method', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/whatsapp/payment-method')>()),
+  checkAndRecordPaymentStatus: mocks.checkPayment,
 }));
 
 // The route builds its own service-role client with the raw supabase-js
@@ -179,7 +191,7 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 
 import { AccountLockedError } from '@/lib/billing/enforce';
-import { POST } from './route';
+import { GET, POST } from './route';
 
 function entitlements(numbers: number | null) {
   return {
@@ -217,6 +229,24 @@ beforeEach(() => {
   mocks.state.updated = null;
   mocks.assertWritable.mockReset();
   mocks.assertWritable.mockResolvedValue(entitlements(1));
+  mocks.getWabaFundingInfo.mockReset();
+  mocks.getWabaFundingInfo.mockResolvedValue({
+    id: 'waba-1',
+    primary_funding_id: 'fund-1',
+  });
+  mocks.checkPayment.mockReset();
+  mocks.checkPayment.mockImplementation(
+    async (_db: unknown, _scope: unknown, opts: { accessToken: string }) => {
+      const { fetchWabaPaymentStatus } = await vi.importActual<
+        typeof import('@/lib/whatsapp/payment-method')
+      >('@/lib/whatsapp/payment-method');
+      const r = await fetchWabaPaymentStatus({
+        wabaId: 'waba-1',
+        accessToken: opts.accessToken,
+      });
+      return { ...r, checkedAt: '2026-10-01T00:00:00.000Z' };
+    }
+  );
 });
 
 describe('POST /api/whatsapp/config — numbers + read-only (fase 3 §4/§5)', () => {
@@ -356,5 +386,120 @@ describe('POST /api/whatsapp/config — numbers + read-only (fase 3 §4/§5)', (
     expect(res.status).toBe(500);
     expect(mocks.state.inserted).toBeNull();
     expect(mocks.state.updated).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// p11.1 — the payment method of the WABA after a manual save (R8, R20)
+// ---------------------------------------------------------------------------
+
+describe('POST /api/whatsapp/config — payment method (p11.1)', () => {
+  it('ok: checks the saved row with the token of the form', async () => {
+    mocks.assertWritable.mockResolvedValue(entitlements(5));
+    const res = await post();
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.saved).toBe(true);
+    expect(json.payment_status).toBe('ok');
+    const [, scope, opts] = mocks.checkPayment.mock.calls[0] as [
+      unknown,
+      { accountId: string; configId: string },
+      { accessToken: string },
+    ];
+    expect(scope).toEqual({ accountId: 'acct-1', configId: 'cfg-new' });
+    expect(opts.accessToken).toBe('tok');
+  });
+
+  it('missing on an edited row: scoped to that row', async () => {
+    mocks.state.rows = [
+      { id: 'cfg-1', phone_number_id: 'pn-a', registered_at: null },
+    ];
+    mocks.getWabaFundingInfo.mockResolvedValue({ id: 'waba-1' });
+    const res = await post({ phone_number_id: 'pn-a' });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.payment_status).toBe('missing');
+    expect(mocks.checkPayment.mock.calls[0]?.[1]).toEqual({
+      accountId: 'acct-1',
+      configId: 'cfg-1',
+    });
+  });
+
+  it("Meta's check fails → the save answers exactly as before, plus unknown", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mocks.assertWritable.mockResolvedValue(entitlements(5));
+    mocks.getWabaFundingInfo.mockRejectedValue(new TypeError('fetch failed'));
+    const res = await post();
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.saved).toBe(true);
+    expect(json.payment_status).toBe('unknown');
+    warn.mockRestore();
+  });
+
+  it('a check that throws outright does not turn the save into a 500', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mocks.assertWritable.mockResolvedValue(entitlements(5));
+    mocks.checkPayment.mockRejectedValue(new Error('boom'));
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect((await res.json()).payment_status).toBe('unknown');
+    warn.mockRestore();
+  });
+
+  it('nothing is checked when the save is refused', async () => {
+    mocks.assertWritable.mockRejectedValue(new AccountLockedError('suspended'));
+    await post();
+    expect(mocks.checkPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/whatsapp/config — publicNumber (p11.1, R20)', () => {
+  it('lists the three payment fields and still no secrets', async () => {
+    mocks.state.rows = [
+      {
+        id: 'cfg-1',
+        phone_number_id: 'pn-a',
+        registered_at: null,
+        status: 'connected',
+        access_token: 'enc:secret-token',
+        verify_token: 'enc:verify',
+        meta_payment_status: 'unknown',
+        meta_payment_checked_at: '2026-10-01T10:00:00.000Z',
+        meta_payment_error: '(#200) Permissions error',
+      },
+    ];
+    const res = await GET(
+      new Request('https://crm.example.com/api/whatsapp/config')
+    );
+    const json = await res.json();
+    expect(json.numbers[0]).toMatchObject({
+      id: 'cfg-1',
+      meta_payment_status: 'unknown',
+      meta_payment_checked_at: '2026-10-01T10:00:00.000Z',
+      meta_payment_error: '(#200) Permissions error',
+    });
+    expect(JSON.stringify(json.numbers)).not.toContain('secret-token');
+    expect(json.numbers[0]).not.toHaveProperty('access_token');
+  });
+
+  it('a row never checked comes back with nulls', async () => {
+    mocks.state.rows = [
+      {
+        id: 'cfg-1',
+        phone_number_id: 'pn-a',
+        registered_at: null,
+        status: 'connected',
+        access_token: 'enc:t',
+      },
+    ];
+    const json = await (
+      await GET(new Request('https://crm.example.com/api/whatsapp/config'))
+    ).json();
+    expect(json.numbers[0].meta_payment_status).toBeNull();
+    expect(json.numbers[0].meta_payment_checked_at).toBeNull();
+    expect(json.numbers[0].meta_payment_error).toBeNull();
   });
 });

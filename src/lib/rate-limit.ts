@@ -215,6 +215,11 @@ export const RATE_LIMITS = {
    *  llamadas: un solo job con filtros se lleva todas las
    *  conversaciones de una vez. */
   exports: { limit: 10, windowMs: 60 * 60_000 },
+  /** «Comprobar de nuevo» el método de pago del WABA en Meta (p11.1),
+   *  por usuario. Cada pulsación es una llamada a la Graph API; 6/min
+   *  basta para quien acaba de añadir la tarjeta y quiere ver el banner
+   *  apagarse, y no deja martillear a Meta con el botón. */
+  metaPaymentCheck: { limit: 6, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't

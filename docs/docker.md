@@ -470,3 +470,34 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   **This is the only thing keeping platform tokens alive: a platform
   deployment without this scheduler loses every connected number after
   60 days.**
+
+  **And it checks whether each WhatsApp Business account has a payment
+  method in Meta** (migration 079, p11.1). Since 2026-10-01 Meta stops
+  delivering messages from a WABA without one, and the CRM showed such a
+  number as "Connected". Each run checks at most 25 connected numbers
+  that are due — never checked, `missing` for an hour, `unknown` for 6 h,
+  `ok` for 24 h — with one `GET /{waba_id}?fields=id,primary_funding_id`
+  per number and that number's own token, and stores the answer on the
+  row. The CRM then shows a red banner while a number is `missing` (with
+  a link to Meta's Billing Hub) and nothing for accounts whose Meta bill
+  Cabbity pays (`subscriptions.meta_billing = 'managed'`). The same check
+  runs when a number is connected and from «Check again» in Settings →
+  WhatsApp. The response carries a `payments` block (`enabled`,
+  `scanned`, `checked`, `ok`, `missing`, `unknown`). Inbound messages and
+  sends are never blocked by it: the notice is informative.
+
+  | Variable                      | Required | What it is                                                                                                                                                                        |
+  | ----------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `META_PAYMENT_CHECK_DISABLED` | no       | `1` switches the payment-method check off entirely: no call to Meta (signup, manual save, sweep or button) and no banner; «Check again» answers 409. Unset or anything else = on. |
+
+  The Meta field this relies on (`primary_funding_id` on the WABA node,
+  absent when there is no payment method) is an **unverified assumption**
+  (S-M1/S-M2 in `specs/meta-payment-method-check/design.md`): Graph also
+  omits fields a token cannot see, which would read as a false "no
+  payment method". The interpretation is conservative — only a 2xx that
+  echoes the requested WABA `id` with no `primary_funding_id` counts as
+  `missing`; any error, permission problem or odd answer is `unknown`,
+  which never shows the red banner — but until someone has checked a
+  WABA with and without a card in the Graph API Explorer, keep
+  `META_PAYMENT_CHECK_DISABLED=1` at hand: if the field does not behave
+  as described, set it and the whole feature goes quiet.

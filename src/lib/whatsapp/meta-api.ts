@@ -285,6 +285,44 @@ export async function getSubscribedApps(
   return data.data ?? [];
 }
 
+export interface GetWabaFundingInfoArgs {
+  wabaId: string;
+  accessToken: string;
+  /** El llamante fija el timeout (p11.1: 5 s). */
+  signal?: AbortSignal;
+}
+
+export interface WabaFundingInfo {
+  id?: string;
+  primary_funding_id?: string | null;
+}
+
+/**
+ * p11.1 — lee la fuente de pago del WABA.
+ *
+ * SUPUESTO SIN VERIFICAR (S-M1/S-M2 de
+ * `specs/meta-payment-method-check/design.md`): que el nodo WABA expone
+ * `primary_funding_id` y que lo omite cuando no hay método de pago. Por
+ * eso este helper solo devuelve el JSON tal cual; quien lo interpreta
+ * (`classifyFundingResponse`) es conservador, y
+ * `META_PAYMENT_CHECK_DISABLED=1` apaga la comprobación entera.
+ */
+export async function getWabaFundingInfo(
+  args: GetWabaFundingInfoArgs
+): Promise<WabaFundingInfo> {
+  const { wabaId, accessToken, signal } = args;
+  const url = `${META_API_BASE}/${wabaId}?fields=id,primary_funding_id`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  return response.json();
+}
+
 // ============================================================
 // Sending
 // ============================================================

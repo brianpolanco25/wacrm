@@ -18,6 +18,8 @@ interface Query {
   op: string;
   filters: [string, unknown][];
   patch?: Record<string, unknown>;
+  /** The column list passed to `select()`, when there was one. */
+  columns?: string;
 }
 
 const h = vi.hoisted(() => ({
@@ -68,7 +70,10 @@ function adminClient() {
           : { data: rows(table).filter(matches), error: null };
 
       const builder = {
-        select() {
+        select(columns?: string) {
+          if (typeof columns === 'string' && call.op === 'select') {
+            call.columns = columns;
+          }
           if (call.op === 'update') {
             const touched = rows(table).filter(matches);
             touched.forEach((r) => Object.assign(r, call.patch));
@@ -489,6 +494,53 @@ describe('loadAccountDetail — the file (spec §2, «Ficha de cuenta»)', () =>
       status: 'disconnected',
       lastRegistrationError: 'token expired',
     });
+  });
+
+  it('p11.1 (R21): each number carries its payment-method state, scoped to the file', async () => {
+    const a1 = rows('whatsapp_config').find((r) => r.id === 'cfg-a1')!;
+    Object.assign(a1, {
+      meta_payment_status: 'missing',
+      meta_payment_checked_at: '2026-10-01T10:00:00.000Z',
+      meta_payment_error: null,
+    });
+    const a2 = rows('whatsapp_config').find((r) => r.id === 'cfg-a2')!;
+    Object.assign(a2, {
+      meta_payment_status: 'unknown',
+      meta_payment_checked_at: '2026-10-01T09:00:00.000Z',
+      meta_payment_error: '(#200) Permissions error',
+    });
+    const b1 = rows('whatsapp_config').find((r) => r.id === 'cfg-b1')!;
+    Object.assign(b1, { meta_payment_status: 'ok' });
+
+    const detail = (await loadAccountDetail(A))!;
+    expect(detail.numbers.map((n) => n.metaPaymentStatus)).toEqual([
+      'missing',
+      'unknown',
+    ]);
+    expect(detail.numbers[0]).toMatchObject({
+      metaPaymentCheckedAt: '2026-10-01T10:00:00.000Z',
+      metaPaymentError: null,
+    });
+    expect(detail.numbers[1].metaPaymentError).toBe('(#200) Permissions error');
+
+    const q = h.queries.find((x) => x.table === 'whatsapp_config')!;
+    expect(q.filters).toContainEqual(['account_id', A]);
+    for (const col of [
+      'meta_payment_status',
+      'meta_payment_checked_at',
+      'meta_payment_error',
+    ]) {
+      expect(q.columns).toContain(col);
+    }
+    expect(q.columns).not.toContain('access_token');
+    expect(detail.numbers.map((n) => n.id)).not.toContain('cfg-b1');
+  });
+
+  it('p11.1: a value outside the CHECK reads as never checked', async () => {
+    const a1 = rows('whatsapp_config').find((r) => r.id === 'cfg-a1')!;
+    a1.meta_payment_status = 'bogus';
+    const detail = (await loadAccountDetail(A))!;
+    expect(detail.numbers[0].metaPaymentStatus).toBeNull();
   });
 
   it('never hands the operator a customer access token', async () => {

@@ -23,7 +23,12 @@
 //   5. renueva los tokens de Embedded Signup a punto de caducar
 //      (migración 067). Va aquí y no en una ruta propia porque una
 //      ruta propia necesita su propia entrada en el programador, y
-//      olvidarla es justo el fallo que la renovación evita.
+//      olvidarla es justo el fallo que la renovación evita;
+//   6. comprueba si el WABA de cada número tiene método de pago en Meta
+//      (p11.1, migración 079): como mucho 25 números por pasada, los
+//      vencidos —nunca comprobados, `missing` hace 1 h, `unknown` hace
+//      6 h, `ok` hace 24 h—. Va aquí por la misma razón que el punto 5,
+//      y su fallo no cambia nada de lo anterior.
 //
 // La frecuencia recomendada es un minuto: es el primer peldaño de la
 // escalera de reintentos.
@@ -36,6 +41,10 @@ import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { purgeOldDeliveries, sweepDueDeliveries } from '@/lib/webhooks/queue';
 import { purgeExpiredExports, sweepExportJobs } from '@/lib/exports/jobs';
 import { renewExpiringTokens } from '@/lib/whatsapp/token-renewal';
+import {
+  sweepPaymentStatus,
+  type PaymentSweepResult,
+} from '@/lib/whatsapp/payment-method';
 
 function secretMatches(supplied: string, expected: string): boolean {
   const suppliedBuf = Buffer.from(supplied);
@@ -74,10 +83,32 @@ export async function GET(request: Request) {
   // la misma razón que `exports`.
   const tokens = await renewExpiringTokens(admin);
 
+  // p11.1. `sweepPaymentStatus` no lanza; el `catch` es la red por si
+  // algo inesperado lo hiciera: un fallo aquí no puede tumbar el cron
+  // ni cambiar lo que devolvía. `payments` es aditivo como `tokens`.
+  let payments: PaymentSweepResult;
+  try {
+    payments = await sweepPaymentStatus(admin);
+  } catch (err) {
+    console.error(
+      '[webhooks/cron] payment sweep failed:',
+      err instanceof Error ? err.message : 'Unknown error'
+    );
+    payments = {
+      enabled: false,
+      scanned: 0,
+      checked: 0,
+      ok: 0,
+      missing: 0,
+      unknown: 0,
+    };
+  }
+
   return NextResponse.json({
     ...swept,
     purged,
     exports: { ...exportSweep, purged: exportsPurged },
     tokens,
+    payments,
   });
 }
