@@ -22,6 +22,12 @@ const h = vi.hoisted(() => ({
     },
     /** Updates written to `conversations` — the seal of fase 4 §1. */
     conversationUpdates: [] as Record<string, unknown>[],
+    /** Filtros de cada update de `conversations`, en el mismo orden. */
+    conversationUpdateFilters: [] as [string, string, unknown][][],
+    /** Error con el que responde el update del punto de entrada (p11.6). */
+    entryPointUpdateError: null as { message: string } | null,
+    /** Excepción que lanza el update del punto de entrada (p11.6). */
+    entryPointUpdateThrows: null as Error | null,
     upsertCalls: [] as { row: Record<string, unknown>; options: unknown }[],
     rpcCalls: [] as { name: string; args: Record<string, unknown> }[],
     /** Error con el que responde `record_message_charge` (075), si alguno. */
@@ -192,11 +198,35 @@ vi.mock('@supabase/supabase-js', () => ({
                 }),
               }),
             }),
+            // update().eq().eq() (sello del número, 053) y, desde p11.6,
+            // update().eq('id').eq('account_id').is|eq('entry_point_at').
             update: (row: Record<string, unknown>) => {
               h.state.conversationUpdates.push(row);
-              return {
-                eq: () => ({ eq: () => Promise.resolve({ error: null }) }),
+              const filters: [string, string, unknown][] = [];
+              h.state.conversationUpdateFilters.push(filters);
+              const isEntryPoint = 'entry_point_source' in row;
+              const chain = {
+                eq: (column: string, value: unknown) => {
+                  filters.push(['eq', column, value]);
+                  return chain;
+                },
+                is: (column: string, value: unknown) => {
+                  filters.push(['is', column, value]);
+                  return chain;
+                },
+                then: (
+                  resolve: (r: unknown) => unknown,
+                  reject: (e: unknown) => unknown
+                ) => {
+                  if (isEntryPoint && h.state.entryPointUpdateThrows) {
+                    return reject(h.state.entryPointUpdateThrows);
+                  }
+                  return resolve({
+                    error: isEntryPoint ? h.state.entryPointUpdateError : null,
+                  });
+                },
               };
+              return chain;
             },
           };
         case 'contacts':
@@ -462,6 +492,9 @@ beforeEach(() => {
     whatsapp_config_id: 'cfg-pn-1',
   };
   h.state.conversationUpdates = [];
+  h.state.conversationUpdateFilters = [];
+  h.state.entryPointUpdateError = null;
+  h.state.entryPointUpdateThrows = null;
   h.state.upsertCalls = [];
   h.state.rpcCalls = [];
   h.state.chargeRpcError = null;
@@ -1794,5 +1827,250 @@ describe('cobro de Meta por mensaje (s10.1)', () => {
     });
     expect(billingGates.assertWritable).not.toHaveBeenCalled();
     expect(billingGates.getEntitlements).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// p11.6 — punto de entrada Click to WhatsApp (migración 082)
+// ============================================================
+describe('punto de entrada Click to WhatsApp (p11.6)', () => {
+  const REFERRAL = {
+    source_type: 'ad',
+    source_id: '123',
+    headline: 'Promo',
+    ctwa_clid: 'x',
+    body: 'texto largo del anuncio',
+  };
+  // Un `timestamp` de hace un minuto: la ventana es timestamp + 72 h.
+  const tsSeconds = () => Math.floor(Date.now() / 1000) - 60;
+  const adMessage = (overrides: Record<string, unknown> = {}) => ({
+    ...TEXT_MESSAGE,
+    id: 'wamid.CTWA1',
+    timestamp: String(tsSeconds()),
+    referral: REFERRAL,
+    ...overrides,
+  });
+  const entryPointUpdates = () =>
+    h.state.conversationUpdates
+      .map((row, i) => ({ row, filters: h.state.conversationUpdateFilters[i] }))
+      .filter(({ row }) => 'entry_point_source' in row);
+  const bumpCalls = () =>
+    h.state.rpcCalls.filter((c) => c.name === 'bump_conversation_on_inbound');
+  /** La fila que devuelve findOrCreateConversation, con las columnas 082. */
+  const conv = () =>
+    h.state.conversation as typeof h.state.conversation & {
+      entry_point_at?: string | null;
+      free_window_until?: string | null;
+    };
+  const statusOf = (res: unknown) =>
+    (res as { init?: { status?: number } }).init?.status ?? 200;
+
+  it('R11: un referral de anuncio guarda ctwa_ad y la ventana de 72 h, filtrado por id y account_id', async () => {
+    const ts = tsSeconds();
+    const res = await runWebhook(adMessage({ timestamp: String(ts) }));
+
+    expect(statusOf(res)).toBe(200);
+    const updates = entryPointUpdates();
+    expect(updates).toHaveLength(1);
+    expect(updates[0].row).toEqual({
+      entry_point_source: 'ctwa_ad',
+      entry_point_at: new Date(ts * 1000).toISOString(),
+      free_window_until: new Date(ts * 1000 + 72 * 3600 * 1000).toISOString(),
+      // R7: sin `body`.
+      entry_point_referral: {
+        source_type: 'ad',
+        source_id: '123',
+        headline: 'Promo',
+        ctwa_clid: 'x',
+      },
+    });
+    expect(updates[0].filters).toEqual([
+      ['eq', 'id', 'conv-1'],
+      ['eq', 'account_id', 'acc-1'],
+      ['is', 'entry_point_at', null],
+    ]);
+  });
+
+  it('R11: un referral más antiguo que el guardado no pisa la conversación', async () => {
+    const ts = tsSeconds();
+    conv().entry_point_at = new Date((ts + 30) * 1000).toISOString();
+    await runWebhook(adMessage({ timestamp: String(ts) }));
+    expect(entryPointUpdates()).toHaveLength(0);
+    // El resto del entrante, igual.
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(bumpCalls()).toHaveLength(1);
+  });
+
+  it('R11: un referral más nuevo que el guardado escribe con el filtro optimista', async () => {
+    const prev = new Date(Date.now() - 5 * 86400 * 1000).toISOString();
+    conv().entry_point_at = prev;
+    await runWebhook(adMessage());
+    const updates = entryPointUpdates();
+    expect(updates).toHaveLength(1);
+    expect(updates[0].filters).toContainEqual(['eq', 'entry_point_at', prev]);
+  });
+
+  it('R12: una repetición de Meta no toca las columnas de punto de entrada', async () => {
+    h.state.messageUpsertResult = [];
+    await runWebhook(adMessage());
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(entryPointUpdates()).toHaveLength(0);
+  });
+
+  it('R12: el mismo payload dos veces escribe una sola vez', async () => {
+    const msg = adMessage();
+    await runWebhook(msg);
+    h.state.afterCallbacks = [];
+    h.state.messageUpsertResult = [];
+    await runWebhook(msg);
+    expect(h.state.upsertCalls).toHaveLength(2);
+    expect(entryPointUpdates()).toHaveLength(1);
+  });
+
+  it('R13: un entrante sin referral no escribe y la ventana abierta sigue igual', async () => {
+    const until = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+    conv().entry_point_at = new Date(
+      Date.now() - 24 * 3600 * 1000
+    ).toISOString();
+    conv().free_window_until = until;
+    await runWebhook();
+    expect(entryPointUpdates()).toHaveLength(0);
+    expect(conv().free_window_until).toBe(until);
+    expect(h.state.upsertCalls).toHaveLength(1);
+  });
+
+  it.each([
+    ['cadena', 'ad'],
+    ['número', 7],
+    ['array', [REFERRAL]],
+    ['null', null],
+  ])(
+    'CP11: un referral malformado (%s) no escribe ni rompe el entrante',
+    async (_label, referral) => {
+      const res = await runWebhook(adMessage({ referral }));
+      expect(statusOf(res)).toBe(200);
+      expect(entryPointUpdates()).toHaveLength(0);
+      expect(h.state.upsertCalls).toHaveLength(1);
+      expect(bumpCalls()).toHaveLength(1);
+      expect(h.runAutomationsForTrigger).toHaveBeenCalled();
+    }
+  );
+
+  it('CP11/R10: un timestamp futuro guarda el origen con la hora de recepción y sin ventana', async () => {
+    const before = Date.now();
+    await runWebhook(
+      adMessage({ timestamp: String(Math.floor(before / 1000) + 3600) })
+    );
+    const updates = entryPointUpdates();
+    expect(updates).toHaveLength(1);
+    expect(updates[0].row.entry_point_source).toBe('ctwa_ad');
+    expect(updates[0].row.free_window_until).toBeNull();
+    const at = Date.parse(updates[0].row.entry_point_at as string);
+    expect(at).toBeGreaterThanOrEqual(before);
+    expect(at).toBeLessThanOrEqual(Date.now());
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(bumpCalls()).toHaveLength(1);
+  });
+
+  it('CP11: un timestamp no numérico responde 200 y no deja escapar la excepción', async () => {
+    // Deuda previa (fuera de p11.6): el `created_at` del INSERT hace
+    // `new Date(parseInt('abc') * 1000).toISOString()`, que lanza
+    // RangeError antes de llegar aquí. El webhook igual responde 200 y
+    // after() no rechaza (processWebhook lo captura).
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(inboundRequest(adMessage({ timestamp: 'abc' })));
+    expect(statusOf(res)).toBe(200);
+    for (const cb of h.state.afterCallbacks) {
+      await expect(Promise.resolve(cb())).resolves.not.toThrow();
+    }
+    err.mockRestore();
+  });
+
+  it('R14: si el update del punto de entrada falla, el mensaje, el bump, el resto del pipeline y el 200 siguen', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    h.state.entryPointUpdateError = { message: 'column does not exist' };
+
+    const res = await runWebhook(adMessage());
+
+    expect(statusOf(res)).toBe(200);
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(bumpCalls()).toHaveLength(1);
+    expect(h.dispatchInboundToFlows).toHaveBeenCalled();
+    expect(h.runAutomationsForTrigger).toHaveBeenCalled();
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalled();
+    expect(h.dispatchWebhookEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      'acc-1',
+      'message.received',
+      expect.anything()
+    );
+    expect(err).toHaveBeenCalledWith(
+      '[webhook] entry point update failed:',
+      'column does not exist'
+    );
+    // Sin contenido del mensaje ni del referral en el log.
+    const logged = JSON.stringify(
+      err.mock.calls.filter((c) =>
+        String(c[0]).includes('entry point update failed')
+      )
+    );
+    expect(logged).not.toContain('hello');
+    expect(logged).not.toContain('Promo');
+    err.mockRestore();
+  });
+
+  it('R14: si el update lanza, el pipeline sigue igual', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    h.state.entryPointUpdateThrows = new Error('socket hang up');
+
+    const res = await runWebhook(adMessage());
+
+    expect(statusOf(res)).toBe(200);
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(bumpCalls()).toHaveLength(1);
+    expect(h.runAutomationsForTrigger).toHaveBeenCalled();
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalled();
+    expect(err).toHaveBeenCalledWith(
+      '[webhook] entry point update failed:',
+      'socket hang up'
+    );
+    err.mockRestore();
+  });
+
+  it('R15: con la cuenta en solo lectura (manual_hold) guarda el entrante y su punto de entrada', async () => {
+    billingGates.assertWritable.mockRejectedValue(
+      new AccountLockedError('active', true)
+    );
+    billingGates.getEntitlements.mockResolvedValue({
+      planId: 'inicio',
+      status: 'past_due',
+      limits: {},
+      features: [],
+      readOnly: true,
+      readOnlyReason: 'manual_hold',
+      manualHold: true,
+      trialEndsAt: null,
+    } as never);
+
+    await runWebhook(adMessage());
+
+    expect(h.state.upsertCalls).toHaveLength(1);
+    const updates = entryPointUpdates();
+    expect(updates).toHaveLength(1);
+    expect(updates[0].row.entry_point_source).toBe('ctwa_ad');
+    expect(billingGates.assertWritable).not.toHaveBeenCalled();
+    expect(billingGates.getEntitlements).not.toHaveBeenCalled();
+  });
+
+  it('una reacción con referral no pasa por el punto de entrada', async () => {
+    await runWebhook({
+      id: 'wamid.R1',
+      from: '15551230000',
+      timestamp: String(tsSeconds()),
+      type: 'reaction',
+      reaction: { message_id: 'wamid.X', emoji: '👍' },
+      referral: REFERRAL,
+    });
+    expect(entryPointUpdates()).toHaveLength(0);
   });
 });
