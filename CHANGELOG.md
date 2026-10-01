@@ -27,6 +27,7 @@ and polish.
 - When a customer writes from a Click to WhatsApp ad, the inbound webhook stores where they came from and when the free window ends (72 hours after their message). Organic posts and unknown origins are stored without a window. A malformed `referral`, an invalid or future timestamp, or a failed write never makes the webhook fail, and a Meta retry never writes twice.
 - The inbox list and the conversation header show «Free window until {time}» while that window is open, with a tooltip explaining it; it disappears on its own within a minute of expiring. It is hidden for accounts whose Meta bill Cabbity pays (`managed`) and while the account's billing mode is unknown.
 - The shape of Meta's `referral` and the window rules are unverified assumptions (S-E1…S-E5 in `specs/free-entry-point-badge/design.md`); in doubt, no badge is shown.
+
 ### WhatsApp: free service quota per number
 
 - **Migration required: `080_service_cap.sql`.** Adds `accounts.service_cap_action` (`warn` by default, or `pause_ai`) and the `service_quota_usage()` function, executable only by the service role, that counts each number's delivered service messages of the month from `message_charges`. It goes after 075–079; on the hosted project, if it lands before 077/078, apply it with `supabase db push --include-all`.
@@ -1191,6 +1192,12 @@ no-store`; before, a shared cache could keep them for five minutes.
   of Cabbity on the unlimited plan, and a demo customer that has not paid
   (`cliente.demo@example.com`), all with the public lab password `bcmp1994`.
   It runs on `supabase db reset --local`; CI and the migration replay skip it.
+
+### Billing emails (optional; migration required: 083, new variables)
+
+- **Migration required: `083_notification_emails.sql`. Apply it before the code.** Adds the `notification_emails` table (one row per billing notice, UNIQUE per account, kind and reference), with RLS on and no policies: only the service role reads or writes it. If the code goes first, each notice fails to reserve, counts in `emails.errors` and the rest of the cron answers as before.
+- `GET /api/billing/cron` can now email the owner and the admins of an account when a number of an account that pays Meta directly reaches 80 % and 100 % of its free service messages of the month, when a statement is issued and when it falls due unpaid. Each notice goes out once; a failed send is retried after an hour, three times at most. An email failure never changes the statements part of the run. The response gains an `emails` block.
+- Off by default. New variables `EMAIL_API_URL`, `EMAIL_API_KEY` and `EMAIL_FROM` (a generic HTTP provider, no new dependency) and `EMAIL_PROVIDER=console` for development; see `docs/docker.md`. To get the quota emails, schedule the billing cron even with no managed accounts.
 
 ## [0.8.1] — 2026-07-10
 

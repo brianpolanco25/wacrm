@@ -531,3 +531,42 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   0 * * * * curl -fsS -H "x-cron-secret: $BILLING_CRON_SECRET" \
     https://your-crm.example.com/api/billing/cron >/dev/null
   ```
+
+- **Billing emails (optional, migration 083).** The same
+  `GET /api/billing/cron` run, right after the statements, emails the
+  owner and the admins of an account (`profiles.email`, at most 20, as
+  one message) when:
+  - a number of an account that pays Meta directly reaches 800 and then
+    1,000 of its free service messages of the month (Meta's free quota,
+    p11.3; accounts whose Meta bill Cabbity CRM pays never get these);
+  - a statement is issued, and when it falls due unpaid (only events of
+    the last 72 hours: configuring a provider never sends old notices).
+
+  Each notice is sent once (`notification_emails`, UNIQUE per account,
+  kind and reference); a failed send is retried after an hour, three
+  attempts at most. An email failure never changes the statements block
+  nor the status code of the route. The response gains an `emails` block
+  (`enabled`, `reason`, `accounts`, `truncated`, `sent`, `failed`,
+  `skipped`, `errors`).
+
+  **If you want the quota emails, schedule this cron even when no account
+  is on managed billing** — it is where they are sent from. Without
+  `BILLING_CRON_SECRET` the route keeps answering 503 and nothing is
+  emailed. With no provider configured (the default) the email part makes
+  no query at all and answers `emails.enabled = false`: only the in-app
+  banners remain.
+
+  | Variable         | Required       | What it is                                                                                                                                                      |
+  | ---------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `EMAIL_API_URL`  | to send emails | HTTPS endpoint of the provider. `http://` only for `localhost` / `127.0.0.1` (a local relay). Receives `POST` JSON `{ "from", "to": [..], "subject", "text" }`. |
+  | `EMAIL_API_KEY`  | to send emails | Sent as `Authorization: Bearer <key>`. Never logged nor stored.                                                                                                 |
+  | `EMAIL_FROM`     | to send emails | Sender, e.g. `Cabbity CRM <billing@example.com>`.                                                                                                               |
+  | `EMAIL_PROVIDER` | no             | `console` = write one line per email to the log (kind, number of recipients, subject; no addresses) instead of sending it. The three above take priority.       |
+
+  If only some of the three `EMAIL_API_*`/`EMAIL_FROM` are set, nothing is
+  sent and the response says `reason: "misconfigured"`. The request shape
+  is an assumption (S-B1 in `specs/billing-emails/design.md`): if your
+  provider expects another body, put a small relay in front of it. The
+  emails are plain text in the instance's language
+  (`NEXT_PUBLIC_APP_LOCALE`) and end with a link to `/billing` when
+  `NEXT_PUBLIC_SITE_URL` is set.
