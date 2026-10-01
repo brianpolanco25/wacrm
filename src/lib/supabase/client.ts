@@ -5,7 +5,10 @@ import {
   supportFlagAccountId,
   supportFlagValue,
 } from '@/lib/auth/support-cookie';
-import { SUPPORT_WRITABLE_TABLES } from '@/lib/auth/support-scope';
+import {
+  SUPPORT_READ_RPCS,
+  SUPPORT_WRITABLE_TABLES,
+} from '@/lib/auth/support-scope';
 
 // Singleton instance — one client shared across the whole browser session.
 // Creating multiple clients causes auth-lock contention ("Lock was released
@@ -35,9 +38,10 @@ let browserClient: SupabaseClient | undefined;
 //     …): the RLS refuses the customer's rows, but `profiles` and
 //     `notifications` are keyed by `auth.uid()` and would quietly write the
 //     OPERATOR'S OWN rows under the customer's banner;
-//   - `rpc()`: the functions in this schema are SECURITY DEFINER almost
-//     without exception and resolve the account from `auth.uid()` — the
-//     operator's company;
+//   - `rpc()`, except the read-only functions in `SUPPORT_READ_RPCS`
+//     (s9.13): the rest of the functions in this schema are SECURITY
+//     DEFINER almost without exception and resolve the account from
+//     `auth.uid()` — the operator's company;
 //   - `storage` writes: the bucket policies were not widened (057/072), so
 //     an upload would go to the operator's own prefix or fail half-way.
 //
@@ -172,10 +176,12 @@ function refusedQuery(): unknown {
  * `from(table)` writes normally when `table` is in
  * `SUPPORT_WRITABLE_TABLES` and returns a refusing builder otherwise;
  * `storage` allows only the read operations (`createSignedUrl`,
- * `download`, …); and `rpc()` refuses outright. RPCs are blocked wholesale
- * rather than by name because they are `SECURITY DEFINER` almost without
- * exception in this schema — one would answer for the operator's own
- * account, which is the mislabelled view (or write) all over again.
+ * `download`, …); and `rpc()` runs only the functions named in
+ * `SUPPORT_READ_RPCS` and refuses every other one. It is an allow-list, not
+ * a block-list, because the functions in this schema are `SECURITY DEFINER`
+ * almost without exception — an unlisted one would answer for the
+ * operator's own account, which is the mislabelled view (or write) all
+ * over again. Only `STABLE`, `SECURITY INVOKER` reads go on the list (s9.13).
  *
  * The check runs per call, not once at construction: the client is a
  * singleton that outlives the session.
@@ -200,7 +206,10 @@ export function guardReadOnly<T extends SupabaseClient>(client: T): T {
       }
       if (prop === 'rpc') {
         return (...args: unknown[]) => {
-          if (!supportSessionActive()) {
+          if (
+            !supportSessionActive() ||
+            (typeof args[0] === 'string' && SUPPORT_READ_RPCS.has(args[0]))
+          ) {
             return (target.rpc as (...a: unknown[]) => unknown)(...args);
           }
           return refusedQuery();

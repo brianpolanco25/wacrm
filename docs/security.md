@@ -462,7 +462,7 @@ hand and granting or revoking operators still require a real reason.
 While a session is open the CRM's own background writes stand down:
 `PresenceHeartbeat` does not call `touch_presence` (it would mark the
 **operator** present in their own company, and the browser guard below
-refuses every `rpc()` anyway).
+refuses it anyway).
 
 A session lasts 30 minutes. Since s9.5 (migration 072) it **writes**: the
 operator acts for the customer with the effective role **`admin`** — never
@@ -473,7 +473,7 @@ means, because there are four ways out of this application:
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | RLS (057 + 072)         | 057 opened every SELECT policy to an open session. 072 opens the write policies of the tenant tables (`can_write_account()`: member **or** open session, and never for a policy that asks for `owner`) and hangs two triggers on each of them: `record_support_write()` (the trail — the only thing that sees what the browser writes straight to Supabase) and `forbid_support_account_move()` (a session never moves a row to another company). At most one open session per operator (unique partial index). |
 | `middleware.ts`         | Lets mutating `/api` requests through and tags them (`x-wacrm-support-*`) so the server records them; refuses the short list below with 403, and every mutation outside `/api`.                                                                                                                                                                                                                                                                                                                                 |
-| `@/lib/supabase/client` | Lets the browser write the tables 072 opened; refuses the rest (`profiles`, `notifications` — the **operator's own** rows —, `accounts`, …), every `rpc()` and every writing `storage` operation.                                                                                                                                                                                                                                                                                                               |
+| `@/lib/supabase/client` | Lets the browser write the tables 072 opened; refuses the rest (`profiles`, `notifications` — the **operator's own** rows —, `accounts`, …), every `rpc()` outside `SUPPORT_READ_RPCS` and every writing `storage` operation.                                                                                                                                                                                                                                                                                   |
 | Effective role `admin`  | `requireRole('owner')` refuses; `assertNotSupportSession()` refuses billing, ownership, members, invitations, API keys and outbound webhooks whatever the role.                                                                                                                                                                                                                                                                                                                                                 |
 
 **What a support session can never do**, and where each is stopped:
@@ -530,9 +530,14 @@ Two things a support session deliberately does **not** show:
 
 Two things a support session deliberately does **not** write, besides the
 table above: attachments (uploads stay refused — the bucket policies were
-not widened) and anything that goes through an `rpc()` from the browser
-(tag filtering on the contacts list included, which shows an error during
-a session).
+not widened) and anything that goes through an `rpc()` from the browser.
+
+The browser's `rpc()` during a session runs only the functions in
+`SUPPORT_READ_RPCS` (`src/lib/auth/support-scope.ts`): today just
+`filter_contacts_by_tags` (`STABLE`, `SECURITY INVOKER`, so it answers under
+the 057 read policies, and the contacts page keeps only the effective
+account's rows); every other one, `touch_presence` included, is refused, and
+`client.test.ts` fails if a new browser `rpc('…')` is in neither list.
 
 ### Auditing
 

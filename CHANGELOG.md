@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Platform console: tag filter during a support session
+
+- Filtering contacts by tag works during a support session: the browser now runs the read-only `filter_contacts_by_tags` while the session is open. Every other database function called from the browser (`touch_presence` included) stays refused.
+
 ### Platform console: support sessions without a reason
 
 - Opening a support session from an account's file no longer requires a reason: left empty, the audit log records "Acceso del operador desde la consola de plataforma". A reason that is written must still be at least 10 characters. Suspending, reactivating and assigning a plan still require one.
