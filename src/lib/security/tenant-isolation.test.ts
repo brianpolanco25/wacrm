@@ -348,6 +348,12 @@ import * as v1ContactTagById from '@/app/api/v1/contacts/[id]/tags/[tagId]/route
 import * as v1Templates from '@/app/api/v1/templates/route';
 import * as v1TemplateById from '@/app/api/v1/templates/[id]/route';
 import * as v1TemplatesSync from '@/app/api/v1/templates/sync/route';
+// s10.4: statements at the cut-off (customer side, operator side, cron).
+import * as billingStatements from '@/app/api/billing/statements/route';
+import * as billingStatementClaim from '@/app/api/billing/statements/[sid]/claim-paid/route';
+import * as billingCron from '@/app/api/billing/cron/route';
+import * as platformStatements from '@/app/api/platform/accounts/[id]/statements/route';
+import * as platformStatementConfirm from '@/app/api/platform/accounts/[id]/statements/[sid]/confirm/route';
 
 // ---- seed ------------------------------------------------------------
 
@@ -4404,6 +4410,245 @@ describe('/api/onboarding/company (s9.6)', () => {
     );
     expect(res.status).toBe(403);
     expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+  });
+});
+
+// ============================================================
+// s10.4 — statements at the cut-off (migration 078). B's statement is
+// seeded FIRST, with the same period as A's, so an unscoped lookup by
+// period or a `.single()` lands on B.
+// ============================================================
+
+describe('statements (s10.4, service role)', () => {
+  const ST_A = 'aaaaaaaa-5555-4000-8000-000000000001';
+  const ST_B = 'bbbbbbbb-5555-4000-8000-000000000002';
+  const PERIOD_END = '2026-11-01T00:00:00.000Z';
+  const PRICING = {
+    included_messages: 7000,
+    fee_usd: 1036,
+    overage: {
+      service: { multiplier: 2.5 },
+      utility: { multiplier: 2.5 },
+      marketing: { multiplier: 2.5 },
+      authentication: { multiplier: 2.5 },
+      authentication_international: { multiplier: 2.5 },
+    },
+  };
+
+  function statementRow(id: string, accountId: string, tag: string) {
+    return {
+      id,
+      account_id: accountId,
+      period_start: '2026-10-01T00:00:00.000Z',
+      period_end: PERIOD_END,
+      plan_fee_usd: 1036,
+      usage_charge_usd: 33.9,
+      total_usd: 1069.9,
+      meta_cost_usd: 520.26,
+      included_messages: 7000,
+      messages_total: 8200,
+      overage_messages: 1200,
+      usage: {
+        version: 1,
+        lines: [
+          {
+            whatsapp_config_id: `cfg-${tag}`,
+            number: `+1 809 ${tag}`,
+            category: 'service',
+            market: 'rest_of_latam',
+            meta_rate_usd: 0.0113,
+            unit_price_usd: 0.02825,
+            delivered: 1200,
+            billable: 200,
+            included: 0,
+            overage: 1200,
+            meta_cost_usd: 2.26,
+            charge_usd: 33.9,
+          },
+        ],
+        uncategorized: { total: 0, by_category: {} },
+      },
+      status: 'issued',
+      issued_at: PERIOD_END,
+      due_at: '2026-11-04T00:00:00.000Z',
+      paid_at: null,
+      paid_reference: `ref-${tag}`,
+      paid_note: null,
+    };
+  }
+
+  function seedStatements() {
+    h.db.rows('statements').push(statementRow(ST_B, B, 'B'));
+    h.db.rows('statements').push(statementRow(ST_A, A, 'A'));
+  }
+
+  function claim(sid: string, body: unknown = { note: 'transferí ayer' }) {
+    return billingStatementClaim.POST(
+      req('POST', `/api/billing/statements/${sid}/claim-paid`, body),
+      params({ sid })
+    );
+  }
+
+  it("GET /api/billing/statements: A's statements only, without what is internal", async () => {
+    seedStatements();
+    const beforeB = h.db.snapshot(B);
+    const res = await billingStatements.GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expectNoBIds(body);
+    expect(body.statements.map((s: { id: string }) => s.id)).toEqual([ST_A]);
+    const text = JSON.stringify(body);
+    for (const secret of ['billable', 'meta_rate', 'meta_cost', 'ref-A']) {
+      expect(text).not.toContain(secret);
+    }
+    expectBUnchanged(beforeB);
+  });
+
+  it("«Ya pagué» on B's statement as A is a 404, and B is untouched", async () => {
+    seedStatements();
+    const beforeB = h.db.snapshot(B);
+    const res = await claim(ST_B);
+    expect(res.status).toBe(404);
+    expectNoBIds(await res.json());
+    expectBUnchanged(beforeB);
+  });
+
+  it("«Ya pagué» on A's statement leaves the note and changes nothing else", async () => {
+    seedStatements();
+    const beforeB = h.db.snapshot(B);
+    const res = await claim(ST_A);
+    expect(res.status).toBe(200);
+    const st = h.db.rows('statements').find((r) => r.id === ST_A)!;
+    expect(st).toMatchObject({
+      status: 'issued',
+      claimed_by: USER_A,
+      claim_note: 'transferí ayer',
+      paid_at: null,
+    });
+    expect(typeof st.claimed_paid_at).toBe('string');
+    expect(
+      h.db.rows('subscriptions').find((r) => r.account_id === A)
+    ).toMatchObject({ status: 'active' });
+    expectBUnchanged(beforeB);
+  });
+
+  it('403s an agent of A on both, and writes nothing', async () => {
+    seedStatements();
+    const profileA = h.db.rows('profiles').find((p) => p.user_id === USER_A)!;
+    profileA.account_role = 'agent';
+    const beforeA = h.db.snapshot(A);
+    expect((await billingStatements.GET()).status).toBe(403);
+    expect((await claim(ST_A)).status).toBe(403);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+  });
+
+  it('403s the owner of A on the operator routes, and moves nothing', async () => {
+    seedStatements();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+    const list = await platformStatements.GET(
+      req('GET', `/api/platform/accounts/${TPL_A}/statements`),
+      params({ id: TPL_A })
+    );
+    expect(list.status).toBe(403);
+    const confirm = await platformStatementConfirm.POST(
+      req(
+        'POST',
+        `/api/platform/accounts/${TPL_A}/statements/${ST_A}/confirm`,
+        {}
+      ),
+      params({ id: TPL_A, sid: ST_A })
+    );
+    expect(confirm.status).toBe(403);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+  });
+
+  it('the cron bills the managed company it is due for — A — and leaves B as it was', async () => {
+    vi.stubEnv('BILLING_CRON_SECRET', 'billing-secret');
+    extraWaivers = [
+      {
+        table: 'subscriptions',
+        op: 'select',
+        by: ['meta_billing', 'current_period_end'],
+        reason:
+          'The cut-off sweep (GET /api/billing/cron) lists every managed ' +
+          'subscription whose period ended, across accounts by design; ' +
+          'every read and write after it is filtered by the account of ' +
+          'the row.',
+      },
+      {
+        table: 'meta_rates',
+        op: 'select',
+        by: [],
+        reason: "Meta's rate card is global (076): no account_id column.",
+      },
+      {
+        table: 'meta_market_countries',
+        op: 'select',
+        by: [],
+        reason: 'The country → market table is global (076).',
+      },
+    ];
+    const subA = h.db.rows('subscriptions').find((r) => r.account_id === A)!;
+    Object.assign(subA, {
+      plan_id: 'gestionado',
+      provider: 'manual',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: PRICING,
+      current_period_end: '2026-01-01T00:00:00.000Z',
+    });
+    // B delivered too — none of it may end up on A's statement.
+    h.db.rows('message_charges').push(
+      {
+        id: 'mc-b',
+        account_id: B,
+        wamid: 'wamid.b',
+        whatsapp_config_id: 'cfg-B',
+        recipient_phone: '18095550000',
+        pricing_category: 'marketing',
+        pricing_billable: true,
+        status: 'delivered',
+        delivered_at: '2025-12-15T00:00:00.000Z',
+      },
+      {
+        id: 'mc-a',
+        account_id: A,
+        wamid: 'wamid.a',
+        whatsapp_config_id: 'cfg-A',
+        recipient_phone: '18095550000',
+        pricing_category: 'marketing',
+        pricing_billable: true,
+        status: 'delivered',
+        delivered_at: '2025-12-16T00:00:00.000Z',
+      }
+    );
+    h.db.rows('meta_rates').push({
+      market: 'rest_of_latam',
+      category: 'marketing',
+      usd_per_message: '0.07400',
+      effective_from: '2025-01-01',
+    });
+    h.db.rows('meta_market_countries').push({
+      country_code: 'DO',
+      market: 'rest_of_latam',
+    });
+    h.db.rows('statements');
+    const beforeB = h.db.snapshot(B);
+
+    const res = await billingCron.GET(
+      req('GET', '/api/billing/cron', undefined, {
+        'x-cron-secret': 'billing-secret',
+      })
+    );
+    expect(res.status).toBe(200);
+    expectNoBIds(await res.json());
+    const issued = h.db.rows('statements');
+    expect(issued).toHaveLength(1);
+    expect(issued[0]).toMatchObject({ account_id: A, messages_total: 1 });
+    expect(subA).toMatchObject({ status: 'past_due' });
     expectBUnchanged(beforeB);
   });
 });

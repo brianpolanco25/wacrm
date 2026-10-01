@@ -1023,6 +1023,48 @@ describe('inbound webhook: billing never blocks what comes in (CP11)', () => {
     expect(billingGates.assertWritable).not.toHaveBeenCalled();
   });
 
+  it('stores it for a managed account read-only over an overdue statement (s10.4)', async () => {
+    // The cut-off of fase 10: the statement was not paid three days after
+    // the period ended, so the account cannot send — and its customers'
+    // messages still land. PayPal may have renewed the fee and left the
+    // row `active`; the lock comes from the open statement.
+    billingGates.assertWritable.mockRejectedValue(
+      new AccountLockedError('active')
+    );
+    billingGates.getEntitlements.mockResolvedValue({
+      planId: 'gestionado',
+      status: 'active',
+      limits: {},
+      features: [],
+      readOnly: true,
+      readOnlyReason: 'statement',
+      manualHold: false,
+      trialEndsAt: null,
+      metaBilling: 'managed',
+      paymentMethod: 'paypal',
+      openStatement: {
+        id: 'st-1',
+        periodStart: '2026-10-01T00:00:00.000Z',
+        periodEnd: '2026-11-01T00:00:00.000Z',
+        totalUsd: 1069.9,
+        dueAt: '2026-11-04T00:00:00.000Z',
+      },
+    } as never);
+
+    await runWebhook();
+
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+    });
+    expect(h.state.rpcCalls[0]).toMatchObject({
+      name: 'bump_conversation_on_inbound',
+    });
+    expect(billingGates.assertWritable).not.toHaveBeenCalled();
+    expect(billingGates.getEntitlements).not.toHaveBeenCalled();
+  });
+
   it('never asks the billing layer anything while storing an inbound', async () => {
     await runWebhook();
 
