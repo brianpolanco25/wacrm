@@ -18,6 +18,11 @@ import { dispatchInboundToFlows } from '@/lib/flows/engine';
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply';
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver';
 import {
+  parseStatusPricing,
+  recordMessageCharge,
+  type WhatsAppStatusPricing,
+} from '@/lib/whatsapp/message-charges';
+import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook';
@@ -122,6 +127,12 @@ interface WhatsAppStatus {
   timestamp: string;
   recipient_id?: string;
   recipient_user_id?: string;
+  /**
+   * Lo que Meta cobra por este mensaje. Viaja en `sent` y `delivered`
+   * (`billable`, `category`, `type`, `pricing_model`); `read` y `failed`
+   * no lo traen. Se registra en `message_charges` (migración 075).
+   */
+  pricing?: WhatsAppStatusPricing;
 }
 
 interface WhatsAppWebhookEntry {
@@ -371,7 +382,7 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
       // Handle status updates
       if (value.statuses) {
         for (const status of value.statuses) {
-          await handleStatusUpdate(status, config.account_id);
+          await handleStatusUpdate(status, config.account_id, config.id);
         }
       }
 
@@ -517,10 +528,10 @@ function isValidStatusTransition(current: string, incoming: string): boolean {
  * principal sigue siendo el `wamid`, y esta identidad solo se usa para
  * desempatar cuando ese `wamid` encuentra más de una fila.
  */
-async function resolveStatusContactId(
+async function resolveStatusContact(
   status: WhatsAppStatus,
   accountId: string
-): Promise<string | null> {
+): Promise<{ id: string; phone: string | null } | null> {
   const waUserId = sanitizeBsuid(status.recipient_user_id);
   if (waUserId) {
     const byUserId = await findContactByWaUserId(
@@ -528,7 +539,7 @@ async function resolveStatusContactId(
       accountId,
       waUserId
     );
-    if (byUserId) return byUserId.id;
+    if (byUserId) return { id: byUserId.id, phone: byUserId.phone ?? null };
   }
   const phone = normalizePhone(status.recipient_id ?? '');
   if (phone) {
@@ -537,7 +548,7 @@ async function resolveStatusContactId(
       accountId,
       phone
     );
-    if (byPhone) return byPhone.id;
+    if (byPhone) return { id: byPhone.id, phone: byPhone.phone ?? null };
   }
   return null;
 }
@@ -561,9 +572,14 @@ function pickByContact<T extends { contact_id?: string | null }>(
   return rows[0];
 }
 
-async function handleStatusUpdate(status: WhatsAppStatus, accountId: string) {
+async function handleStatusUpdate(
+  status: WhatsAppStatus,
+  accountId: string,
+  whatsappConfigId: string
+) {
   // A quién se le envió, según la identidad que traiga el evento.
-  const recipientContactId = await resolveStatusContactId(status, accountId);
+  const recipientContact = await resolveStatusContact(status, accountId);
+  const recipientContactId = recipientContact?.id ?? null;
 
   // 1) Mirror onto messages (legacy behavior) — Meta's status values
   //    already match the CHECK constraint on messages.status. El
@@ -659,17 +675,41 @@ async function handleStatusUpdate(status: WhatsAppStatus, accountId: string) {
     }
   }
 
-  // 3) Webhook fan-out for messages we store (inbox / API sends).
-  //    Runs last so a slow subscriber can't delay the mirrors above.
-  //    Se reutiliza la consulta del paso 1 (misma cuenta, mismo
-  //    `wamid`): una llamada menos por evento de estado.
+  // Se reutiliza la consulta del paso 1 (misma cuenta, mismo `wamid`)
+  // para el cobro y para el fan-out: una llamada menos por evento.
   const msgRow = pickByContact(
     messageRows.map((m) => ({
+      id: m.id,
       conversation_id: m.conversation_id,
       contact_id: m.conversations?.contact_id ?? null,
     })),
     recipientContactId
   );
+
+  // 3) Lo que Meta cobra por este mensaje (migración 075). Sirve tanto
+  //    a los mensajes de conversación como a los destinatarios de
+  //    difusión, que no pasan por `messages`. El número es el de este
+  //    webhook —el que envió—, no el de la conversación, que se puede
+  //    volver a sellar después. Un estado sin `pricing` solo avanza una
+  //    fila que ya exista. `recordMessageCharge` no lanza: el estado ya
+  //    está reflejado arriba y el webhook nunca falla por esto (CP11).
+  await recordMessageCharge(supabaseAdmin(), {
+    accountId,
+    whatsappConfigId,
+    wamid: status.id,
+    status: status.status,
+    eventAt: tsIso,
+    messageId: msgRow?.id ?? null,
+    broadcastRecipientId: recipient?.id ?? null,
+    recipientPhone:
+      normalizePhone(status.recipient_id ?? '') ||
+      normalizePhone(recipientContact?.phone ?? '') ||
+      null,
+    pricing: parseStatusPricing(status.pricing),
+  });
+
+  // 4) Webhook fan-out for messages we store (inbox / API sends).
+  //    Runs last so a slow subscriber can't delay the mirrors above.
 
   if (msgRow) {
     await dispatchWebhookEvent(

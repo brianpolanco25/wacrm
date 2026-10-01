@@ -1971,6 +1971,80 @@ describe('/api/whatsapp/webhook (service role, tenant from phone_number_id)', ()
     expectBUnchanged(before);
   });
 
+  it('s10.1: el cobro de Meta de un wamid compartido se registra solo con las filas de la cuenta del número', async () => {
+    // Mismo wamid en un mensaje y en un destinatario de difusión de CADA
+    // cuenta. El estado llega por el número de A: el cobro sale con la
+    // cuenta, el número y las referencias de A, y nada de B.
+    for (const row of h.db.rows('broadcast_recipients')) {
+      row.whatsapp_message_id = 'wamid.CHARGED';
+      row.status = 'sent';
+    }
+    for (const row of h.db.rows('messages')) {
+      if (row.id === 'msg-a' || row.id === 'msg-b') {
+        row.message_id = 'wamid.CHARGED';
+      }
+    }
+    const before = h.db.snapshot(B);
+
+    await waWebhook.POST(
+      req(
+        'POST',
+        '/api/whatsapp/webhook',
+        {
+          entry: [
+            {
+              id: 'waba',
+              changes: [
+                {
+                  field: 'messages',
+                  value: {
+                    messaging_product: 'whatsapp',
+                    metadata: {
+                      display_phone_number: '1',
+                      phone_number_id: 'pn-a',
+                    },
+                    statuses: [
+                      {
+                        id: 'wamid.CHARGED',
+                        status: 'delivered',
+                        timestamp: '1700000000',
+                        recipient_user_id: SHARED_WA_USER_ID,
+                        pricing: {
+                          billable: true,
+                          pricing_model: 'PMP',
+                          category: 'marketing',
+                          type: 'regular',
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        { 'x-hub-signature-256': 'sha256=stub' }
+      )
+    );
+    await drainAfter();
+
+    const charges = h.db.log.filter(
+      (l) => l.table === 'rpc:record_message_charge'
+    );
+    expect(charges).toHaveLength(1);
+    expect(charges[0].args).toMatchObject({
+      p_account_id: A,
+      p_whatsapp_config_id: 'cfg-a',
+      p_message_id: 'msg-a',
+      p_broadcast_recipient_id: 'rcpt-a',
+      p_pricing_category: 'marketing',
+    });
+    expect(JSON.stringify(charges[0].args)).not.toMatch(
+      /-b"|"cfg-b|"rcpt-b|"msg-b/
+    );
+    expectBUnchanged(before);
+  });
+
   it('an inbound for an unknown number is dropped without touching either account', async () => {
     const beforeA = h.db.snapshot(A);
     const beforeB = h.db.snapshot(B);

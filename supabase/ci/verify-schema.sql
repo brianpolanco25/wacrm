@@ -1870,6 +1870,113 @@ BEGIN
   END IF;
   -- /074 -----------------------------------------------------------
 
+  -- 075 ------------------------------------------------------------
+  -- message_charges: lo que Meta cobra por mensaje (s10.1).
+  IF to_regclass('public.message_charges') IS NULL THEN
+    RAISE EXCEPTION 'message_charges table missing (migration 075)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'message_charges'
+      AND column_name IN ('id', 'account_id', 'whatsapp_config_id', 'wamid',
+                          'message_id', 'broadcast_recipient_id',
+                          'recipient_phone', 'pricing_category',
+                          'pricing_billable', 'pricing_type', 'pricing_model',
+                          'status', 'sent_at', 'delivered_at', 'created_at')
+  ) <> 15 THEN
+    RAISE EXCEPTION 'message_charges is missing columns (migration 075)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.message_charges'::regclass
+      AND conname = 'message_charges_wamid_key' AND contype = 'u'
+  ) THEN
+    RAISE EXCEPTION 'message_charges.wamid must be UNIQUE (migration 075)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.message_charges'::regclass
+      AND conname = 'message_charges_status_check' AND contype = 'c'
+  ) THEN
+    RAISE EXCEPTION 'message_charges status CHECK missing (migration 075)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM pg_constraint
+    WHERE conrelid = 'public.message_charges'::regclass AND contype = 'f'
+      AND confdeltype = 'n'
+      AND confrelid IN ('public.messages'::regclass,
+                        'public.broadcast_recipients'::regclass,
+                        'public.whatsapp_config'::regclass)
+  ) <> 3 THEN
+    RAISE EXCEPTION 'message_charges FKs to messages/broadcast_recipients/whatsapp_config must be ON DELETE SET NULL (migration 075)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'message_charges'
+      AND indexname IN ('message_charges_account_delivered_idx',
+                        'message_charges_config_delivered_idx',
+                        'message_charges_message_idx',
+                        'message_charges_broadcast_recipient_idx')
+  ) <> 4 THEN
+    RAISE EXCEPTION 'message_charges indexes missing (migration 075)';
+  END IF;
+
+  IF NOT (SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.message_charges'::regclass) THEN
+    RAISE EXCEPTION 'message_charges must have RLS enabled (migration 075)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'message_charges'
+      AND policyname = 'message_charges_select' AND cmd = 'SELECT'
+      AND qual LIKE '%can_read_account(account_id, ''admin''%'
+  ) OR EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'message_charges'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'message_charges must be readable by admin+ only and writable by nobody but service_role (migration 075)';
+  END IF;
+
+  IF has_table_privilege('authenticated', 'public.message_charges', 'INSERT')
+     OR has_table_privilege('authenticated', 'public.message_charges', 'UPDATE')
+     OR has_table_privilege('authenticated', 'public.message_charges', 'DELETE')
+     OR has_table_privilege('anon', 'public.message_charges', 'INSERT') THEN
+    RAISE EXCEPTION 'message_charges must not be writable by anon/authenticated (migration 075)';
+  END IF;
+
+  IF to_regprocedure('public.record_message_charge(uuid, text, text, timestamptz, uuid, uuid, uuid, text, text, boolean, text, text)') IS NULL THEN
+    RAISE EXCEPTION 'record_message_charge() missing (migration 075)';
+  END IF;
+
+  IF has_function_privilege('authenticated',
+       'public.record_message_charge(uuid, text, text, timestamptz, uuid, uuid, uuid, text, text, boolean, text, text)',
+       'EXECUTE')
+     OR has_function_privilege('anon',
+       'public.record_message_charge(uuid, text, text, timestamptz, uuid, uuid, uuid, text, text, boolean, text, text)',
+       'EXECUTE')
+     OR NOT has_function_privilege('service_role',
+       'public.record_message_charge(uuid, text, text, timestamptz, uuid, uuid, uuid, text, text, boolean, text, text)',
+       'EXECUTE') THEN
+    RAISE EXCEPTION 'record_message_charge() must be executable by service_role only (migration 075)';
+  END IF;
+
+  IF message_charge_next_status('read', 'delivered') <> 'read'
+     OR message_charge_next_status('delivered', 'failed') <> 'delivered'
+     OR message_charge_next_status('sent', 'failed') <> 'failed'
+     OR message_charge_next_status(NULL, 'sent') <> 'sent'
+     OR message_charge_next_status('sent', 'delivered') <> 'delivered'
+     OR message_charge_next_status('delivered', 'bogus') <> 'delivered' THEN
+    RAISE EXCEPTION 'message_charge_next_status() lets status move backwards (migration 075)';
+  END IF;
+  -- /075 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
