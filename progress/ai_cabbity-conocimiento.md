@@ -4,7 +4,8 @@ Material para pegar en Asistentes IA → Setup (contexto e instrucciones, mensaj
 derivación) y en la base de conocimiento (un documento por sección de la parte 3).
 Fuente: cabbity.com y sus subpáginas y blog (leídas el 2026-09-25), crm.cabbity.com,
 terapiacloud.com y el catálogo de planes del CRM en `supabase/migrations/041`, `059`
-y `065`. Horario de atención indicado por el humano: lunes a viernes, 9:00 a 17:00.
+y `065`; cambio de precios de Meta del 2026-10-01 en `progress/spec_facturacion-gestionada.md`
+y `supabase/migrations/076_meta_rates.sql` (sección «qué cobra Cabbity y qué cobra Meta», p11.2). Horario de atención indicado por el humano: lunes a viernes, 9:00 a 17:00.
 
 Cómo funciona la derivación: el CRM ya instruye al modelo, en modo respuesta
 automática, a contestar exactamente `[[HANDOFF]]` cuando no tenga la información o
@@ -317,26 +318,80 @@ Prueba gratis de Cabbity CRM: 14 días con todas las funciones del plan Pro, sin
 tarjeta. Al terminar, se elige un plan.
 
 Plan Inicio de Cabbity CRM: US$35 al mes o US$350 al año. Incluye 3 operadores,
-2,000 contactos, 3,000 mensajes salientes al mes, 500 respuestas de IA al mes,
-difusiones de hasta 2,000 destinatarios, 10 documentos en la base de conocimiento,
+2,000 contactos, 3,000 mensajes salientes incluidos al mes, 500 respuestas de IA
+incluidas al mes, 2,000 destinatarios de difusión incluidos al mes, 10 documentos en la base de conocimiento,
 1 número de WhatsApp y 12 meses de historial. No incluye API ni webhooks.
 
 Plan Pro de Cabbity CRM: US$100 al mes o US$1,000 al año. Incluye 10 operadores,
-10,000 contactos, 15,000 mensajes salientes al mes, 3,000 respuestas de IA al mes,
-difusiones de hasta 10,000 destinatarios, 50 documentos en la base de
+10,000 contactos, 15,000 mensajes salientes incluidos al mes, 3,000 respuestas de
+IA incluidas al mes, 10,000 destinatarios de difusión incluidos al mes, 50 documentos en la base de
 conocimiento, 1 número de WhatsApp, 24 meses de historial, API para
 desarrolladores y webhooks.
 
 Plan Negocio de Cabbity CRM: US$199 al mes o US$1,990 al año. Incluye 30
-operadores, 50,000 contactos, 60,000 mensajes salientes al mes, 15,000 respuestas
-de IA al mes, difusiones de hasta 50,000 destinatarios, 200 documentos en la base
+operadores, 50,000 contactos, 60,000 mensajes salientes incluidos al mes, 15,000
+respuestas de IA incluidas al mes, 50,000 destinatarios de difusión incluidos al
+mes, 200 documentos en la base
 de conocimiento, hasta 3 números de WhatsApp, historial ilimitado, API, webhooks y
-soporte prioritario.
+soporte prioritario. Como la cuota gratis de Meta es por número, con los 3
+números son 3,000 mensajes de servicio gratis al mes.
 
 Agente de IA de Cabbity CRM: cada negocio usa su propia clave de OpenAI,
 Anthropic o Google Gemini. La IA redacta borradores en la bandeja, puede responder
 sola a los clientes y deriva a un humano cuando no sabe la respuesta. Aprende de
 la base de conocimiento que carga el negocio.
+
+### Cabbity CRM: qué cobra Cabbity y qué cobra Meta
+
+¿Qué me cobra Cabbity CRM y qué me cobra Meta? Cabbity cobra la suscripción del
+plan de Cabbity CRM (Inicio, Pro o Negocio), mensual o anual, con PayPal, con los
+mensajes salientes, respuestas de IA y destinatarios de difusión que incluye cada
+plan. Meta cobra aparte, directamente a la empresa y con el método de pago de su
+cuenta de WhatsApp Business, cada mensaje de WhatsApp entregado según su
+categoría (marketing, utilidad, autenticación o servicio) y el país del
+destinatario. Son dos cobros distintos.
+
+¿El precio del plan de Cabbity CRM incluye lo que cobra Meta? No. El precio del
+plan es lo que cobra Cabbity. Lo que cobra Meta por los mensajes de WhatsApp va
+aparte y la empresa lo paga directamente a Meta.
+
+¿Cuántos mensajes de WhatsApp son gratis en Meta? Desde el 1 de octubre de 2026,
+Meta no cobra los primeros 1,000 mensajes de servicio entregados al mes por cada
+número de WhatsApp. Los mensajes de servicio son las respuestas que la empresa
+envía cuando el cliente le ha escrito; a partir del 1,001, Meta los cobra a la
+tarifa de utilidad. Meta tampoco cobra los mensajes enviados dentro de la
+ventana gratuita de 72 horas que se abre cuando un cliente escribe desde un
+anuncio o un botón de WhatsApp de la página de Facebook de la empresa.
+
+¿Cuántos mensajes gratis de Meta tengo con el plan Negocio de Cabbity CRM? La
+cuota gratis de Meta es por número, y el plan Negocio incluye hasta 3 números de
+WhatsApp: con los 3 conectados son 3,000 mensajes de servicio gratis al mes
+(1,000 por número). Inicio y Pro incluyen 1 número: 1,000 al mes.
+
+¿Cuánto cobra Meta por cada mensaje de WhatsApp? Depende de la categoría del
+mensaje y del país del destinatario, según la tarifa vigente de Meta para ese
+país. Ejemplo: la República Dominicana está en el mercado «Resto de
+Latinoamérica» de Meta; con la tarifa vigente el 1 de octubre de 2026, un
+mensaje de utilidad, o de servicio pasados los 1,000 gratis, cuesta US$0.0113, y
+uno de marketing US$0.0740. Meta puede cambiar sus tarifas: se aplica siempre la
+vigente de Meta para el país. Para otros países, consultar la tarifa de Meta;
+si el cliente insiste en una cifra concreta, derivar a una persona.
+
+¿Necesito un método de pago en Meta para usar Cabbity CRM? Sí. La cuenta de
+WhatsApp Business necesita un método de pago (una tarjeta) en el Billing Hub de
+Meta; sin él, Meta no entrega los mensajes que envía la empresa. Cabbity CRM
+avisa con un banner en el panel si no lo encuentra. Los mensajes que escriben
+los clientes siguen llegando.
+
+¿Qué pasa si uso todos los mensajes incluidos en mi plan de Cabbity CRM? Cabbity
+no cobra nada extra. Ese tipo de envío (mensajes salientes, respuestas de IA o
+destinatarios de difusión) se pausa hasta que empieza el mes siguiente; los
+mensajes que escriben los clientes siguen llegando y no se pierde nada. Si el
+plan se queda corto, se cambia a uno con más incluido desde el panel; el cambio
+se aplica en la siguiente renovación.
+
+¿Dónde veo los precios de Cabbity CRM? En crm.cabbity.com/precios, con los
+planes, lo que incluye cada uno y lo que cobra Meta.
 
 ### Desarrollo de software a medida y otros productos de Cabbity
 
