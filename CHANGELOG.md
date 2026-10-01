@@ -11,6 +11,13 @@ and polish.
 
 ## [Unreleased]
 
+### Inbox: free entry-point window from Click to WhatsApp ads
+
+- **Migration required: `082_conversation_entry_point.sql`. Apply it before the code.** Adds four nullable columns to `conversations` (`entry_point_source`, `entry_point_at`, `free_window_until`, `entry_point_referral`) and two `NOT VALID` CHECKs, with `lock_timeout = 5s`; no table rewrite. If the code goes first, the inbound webhook logs a harmless `entry point update failed` line per ad message and keeps working.
+- When a customer writes from a Click to WhatsApp ad, the inbound webhook stores where they came from and when the free window ends (72 hours after their message). Organic posts and unknown origins are stored without a window. A malformed `referral`, an invalid or future timestamp, or a failed write never makes the webhook fail, and a Meta retry never writes twice.
+- The inbox list and the conversation header show «Free window until {time}» while that window is open, with a tooltip explaining it; it disappears on its own within a minute of expiring. It is hidden for accounts whose Meta bill Cabbity pays (`managed`) and while the account's billing mode is unknown.
+- The shape of Meta's `referral` and the window rules are unverified assumptions (S-E1…S-E5 in `specs/free-entry-point-badge/design.md`); in doubt, no badge is shown.
+
 ### WhatsApp: payment method in Meta
 
 - **Migration required: `079_meta_payment_status.sql`.** Adds `meta_payment_status` (`ok` | `missing` | `unknown`), `meta_payment_checked_at` and `meta_payment_error` to `whatsapp_config`, a partial index for the sweep, and a trigger that keeps a browser session from writing those columns (only the server does) and resets them when the WABA or the token is changed from Settings. On the hosted project it can be applied before 075–078 only with `supabase db push --include-all`.

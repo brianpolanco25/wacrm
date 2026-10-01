@@ -4,6 +4,13 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { usePresence } from '@/hooks/use-presence';
+import { useBillingStatus } from '@/hooks/use-billing-status';
+import { useMinuteClock } from '@/hooks/use-minute-clock';
+import {
+  freeWindowDateTimeOptions,
+  freeWindowUntil,
+} from '@/lib/inbox/free-window';
+import { FreeWindowBadge } from './free-window-badge';
 import { PresenceDot } from '@/components/presence/presence-dot';
 import { presenceLabel } from '@/lib/presence';
 import { cn } from '@/lib/utils';
@@ -29,7 +36,7 @@ import {
   PanelRightClose,
 } from 'lucide-react';
 import { format, isToday, isYesterday, differenceInHours } from 'date-fns';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 import { contactDisplayName, contactHandle } from '@/lib/contacts/display';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -175,6 +182,8 @@ export function MessageThread({
   const t = useTranslations('Inbox.messageThread');
   const tTimer = useTranslations('Inbox.sessionTimer');
   const tQuote = useTranslations('Inbox.replyQuote');
+  const tFreeWindow = useTranslations('Inbox.freeWindow');
+  const formatter = useFormatter();
 
   const { user, accountId } = useAuth();
   const { getPresence, getRow, now } = usePresence();
@@ -243,6 +252,22 @@ export function MessageThread({
       cancelled = true;
     };
   }, [accountId]);
+
+  // Ventana gratis de punto de entrada (p11.6): el mismo cálculo que la
+  // lista, con su propio reloj de minuto. Oculta en cuentas `managed` y
+  // mientras `metaBilling` no se conozca (lo decide `freeWindowUntil`).
+  const clockNow = useMinuteClock();
+  const metaBilling = useBillingStatus()?.metaBilling;
+  const freeWindow = useMemo(() => {
+    if (!conversation) return null;
+    const until = freeWindowUntil(conversation, clockNow, metaBilling);
+    if (!until) return null;
+    const formatted = formatter.dateTime(until, freeWindowDateTimeOptions());
+    return {
+      label: tFreeWindow('badge', { until: formatted }),
+      title: tFreeWindow('tooltip', { until: formatted }),
+    };
+  }, [conversation, clockNow, metaBilling, formatter, tFreeWindow]);
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
@@ -974,6 +999,13 @@ export function MessageThread({
             <Clock className="h-3 w-3" />
             {sessionInfo.remaining}
           </Badge>
+          {freeWindow && (
+            <FreeWindowBadge
+              label={freeWindow.label}
+              title={freeWindow.title}
+              className="ml-1 hidden sm:ml-2 sm:inline-flex"
+            />
+          )}
         </div>
 
         <div className="flex items-center gap-2">

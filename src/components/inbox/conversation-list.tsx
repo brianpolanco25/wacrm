@@ -14,15 +14,22 @@ import {
   type AttentionState,
 } from '@/lib/inbox/attention';
 import { AttentionBadge } from '@/components/inbox/attention-badge';
+import { FreeWindowBadge } from '@/components/inbox/free-window-badge';
 import { useAiAccountStatus } from '@/hooks/use-ai-account-status';
 import { usePresence } from '@/hooks/use-presence';
 import { useAuth } from '@/hooks/use-auth';
+import { useBillingStatus } from '@/hooks/use-billing-status';
+import { useMinuteClock } from '@/hooks/use-minute-clock';
+import {
+  freeWindowDateTimeOptions,
+  freeWindowUntil,
+} from '@/lib/inbox/free-window';
 import { presenceLabel, type PresenceStatus } from '@/lib/presence';
 import { cn } from '@/lib/utils';
 import type { Conversation, ConversationStatus, Profile, Tag } from '@/types';
 import { Search, ChevronDown, X } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 import {
   contactDisplayName,
   contactMatchesSearch,
@@ -67,6 +74,13 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations('Inbox.conversationList');
+  // Ventana gratis de punto de entrada (p11.6). Un solo reloj para toda
+  // la lista, nunca uno por fila; y la insignia solo con `metaBilling`
+  // conocido y `direct` (lo decide `freeWindowUntil`).
+  const tFreeWindow = useTranslations('Inbox.freeWindow');
+  const formatter = useFormatter();
+  const clockNow = useMinuteClock();
+  const metaBilling = useBillingStatus()?.metaBilling;
   // The account this list is showing. Normally the signed-in user's own;
   // the customer's during a support session. Every fetch below filters by
   // it — since migration 057, RLS answers a platform operator with both
@@ -349,6 +363,21 @@ export function ConversationList({
 
   const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
 
+  // Textos de la insignia de ventana gratis de una fila, o nada. Con el
+  // reloj del minuto: cuando pasa `free_window_until`, la insignia se va
+  // sola en menos de 60 s (R20).
+  const freeWindowTexts = (
+    conv: Conversation
+  ): { freeWindowLabel?: string; freeWindowTitle?: string } => {
+    const until = freeWindowUntil(conv, clockNow, metaBilling);
+    if (!until) return {};
+    const formatted = formatter.dateTime(until, freeWindowDateTimeOptions());
+    return {
+      freeWindowLabel: tFreeWindow('badge', { until: formatted }),
+      freeWindowTitle: tFreeWindow('tooltip', { until: formatted }),
+    };
+  };
+
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
@@ -585,6 +614,7 @@ export function ConversationList({
                         )
                       : undefined
                   }
+                  {...freeWindowTexts(conv)}
                   t={t}
                 />
               );
@@ -607,6 +637,9 @@ interface ConversationItemProps {
   attentionLabel: string;
   presence?: PresenceStatus;
   presenceTitle?: string;
+  /** «Ventana gratis hasta …» (p11.6); ausente = sin insignia. */
+  freeWindowLabel?: string;
+  freeWindowTitle?: string;
   t: ReturnType<typeof useTranslations>;
 }
 
@@ -618,6 +651,8 @@ function ConversationItem({
   attentionLabel,
   presence,
   presenceTitle,
+  freeWindowLabel,
+  freeWindowTitle,
   t,
 }: ConversationItemProps) {
   const contact = conversation.contact;
@@ -686,14 +721,22 @@ function ConversationItem({
         </div>
         {/* Who is attending. Its own line so the operator's name isn't
             fighting the message preview for the 320px the list gets. */}
-        {attention && (
-          <div className="mt-1 flex min-w-0 items-center">
-            <AttentionBadge
-              state={attention}
-              label={attentionLabel}
-              presence={presence}
-              presenceTitle={presenceTitle}
-            />
+        {(attention || freeWindowLabel) && (
+          <div className="mt-1 flex min-w-0 items-center gap-2">
+            {attention && (
+              <AttentionBadge
+                state={attention}
+                label={attentionLabel}
+                presence={presence}
+                presenceTitle={presenceTitle}
+              />
+            )}
+            {freeWindowLabel && (
+              <FreeWindowBadge
+                label={freeWindowLabel}
+                title={freeWindowTitle ?? freeWindowLabel}
+              />
+            )}
           </div>
         )}
       </div>

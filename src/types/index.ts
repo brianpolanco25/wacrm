@@ -187,6 +187,15 @@ export interface Conversation {
   ai_autoreply_disabled?: boolean;
   ai_reply_count?: number;
   ai_handoff_summary?: string | null;
+  /**
+   * Punto de entrada Click to WhatsApp (migración 082, p11.6). Lo escribe
+   * el webhook cuando el entrante trae `referral`; `free_window_until` es
+   * el fin de la ventana en la que Meta no cobra (entrada + 72 h), solo
+   * para anuncios. `entry_point_referral` no se tipa: no se muestra.
+   */
+  entry_point_source?: 'ctwa_ad' | 'ctwa_organic' | 'ctwa_other' | null;
+  entry_point_at?: string | null;
+  free_window_until?: string | null;
 }
 
 // ============================================================

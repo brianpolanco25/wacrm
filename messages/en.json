@@ -188,6 +188,10 @@
     }
   },
   "Inbox": {
+    "freeWindow": {
+      "badge": "Free window until {until}",
+      "tooltip": "This customer came from a Click to WhatsApp ad. If you reply within 24 hours of their first message, Meta does not charge for the messages in this conversation until {until}."
+    },
     "page": {
       "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account."
     },
