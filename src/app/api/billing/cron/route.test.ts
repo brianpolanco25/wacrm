@@ -15,6 +15,11 @@ vi.mock('@/lib/flows/admin-client', async () => {
   return { supabaseAdmin: () => forward };
 });
 
+// ~14.000 seeded deliveries evaluated by the in-memory database: each
+// sweep takes well under a second on an idle machine, but several on a
+// loaded one. A roomier limit than the 5 s default keeps it from flaking.
+vi.setConfig({ testTimeout: 30_000 });
+
 const { FakeDatabase } = await import('@/lib/security/fake-supabase');
 const { GET } = await import('./route');
 
@@ -59,6 +64,7 @@ function sub(
     meta_billing: 'managed',
     meta_pricing: PRICING,
     current_period_end: PERIOD_END,
+    statement_period_end: PERIOD_END,
     grace_until: null,
     ...over,
   };
@@ -100,8 +106,12 @@ function seed() {
         payment_method: null,
         meta_billing: 'direct',
         meta_pricing: {},
+        statement_period_end: null,
       }),
-      sub(F, { current_period_end: '2026-11-20T00:00:00.000Z' }),
+      sub(F, {
+        current_period_end: '2026-11-20T00:00:00.000Z',
+        statement_period_end: '2026-11-20T00:00:00.000Z',
+      }),
       sub(G, {
         provider: 'paypal',
         payment_method: 'paypal',
@@ -212,6 +222,7 @@ describe('the cut-off', () => {
       status: 'past_due',
       grace_until: '2026-11-04T00:00:00.000Z',
       current_period_end: PERIOD_END,
+      statement_period_end: PERIOD_END,
     });
   });
 
@@ -228,18 +239,56 @@ describe('the cut-off', () => {
     expect(bodies[0]).toMatchObject({ issued: 2, extended: 1, failed: 1 });
     expect(bodies[1]).toMatchObject({ issued: 0, existing: 2, failed: 1 });
     expect(bodies[2]).toMatchObject({ issued: 0, existing: 2, failed: 1 });
-    // The period of B was extended once, not three times.
-    expect(subOf(B).current_period_end).toBe('2026-12-01T00:00:00.000Z');
+    // The anchor of B was moved once, not three times.
+    expect(subOf(B).statement_period_end).toBe('2026-12-01T00:00:00.000Z');
   });
 
-  it('PayPal with no overage: no statement, no cut-off, the period moves a month', async () => {
+  it('PayPal with no overage: no statement, no cut-off, the anchor moves a month and the period stays PayPal’s', async () => {
     await GET(req(SECRET));
     expect(statementsOf(B)).toEqual([]);
     expect(subOf(B)).toMatchObject({
       status: 'active',
       grace_until: null,
+      statement_period_end: '2026-12-01T00:00:00.000Z',
+      current_period_end: PERIOD_END,
+    });
+  });
+
+  it('manual with nothing to bill (fee 0, no overage): the anchor and the period move together', async () => {
+    Object.assign(subOf(A), {
+      meta_pricing: { ...PRICING, fee_usd: 0, included_messages: 100000 },
+    });
+    await GET(req(SECRET));
+    expect(statementsOf(A)).toEqual([]);
+    expect(subOf(A)).toMatchObject({
+      statement_period_end: '2026-12-01T00:00:00.000Z',
       current_period_end: '2026-12-01T00:00:00.000Z',
     });
+  });
+
+  it('a PayPal renewal processed BEFORE the sweep (period end already in the future) still gets its overage billed', async () => {
+    // PAYMENT.SALE.COMPLETED moved current_period_end to next month; the
+    // anchor stayed at the cut-off.
+    subOf(C).current_period_end = '2026-12-01T00:00:00.000Z';
+    await GET(req(SECRET));
+    const [st] = statementsOf(C);
+    expect(st).toMatchObject({
+      period_start: PERIOD_START,
+      period_end: PERIOD_END,
+      total_usd: 18.5,
+      status: 'issued',
+    });
+    expect(subOf(C)).toMatchObject({
+      status: 'past_due',
+      statement_period_end: PERIOD_END,
+      current_period_end: '2026-12-01T00:00:00.000Z',
+    });
+  });
+
+  it('a managed account with no anchor is not swept', async () => {
+    subOf(A).statement_period_end = null;
+    await GET(req(SECRET));
+    expect(statementsOf(A)).toEqual([]);
   });
 
   it('PayPal with overage: a statement of the overage alone, and it cuts off like the manual one', async () => {

@@ -3,7 +3,8 @@
 // `GET /api/billing/cron`.
 //
 // For every subscription with `meta_billing = 'managed'` whose
-// `current_period_end` has passed:
+// `statement_period_end` — the cut-off anchor of migration 078 — has
+// passed:
 //
 //   1. If a statement for that `period_end` already exists, nothing new
 //      is issued (UNIQUE (account_id, period_end), migration 078). An
@@ -11,14 +12,22 @@
 //      run died between the two writes — so the sweep is idempotent AND
 //      self-healing: three runs on the same day issue one statement.
 //   2. Otherwise the statement is built (`computeStatement`) over the
-//      period that ends at `current_period_end`:
+//      period that ends at the anchor:
 //        - total 0 (PayPal with no overage: the fee is PayPal's): no
-//          statement and no cut-off — the period is extended a month;
+//          statement and no cut-off — the ANCHOR moves on a month (and,
+//          on a manual account, `current_period_end` with it);
 //        - otherwise it is issued (`issued`, `due_at = period_end + 3
 //          days`) and the subscription goes `past_due` with
-//          `grace_until = due_at`. `current_period_end` is NOT touched:
-//          the next period starts where this one ended, whenever it is
-//          paid (no drift). Settling the statement moves it.
+//          `grace_until = due_at`. The anchor is NOT touched: the next
+//          period starts where this one ended, whenever it is paid (no
+//          drift). Settling the statement moves it.
+//
+// Why an anchor of its own and not `current_period_end` (decision of
+// the leader, 2026-10-01): on a PayPal account the sale webhook moves
+// `current_period_end` forward when the fee renews. If that renewal was
+// processed before this sweep ran, the period end was already in the
+// future and the month's overage was never billed. PayPal never touches
+// `statement_period_end`.
 //   3. A statement that cannot be built (a Meta rate missing — the s10.2
 //      contract —, no valid price policy, a database error) skips THAT
 //      account, with the error in the summary, and the sweep goes on.
@@ -57,7 +66,8 @@ interface DueSubscription {
   provider: string | null;
   payment_method: string | null;
   meta_pricing: unknown;
-  current_period_end: string;
+  current_period_end: string | null;
+  statement_period_end: string;
   grace_until: string | null;
 }
 
@@ -134,7 +144,7 @@ async function processOne(
   summary: StatementSweep
 ): Promise<void> {
   const accountId = sub.account_id;
-  const periodEnd = iso(sub.current_period_end);
+  const periodEnd = iso(sub.statement_period_end);
 
   const { data: existing, error: existingErr } = await client
     .from('statements')
@@ -180,14 +190,21 @@ async function processOne(
 
   if (built.total_usd === 0) {
     // Nothing to collect (PayPal charges the fee, no overage): no
-    // statement and no cut-off. The period moves on a month, from the
-    // cut-off, exactly as a settled statement would move it. Filtered
-    // by the end we read, so a concurrent sweep cannot extend it twice.
+    // statement and no cut-off. The anchor moves on a month, from the
+    // cut-off, exactly as a settled statement would move it — and on a
+    // manual account `current_period_end` follows it (on PayPal it is
+    // PayPal's). Filtered by the anchor we read, so a concurrent sweep
+    // cannot extend it twice.
+    const next = addCycle(periodEnd, 'month');
     const { error } = await client
       .from('subscriptions')
-      .update({ current_period_end: addCycle(periodEnd, 'month') })
+      .update(
+        paymentMethod === 'manual'
+          ? { statement_period_end: next, current_period_end: next }
+          : { statement_period_end: next }
+      )
       .eq('account_id', accountId)
-      .eq('current_period_end', sub.current_period_end);
+      .eq('statement_period_end', sub.statement_period_end);
     if (error) throw error;
     summary.extended += 1;
     return;
@@ -233,12 +250,12 @@ export async function sweepStatements(
   const { data, error } = await client
     .from('subscriptions')
     .select(
-      'account_id, status, provider, payment_method, meta_pricing, current_period_end, grace_until'
+      'account_id, status, provider, payment_method, meta_pricing, current_period_end, statement_period_end, grace_until'
     )
     .eq('meta_billing', 'managed')
-    .not('current_period_end', 'is', null)
-    .lte('current_period_end', now.toISOString())
-    .order('current_period_end', { ascending: true })
+    .not('statement_period_end', 'is', null)
+    .lte('statement_period_end', now.toISOString())
+    .order('statement_period_end', { ascending: true })
     .limit(STATEMENT_SWEEP_LIMIT);
   if (error) throw error;
 
@@ -263,7 +280,7 @@ export async function sweepStatements(
             : 'database';
       const entry: StatementSweepError = {
         accountId: sub.account_id,
-        periodEnd: iso(sub.current_period_end),
+        periodEnd: iso(sub.statement_period_end),
         kind,
         error: describe(err),
       };

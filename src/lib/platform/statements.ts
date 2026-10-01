@@ -8,9 +8,11 @@
 //                     reason, so none is asked for).
 //   voidStatement   → `void` (reason of at least MIN_REASON_LENGTH).
 //
-// Both settle the subscription the same way: the cut-off moves one month
-// from the `period_end` of the statement — never from the day it was
-// paid, so paying late does not move the billing day — and the lock of
+// Both settle the subscription the same way: the cut-off anchor
+// (`statement_period_end`, 078) moves one month from the `period_end` of
+// the statement — never from the day it was paid, so paying late does
+// not move the billing day; on a manual account `current_period_end`
+// moves with it, on a PayPal one it stays PayPal's — and the lock of
 // the statement is lifted (`active`, `grace_until = NULL`), unless
 // another statement is still open, whose due date then becomes the
 // grace. A `past_due` that came from PayPal (a failed charge, with an
@@ -27,6 +29,7 @@
 
 import { supabaseAdmin } from '@/lib/auth/admin-client';
 import {
+  effectivePaymentMethod,
   nextPeriodEnd,
   type StatementLine,
   type StatementRow,
@@ -124,6 +127,9 @@ interface SubscriptionState {
   status: string;
   grace_until: string | null;
   current_period_end: string | null;
+  statement_period_end: string | null;
+  payment_method?: string | null;
+  provider?: string | null;
 }
 
 /**
@@ -136,12 +142,20 @@ export function settlePatch(
   statement: { period_end: string; due_at: string },
   nextOpenDueAt: string | null
 ): Record<string, unknown> {
+  // One month after the statement's cut-off, never back from an anchor
+  // already further on (a retry after a half-done settle is a no-op).
+  const nextAnchor = nextPeriodEnd(
+    statement.period_end,
+    sub.statement_period_end
+  );
   const patch: Record<string, unknown> = {
-    current_period_end: nextPeriodEnd(
-      statement.period_end,
-      sub.current_period_end
-    ),
+    statement_period_end: nextAnchor,
   };
+  // Manual: the period is ours, and stays equal to the anchor. PayPal:
+  // `current_period_end` is what PayPal says, never touched here.
+  if (effectivePaymentMethod(sub.payment_method, sub.provider) === 'manual') {
+    patch.current_period_end = nextAnchor;
+  }
   if (sub.status !== 'past_due') return patch;
   // Our lock: no grace, or the one the cut-off set (never pushed later
   // than a PayPal grace that came first — see `lockPatch`).
@@ -163,6 +177,7 @@ export type SettleOutcome =
       ok: true;
       statement: PlatformStatement;
       currentPeriodEnd: string;
+      statementPeriodEnd: string;
       subscriptionStatus: string;
     }
   | { ok: false; reason: 'not_found' | 'not_open' | 'audit_failed' };
@@ -207,7 +222,9 @@ export async function settleStatement(args: {
 
   const { data: subRow, error: subErr } = await db
     .from('subscriptions')
-    .select('status, grace_until, current_period_end')
+    .select(
+      'status, grace_until, current_period_end, statement_period_end, payment_method, provider'
+    )
     .eq('account_id', accountId)
     .maybeSingle();
   if (subErr) throw subErr;
@@ -254,8 +271,9 @@ export async function settleStatement(args: {
           }
         : {}),
       from_status: sub?.status ?? null,
-      from_period_end: sub?.current_period_end ?? null,
-      to_period_end: (patch?.current_period_end as string | undefined) ?? null,
+      from_period_end: sub?.statement_period_end ?? null,
+      to_period_end:
+        (patch?.statement_period_end as string | undefined) ?? null,
     },
   });
   if (!logId) return { ok: false, reason: 'audit_failed' };
@@ -297,6 +315,10 @@ export async function settleStatement(args: {
     currentPeriodEnd:
       (patch?.current_period_end as string | undefined) ??
       sub?.current_period_end ??
+      '',
+    statementPeriodEnd:
+      (patch?.statement_period_end as string | undefined) ??
+      sub?.statement_period_end ??
       '',
     subscriptionStatus:
       (patch?.status as string | undefined) ?? sub?.status ?? '',

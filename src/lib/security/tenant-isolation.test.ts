@@ -4571,7 +4571,7 @@ describe('statements (s10.4, service role)', () => {
       {
         table: 'subscriptions',
         op: 'select',
-        by: ['meta_billing', 'current_period_end'],
+        by: ['meta_billing', 'statement_period_end'],
         reason:
           'The cut-off sweep (GET /api/billing/cron) lists every managed ' +
           'subscription whose period ended, across accounts by design; ' +
@@ -4599,6 +4599,7 @@ describe('statements (s10.4, service role)', () => {
       meta_billing: 'managed',
       meta_pricing: PRICING,
       current_period_end: '2026-01-01T00:00:00.000Z',
+      statement_period_end: '2026-01-01T00:00:00.000Z',
     });
     // B delivered too — none of it may end up on A's statement.
     h.db.rows('message_charges').push(

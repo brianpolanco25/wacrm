@@ -128,6 +128,7 @@ function seed() {
         status: 'past_due',
         grace_until: DUE,
         current_period_end: PERIOD_END,
+        statement_period_end: PERIOD_END,
         meta_billing: 'managed',
         payment_method: 'manual',
       },
@@ -139,6 +140,7 @@ function seed() {
         status: 'past_due',
         grace_until: DUE,
         current_period_end: PERIOD_END,
+        statement_period_end: PERIOD_END,
         meta_billing: 'managed',
         payment_method: 'manual',
       },
@@ -276,10 +278,12 @@ describe('POST …/confirm — «Confirmar pago»', () => {
       paid_reference: 'TRX-123',
       paid_note: 'transferencia Banreservas',
     });
+    // Manual: the anchor and the period move together.
     expect(subOf(A)).toMatchObject({
       status: 'active',
       grace_until: null,
       current_period_end: NEXT_END,
+      statement_period_end: NEXT_END,
     });
 
     const [line] = h.db.rows('impersonation_log');
@@ -310,8 +314,38 @@ describe('POST …/confirm — «Confirmar pago»', () => {
     vi.setSystemTime(new Date('2026-11-20T09:00:00.000Z'));
     const res = await post(confirmRoute, {});
     expect(res.status).toBe(200);
+    // The next anchor starts from the previous one, not from the payment.
+    expect(subOf(A).statement_period_end).toBe(NEXT_END);
     expect(subOf(A).current_period_end).toBe(NEXT_END);
     expect(stOf(ST_A).paid_at).toBe('2026-11-20T09:00:00.000Z');
+  });
+
+  it('PayPal: confirming moves the anchor and leaves current_period_end to PayPal', async () => {
+    Object.assign(subOf(A), {
+      provider: 'paypal',
+      payment_method: 'paypal',
+      // PayPal already renewed the fee and moved its own period.
+      current_period_end: '2026-12-01T10:00:00.000Z',
+    });
+    await post(confirmRoute, {});
+    expect(subOf(A)).toMatchObject({
+      status: 'active',
+      statement_period_end: NEXT_END,
+      current_period_end: '2026-12-01T10:00:00.000Z',
+    });
+  });
+
+  it('a retry after a half-done confirmation does not move the anchor twice', async () => {
+    // The subscription step ran, the statement write did not.
+    Object.assign(subOf(A), {
+      status: 'active',
+      grace_until: null,
+      statement_period_end: NEXT_END,
+      current_period_end: NEXT_END,
+    });
+    expect((await post(confirmRoute, {})).status).toBe(200);
+    expect(subOf(A).statement_period_end).toBe(NEXT_END);
+    expect(stOf(ST_A).status).toBe('paid');
   });
 
   it("404s B's statement addressed through A, and B is untouched", async () => {
@@ -396,6 +430,7 @@ describe('POST …/void — «Anular»', () => {
       status: 'active',
       grace_until: null,
       current_period_end: NEXT_END,
+      statement_period_end: NEXT_END,
     });
     expect(h.db.rows('impersonation_log')[0]).toMatchObject({
       action: 'statement_void',

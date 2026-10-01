@@ -166,6 +166,8 @@ describe('manualPlanRow', () => {
       payment_method: null,
       meta_billing: 'direct',
       meta_pricing: {},
+      // s10.4: no statement anchor outside managed billing.
+      statement_period_end: null,
     });
     // A suspension is its own axis (058): giving a plan must not lift it.
     expect(Object.keys(row).some((k) => k.startsWith('manual_hold'))).toBe(
@@ -199,6 +201,8 @@ describe('manualPlanRow with managed terms (s10.3)', () => {
       status: 'active',
       cycle: 'month',
       current_period_end: '2026-11-01T15:00:00.000Z',
+      // s10.4 (078): the statement anchor starts equal to the period.
+      statement_period_end: '2026-11-01T15:00:00.000Z',
       payment_method: 'manual',
       meta_billing: 'managed',
       meta_pricing: PRICING,
@@ -226,6 +230,7 @@ describe('manualPlanRow with managed terms (s10.3)', () => {
     expect(row.meta_billing).toBe('direct');
     expect(row.meta_pricing).toEqual({});
     expect(row.payment_method).toBe('manual');
+    expect(row.statement_period_end).toBeNull();
   });
 });
 

@@ -473,11 +473,13 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
 - **Managed Meta billing needs the cut-off scheduler** (migration 078).
   `GET /api/billing/cron` issues the monthly statement of every account
   whose Meta messages Cabbity CRM pays (`meta_billing = 'managed'`) once
-  its `current_period_end` has passed: package fee plus the overage of
+  its statement cut-off (`subscriptions.statement_period_end`, its own
+  anchor: a PayPal renewal moving `current_period_end` never skips a
+  month) has passed: package fee plus the overage of
   delivered messages, due three days after the cut-off. Until it is paid
   the account is `past_due`; past the due date it is read-only (it can
   still read, and inbound messages keep arriving). A PayPal account with
-  no overage gets no statement and its period simply moves on a month.
+  no overage gets no statement and its cut-off simply moves on a month.
   Same contract as the crons above: the secret travels in
   `x-cron-secret`, and the route answers 503 until the variable is set.
 

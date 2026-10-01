@@ -47,6 +47,7 @@ import {
   PayPalError,
 } from '@/lib/billing/paypal';
 import { syncPlanCycle } from '@/lib/billing/plan-sync';
+import { addCycle } from '@/lib/billing/webhook-events';
 import { recordPlatformAction } from './audit';
 import {
   isLivePayPalSubscription,
@@ -326,6 +327,11 @@ export async function assignManagedPlanViaPayPal(params: {
       payment_method: 'paypal',
       meta_billing: managed ? 'managed' : 'direct',
       meta_pricing: metaPricing,
+      // s10.4 (078): the statement's own cut-off, a month from the
+      // assignment. PayPal moves `current_period_end`, never this.
+      statement_period_end: managed
+        ? addCycle(new Date().toISOString(), 'month')
+        : null,
     },
     { onConflict: 'account_id' }
   );

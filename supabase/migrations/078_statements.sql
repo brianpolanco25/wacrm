@@ -36,6 +36,16 @@
 --   `impersonation_log.action` admite `payment_confirmed` y
 --   `statement_void` (se amplía el CHECK de la 071 sin perder ninguno).
 --
+-- Ancla del corte (decisión del líder, 2026-10-01)
+--   `subscriptions.statement_period_end`: la fecha de corte de una cuenta
+--   `managed`, propia y separada de `current_period_end`. En una cuenta
+--   PayPal `current_period_end` lo mueve el webhook de la venta: si la
+--   renovación llegaba antes que el cron, el periodo quedaba en el futuro
+--   y ese mes no se facturaba nunca. El cron corta por el ancla; solo la
+--   avanzan confirmar/anular un estado (+1 mes desde su valor, sin deriva)
+--   y el cron cuando no hay nada que cobrar. El webhook de PayPal no la
+--   toca. Se rellena aquí para las cuentas `managed` que ya existan.
+--
 -- CP11: no se toca ninguna tabla del entrante.
 --
 -- Idempotente — se puede re-ejecutar.
@@ -133,3 +143,23 @@ COMMENT ON COLUMN impersonation_log.action IS
   'defecto), suspend/reactivate (058), plan_override, account_create, '
   'member_invite, operator_grant, operator_revoke (071), '
   'payment_confirmed, statement_void (078).';
+
+-- ============================================================
+-- Ancla del corte de las cuentas managed
+-- ============================================================
+
+ALTER TABLE subscriptions
+  ADD COLUMN IF NOT EXISTS statement_period_end timestamptz;
+
+COMMENT ON COLUMN subscriptions.statement_period_end IS
+  'Próximo corte del estado de cuenta de una cuenta managed (078, s10.4). '
+  'Lo usa /api/billing/cron; lo avanzan confirmar/anular (+1 mes). '
+  'Independiente de current_period_end, que en PayPal lleva el webhook.';
+
+-- Las cuentas managed de antes de la 078: su corte es el periodo que ya
+-- tenían, o dentro de un mes si no tenían ninguno. Solo las que no tienen
+-- ancla, así que re-ejecutar no mueve ninguna.
+UPDATE subscriptions
+   SET statement_period_end = COALESCE(current_period_end, now() + interval '1 month')
+ WHERE meta_billing = 'managed'
+   AND statement_period_end IS NULL;

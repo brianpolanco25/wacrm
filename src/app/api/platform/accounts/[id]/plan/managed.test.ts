@@ -377,6 +377,8 @@ describe('manual', () => {
     const days = (end - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(27);
     expect(days).toBeLessThan(32);
+    // s10.4 (078): the statement anchor starts equal to the period.
+    expect(row.statement_period_end).toBe(row.current_period_end);
 
     // B untouched; PayPal never called.
     expect(JSON.stringify(sub(B))).toBe(bBefore);
@@ -521,6 +523,14 @@ describe('paypal', () => {
         created_by: OPERATOR,
       }),
     ]);
+
+    // s10.4 (078): the statement anchor is a month from the assignment,
+    // set now; PayPal's own period end comes later with the webhook.
+    const anchor = Date.parse(sub(A).statement_period_end as string);
+    const anchorDays = (anchor - Date.now()) / 86_400_000;
+    expect(anchorDays).toBeGreaterThan(27);
+    expect(anchorDays).toBeLessThan(32);
+    expect(sub(A).current_period_end).toBeNull();
 
     // A is unpaid until PayPal confirms; B never moved.
     expect(sub(A)).toMatchObject({

@@ -2242,6 +2242,18 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'impersonation_log.action must admit payment_confirmed and statement_void without dropping the earlier acts (migration 078)';
   END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'statement_period_end'
+      AND data_type = 'timestamp with time zone' AND is_nullable = 'YES'
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.statement_period_end is missing or not a nullable timestamptz (migration 078)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM subscriptions
+             WHERE meta_billing = 'managed' AND statement_period_end IS NULL) THEN
+    RAISE EXCEPTION 'a managed subscription has no statement_period_end (migration 078)';
+  END IF;
   -- /078 -----------------------------------------------------------
 
   RAISE NOTICE 'schema verification passed';

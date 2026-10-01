@@ -109,6 +109,7 @@ export async function handleSettle(
       accountId: id,
       statement: outcome.statement,
       currentPeriodEnd: outcome.currentPeriodEnd,
+      statementPeriodEnd: outcome.statementPeriodEnd,
       subscriptionStatus: outcome.subscriptionStatus,
     });
   } catch (err) {

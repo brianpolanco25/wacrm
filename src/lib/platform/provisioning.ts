@@ -329,6 +329,9 @@ export function manualPlanRow(
     payment_method: terms ? 'manual' : null,
     meta_billing: managed ? 'managed' : 'direct',
     meta_pricing: managed && terms?.metaPricing ? terms.metaPricing : {},
+    // s10.4 (078): the cut-off anchor of the statement, a month from now.
+    // Null when the account leaves managed billing.
+    statement_period_end: managed ? addCycle(now.toISOString(), 'month') : null,
   };
 }
 
