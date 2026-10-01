@@ -148,6 +148,10 @@ function seed() {
     // B first: an unscoped lookup would land on it.
     statements: [statement(ST_B, B), statement(ST_A, A)],
     impersonation_log: [],
+    // s10.7: the list also reads the reconciliation snapshots and the
+    // account's connected WABAs.
+    meta_spend_snapshots: [],
+    whatsapp_config: [],
   };
 }
 

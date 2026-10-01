@@ -91,6 +91,12 @@ and polish.
 - The broadcast scheduling step shows what the send will cost: «{n} recipients × {category} rate = US$ {x}», or for managed accounts how many fit in the package and how many go to overage at what price. When the send generates overage, the confirmation asks for an explicit tick before sending. With no Meta rate loaded it says so and the send goes on as before.
 - New read-only endpoints `GET /api/billing/meta-usage` (admin and above) and `GET /api/billing/broadcast-estimate` (agent and above). No migration, no new variables.
 
+### Managed Meta billing: reconciliation with Meta (migration required: 084)
+
+- **Migration required:** apply `supabase/migrations/084_meta_spend_snapshots.sql`. It adds `meta_spend_snapshots` (what Meta reports a WABA cost, per day, number and category), readable and writable only by the service role.
+- `GET /api/billing/cron` now also downloads, at most once a day per company, Meta's `pricing_analytics` (cost and volume per number and category, previous and current month) for every managed company with a connected number, and reports it in a new `reconciliation` block (`scanned`, `fetched`, `skipped`, `failed`). An unexpected answer from Meta stores nothing and never makes the cron fail. No new variable; the shape of Meta's answer is still unverified (see `docs/docker.md`).
+- Operator console, company file, «Statements»: each statement shows what Meta reports for its period, our own Meta cost and the difference, or «no Meta data». Nothing is adjusted automatically: Meta's invoice is what counts, and a difference is settled as a manual line on the next statement.
+
 ### Platform console: tag filter during a support session
 
 - Filtering contacts by tag works during a support session: the browser now runs the read-only `filter_contacts_by_tags` while the session is open. Every other database function called from the browser (`touch_presence` included) stays refused.

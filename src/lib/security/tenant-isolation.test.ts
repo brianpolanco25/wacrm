@@ -1267,6 +1267,7 @@ const GLOBAL_WAIVERS: ScopeWaiver[] = [
 let extraWaivers: ScopeWaiver[] = [];
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   const violations = unscopedServiceRoleQueries(h.db.log, [
     ...GLOBAL_WAIVERS,
     ...extraWaivers,
@@ -4719,67 +4720,100 @@ describe('statements (s10.4, service role)', () => {
         by: [],
         reason: 'The country → market table is global (076).',
       },
-    ];
-    const subA = h.db.rows('subscriptions').find((r) => r.account_id === A)!;
-    Object.assign(subA, {
-      plan_id: 'gestionado',
-      provider: 'manual',
-      payment_method: 'manual',
-      meta_billing: 'managed',
-      meta_pricing: PRICING,
-      current_period_end: '2026-01-01T00:00:00.000Z',
-      statement_period_end: '2026-01-01T00:00:00.000Z',
-    });
-    // B delivered too — none of it may end up on A's statement.
-    h.db.rows('message_charges').push(
       {
-        id: 'mc-b',
-        account_id: B,
-        wamid: 'wamid.b',
-        whatsapp_config_id: 'cfg-B',
-        recipient_phone: '18095550000',
-        pricing_category: 'marketing',
-        pricing_billable: true,
-        status: 'delivered',
-        delivered_at: '2025-12-15T00:00:00.000Z',
+        table: 'subscriptions',
+        op: 'select',
+        by: ['meta_billing'],
+        reason:
+          'The reconciliation sweep of the same cron (s10.7) lists the ' +
+          'managed subscriptions across accounts by design; the numbers ' +
+          'it reads next are filtered by those account ids and every ' +
+          'snapshot read and write by the account being processed.',
       },
-      {
-        id: 'mc-a',
-        account_id: A,
-        wamid: 'wamid.a',
-        whatsapp_config_id: 'cfg-A',
-        recipient_phone: '18095550000',
-        pricing_category: 'marketing',
-        pricing_billable: true,
-        status: 'delivered',
-        delivered_at: '2025-12-16T00:00:00.000Z',
-      }
+    ];
+    // s10.7: the same run asks Graph for A's pricing_analytics. Mocked:
+    // no test reaches the network.
+    const graph = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ pricing_analytics: { data: [{ data_points: [] }] } })
+        )
     );
-    h.db.rows('meta_rates').push({
-      market: 'rest_of_latam',
-      category: 'marketing',
-      usd_per_message: '0.07400',
-      effective_from: '2025-01-01',
-    });
-    h.db.rows('meta_market_countries').push({
-      country_code: 'DO',
-      market: 'rest_of_latam',
-    });
-    h.db.rows('statements');
-    const beforeB = h.db.snapshot(B);
+    vi.stubGlobal('fetch', graph);
+    try {
+      h.db.rows('meta_spend_snapshots');
+      const subA = h.db.rows('subscriptions').find((r) => r.account_id === A)!;
+      Object.assign(subA, {
+        plan_id: 'gestionado',
+        provider: 'manual',
+        payment_method: 'manual',
+        meta_billing: 'managed',
+        meta_pricing: PRICING,
+        current_period_end: '2026-01-01T00:00:00.000Z',
+        statement_period_end: '2026-01-01T00:00:00.000Z',
+      });
+      // B delivered too — none of it may end up on A's statement.
+      h.db.rows('message_charges').push(
+        {
+          id: 'mc-b',
+          account_id: B,
+          wamid: 'wamid.b',
+          whatsapp_config_id: 'cfg-B',
+          recipient_phone: '18095550000',
+          pricing_category: 'marketing',
+          pricing_billable: true,
+          status: 'delivered',
+          delivered_at: '2025-12-15T00:00:00.000Z',
+        },
+        {
+          id: 'mc-a',
+          account_id: A,
+          wamid: 'wamid.a',
+          whatsapp_config_id: 'cfg-A',
+          recipient_phone: '18095550000',
+          pricing_category: 'marketing',
+          pricing_billable: true,
+          status: 'delivered',
+          delivered_at: '2025-12-16T00:00:00.000Z',
+        }
+      );
+      h.db.rows('meta_rates').push({
+        market: 'rest_of_latam',
+        category: 'marketing',
+        usd_per_message: '0.07400',
+        effective_from: '2025-01-01',
+      });
+      h.db.rows('meta_market_countries').push({
+        country_code: 'DO',
+        market: 'rest_of_latam',
+      });
+      h.db.rows('statements');
+      const beforeB = h.db.snapshot(B);
 
-    const res = await billingCron.GET(
-      req('GET', '/api/billing/cron', undefined, {
-        'x-cron-secret': 'billing-secret',
-      })
-    );
-    expect(res.status).toBe(200);
-    expectNoBIds(await res.json());
-    const issued = h.db.rows('statements');
-    expect(issued).toHaveLength(1);
-    expect(issued[0]).toMatchObject({ account_id: A, messages_total: 1 });
-    expect(subA).toMatchObject({ status: 'past_due' });
-    expectBUnchanged(beforeB);
+      const res = await billingCron.GET(
+        req('GET', '/api/billing/cron', undefined, {
+          'x-cron-secret': 'billing-secret',
+        })
+      );
+      expect(res.status).toBe(200);
+      expectNoBIds(await res.json());
+      const issued = h.db.rows('statements');
+      expect(issued).toHaveLength(1);
+      expect(issued[0]).toMatchObject({ account_id: A, messages_total: 1 });
+      expect(subA).toMatchObject({ status: 'past_due' });
+      // Only A's WABA was asked, and only A got a snapshot.
+      expect(graph).toHaveBeenCalledTimes(1);
+      for (const [url] of graph.mock.calls as unknown as [string][]) {
+        expect(url).not.toContain('waba-b');
+      }
+      for (const row of h.db.rows('meta_spend_snapshots')) {
+        expect(row.account_id).toBe(A);
+      }
+      expectBUnchanged(beforeB);
+    } finally {
+      // Even if an assertion above fails, the mock does not leak.
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -4829,7 +4863,29 @@ describe('billing emails (p11.7, service role, cron)', () => {
           'the last days across accounts. Read-only; each event carries ' +
           'the account_id of its row and everything after it is scoped.',
       },
+      {
+        table: 'subscriptions',
+        op: 'select',
+        by: ['meta_billing'],
+        reason:
+          'The reconciliation sweep of the same cron (s10.7) lists the ' +
+          'managed subscriptions across accounts by design; everything ' +
+          'it reads next is filtered by the account being processed.',
+      },
     ];
+    // s10.7: the same run asks Graph for pricing_analytics. Mocked: no
+    // test reaches the network.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              pricing_analytics: { data: [{ data_points: [] }] },
+            })
+          )
+      )
+    );
 
     const now = Date.now();
     const hourAgo = new Date(now - 3600_000).toISOString();

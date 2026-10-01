@@ -2373,6 +2373,55 @@ BEGIN
     RAISE EXCEPTION 'notification_emails is granted to a client role (migration 083)';
   END IF;
   -- /083 -----------------------------------------------------------
+  -- 084 — meta_spend_snapshots: conciliación con Meta (s10.7) -------
+  IF to_regclass('public.meta_spend_snapshots') IS NULL THEN
+    RAISE EXCEPTION 'meta_spend_snapshots table missing (migration 084)';
+  END IF;
+  IF (SELECT count(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'meta_spend_snapshots'
+        AND column_name IN ('account_id', 'whatsapp_config_id', 'waba_id',
+                            'period_start', 'period_end', 'category',
+                            'volume', 'cost_usd', 'fetched_at', 'raw')) <> 10 THEN
+    RAISE EXCEPTION 'meta_spend_snapshots is missing columns (migration 084)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_constraint c ON c.conindid = i.indexrelid
+    WHERE c.conrelid = 'public.meta_spend_snapshots'::regclass
+      AND c.conname = 'meta_spend_snapshots_key' AND c.contype = 'u'
+      AND i.indnullsnotdistinct
+  ) THEN
+    RAISE EXCEPTION 'meta_spend_snapshots_key must be UNIQUE NULLS NOT DISTINCT (migration 084)';
+  END IF;
+  IF (SELECT count(*) FROM pg_constraint
+      WHERE conrelid = 'public.meta_spend_snapshots'::regclass AND contype = 'c'
+        AND conname IN ('meta_spend_snapshots_period_check',
+                        'meta_spend_snapshots_amounts_check',
+                        'meta_spend_snapshots_category_check',
+                        'meta_spend_snapshots_waba_check')) <> 4 THEN
+    RAISE EXCEPTION 'meta_spend_snapshots CHECKs missing (migration 084)';
+  END IF;
+  IF (SELECT count(*) FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'meta_spend_snapshots'
+        AND indexname IN ('meta_spend_snapshots_account_period_idx',
+                          'meta_spend_snapshots_account_fetched_idx')) <> 2 THEN
+    RAISE EXCEPTION 'meta_spend_snapshots indexes missing (migration 084)';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.meta_spend_snapshots'::regclass) THEN
+    RAISE EXCEPTION 'meta_spend_snapshots must have RLS enabled (migration 084)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'meta_spend_snapshots') THEN
+    RAISE EXCEPTION 'meta_spend_snapshots must have no policies (migration 084)';
+  END IF;
+  IF has_table_privilege('authenticated', 'public.meta_spend_snapshots', 'SELECT')
+     OR has_table_privilege('anon', 'public.meta_spend_snapshots', 'SELECT')
+     OR has_table_privilege('authenticated', 'public.meta_spend_snapshots', 'INSERT')
+     OR has_table_privilege('anon', 'public.meta_spend_snapshots', 'INSERT') THEN
+    RAISE EXCEPTION 'meta_spend_snapshots is readable or writable by a client role (migration 084)';
+  END IF;
+  -- /084 -----------------------------------------------------------
 
   RAISE NOTICE 'schema verification passed';
 END

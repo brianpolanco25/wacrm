@@ -113,6 +113,139 @@ describe('PlatformStatements', () => {
   });
 });
 
+describe('PlatformStatements — reconciliation with Meta (s10.7)', () => {
+  const WITH_META: PlatformStatement = {
+    ...PAID,
+    id: 'st-r',
+    reconciliation: {
+      metaReportedCostUsd: 514.5,
+      differenceUsd: 5.76,
+      volume: 6250,
+      wabas: [
+        {
+          wabaId: 'W-1',
+          metaReportedCostUsd: 510.5,
+          volume: 6200,
+          lastFetchedAt: '2026-10-20T06:00:00.000Z',
+          partial: true,
+        },
+        {
+          wabaId: 'W-2',
+          metaReportedCostUsd: 4,
+          volume: 50,
+          lastFetchedAt: '2026-11-02T06:00:00.000Z',
+          partial: false,
+        },
+      ],
+      lastFetchedAt: '2026-10-20T06:00:00.000Z',
+      partial: true,
+    },
+  };
+
+  it('shows Meta’s cost, ours, the signed difference, per WABA, partial data and the manual-adjustment note — no adjust button', () => {
+    const html = render(
+      <PlatformStatements accountId={ACCOUNT} initial={[WITH_META]} />
+    );
+    expect(html).toContain('Meta reporta US$ 514,50 (6250 mensajes)');
+    expect(html).toContain('nuestro cálculo US$ 520,26');
+    expect(html).toContain('diferencia +US$ 5,76');
+    expect(html).toContain('WABA W-1: US$ 510,50 (6200 mensajes)');
+    expect(html).toContain('WABA W-2: US$ 4,00 (50 mensajes)');
+    expect(html).toContain('la última lectura es del 20 oct 2026');
+    expect(html).toContain(es.Platform.statements.reconciliation.adjust);
+    expect(html).not.toContain('<button');
+  });
+
+  it('a negative difference carries its sign; one WABA is not listed apart', () => {
+    const html = render(
+      <PlatformStatements
+        accountId={ACCOUNT}
+        initial={[
+          {
+            ...WITH_META,
+            reconciliation: {
+              ...WITH_META.reconciliation!,
+              differenceUsd: -3.2,
+              wabas: [WITH_META.reconciliation!.wabas[0]],
+              partial: false,
+            },
+          },
+        ]}
+      />
+    );
+    expect(html).toContain('diferencia −US$ 3,20');
+    expect(html).not.toContain('WABA W-1');
+    expect(html).not.toContain('data-reconciliation-partial');
+  });
+
+  it('«sin dato de Meta» without a snapshot; nothing at all when it could not be read', () => {
+    const none = render(
+      <PlatformStatements
+        accountId={ACCOUNT}
+        initial={[
+          {
+            ...PAID,
+            reconciliation: {
+              metaReportedCostUsd: null,
+              differenceUsd: null,
+              volume: null,
+              wabas: [],
+              lastFetchedAt: null,
+              partial: true,
+            },
+          },
+        ]}
+      />
+    );
+    expect(none).toContain(es.Platform.statements.reconciliation.noData);
+    const absent = render(
+      <PlatformStatements accountId={ACCOUNT} initial={[PAID]} />
+    );
+    expect(absent).not.toContain('data-reconciliation');
+  });
+
+  it('a WABA without data is named as such, and a WABA never read says the data is incomplete', () => {
+    const html = render(
+      <PlatformStatements
+        accountId={ACCOUNT}
+        initial={[
+          {
+            ...WITH_META,
+            reconciliation: {
+              ...WITH_META.reconciliation!,
+              lastFetchedAt: null,
+              partial: true,
+              wabas: [
+                WITH_META.reconciliation!.wabas[0],
+                {
+                  wabaId: 'W-9',
+                  metaReportedCostUsd: null,
+                  volume: null,
+                  lastFetchedAt: null,
+                  partial: true,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    );
+    expect(html).toContain('WABA W-9: sin dato de Meta');
+    expect(html).toContain(
+      es.Platform.statements.reconciliation.partialMissing
+    );
+  });
+
+  it('is translated in en', () => {
+    const html = render(
+      <PlatformStatements accountId={ACCOUNT} initial={[WITH_META]} />,
+      'en'
+    );
+    expect(html).toContain('Meta reports US$ 514.50 (6250 messages)');
+    expect(html).toContain(en.Platform.statements.reconciliation.adjust);
+  });
+});
+
 describe('settleStatementRequest', () => {
   const fake = (status: number, body: unknown) =>
     vi.fn(

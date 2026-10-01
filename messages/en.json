@@ -2748,6 +2748,15 @@
         "notFound": "That statement does not exist in this company.",
         "invalid": "Check the data: {detail}",
         "failed": "It could not be completed. Nothing was changed."
+      },
+      "reconciliation": {
+        "noData": "Reconciliation with Meta: no Meta data for this period.",
+        "figures": "Reconciliation with Meta: Meta reports {meta} ({volume} messages) · our calculation {ours} · difference {difference}",
+        "waba": "WABA {waba}: {meta} ({volume} messages)",
+        "partial": "Incomplete Meta data: the last reading is from {date}, before the end of the period.",
+        "adjust": "Meta warns that this cost is approximate and its invoice is what counts. If there is a difference, settle it as a manual line on the next statement; nothing is adjusted here.",
+        "wabaNoData": "WABA {waba}: no Meta data",
+        "partialMissing": "Incomplete Meta data: some WABA could not be read yet."
       }
     }
   },

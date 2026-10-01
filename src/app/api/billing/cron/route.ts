@@ -23,6 +23,10 @@
 // code, and a statement failure does not stop the emails. Without a
 // provider the email sweep makes no query and answers
 // `emails.enabled = false`.
+//
+// s10.7: after the emails, one more sweep downloads Meta's
+// `pricing_analytics` of each managed WABA (`meta-reconciliation.ts`);
+// its counts travel in the `reconciliation` block of the response.
 // ============================================================
 
 import { timingSafeEqual } from 'node:crypto';
@@ -38,6 +42,7 @@ import {
   sweepStatements,
   type StatementSweep,
 } from '@/lib/billing/statement-cron';
+import { sweepMetaReconciliation } from '@/lib/billing/meta-reconciliation';
 
 function secretMatches(supplied: string, expected: string): boolean {
   const suppliedBuf = Buffer.from(supplied);
@@ -92,12 +97,27 @@ export async function GET(request: Request) {
     };
   }
 
+  // s10.7: Meta's own figures for the reconciliation, at most once a
+  // day per account and WABA. Own `try`: a failure here is counted, never
+  // raised, and never touches the statements or the emails.
+  let reconciliation: Awaited<
+    ReturnType<typeof sweepMetaReconciliation>
+  > | null = null;
+  try {
+    reconciliation = await sweepMetaReconciliation(admin);
+  } catch (err) {
+    console.error(
+      '[GET /api/billing/cron] reconciliation sweep failed:',
+      err instanceof Error ? err.message : err
+    );
+  }
+
   if (statementsError) {
     console.error('[GET /api/billing/cron] sweep failed:', statementsError);
     return NextResponse.json(
-      { error: 'The statement sweep failed', emails },
+      { error: 'The statement sweep failed', emails, reconciliation },
       { status: 500 }
     );
   }
-  return NextResponse.json({ statements, emails });
+  return NextResponse.json({ statements, emails, reconciliation });
 }
