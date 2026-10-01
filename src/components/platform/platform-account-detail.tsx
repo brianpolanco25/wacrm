@@ -44,6 +44,7 @@ import {
 import { ImpersonationActions } from './impersonation-actions';
 import { CheckoutLinkNotice, ManagedPricingCard } from './platform-managed';
 import { useSubscriptionStatusLabel } from './subscription-status';
+import { AccountNumbersCard, type WhatsAppNumber } from './platform-numbers';
 
 interface UsageLine {
   metric: string;
@@ -57,18 +58,6 @@ interface Member {
   fullName: string | null;
   email: string | null;
   role: string | null;
-}
-
-interface WhatsAppNumber {
-  id: string;
-  phoneNumberId: string;
-  displayPhoneNumber: string | null;
-  verifiedName: string | null;
-  label: string | null;
-  status: string;
-  isDefault: boolean;
-  registeredAt: string | null;
-  lastRegistrationError: string | null;
 }
 
 interface BillingEntry {
@@ -446,50 +435,11 @@ export function PlatformAccountDetail({
         </CardContent>
       </Card>
 
-      {/* ---- WhatsApp ------------------------------------------------ */}
-      <Card>
-        <CardContent className="flex flex-col gap-3 p-4">
-          <h2 className="text-foreground text-sm font-semibold">
-            {t('whatsappTitle')}
-          </h2>
-          {detail.numbers.length === 0 ? (
-            <p className="text-muted-foreground text-sm">{t('whatsappNone')}</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {detail.numbers.map((number) => (
-                <li
-                  key={number.id}
-                  className="border-border flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm"
-                >
-                  <span className="font-medium">
-                    {number.displayPhoneNumber ?? number.phoneNumberId}
-                  </span>
-                  {number.label ? (
-                    <span className="text-muted-foreground">
-                      {number.label}
-                    </span>
-                  ) : null}
-                  <Badge
-                    variant={
-                      number.status === 'connected' ? 'outline' : 'destructive'
-                    }
-                  >
-                    {number.status}
-                  </Badge>
-                  {number.isDefault ? (
-                    <Badge variant="secondary">{t('defaultNumber')}</Badge>
-                  ) : null}
-                  {number.lastRegistrationError ? (
-                    <span className="text-destructive text-xs">
-                      {number.lastRegistrationError}
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      {/* ---- WhatsApp (s10.6: ids, mode, portfolio) ------------------ */}
+      <AccountNumbersCard
+        numbers={detail.numbers}
+        metaBilling={detail.metaBilling}
+      />
 
       {/* ---- members ------------------------------------------------- */}
       <Card>

@@ -18,6 +18,8 @@ interface Query {
   op: string;
   filters: [string, unknown][];
   patch?: Record<string, unknown>;
+  /** The column list handed to `.select()`, when it was a read. */
+  columns?: string;
 }
 
 const h = vi.hoisted(() => ({
@@ -68,7 +70,10 @@ function adminClient() {
           : { data: rows(table).filter(matches), error: null };
 
       const builder = {
-        select() {
+        select(columns?: string) {
+          if (call.op !== 'update' && typeof columns === 'string') {
+            call.columns = columns;
+          }
           if (call.op === 'update') {
             const touched = rows(table).filter(matches);
             touched.forEach((r) => Object.assign(r, call.patch));
@@ -215,6 +220,7 @@ function seed() {
       connected_at: '2026-03-01T00:00:00.000Z',
       registered_at: '2026-03-01T00:00:00.000Z',
       last_registration_error: null,
+      provisioned_via: 'embedded_signup',
       access_token: 'SECRET-A',
       created_at: '2026-03-01T00:00:00.000Z',
     },
@@ -231,6 +237,7 @@ function seed() {
       connected_at: null,
       registered_at: null,
       last_registration_error: 'token expired',
+      provisioned_via: 'manual',
       access_token: 'SECRET-A2',
       created_at: '2026-03-02T00:00:00.000Z',
     },
@@ -489,6 +496,29 @@ describe('loadAccountDetail — the file (spec §2, «Ficha de cuenta»)', () =>
       status: 'disconnected',
       lastRegistrationError: 'token expired',
     });
+  });
+
+  it('s10.6: each number carries its WABA id, phone_number_id and connection mode, for this account only', async () => {
+    const detail = (await loadAccountDetail(A))!;
+    expect(
+      detail.numbers.map((n) => [n.phoneNumberId, n.wabaId, n.provisionedVia])
+    ).toEqual([
+      ['pn-a1', 'waba-a', 'embedded_signup'],
+      ['pn-a2', 'waba-a', 'manual'],
+    ]);
+    expect(JSON.stringify(detail.numbers)).not.toContain('waba-b');
+    const numbersQuery = h.queries.find((q) => q.table === 'whatsapp_config')!;
+    expect(numbersQuery.columns).toContain('waba_id');
+    expect(numbersQuery.columns).toContain('provisioned_via');
+    expect(numbersQuery.columns).not.toContain('access_token');
+    expect(numbersQuery.columns).not.toContain('*');
+    expect(numbersQuery.filters).toContainEqual(['account_id', A]);
+  });
+
+  it('s10.6: a row without a known provisioned_via reads as manual (the column default)', async () => {
+    const detail = (await loadAccountDetail(B))!;
+    expect(detail.numbers.map((n) => n.provisionedVia)).toEqual(['manual']);
+    expect(detail.numbers[0]?.wabaId).toBe('waba-b');
   });
 
   it('never hands the operator a customer access token', async () => {

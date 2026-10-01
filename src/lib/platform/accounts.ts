@@ -168,6 +168,13 @@ export interface AccountNumber {
   verifiedName: string | null;
   label: string | null;
   wabaId: string | null;
+  /**
+   * How the row got here (054): through the Embedded Signup dialog, or
+   * typed into the manual form — the only way for a managed number in
+   * Cabbity's own portfolio (s10.6). Anything unknown reads as manual,
+   * the column's default.
+   */
+  provisionedVia: 'embedded_signup' | 'manual';
   status: string;
   isDefault: boolean;
   connectedAt: string | null;
@@ -321,7 +328,7 @@ async function loadNumbers(accountId: string): Promise<AccountNumber[]> {
     .select(
       'id, phone_number_id, display_phone_number, verified_name, label, ' +
         'waba_id, status, is_default, connected_at, registered_at, ' +
-        'last_registration_error'
+        'last_registration_error, provisioned_via'
     )
     .eq('account_id', accountId)
     .order('is_default', { ascending: false })
@@ -338,6 +345,8 @@ async function loadNumbers(accountId: string): Promise<AccountNumber[]> {
     verifiedName: (row.verified_name as string | null) ?? null,
     label: (row.label as string | null) ?? null,
     wabaId: (row.waba_id as string | null) ?? null,
+    provisionedVia:
+      row.provisioned_via === 'embedded_signup' ? 'embedded_signup' : 'manual',
     status: (row.status as string) ?? 'disconnected',
     isDefault: Boolean(row.is_default),
     connectedAt: (row.connected_at as string | null) ?? null,
