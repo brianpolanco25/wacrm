@@ -1,5 +1,62 @@
 # Estado actual
 
+Actualizado: 2026-10-01 (tarde). **Fases 9, 10 y 11 COMPLETAS** (30/30 features de las tres fases en `done`), sin
+merge a `main`. **Rama final del conjunto: `feat/precios-meta-directo` @ 0ed0338** (worktree
+`.claude/worktrees/precios-meta-directo`) = fase 9 (`feat/superadmin` @ 4ad530f) + fase 10 completa
+(`feat/facturacion-gestionada` @ 0085083, fusionada @ 74a5daa) + fase 11 completa. Compuerta final sobre esa rama:
+lint 0 errores (34 avisos preexistentes), typecheck limpio, 305 archivos / 4 559 tests, build OK.
+
+**Base local verificada (2026-10-01, noche):** Docker encendido por orden del humano («levanta la bd local»); stack
+de Supabase local arrancado con `docker start` de los contenedores existentes (sin Studio, analytics, vector ni
+edge-runtime; el CLI de Supabase no está instalado, solo en caché de npx). Copia previa en el scratchpad de la sesión.
+Migraciones 075–084 (sin 081, hueco intencional: p11.4 no la necesitó) aplicadas con psql y registradas en
+`supabase_migrations.schema_migrations`; `verify-schema.sql` OK; segunda pasada de cada una en transacción con
+ROLLBACK → las nueve idempotentes; los cinco `checks_*.sql` pendientes (s10.4, p11.3, p11.6, p11.7, s10.7) en verde con
+ROLLBACK. El fixture de `checks_meta-reconciliation.sql` se corrigió (usuarios en auth.users, índice de una cuenta por
+dueño soltado dentro de la transacción, CASCADE comprobado por catálogo porque `subscriptions` impide borrar cuentas).
+La base local queda en la 084 con los datos del seed del 30-09 intactos.
+
+## Cierre del 2026-10-01 (tarde)
+
+| Feature | Rondas | Integrada en | Nota |
+|---|---|---|---|
+| s10.4 statements | 3 | fg @ 0085083 | lock_timeout en 078, applyLock condicionado al ancla, banner por motivo, ancla conservada al reasignar |
+| p11.3 service-cap-per-number | 3 | pmd @ 24fdb08 | 403 explícito en soporte, caché del hook sin carrera |
+| p11.5 utility-in-window-warning | 1 | pmd @ 470ff3e | |
+| p11.6 free-entry-point-badge | 1 | pmd @ 5c4d2a0 | H1 pendiente del humano (apagar insignia a las 24 h sin respuesta) |
+| fase 10 → fase 11 | — | pmd @ 74a5daa | conflicto semántico en la ficha del superadmin resuelto (`AccountNumbersCard` + estado de pago de p11.1), informe `impl_integracion-fase-10-11.md` |
+| p11.4 ai-single-reply | 2 | pmd @ b37e4ad | reprompt condicionado al puntero (`lost_race_before_reprompt`) |
+| p11.7 billing-emails | 1 | pmd @ 8d7ef9f | proveedor no-op por defecto; `EMAIL_API_URL/KEY/FROM` |
+| s10.5 managed-usage-panel | 2 | pmd @ 4cc91ee | estimado con estado de carga, `pricingMissing`, RangeError capturado |
+| s10.7 meta-reconciliation | 2 | pmd @ 0ed0338 | mig. 084; ventana reemplazada por cuenta+WABA; formato de `pricing_analytics` SIN verificar |
+
+**Incidente de red (2026-10-01):** en la primera pasada de tests de s10.7, un test de `tenant-isolation.test.ts` sin
+mock de `fetch` ejecutó el cron real y salió UNA petición a graph.facebook.com con token dummy (rechazada). Corregido
+antes del commit; el reviewer lo verificó con un guardia de red. Regla nueva: todo test que invoque
+`GET /api/billing/cron` mockea `fetch`; el `afterEach` global de la suite de aislamiento hace `unstubAllGlobals`.
+
+## Pendiente del humano (orden sugerido)
+
+1. Probar el conjunto: `cd .claude/worktrees/precios-meta-directo && npm run dev` (la rama vive en ese worktree; el
+   checkout raíz sigue en `feat/superadmin`). Necesita una base con 001–084 aplicadas.
+2. ~~Réplica y checks~~ HECHO el 2026-10-01 contra la base local (ver arriba). Falta en el worktree el enlace
+   `ln -s ../../../.env.local .env.local` (archivo vedado a los agentes) antes de `npm run dev`.
+3. Merge a `main` (sugerido: `feat/precios-meta-directo` directo, ya contiene las tres fases) y push; luego
+   `db push` 066–084 con copia previa y el usuario operador creado ANTES de la 074 (docs/security.md).
+4. `.env.local.example`: `META_PAYMENT_CHECK_DISABLED`, `BILLING_CRON_SECRET`, `EMAIL_API_URL`, `EMAIL_API_KEY`,
+   `EMAIL_FROM`, más las viejas (`WEBHOOK_CRON_SECRET`, `AI_PLATFORM_GEMINI_API_KEY`, `META_CONFIG_ID`…).
+5. Crons en Dokploy: webhooks (cada minuto), renovación de token, `GET /api/billing/cron` al menos cada hora
+   (estados de cuenta + correos + conciliación), ver `docs/docker.md`.
+6. Verificaciones manuales contra Meta (sin red para los agentes): supuestos S-M1…S-M8 de p11.1, formato y `paging`
+   de `pricing_analytics` (guion en `impl_meta-reconciliation.md`), proveedor de correo HTTP (S-B1); cargar tarifas en
+   `/platform/rates`; Redirect URLs de `docs/docker.md`.
+7. Decisiones de producto abiertas: (a) cuenta gestionada manual `cancelled`/`expired` recibe estado de cuenta con
+   cuota completa al corte (review_statements §6); (b) H1 de p11.6; (c) duplicado posible de correo si el proveedor
+   envía y falla el cierre de la fila (review_billing-emails §2); (d) deudas viejas: tag-manager por `user_id`,
+   automatizaciones huérfanas.
+
+## Historial hasta la fase 8
+
 Actualizado: 2026-09-23. 34 de 34 features aprobadas (programa SaaS 22 + fase 6 de producto 5 + fase 7 «API
 pública para clientes» 7). **La fase 7 está en `main` y en producción**: `main` = 9c8d5d9 (fase 7 @ 0be9815 +
 `feat/planes-api`: Pro a 100/1000 USD, `api`/`webhooks` solo en Pro y Negocio, migración 065), pusheada ff el

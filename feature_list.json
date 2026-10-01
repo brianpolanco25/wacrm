@@ -72,6 +72,27 @@
       "worktree": ".claude/worktrees/developers-link",
       "base": "main @ 9c8d5d9",
       "note": "Ajustes de producto tras la fase 7, pedidos por el humano el 2026-09-23. p8.1: el humano no conocía /developers; se enlaza desde sidebar, menú de usuario y login sin tocar su contenido."
+    },
+    "9": {
+      "doc": "progress/spec_superadmin.md",
+      "branch": "feat/superadmin",
+      "worktree": ".claude/worktrees/superadmin",
+      "base": "main @ 005f85a",
+      "note": "Fase 9 pedida el 2026-09-30: superadmin con UI propia, dashboard (MRR), planes + PayPal, altas manuales, impersonación con escritura, alta de pago obligatoria (sin demos) y plan ilimitado para la empresa de brianmpolanco@gmail.com. Seed local con brianpolancodisenos@gmail.com como operador. Migraciones 069–074 (069 métricas, 070 historial PayPal, 071 provisioning, 072 impersonation_actions, 073 sin trial, 074 plan ilimitado). FASE 9 COMPLETA el 2026-09-30: feat/superadmin @ 4ad530f = s9.1–s9.13 (s9.11 arregla scroll y hydration del shell, vistos en la prueba local) (10/10 aprobadas; sin coreano; Inter local). Compuerta final: lint 0 errores, typecheck, 3 493 tests, replay 001–074 + verify-schema OK, build sin red. Compuerta final sin build: lint 0 errores, typecheck, 3 505 tests, replay 001–074 + verify-schema OK.. Pendiente humano: merge a main, push, db push 069–074, crear usuario operador en Supabase Auth, dar de alta Redirect URLs (docs/docker.md). s9.8 invite-accept añadida tras s9.4 (sin migración).. Spec aprobada por el humano el 2026-09-30."
+    },
+    "10": {
+      "doc": "progress/spec_facturacion-gestionada.md",
+      "branch": "feat/facturacion-gestionada",
+      "worktree": ".claude/worktrees/facturacion-gestionada",
+      "base": "feat/superadmin @ 4ad530f (fase 9 completa, pendiente de merge a main)",
+      "note": "Fase 10 pedida el 2026-09-30 por el cambio de precios de Meta (01-10-2026). Un cliente paga a Cabbity y Cabbity paga a Meta (opción A: WABA en el portafolio de Cabbity). Plan oculto `gestionado`: 1.036 USD/mes con 7.000 mensajes entregados incluidos, excedente a 2,5× tarifa de Meta por categoría, se cobran también los gratis de Meta; pago manual (botón del superadmin) o PayPal; estado de cuenta al corte, gracia de 3 días, banner, luego solo lectura (CP11: entrante nunca se bloquea). Sin ITBIS, solo USD, sin tope. Migraciones 075–078. Decisiones del humano cerradas; spec pendiente de su aprobación final. No arrancar antes del merge de feat/superadmin. Aprobada por el humano el 2026-09-30 («hagámoslos»); arranca desde feat/superadmin @ 4ad530f (equivale a main tras el merge). i18n: solo es + en desde s9.9. s10.1 en fg/pricing-capture y s10.2 en fg/rate-card en paralelo. Integración: feat/facturacion-gestionada @ 1b7ad54 = s10.1+s10.2+s10.3+s10.6 (replay 001–077). s10.4 integrada @ 0085083 (2026-10-01). Fase 10 fusionada en feat/precios-meta-directo: ahí sigue el conjunto. FASE 10 COMPLETA el 2026-10-01: s10.5 @ 4cc91ee y s10.7 @ 0ed0338 en feat/precios-meta-directo."
+    },
+    "11": {
+      "doc": null,
+      "branch": "feat/precios-meta-directo",
+      "worktree": ".claude/worktrees/precios-meta-directo",
+      "base": "feat/facturacion-gestionada @ 194e4e6 (fase 9 + s10.1 + s10.2: existe subscriptions.meta_billing)",
+      "note": "Fase 11: ajustes para clientes que pagan a Meta directo tras el cambio de precios del 01-10-2026. Sin spec todavía (sdd). p11.1 es la única urgente. p11.1 aprobada por el humano el 2026-10-01 («aprueba p11.1 y lánzala»); worktree .claude/worktrees/precios-meta-directo; migración 079. p11.1 completa @ be8ca0f (sin merge). Resto de la fase sin spec (sdd). 2026-10-01: el humano pide completar TODA la fase («quiero que lo hagas todo»); ramas hijas pmd/* desde feat/precios-meta-directo @ be8ca0f. Integración 2026-10-01: p11.5 @ 470ff3e, p11.6 @ 5c4d2a0 sobre 4345c4c. p11.3 @ 24fdb08. FASE 11 COMPLETA el 2026-10-01: p11.4 @ b37e4ad, p11.7 @ 8d7ef9f; fase 10 fusionada @ 74a5daa. Rama final del conjunto: feat/precios-meta-directo @ 0ed0338 (compuerta final en curso). Migraciones 075–084 sin réplica (Docker apagado)."
     }
   },
   "features": [
@@ -713,6 +734,506 @@
       "review": null,
       "branch": "feat/proveedor-gemini",
       "worktree": ".claude/worktrees/gemini"
+    },
+    {
+      "id": "s9.1",
+      "name": "platform-shell",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.1",
+      "sdd": false,
+      "note": "Grupo de rutas (platform) con layout propio, nav Resumen/Cuentas/Planes/Operadores, mover /platform y /platform/[id], login del operador aterriza en /platform. Aprobada el 2026-09-30 en segunda ronda (HEAD 82f0d0c, 2 780 tests). Deudas: operador con sesión que abre /login va a /dashboard; consulta a /api/platform/me duplicada en use-platform-admin.ts; Cache-Control public s-maxage=300 de next.config.ts alcanza /platform (se cierra en s9.4).",
+      "commits": [
+        "97e042d",
+        "e911cef",
+        "785c3ae",
+        "82f0d0c"
+      ],
+      "implementation": "progress/impl_platform-shell.md",
+      "review": "progress/review_platform-shell.md"
+    },
+    {
+      "id": "s9.2",
+      "name": "platform-dashboard",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.2",
+      "sdd": false,
+      "note": "Migración 069_platform_metrics.sql platform_metrics() + GET /api/platform/metrics + Resumen con MRR/ARR, cuentas por estado, altas, morosos, WhatsApp, mensajes del mes. Censo pasa a /platform/accounts. Aprobada el 2026-09-30 (HEAD 461a144, 2 794 tests, replay 001–069 OK). Usa subscriptions.cycle (056), no columna nueva. Deudas: MRR con precio de catálogo; comped depende de provider='manual' (lo escribe s9.4); ARR redondeado aparte; sin índice messages(created_at); MetricCard/formatUsd duplicados.",
+      "commits": [
+        "73e0746",
+        "cf5461f",
+        "6898580",
+        "461a144"
+      ],
+      "implementation": "progress/impl_platform-dashboard.md",
+      "review": "progress/review_platform-dashboard.md",
+      "branch": "platform/dashboard",
+      "worktree": ".claude/worktrees/platform-dashboard"
+    },
+    {
+      "id": "s9.3",
+      "name": "plans-admin",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.3",
+      "sdd": false,
+      "note": "/platform/plans: CRUD de plans con rol de servicio y sincronización con PayPal (plan nuevo al cambiar precio, plan_provider_history en la 070). Aprobada el 2026-09-30 en segunda ronda (HEAD 53b5236, 2 907 tests, replay OK, 19 checks SQL). Incluye: getPlan en paypal.ts, plan-sync.ts, resolvePlanForEvent consulta plan_provider_history por PAYPAL_ENV, action unpublish. Deudas: recordArchived traga conflictos de id único; openRowFor sin filtro de entorno; test de unpublish no afirma subscriptions intacta. Aviso al humano: precio editado sin sincronizar = checkout muestra nuevo, PayPal cobra viejo (la UI lo avisa).",
+      "commits": [
+        "4452d7b",
+        "ad221b8",
+        "2bdec06",
+        "53b5236"
+      ],
+      "implementation": "progress/impl_plans-admin.md",
+      "review": "progress/review_plans-admin.md",
+      "branch": "platform/plans",
+      "worktree": ".claude/worktrees/platform-plans"
+    },
+    {
+      "id": "s9.4",
+      "name": "platform-provisioning",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.4",
+      "sdd": false,
+      "note": "Crear empresa (invitación al propietario), asignar plan a mano (provider manual, action plan_override; migración 071_platform_provisioning.sql), operadores (conceder/revocar), añadir miembro. Incluye además: Cache-Control private, no-store para todas las páginas /platform* (deuda de s9.1: next.config.ts pone public s-maxage=300 fuera de /api). Aprobada el 2026-09-30 en segunda ronda (HEAD b06eb36, 2 958 tests, replay OK, 7 checks). Deudas: carrera plan a mano vs webhook; 500 tras invitar si falla renombrado; índice 071 sin lector; addons se conserva; aviso de recarga 404 genérico. redirectTo de las invitaciones debe pasar a authCallbackUrl al integrar s9.8.",
+      "commits": [
+        "1935628",
+        "ca32b09",
+        "41ca8ab",
+        "aabf4a7",
+        "71bb414",
+        "0da44ea",
+        "b06eb36"
+      ],
+      "implementation": "progress/impl_platform-provisioning.md",
+      "review": "progress/review_platform-provisioning.md",
+      "branch": "platform/provisioning",
+      "worktree": ".claude/worktrees/platform-provisioning"
+    },
+    {
+      "id": "s9.5",
+      "name": "impersonation-write",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.5",
+      "sdd": false,
+      "note": "Sesión de soporte con rol efectivo admin; middleware deja pasar mutaciones con cookie válida y las registra en impersonation_actions; banner y ficha muestran las acciones. Migración 072_impersonation_actions.sql. Aprobada el 2026-09-30 en segunda ronda (HEAD fa13556, 3 064 tests, replay OK). Camino (a): can_write_account() en 56 políticas de 24 tablas; cerradas accounts, account_invitations, api_keys, webhook_endpoints (decisión del líder), subscriptions, checkout_intents, platform_admins, impersonation_log/_actions, profiles, notifications. Triggers record_support_write y forbid_support_account_move; índice UNIQUE de una sesión abierta por operador. Deudas: status final en filas http; test del camino de error al cerrar sesiones previas.",
+      "commits": [
+        "b296ca3",
+        "384f11d",
+        "cc78c35",
+        "c2bbf88",
+        "fa13556"
+      ],
+      "implementation": "progress/impl_impersonation-write.md",
+      "review": "progress/review_impersonation-write.md",
+      "branch": "platform/impersonation",
+      "worktree": ".claude/worktrees/platform-impersonation"
+    },
+    {
+      "id": "s9.6",
+      "name": "paid-onboarding",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.6",
+      "sdd": false,
+      "note": "Migración 073: sin trial, status incomplete, trialing existentes → incomplete, columnas de empresa. /onboarding (empresa → plan → PayPal) y puerta en el middleware con exenciones. Retirar TrialBanner. Aprobada el 2026-09-30 en segunda ronda (HEAD b9bfba2, 3 337 tests, replay 001–073, 11 checks; build NO ejecutado en local por la regla de red). Puerta en el layout de (dashboard) con cabecera x-wacrm-pathname del middleware; /onboarding/return; redeem_invitation reescrita en la 073; cuentas bloqueadas por facturación o retención quedan fuera de la puerta. Deudas: matcher del middleware omite rutas con extensión de imagen; incomplete + retención entra en solo lectura; navegación cliente desde /billing hasta el siguiente render.",
+      "commits": [
+        "15c5768",
+        "1fecf8f",
+        "8b9d998",
+        "1332082",
+        "b9bfba2"
+      ],
+      "implementation": null,
+      "review": "progress/review_paid-onboarding.md",
+      "branch": "platform/paid-onboarding",
+      "worktree": ".claude/worktrees/paid-onboarding"
+    },
+    {
+      "id": "s9.7",
+      "name": "unlimited-plan-and-seed",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.7",
+      "sdd": false,
+      "note": "Migración 074 plan ilimitado asignado por correo a brianmpolanco@gmail.com; supabase/seed.sql local con operador brianpolancodisenos@gmail.com y cliente de ejemplo; docs/security.md. Aprobada el 2026-09-30 (HEAD 7bf11d0, 3 505 tests, replay 001–074, seed idempotente; build no ejecutado por la regla de red). La 074 no sella onboarding_completed_at (el owner rellena el paso de empresa una vez), solo actúa sobre usuarios confirmados y no pisa PayPal. Deudas: docs deben nombrar como prohibidos `db push --include-seed` y `db reset --linked`; cabecera del SQL de checks sin la nota del docker cp.",
+      "commits": [
+        "8bafd6d",
+        "e153637",
+        "7bf11d0"
+      ],
+      "implementation": "progress/impl_unlimited-plan-and-seed.md",
+      "review": "progress/review_unlimited-plan-and-seed.md",
+      "branch": "platform/unlimited-seed",
+      "worktree": ".claude/worktrees/unlimited-seed"
+    },
+    {
+      "id": "s9.8",
+      "name": "invite-accept",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.8",
+      "sdd": false,
+      "note": "Añadida por el líder el 2026-09-30 tras s9.4 («Riesgo 1» de impl_platform-provisioning.md): inviteUserByEmail no soporta PKCE (tokens en el fragmento) y no existe /auth/callback ni /reset-password (forgot-password ya redirige ahí). Página para aceptar invitación / fijar contraseña que cierre el flujo de crear empresa y de invitar miembros por correo, y el de recuperar contraseña. Sin migración. Aprobada el 2026-09-30 en tercera ronda (HEAD 2214d8d, 3 097 tests). Rondas: open redirect por normalización de `..` (cerrado con isSameOriginPath sobre el resultado final); Location absoluto con host del servidor (cerrado con 307 relativo a mano). Deudas: login CSRF por fragmento (flujo implícito); /reset-password con caché pública del comodín. Pendiente humano: dar de alta las Redirect URLs en Supabase Auth (docs/docker.md).",
+      "commits": [
+        "ac076e3",
+        "271b6eb",
+        "8c3ba29",
+        "429e948",
+        "4057287",
+        "2214d8d"
+      ],
+      "implementation": "progress/impl_invite-accept.md",
+      "review": "progress/review_invite-accept.md",
+      "branch": "platform/invite-accept",
+      "worktree": ".claude/worktrees/invite-accept"
+    },
+    {
+      "id": "s9.9",
+      "name": "drop-korean",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.9",
+      "sdd": false,
+      "branch": "platform/drop-korean",
+      "worktree": ".claude/worktrees/drop-korean",
+      "note": "Pedida por el humano el 2026-09-30: quitar el idioma coreano (ko.json existe desde 2026-07-12; nadie lo pidió). Borrar messages/ko.json, dejar es (defecto) + en en la config de i18n, ajustar test de paridad, CHECKPOINTS.md CP6, docs y agentes del harness. Sin migración. Aprobada el 2026-09-30 (HEAD b164284, 3 488 tests, sin build). es.json y en.json con 2 128 claves en paridad. Cambios: locale desconocido cae a es; /developers en ko abre en es.",
+      "commits": [
+        "b164284"
+      ],
+      "implementation": "progress/impl_drop-korean.md",
+      "review": "progress/review_drop-korean.md"
+    },
+    {
+      "id": "s9.10",
+      "name": "local-font",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.10",
+      "sdd": false,
+      "note": "Pedida por el humano el 2026-09-30: sustituir next/font/google (descarga Inter de Google en cada build) por next/font/local con los archivos woff2 en el repo. Elimina la conexión externa del build en local, CI y Docker. Sin migración. Aprobada el 2026-09-30 (HEAD 45ab08d, 3 510 tests, build sin red). Inter 400/600 fontsource latin + latin-ext, 500/700 rsms completas (~288 KB, OFL). Deudas: preload ~249 KB por ruta (500/700 sin subconjunto latin); 800 cae a 700 (revisar logo a ojo); latin-ext en 500/700 cae a 400/600.",
+      "commits": [
+        "45ab08d"
+      ],
+      "implementation": "progress/impl_local-font.md",
+      "review": "progress/review_local-font.md",
+      "branch": "platform/local-font",
+      "worktree": ".claude/worktrees/local-font"
+    },
+    {
+      "id": "s10.1",
+      "name": "meta-pricing-capture",
+      "phase": "10",
+      "status": "done",
+      "spec": "progress/spec_facturacion-gestionada.md#s10.1",
+      "sdd": false,
+      "note": "Migración 075: tabla message_charges (wamid único; cuenta, número, categoría, billable, type, status, delivered_at; enlaza a messages o broadcast_recipients) alimentada por el webhook de estados. Decisión del líder tras el bloqueo del implementer: messages no tiene delivered_at/whatsapp_config_id y las difusiones no pasan por messages. Aprobada el 2026-10-01 (HEAD 09dd755, 3 538 tests, replay 001–075). Deudas: comentario del lock en la 075; aviso 'foreign' sin wamid/account_id; route.ts:635 timestamp no numérico lanza RangeError (CP11, preexistente).",
+      "commits": [
+        "09dd755"
+      ],
+      "implementation": "progress/impl_meta-pricing-capture.md",
+      "review": "progress/review_meta-pricing-capture.md",
+      "branch": "fg/pricing-capture",
+      "worktree": ".claude/worktrees/fg-pricing-capture"
+    },
+    {
+      "id": "s10.2",
+      "name": "meta-rate-card",
+      "phase": "10",
+      "status": "done",
+      "spec": "progress/spec_facturacion-gestionada.md#s10.2",
+      "sdd": false,
+      "note": "Migración 076: meta_rates, meta_market_countries, subscriptions.meta_billing y meta_pricing (jsonb: incluidos, cuota, precio por categoría como multiplicador o USD fijo). rateFor() y /platform/rates. Aprobada el 2026-10-01 en segunda ronda (HEAD de4298b, 3 656 tests, replay 001–076). Pendiente humano: verificar mapa país→mercado y cargar tarifas que faltan (rest_of_latam autenticación/auth. internacional; MX, CO, BR, NA, ES, AR, CL, PE, rest_of_world). Contrato para s10.4: buildStatement falla entero con MetaRateMissingError (exigir test).",
+      "commits": [
+        "8bf277c",
+        "e85926f",
+        "5769fa2",
+        "de4298b"
+      ],
+      "implementation": "progress/impl_meta-rate-card.md",
+      "review": "progress/review_meta-rate-card.md",
+      "branch": "fg/rate-card",
+      "worktree": ".claude/worktrees/fg-rate-card"
+    },
+    {
+      "id": "s10.3",
+      "name": "managed-plan",
+      "phase": "10",
+      "status": "done",
+      "spec": "progress/spec_facturacion-gestionada.md#s10.3",
+      "sdd": false,
+      "note": "Migración 077: plan oculto gestionado (1.036/mes, 7.000 incluidos). Asignación desde la ficha con método de pago manual|paypal y precio editable. Extiende s9.4. Aprobada el 2026-10-01 en segunda ronda (HEAD 4917f86, 3 774 tests, replay 001–077; compuerta corrida por el líder por cuelgues del watchdog de los reviewers; reviewer final en Sonnet). plans.meta_pricing columna propia; confirmHidden para publicar planes ocultos; alta PayPal reutiliza checkout_intents pendiente (getSubscription) y evita suscripciones duplicadas. Deuda: sin test de 500 en el GET del estado del intent.",
+      "commits": [
+        "c40f1ca",
+        "c4a3024",
+        "52809ed",
+        "4917f86"
+      ],
+      "implementation": "progress/impl_managed-plan.md",
+      "review": "progress/review_managed-plan.md",
+      "branch": "fg/managed-plan",
+      "worktree": ".claude/worktrees/fg-managed-plan"
+    },
+    {
+      "id": "s10.4",
+      "name": "statements",
+      "phase": "10",
+      "status": "done",
+      "spec": "progress/spec_facturacion-gestionada.md#s10.4",
+      "sdd": false,
+      "note": "Migración 078: statements. buildStatement (cuota + excedente por orden de entrega), cron /api/billing/cron (BILLING_CRON_SECRET) que emite al corte y pone past_due con grace_until = +3 días, Confirmar pago / Anular en el superadmin, /billing con desglose, banner statement_due y solo lectura al vencer.",
+      "commits": [
+        "4611013",
+        "352cd18",
+        "827a032",
+        "b9f3e01",
+        "425c51e",
+        "576a5e0"
+      ],
+      "implementation": "progress/impl_statements.md",
+      "review": "progress/review_statements.md",
+      "branch": "fg/statements",
+      "worktree": ".claude/worktrees/fg-statements",
+      "notes": "undefined Reviewer APPROVED en tercera ronda el 2026-10-01 (HEAD 576a5e0): lock_timeout en la 078, applyLock condicionado al ancla, banner por motivo de bloqueo, el ancla se conserva al reasignar el plan, «Ya pagué» oculto en soporte. Integrada en feat/facturacion-gestionada @ 0085083. Réplica de la 078 y checks_statements.sql §6 pendientes (Docker apagado). Decisión del humano pendiente: cuentas manual cancelled/expired reciben estado de cuenta con cuota completa al corte."
+    },
+    {
+      "id": "s10.5",
+      "name": "managed-usage-panel",
+      "phase": "10",
+      "status": "done",
+      "spec": "progress/spec_facturacion-gestionada.md#s10.5",
+      "sdd": false,
+      "note": "Consumo del ciclo en el panel: paquete usado/7.000 con avisos 80/100%, excedente, estimado al corte; cuentas direct ven cuota gratis de Meta y costo estimado. Estimado de costo antes de cada broadcast.",
+      "commits": [
+        "dc804ef",
+        "5349031"
+      ],
+      "implementation": "progress/impl_managed-usage-panel.md",
+      "review": "progress/review_managed-usage-panel.md",
+      "branch": "pmd/managed-usage-panel",
+      "worktree": ".claude/worktrees/pmd-managed-usage-panel",
+      "notes": "undefined Lanzada el 2026-10-01 desde feat/precios-meta-directo @ 74a5daa (fase 10 + p11.3 integradas). Decisión del líder: la parte direct reutiliza service_quota_usage/serviceCapState de p11.3, sin segundo conteo. Entregada el 2026-10-01. Reviewer APPROVED en segunda ronda el 2026-10-01 (HEAD 5349031: estado del estimado, pricingMissing, RangeError capturado). Integrada en feat/precios-meta-directo @ 4cc91ee."
+    },
+    {
+      "id": "s10.6",
+      "name": "managed-number-setup",
+      "phase": "10",
+      "status": "done",
+      "spec": "progress/spec_facturacion-gestionada.md#s10.6",
+      "sdd": false,
+      "note": "Checklist de la opción A en la configuración manual; token-renewal ignora tokens sin caducidad; WABA en la ficha del superadmin. Reviewer (Sonnet) APPROVED el 2026-10-01 (HEAD 6bb0565); compuerta del líder: lint, typecheck y 3 808 tests verdes; build compilado, generación de páginas pendiente. Compuerta del líder completa: build OK. Integrada el 2026-10-01.",
+      "commits": [
+        "6bb0565"
+      ],
+      "implementation": "progress/impl_managed-number-setup.md",
+      "review": "progress/review_managed-number-setup.md",
+      "branch": "fg/number-setup",
+      "worktree": ".claude/worktrees/fg-number-setup"
+    },
+    {
+      "id": "s10.7",
+      "name": "meta-reconciliation",
+      "phase": "10",
+      "status": "done",
+      "spec": "progress/spec_facturacion-gestionada.md#s10.7",
+      "sdd": false,
+      "note": "Opcional: cron mensual con pricing_analytics de Meta vs estado de cuenta; diferencias como línea manual.",
+      "commits": [
+        "50b8183",
+        "1dd5c4a"
+      ],
+      "implementation": "progress/impl_meta-reconciliation.md",
+      "review": "progress/review_meta-reconciliation.md",
+      "branch": "pmd/meta-reconciliation",
+      "worktree": ".claude/worktrees/pmd-meta-reconciliation",
+      "notes": "undefined Lanzada el 2026-10-01 desde feat/precios-meta-directo @ 74a5daa; migración 084 (la 083 es de p11.7). Entregada el 2026-10-01 @ 50b8183. INCIDENTE: en la primera pasada de tests un test de tenant-isolation sin mock de fetch hizo UNA petición real a graph.facebook.com (token dummy, rechazada); corregido antes del commit (mocks en tenant-isolation.test.ts y cron/route.test.ts). Reviewer APPROVED en segunda ronda el 2026-10-01 (HEAD 1dd5c4a: ventana reemplazada por cuenta+WABA, gate por WABA, desempate en paginación; guardia de red del reviewer sin salidas). Integrada en feat/precios-meta-directo @ 0ed0338. La 084 sin réplica. Formato de pricing_analytics y paging sin verificar (guion manual en el informe)."
+    },
+    {
+      "id": "p11.1",
+      "name": "meta-payment-method-check",
+      "phase": "11",
+      "status": "done",
+      "spec": "specs/meta-payment-method-check/",
+      "sdd": true,
+      "note": "URGENTE: tras el Embedded Signup, leer primary_funding_id/payment_configurations del WABA y mostrar banner rojo si no hay método de pago (desde el 01-10 Meta no entrega sin él). Se omite en cuentas managed. Spec redactada el 2026-09-30 (specs/meta-payment-method-check/): migración 079, rama feat/precios-meta-directo desde feat/superadmin @ 4ad530f; supuestos S-M1…S-M8 de la API de Meta sin verificar (design.md). Aprobada el 2026-10-01 (HEAD be8ca0f en feat/precios-meta-directo sobre feat/facturacion-gestionada @ 194e4e6; 3 816 tests, replay 001–076+079; compuerta por el líder, reviewer Sonnet). Pendiente humano: META_PAYMENT_CHECK_DISABLED en .env.local.example (edición denegada a los agentes); verificar supuestos S-M1…S-M8 en Graph API Explorer (guion en el informe); al desplegar, la 079 llega con la fase 10 (orden 075–079).",
+      "commits": [
+        "8022e28",
+        "be8ca0f"
+      ],
+      "implementation": "progress/impl_meta-payment-method-check.md",
+      "review": "progress/review_meta-payment-method-check.md",
+      "branch": "feat/precios-meta-directo",
+      "worktree": ".claude/worktrees/precios-meta-directo"
+    },
+    {
+      "id": "p11.2",
+      "name": "pricing-texts-kb",
+      "phase": "11",
+      "status": "done",
+      "spec": null,
+      "sdd": false,
+      "note": "Página de precios, FAQ y progress/ai_cabbity-conocimiento.md: qué cobra Meta y qué Cabbity; 3 números = 3.000 gratis en Negocio; límites de mensajes como incluidos, no como muro. Reviewer (Sonnet) APPROVED el 2026-10-01 (HEAD 63a145f); compuerta del líder pendiente por carga de la máquina. Deuda: seoTitle de /precios duplica la marca con el title.template del layout raíz. Compuerta del líder completa (lint, typecheck, 3 834 tests, build). Integrada el 2026-10-01.",
+      "commits": [
+        "63a145f"
+      ],
+      "implementation": "progress/impl_pricing-texts-kb.md",
+      "review": "progress/review_pricing-texts-kb.md",
+      "branch": "pmd/pricing-texts",
+      "worktree": ".claude/worktrees/pmd-pricing-texts"
+    },
+    {
+      "id": "p11.3",
+      "name": "service-cap-per-number",
+      "phase": "11",
+      "status": "done",
+      "spec": "specs/service-cap-per-number/",
+      "sdd": true,
+      "note": "Ajuste por cuenta: al agotar los 1.000 gratis de un número, pausar la IA o solo avisar. spec_author lanzado el 2026-10-01 (specs/<name>/). Entregada el 2026-10-01 @ e5b53fb sin réplica/checks (Docker saturado): los corre el líder.",
+      "commits": [
+        "19b8126",
+        "37677f1",
+        "e5b53fb",
+        "0912d47",
+        "29fb4bc"
+      ],
+      "implementation": "progress/impl_service-cap-per-number.md",
+      "review": "progress/review_service-cap-per-number.md",
+      "branch": "pmd/service-cap",
+      "worktree": ".claude/worktrees/pmd-service-cap",
+      "notes": "undefined Reviewer APPROVED en tercera ronda el 2026-10-01 (HEAD 29fb4bc). Integrada en feat/precios-meta-directo @ 24fdb08. La 080 nunca ha corrido contra base real: réplica + checks_service-cap-per-number.sql obligatorios antes del db push."
+    },
+    {
+      "id": "p11.4",
+      "name": "ai-single-reply",
+      "phase": "11",
+      "status": "done",
+      "spec": "specs/ai-single-reply/",
+      "sdd": true,
+      "note": "Garantizar un solo mensaje saliente por turno de IA y por paso de flujo; Meta cobra por mensaje. spec_author lanzado el 2026-10-01 (specs/<name>/). Espera a integrar p11.3 (ambas tocan auto-reply.ts). Sin migración (081 no se usa).",
+      "commits": [
+        "b5f73e1",
+        "b7b3cef",
+        "5660a7b",
+        "31f2fb1",
+        "f2648e0",
+        "6d4c43e"
+      ],
+      "implementation": "progress/impl_ai-single-reply.md",
+      "review": "progress/review_ai-single-reply.md",
+      "branch": "pmd/ai-single-reply",
+      "worktree": ".claude/worktrees/pmd-ai-single-reply",
+      "notes": "undefined Lanzada el 2026-10-01 desde feat/precios-meta-directo @ 24fdb08 (p11.3 integrada). Entregada el 2026-10-01. Reviewer APPROVED en segunda ronda el 2026-10-01 (HEAD 6d4c43e: reprompt condicionado al puntero, lost_race_before_reprompt). Integrada en feat/precios-meta-directo @ b37e4ad."
+    },
+    {
+      "id": "p11.5",
+      "name": "utility-in-window-warning",
+      "phase": "11",
+      "status": "done",
+      "spec": "specs/utility-in-window-warning/",
+      "sdd": true,
+      "note": "Aviso en el builder de automatizaciones/flujos cuando un paso manda plantilla de utilidad con ventana abierta (cuesta igual que texto, sin cuota gratis). spec_author lanzado el 2026-10-01 (specs/<name>/). Reviewer (Sonnet) APPROVED el 2026-10-01 (HEAD 1a2f6bf); compuerta del líder pendiente por carga.",
+      "commits": [
+        "b4d8664",
+        "1a2f6bf"
+      ],
+      "implementation": "progress/impl_utility-in-window-warning.md",
+      "review": "progress/review_utility-in-window-warning.md",
+      "branch": "pmd/template-window",
+      "worktree": ".claude/worktrees/pmd-template-window",
+      "notes": " Compuerta del líder: lint/typecheck/tests en los reviewers; build sobre la rama integrada. Integrada en feat/precios-meta-directo @ 470ff3e (2026-10-01)."
+    },
+    {
+      "id": "p11.6",
+      "name": "free-entry-point-badge",
+      "phase": "11",
+      "status": "done",
+      "spec": "specs/free-entry-point-badge/",
+      "sdd": true,
+      "note": "Guardar el referral de Click to WhatsApp y mostrar insignia de ventana gratis de 72 h en la bandeja. spec_author lanzado el 2026-10-01 (specs/<name>/).",
+      "commits": [
+        "21949d0",
+        "61e46a4",
+        "5bc3284",
+        "dfaf8f6"
+      ],
+      "implementation": "progress/impl_free-entry-point-badge.md",
+      "review": "progress/review_free-entry-point-badge.md",
+      "branch": "pmd/entry-point",
+      "worktree": ".claude/worktrees/pmd-entry-point",
+      "notes": "Guardar el referral de Click to WhatsApp y mostrar insignia de ventana gratis de 72 h en la bandeja. spec_author lanzado el 2026-10-01 (specs/<name>/). Entregada el 2026-10-01 (lint/typecheck/tests verdes; build y réplica pendientes del líder, Docker apagado). Reviewer APPROVED el 2026-10-01 (HEAD dfaf8f6, review_free-entry-point-badge.md). Integrada en feat/precios-meta-directo @ 5c4d2a0. Decisión H1 pendiente del humano: apagar la insignia a las 24 h si el negocio no respondió."
+    },
+    {
+      "id": "p11.7",
+      "name": "billing-emails",
+      "phase": "11",
+      "status": "done",
+      "spec": "specs/billing-emails/",
+      "sdd": true,
+      "note": "Correos al 80/100% de la cuota gratis y al emitir/vencer un estado de cuenta (si hay proveedor de correo). spec_author lanzado el 2026-10-01 (specs/<name>/).",
+      "commits": [
+        "ae3f4cd",
+        "0c74b33",
+        "b37e168"
+      ],
+      "implementation": "progress/impl_billing-emails.md",
+      "review": "progress/review_billing-emails.md",
+      "branch": "pmd/billing-emails",
+      "worktree": ".claude/worktrees/pmd-billing-emails",
+      "notes": "undefined Lanzada el 2026-10-01 desde feat/precios-meta-directo @ 74a5daa (fase 10 + p11.3 integradas). Decisión del líder: la parte direct reutiliza service_quota_usage/serviceCapState de p11.3, sin segundo conteo. Entregada el 2026-10-01. Reviewer APPROVED el 2026-10-01 (HEAD b37e168). Integrada en feat/precios-meta-directo @ 8d7ef9f. La 083 sin réplica (Docker apagado). Pendiente humano: EMAIL_API_URL/EMAIL_API_KEY/EMAIL_FROM en .env.local.example y verificar el formato HTTP del proveedor real (S-B1)."
+    },
+    {
+      "id": "s9.11",
+      "name": "platform-shell-fixes",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.11",
+      "sdd": false,
+      "branch": "platform/shell-fixes",
+      "worktree": ".claude/worktrees/shell-fixes",
+      "note": "Bugs vistos por el humano en la prueba local del 2026-09-30: (1) TABLE.sr-only del gráfico de altas (platform-overview.tsx) escapa del shell y estira el documento (scroll de página, sidebar cortado); (2) hydration mismatch de ModeToggle en el shell de plataforma (SSR light vs cliente dark).",
+      "commits": [
+        "dc74009",
+        "0fea446"
+      ],
+      "implementation": "progress/impl_platform-shell-fixes.md",
+      "review": "verificado por el líder en el navegador (localhost) el 2026-09-30: body.scrollHeight = viewport, sidebar completo, toggle correcto en dark tras montar; segunda ronda (relative en CardContent y main) verificada en navegador: scrollHeight 665 = viewport"
+    },
+    {
+      "id": "s9.12",
+      "name": "impersonate-no-reason",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.12",
+      "sdd": false,
+      "branch": "platform/impersonate-no-reason",
+      "worktree": ".claude/worktrees/impersonate-no-reason",
+      "note": "Pedida por el humano el 2026-09-30 en la prueba local: (1) abrir sesión de soporte SIN motivo (motivo automático en la bitácora; el CHECK ≥10 de la 055 se cumple con el texto por defecto); el motivo sigue obligatorio para suspender, asignar plan, invitar y revocar. (2) PresenceHeartbeat no debe llamar a touch_presence durante una sesión de soporte (console.error «Not available during a support session»). Deuda: rpc filter_contacts_by_tags bloqueado durante la sesión de soporte (filtrar contactos por etiqueta falla).",
+      "commits": [
+        "320ed22",
+        "7b91ff5"
+      ],
+      "implementation": "progress/impl_impersonate-no-reason.md",
+      "review": "verificado por el líder en el navegador (localhost) el 2026-09-30: botón de sesión de soporte activo sin motivo; texto de ayuda nuevo"
+    },
+    {
+      "id": "s9.13",
+      "name": "support-readonly-rpcs",
+      "phase": "9",
+      "status": "done",
+      "spec": "progress/spec_superadmin.md#s9.13",
+      "sdd": false,
+      "branch": "platform/support-readonly-rpcs",
+      "worktree": ".claude/worktrees/support-readonly-rpcs",
+      "note": "Deuda de s9.12 (2026-09-30): la guarda de sesión de soporte bloquea rpc('filter_contacts_by_tags') y filtrar contactos por etiqueta falla durante la sesión. Permitir RPCs de solo lectura durante el soporte (lista explícita), seguir bloqueando las que escriben en perfil/cuenta del operador. Deuda: contact_tags no comprueba la cuenta de la etiqueta; contacts/page.tsx descarta filas ajenas a la cuenta efectiva.",
+      "commits": [
+        "9a99cbc",
+        "88e9944"
+      ],
+      "implementation": "progress/impl_support-readonly-rpcs.md",
+      "review": "integrada por el líder el 2026-09-30 tras compuerta del implementer (3 518 tests, replay, checks SQL); permitida filter_contacts_by_tags, bloqueado touch_presence y todo lo no listado"
     }
   ]
 }
