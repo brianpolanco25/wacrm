@@ -360,23 +360,28 @@ export function WeeklyBars({
           );
         })}
       </svg>
-      <table className="sr-only">
-        <caption>{t('weeklyTitle')}</caption>
-        <thead>
-          <tr>
-            <th scope="col">{t('weekColumn')}</th>
-            <th scope="col">{t('countColumn')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {weeks.map((w) => (
-            <tr key={w.weekStart}>
-              <td>{weekLabel(w.weekStart, locale)}</td>
-              <td>{w.count}</td>
+      {/* sr-only on a wrapper, not on the <table>: a table ignores the
+          1px height/overflow clip and, absolutely positioned, stretched
+          the document past the h-screen shell (s9.11). */}
+      <div className="sr-only">
+        <table>
+          <caption>{t('weeklyTitle')}</caption>
+          <thead>
+            <tr>
+              <th scope="col">{t('weekColumn')}</th>
+              <th scope="col">{t('countColumn')}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {weeks.map((w) => (
+              <tr key={w.weekStart}>
+                <td>{weekLabel(w.weekStart, locale)}</td>
+                <td>{w.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }

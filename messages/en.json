@@ -106,7 +106,8 @@
     "menuApiDocs": "API documentation"
   },
   "ModeToggle": {
-    "switchMode": "Switch to {mode} mode"
+    "switchMode": "Switch to {mode} mode",
+    "toggle": "Toggle mode"
   },
   "AccountAccess": {
     "unlinkedTitle": "This user is not linked to an account",

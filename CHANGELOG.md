@@ -11,6 +11,11 @@ and polish.
 
 ## [Unreleased]
 
+### Platform console: shell fixes
+
+- `/platform` no longer scrolls the whole page or clips the sidebar: the weekly sign-ups chart's screen-reader table stayed outside the shell.
+- The light/dark toggle no longer triggers a hydration error in the operator console when dark mode is on; it shows a neutral state until mounted.
+
 ### Korean retired
 
 - The Korean interface (`messages/ko.json`) is gone: the product ships Spanish (default) and English. An instance built with `NEXT_PUBLIC_APP_LOCALE=ko` now falls back to Spanish, interface and `/developers` alike.
