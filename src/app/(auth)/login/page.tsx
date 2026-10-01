@@ -201,6 +201,13 @@ function LoginPageInner() {
         >
           {t('developersLink')}
         </Link>
+        {' · '}
+        <Link
+          href="/precios"
+          className="text-brand-ink hover:text-brand-ink/80 font-semibold transition-colors"
+        >
+          {t('pricingLink')}
+        </Link>
       </p>
     </AuthCard>
   );

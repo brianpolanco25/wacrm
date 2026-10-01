@@ -52,6 +52,8 @@ const IDENTICAL_TO_SOURCE_OK: Record<string, string> = {
   'Platform.rates.categories.marketing':
     "Meta's category name, same word in Spanish",
   'Platform.rates.import.placeholder': 'literal CSV sample',
+  'Pricing.who.cabbityTitle': 'brand name',
+  'Pricing.who.metaTitle': 'brand name',
 };
 
 function load(locale: string): Record<string, unknown> {
