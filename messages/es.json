@@ -877,7 +877,21 @@
         "progressDesc": "Procesando {current} de {total} destinatarios...",
         "toastFailedPreview": "No se pudieron cargar los datos de la vista previa",
         "sendFrom": "Enviar desde",
-        "sendFromHint": "El número por el que sale esta campaña. Queda fijo para toda la campaña: si la pausas y la reanudas, el remitente no cambia."
+        "sendFromHint": "El número por el que sale esta campaña. Queda fijo para toda la campaña: si la pausas y la reanudas, el remitente no cambia.",
+        "cost": {
+          "label": "Costo estimado",
+          "direct": "{recipients} destinatarios × tarifa de {category} ({rate}) = {total}",
+          "directNote": "Lo cobra Meta por cada mensaje entregado; los que no se entreguen no se cobran.",
+          "ratePending": "No hay tarifa de Meta cargada para {category} en el mercado de este número: no se puede estimar el costo. El envío no se bloquea.",
+          "managedPackage": "{inPackage} entran en tu paquete ({remaining} disponibles en este ciclo).",
+          "managedOverage": "{overage} van a excedente a {price} por mensaje de {category} = {total}.",
+          "managedOveragePending": "{overage} van a excedente; el precio de {category} está pendiente de tarifa.",
+          "managedNoOverage": "Sin excedente.",
+          "consent": "Entiendo que este envío genera {overage} mensajes de excedente, unos {total} que se cobran al corte.",
+          "consentPending": "Entiendo que este envío genera {overage} mensajes de excedente que se cobran al corte.",
+          "loading": "Calculando el costo del envío…",
+          "managedPricingMissing": "El precio de tu plan aún no está configurado: no se puede estimar cuántos mensajes entran en el paquete. El envío no se bloquea."
+        }
       }
     }
   },
@@ -2166,6 +2180,32 @@
         "forbidden": "Solo un administrador puede avisar del pago.",
         "failed": "No se pudo enviar el aviso. Inténtalo de nuevo."
       }
+    },
+    "metaUsage": {
+      "managedTitle": "Consumo del ciclo",
+      "managedPeriod": "Mensajes entregados desde el {start}. Próximo corte: {cut}.",
+      "managedPeriodNoCut": "Mensajes entregados desde el {start}.",
+      "packageLabel": "Mensajes del paquete",
+      "packageOf": "{used} de {included}",
+      "packageWarn": "Has usado el {percent} % del paquete del mes.",
+      "packageFull": "Paquete agotado: {overage} mensajes entregados van a excedente, y cada uno que se entregue a partir de ahora también.",
+      "ratePending": "Tarifa pendiente: Meta aún no tiene precio cargado para {category} en el mercado {market}. El estimado aparecerá en cuanto se cargue; tus envíos no se detienen.",
+      "pricingMissing": "El precio de tu plan aún no está configurado. Escríbenos para revisarlo.",
+      "estimateLabel": "Estimado a pagar al corte",
+      "estimatePending": "Pendiente de tarifa",
+      "estimateNote": "Estimado con lo entregado hasta ahora: el importe final sale del estado de cuenta del corte.",
+      "paypalNote": "La cuota la cobra tu suscripción de PayPal; al corte se factura solo el excedente: {amount}.",
+      "directTitle": "Meta: cuota gratis y costo estimado",
+      "directDesc": "Meta regala {free} mensajes de servicio entregados por número y mes. El conteo vuelve a cero el {date}.",
+      "noNumbers": "Aún no hay números de WhatsApp conectados.",
+      "unnamedNumber": "Número sin nombre",
+      "freeOf": "{used} de {free} gratis",
+      "freeWarn": "Este número ya usó el {percent} % de su cuota gratis del mes.",
+      "freeFull": "Cuota gratis agotada: Meta cobra los mensajes de servicio de este número hasta fin de mes.",
+      "metaCostLabel": "Costo estimado que Meta te cobrará este mes",
+      "metaCostLine": "{category}: {count} mensajes cobrados",
+      "metaCostNote": "Solo cuenta los mensajes que Meta marcó como cobrados, a su tarifa vigente. Lo cobra Meta a tu método de pago; su factura es la cifra final.",
+      "noPeriod": "Aún no hay un ciclo en curso: el próximo empieza el {start}. Tu paquete está entero."
     }
   },
   "Platform": {

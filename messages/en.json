@@ -877,7 +877,21 @@
         "progressDesc": "Processing {current} of {total} recipients...",
         "toastFailedPreview": "Failed to load preview data",
         "sendFrom": "Send from",
-        "sendFromHint": "The number this campaign goes out through. It is fixed for the whole campaign: pausing and resuming keeps the same sender."
+        "sendFromHint": "The number this campaign goes out through. It is fixed for the whole campaign: pausing and resuming keeps the same sender.",
+        "cost": {
+          "label": "Estimated cost",
+          "direct": "{recipients} recipients × {category} rate ({rate}) = {total}",
+          "directNote": "Meta charges for each delivered message; undelivered ones are not charged.",
+          "ratePending": "No Meta rate is loaded for {category} in this number's market, so the cost can't be estimated. The send is not blocked.",
+          "managedPackage": "{inPackage} fit in your package ({remaining} left this cycle).",
+          "managedOverage": "{overage} go to overage at {price} per {category} message = {total}.",
+          "managedOveragePending": "{overage} go to overage; the {category} price is pending a rate.",
+          "managedNoOverage": "No overage.",
+          "consent": "I understand this send generates {overage} overage messages, about {total} billed at the cut-off.",
+          "consentPending": "I understand this send generates {overage} overage messages billed at the cut-off.",
+          "loading": "Working out the cost of this send…",
+          "managedPricingMissing": "Your plan's pricing isn't set up yet, so we can't estimate how many messages fit in the package. The send is not blocked."
+        }
       }
     }
   },
@@ -2166,6 +2180,32 @@
         "forbidden": "Only an administrator can report the payment.",
         "failed": "The notice could not be sent. Please try again."
       }
+    },
+    "metaUsage": {
+      "managedTitle": "Usage this cycle",
+      "managedPeriod": "Messages delivered since {start}. Next cut-off: {cut}.",
+      "managedPeriodNoCut": "Messages delivered since {start}.",
+      "packageLabel": "Package messages",
+      "packageOf": "{used} of {included}",
+      "packageWarn": "You've used {percent}% of this month's package.",
+      "packageFull": "Package used up: {overage} delivered messages are overage, and so is every one delivered from now on.",
+      "ratePending": "Rate pending: Meta's price for {category} in the {market} market isn't loaded yet. The estimate will show once it is; your sends are not stopped.",
+      "pricingMissing": "Your plan's pricing isn't set up yet. Contact us to review it.",
+      "estimateLabel": "Estimated amount due at cut-off",
+      "estimatePending": "Rate pending",
+      "estimateNote": "Estimated from what has been delivered so far: the final amount comes from the statement at the cut-off.",
+      "paypalNote": "The fee is charged by your PayPal subscription; at the cut-off only the overage is billed: {amount}.",
+      "directTitle": "Meta: free quota and estimated cost",
+      "directDesc": "Meta gives {free} free delivered service messages per number per month. The count resets on {date}.",
+      "noNumbers": "No WhatsApp numbers connected yet.",
+      "unnamedNumber": "Unnamed number",
+      "freeOf": "{used} of {free} free",
+      "freeWarn": "This number has used {percent}% of its free quota this month.",
+      "freeFull": "Free quota used up: Meta charges this number's service messages until the end of the month.",
+      "metaCostLabel": "Estimated cost Meta will charge you this month",
+      "metaCostLine": "{category}: {count} charged messages",
+      "metaCostNote": "Counts only the messages Meta marked as charged, at its current rate. Meta charges your payment method; its invoice is the final figure.",
+      "noPeriod": "No cycle in progress yet: the next one starts on {start}. Your package is untouched."
     }
   },
   "Platform": {

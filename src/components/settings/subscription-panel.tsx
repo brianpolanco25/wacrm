@@ -60,6 +60,8 @@ import { useAuth } from '@/hooks/use-auth';
 import { hasMinRole } from '@/lib/auth/roles';
 import { cn } from '@/lib/utils';
 
+import { MetaUsageCard } from '@/components/billing/meta-usage-card';
+
 import { SettingsPanelHead } from './settings-panel-head';
 
 type Cycle = 'month' | 'year';
@@ -556,6 +558,10 @@ export function SubscriptionPanel() {
             </ul>
           </CardContent>
         </Card>
+
+        {/* ---- Meta consumption (s10.5): the package of a managed
+            account, or Meta's free quota and cost of a direct one ---- */}
+        <MetaUsageCard />
 
         {/* ---- Receipts ---- */}
         <Card>
