@@ -434,6 +434,39 @@ _Assign plan_ → `Ilimitado`, with a reason (s9.4). It is a comped plan:
 counted apart in the Overview and never in the MRR. Taking it away is
 the same form with another plan, or a PayPal checkout by the customer.
 
+### The managed plan
+
+_(Plan gestionado — phase 10, s10.3, migration 077.)_
+
+`077_plan_gestionado.sql` adds the hidden plan `gestionado` (Cabbity
+pays Meta and bills the company at the monthly cut-off), its default
+price in `plans.meta_pricing` and `subscriptions.payment_method`. What
+holds it together:
+
+- **Only the service role writes the billing terms.** `meta_billing`,
+  `meta_pricing` (076) and `payment_method` (077) live in
+  `subscriptions`, which has no client write policy (041): a tenant
+  cannot make itself `direct`, lower its price or move its cut-off
+  (`progress/checks_managed-plan.sql`, block 3). The panel writes them
+  behind `requirePlatformAdmin()`, every query filtered by the account
+  of the file, with a `plan_override` row in `impersonation_log`
+  **before** the change (the price before and after, for an edit).
+- **Hidden stays hidden.** `is_public = false` keeps it out of
+  `/api/billing/plans` (the plan picker of `/billing` and onboarding)
+  and the checkout refuses it. Publishing a hidden plan to PayPal from
+  `/platform/plans` needs `confirmHidden` (a tick in the dialog), and
+  the CLI bootstrap only publishes public plans. Publishing does not put
+  it on sale: it only lets the operator create a PayPal subscription
+  for one company from its file.
+- **No double fee.** The payment method only changes where the gateway
+  agrees: `manual` is refused while PayPal still bills the fee
+  (`paypal_active`), and `paypal` needs a live PayPal subscription
+  (`needs_checkout` — assign the plan with PayPal, which creates it).
+- The PayPal approval link is shown once on the file; it is not
+  emailed. Whoever holds it can only pay for that company's
+  subscription (`custom_id` and the checkout intent pin the account; the
+  webhook activates it).
+
 **The local seed** (`supabase/seed.sql`) creates those two users and a
 demo customer (`cliente.demo@example.com`, unpaid) with the password
 `bcmp1994`. It is **local development only**: the password is public
