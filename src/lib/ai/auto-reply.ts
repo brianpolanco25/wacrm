@@ -9,6 +9,7 @@ import { buildHandoffSummary } from './handoff';
 import { logAiUsage } from './usage';
 import { latestUserMessage } from './query';
 import { engineSendText } from '@/lib/flows/meta-send';
+import { fitWhatsAppText } from '@/lib/whatsapp/text-limit';
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import { claimInboundAutoReply } from '@/lib/automations/reply-marker';
 import {
@@ -54,6 +55,14 @@ interface DispatchArgs {
  *     inbound or a human's send, and fails open on a read error)
  *   - an automation already answered THIS inbound message
  *   - there's nothing to reply to
+ *
+ * One turn = one inbound message, and a turn sends AT MOST ONE outbound
+ * message (p11.4: Meta bills per delivered message). The turn key is
+ * `inbound_auto_replies.message_id` (migration 051), taken by
+ * `claimInboundAutoReply` below; a retry of the same inbound loses it
+ * and stays silent. Paragraphs go out in one message; a text over the
+ * WhatsApp limit is truncated (`fitWhatsAppText`), never split; a send
+ * that throws is not retried.
  *
  * The 24h WhatsApp session window is inherently open here — we're
  * reacting to a customer message that just landed — so no separate
@@ -308,7 +317,7 @@ export async function dispatchInboundToAiReply(
             userId: configOwnerUserId,
             conversationId,
             contactId,
-            text: handoffMessage,
+            text: fitForOneMessage(handoffMessage, conversationId),
             aiGenerated: true,
           });
         } catch (err) {
@@ -343,12 +352,17 @@ export async function dispatchInboundToAiReply(
     }
     if (claimed !== true) return; // lost the per-conversation cap race
 
+    // p11.4. Exactly one send for the reply: paragraphs stay in one
+    // message, and an over-long text is truncated rather than rejected
+    // whole by Meta (which used to lose the reply AND the slot above).
+    // No retry if it throws: «sent to Meta but DB insert failed» means
+    // the customer already has it.
     await engineSendText({
       accountId,
       userId: configOwnerUserId,
       conversationId,
       contactId,
-      text,
+      text: fitForOneMessage(text, conversationId),
       aiGenerated: true,
     });
 
@@ -373,6 +387,22 @@ export async function dispatchInboundToAiReply(
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err);
   }
+}
+
+/**
+ * Fit an outbound text into one WhatsApp message (p11.4, R3). Logs the
+ * truncation with the conversation id and the original length — never the
+ * text, which may carry customer data.
+ */
+function fitForOneMessage(text: string, conversationId: string): string {
+  const fitted = fitWhatsAppText(text);
+  if (fitted.truncated) {
+    console.warn('[ai auto-reply] reply truncated to the WhatsApp limit', {
+      conversationId,
+      originalLength: fitted.originalLength,
+    });
+  }
+  return fitted.text;
 }
 
 /**

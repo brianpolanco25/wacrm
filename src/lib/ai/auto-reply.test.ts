@@ -1194,3 +1194,117 @@ describe('dispatchInboundToAiReply — free service quota (p11.3)', () => {
     warn.mockRestore();
   });
 });
+
+describe('dispatchInboundToAiReply — un solo envío por turno (p11.4)', () => {
+  const sends = () => h.engineSendText.mock.calls.length;
+
+  it('R1 normal reply: exactly one send', async () => {
+    await dispatchInboundToAiReply(ARGS);
+    expect(sends()).toBe(1);
+  });
+
+  it('R1 handoff with a notice: exactly one send (the notice)', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ handoffMessage: 'Te paso con una persona.' })
+    );
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+    await dispatchInboundToAiReply(ARGS);
+    expect(sends()).toBe(1);
+    expect(h.engineSendText.mock.calls[0][0].text).toBe(
+      'Te paso con una persona.'
+    );
+  });
+
+  it('R1 handoff with partial model text: only the notice goes out', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ handoffMessage: 'Te paso con una persona.' })
+    );
+    h.generateReply.mockResolvedValue({
+      text: 'Creo que el precio es…',
+      handoff: true,
+    });
+    await dispatchInboundToAiReply(ARGS);
+    expect(sends()).toBe(1);
+    expect(h.engineSendText.mock.calls[0][0].text).toBe(
+      'Te paso con una persona.'
+    );
+  });
+
+  it('R1 empty model text: at most the notice, never a reply', async () => {
+    h.generateReply.mockResolvedValue({ text: '', handoff: false });
+    await dispatchInboundToAiReply(ARGS); // handoffMessage null → nothing
+    expect(sends()).toBe(0);
+  });
+
+  it('R1 empty handoff notice: zero sends', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: '   ' }));
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+    await dispatchInboundToAiReply(ARGS);
+    expect(sends()).toBe(0);
+  });
+
+  it('R2 several paragraphs go out as ONE message with line breaks intact', async () => {
+    const text = 'Hola.\n\nPrecio: 10.\n\nGracias.';
+    h.generateReply.mockResolvedValue({ text, handoff: false });
+    await dispatchInboundToAiReply(ARGS);
+    expect(sends()).toBe(1);
+    expect(h.engineSendText.mock.calls[0][0].text).toBe(text);
+  });
+
+  it('R3 a 6,000-char reply is truncated to one message and warned without the text', async () => {
+    const text = 'palabra '.repeat(750); // 6000 chars
+    h.generateReply.mockResolvedValue({ text, handoff: false });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await dispatchInboundToAiReply(ARGS);
+    expect(sends()).toBe(1);
+    const sent = h.engineSendText.mock.calls[0][0].text as string;
+    expect(sent.length).toBeLessThanOrEqual(4096);
+    expect(sent.endsWith('…')).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      '[ai auto-reply] reply truncated to the WhatsApp limit',
+      { conversationId: 'conv-1', originalLength: 5999 }
+    );
+    for (const call of warn.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('palabra');
+    }
+    warn.mockRestore();
+  });
+
+  it('R3 an over-long handoff notice is truncated too', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ handoffMessage: 'x'.repeat(5000) })
+    );
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await dispatchInboundToAiReply(ARGS);
+    expect(sends()).toBe(1);
+    expect(
+      (h.engineSendText.mock.calls[0][0].text as string).length
+    ).toBeLessThanOrEqual(4096);
+    warn.mockRestore();
+  });
+
+  it('R4 the same inboundMessageId twice: one model call, one send', async () => {
+    await dispatchInboundToAiReply(ARGS);
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.generateReply).toHaveBeenCalledTimes(1);
+    expect(sends()).toBe(1);
+  });
+
+  for (const message of [
+    'Meta API error: (#100) Invalid parameter',
+    'sent to Meta but DB insert failed',
+  ]) {
+    it(`R5 send throws («${message}»): no retry, no notice, no ai_replies`, async () => {
+      h.loadAiConfig.mockResolvedValue(
+        aiConfig({ handoffMessage: 'Te paso con una persona.' })
+      );
+      h.engineSendText.mockRejectedValue(new Error(message));
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await expect(dispatchInboundToAiReply(ARGS)).resolves.toBeUndefined();
+      expect(sends()).toBe(1);
+      expect(billing.recordUsage).not.toHaveBeenCalled();
+      err.mockRestore();
+    });
+  }
+});
