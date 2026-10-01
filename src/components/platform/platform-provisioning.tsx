@@ -411,6 +411,10 @@ export function PlanAssignment({
         toast.error(t('paypalActive'));
         return;
       }
+      if (res.status === 409 && json?.code === 'checkout_in_progress') {
+        toast.error(tm('errors.checkoutInProgress'));
+        return;
+      }
       if (res.status === 503) {
         toast.error(tm('errors.paypalNotConfigured'));
         return;

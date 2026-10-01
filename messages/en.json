@@ -2515,7 +2515,8 @@
         "needsCheckout": "There is no PayPal subscription to charge the fee. Assign the plan with PayPal from the file.",
         "paypalNotConfigured": "PayPal is not configured on this server. Nothing was changed.",
         "paypalFailed": "PayPal refused the request. Nothing was changed.",
-        "failed": "Could not save the price. Nothing was changed."
+        "failed": "Could not save the price. Nothing was changed.",
+        "checkoutInProgress": "The owner already approved the payment at PayPal: wait for PayPal to confirm it. Nothing was changed."
       }
     }
   },

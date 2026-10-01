@@ -37,6 +37,10 @@
 //           subscription is created for this account and the account
 //           stays `incomplete` until the webhook activates it (s9.6).
 //           200 with `approvalUrl`: the operator sends it to the owner.
+//           Repeating it while that checkout still waits for the owner
+//           hands out the SAME link (`reused`), never a second PayPal
+//           subscription; once the owner approved it, 409
+//           `checkout_in_progress` until the webhook lands.
 //
 // `metaPricing` is validated with `parseMetaPricing` (400 with the
 // reason). Every other plan keeps the s9.4 behaviour, and leaves the
@@ -336,6 +340,15 @@ async function assignWithPayPal(
           },
           { status: 409 }
         );
+      case 'checkout_in_progress':
+        return NextResponse.json(
+          {
+            error:
+              'The owner already approved the PayPal checkout of this company; wait for PayPal to confirm it. Nothing was changed.',
+            code: 'checkout_in_progress',
+          },
+          { status: 409 }
+        );
       case 'audit_failed':
         return NextResponse.json(
           { error: 'Could not record the action; nothing was changed' },
@@ -353,6 +366,7 @@ async function assignWithPayPal(
     approvalUrl: outcome.approvalUrl,
     subscriptionId: outcome.subscriptionId,
     published: outcome.published,
+    reused: outcome.reused,
     fromPlan: outcome.fromPlan,
     fromProvider: outcome.fromProvider,
   });

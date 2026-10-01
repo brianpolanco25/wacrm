@@ -16,8 +16,39 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// The fake does not enforce indexes; the one that matters here is 048's
+// UNIQUE (provider, provider_subscription_id) on `checkout_intents`, so a
+// second intent for the same PayPal subscription answers 23505 like
+// PostgREST.
 vi.mock('@/lib/auth/admin-client', () => ({
-  supabaseAdmin: () => h.db.admin,
+  supabaseAdmin: () => ({
+    from: (table: string) => {
+      const query = h.db.admin.from(table);
+      if (table !== 'checkout_intents') return query;
+      return new Proxy(query, {
+        get(target, prop, receiver) {
+          if (prop !== 'insert') return Reflect.get(target, prop, receiver);
+          return (row: Record<string, unknown>) => {
+            const clash = h.db
+              .rows('checkout_intents')
+              .some(
+                (r) =>
+                  r.provider === row.provider &&
+                  r.provider_subscription_id === row.provider_subscription_id
+              );
+            if (!clash) return target.insert(row);
+            const failed = { data: null, error: { code: '23505' } };
+            const chain = {
+              select: () => chain,
+              single: async () => failed,
+              then: (resolve: (v: unknown) => unknown) => resolve(failed),
+            };
+            return chain;
+          };
+        },
+      });
+    },
+  }),
 }));
 
 vi.mock('@/lib/rate-limit', async (importOriginal) => ({
@@ -107,16 +138,58 @@ function seed() {
 
 let paypal: ReturnType<typeof paypalFake>;
 
-/** `paypalFake` plus `POST /v1/billing/subscriptions`. */
+/**
+ * Status PayPal reports for a subscription on `GET`, by id (default
+ * APPROVAL_PENDING; `'404'` answers RESOURCE_NOT_FOUND).
+ */
+let remoteStatus: Record<string, string> = {};
+
+/**
+ * `paypalFake` plus the subscription calls. Like PayPal, a POST with a
+ * `PayPal-Request-Id` already seen replays the SAME subscription and
+ * link instead of minting a new one.
+ */
 function usePayPal(options: { subscriptionStatus?: number } = {}) {
   paypal = paypalFake({ products: [{ id: 'PROD-CAB', name: 'Cabbity CRM' }] });
   let minted = 0;
+  const byRequestId = new Map<string, number>();
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  const subscriptionBody = (n: number, status: string) => ({
+    id: `I-NEW-${n}`,
+    status,
+    links:
+      status === 'APPROVAL_PENDING'
+        ? [
+            {
+              rel: 'approve',
+              href: `https://www.sandbox.paypal.com/webapps/billing/subscriptions?ba_token=BA-${n}`,
+            },
+          ]
+        : [],
+  });
   const base = paypal.fetch;
   const fetchImpl = async (
     input: string | URL | Request,
     init: RequestInit = {}
   ): Promise<Response> => {
     const url = new URL(String(input));
+    const read = /^\/v1\/billing\/subscriptions\/([^/]+)$/.exec(url.pathname);
+    if (read && (init.method ?? 'GET') === 'GET') {
+      const id = decodeURIComponent(read[1]);
+      paypal.requests.push({
+        method: 'GET',
+        path: url.pathname,
+        body: null,
+        headers: (init.headers ?? {}) as Record<string, string>,
+      });
+      const status = remoteStatus[id] ?? 'APPROVAL_PENDING';
+      if (status === '404') return json({ name: 'RESOURCE_NOT_FOUND' }, 404);
+      return json(subscriptionBody(Number(id.replace('I-NEW-', '')), status));
+    }
     if (
       url.pathname === '/v1/billing/subscriptions' &&
       init.method === 'POST'
@@ -134,20 +207,14 @@ function usePayPal(options: { subscriptionStatus?: number } = {}) {
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      minted += 1;
-      return new Response(
-        JSON.stringify({
-          id: `I-NEW-${minted}`,
-          status: 'APPROVAL_PENDING',
-          links: [
-            {
-              rel: 'approve',
-              href: `https://www.sandbox.paypal.com/webapps/billing/subscriptions?ba_token=BA-${minted}`,
-            },
-          ],
-        }),
-        { status: 201, headers: { 'Content-Type': 'application/json' } }
-      );
+      const key = (init.headers as Record<string, string>)['PayPal-Request-Id'];
+      let n = key ? byRequestId.get(key) : undefined;
+      if (n === undefined) {
+        minted += 1;
+        n = minted;
+        if (key) byRequestId.set(key, n);
+      }
+      return json(subscriptionBody(n, 'APPROVAL_PENDING'), 201);
     }
     return base(input, init);
   };
@@ -173,6 +240,7 @@ beforeEach(() => {
   __resetPayPalForTests();
   h.user = { id: OPERATOR };
   h.db = new FakeDatabase(seed());
+  remoteStatus = {};
   vi.stubEnv('PAYPAL_CLIENT_ID', 'client-id');
   vi.stubEnv('PAYPAL_CLIENT_SECRET', 'client-secret');
   vi.stubEnv('PAYPAL_ENV', 'sandbox');
@@ -493,6 +561,133 @@ describe('paypal', () => {
     expect(h.db.rows('checkout_intents')[0].provider_plan_id).toBe(
       'P-EXISTING'
     );
+  });
+
+  describe('repeating it (idempotency)', () => {
+    const BODY = {
+      planId: 'gestionado',
+      reason: REASON,
+      paymentMethod: 'paypal',
+    };
+    const subscriptionPosts = () =>
+      paypal.requests.filter(
+        (r) => r.method === 'POST' && r.path === '/v1/billing/subscriptions'
+      );
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('twice in a row (double click): one subscription, one intent, the same link', async () => {
+      const first = await (await call(BODY)).json();
+      const second = await call(BODY);
+      expect(second.status).toBe(200);
+      const again = await second.json();
+
+      expect(again.subscriptionId).toBe(first.subscriptionId);
+      expect(again.approvalUrl).toBe(first.approvalUrl);
+      expect(again.reused).toBe(true);
+      expect(subscriptionPosts()).toHaveLength(1);
+      expect(h.db.rows('checkout_intents')).toHaveLength(1);
+      expect(h.db.rows('checkout_intents')[0]).toMatchObject({
+        account_id: A,
+        provider_subscription_id: 'I-NEW-1',
+        status: 'pending',
+      });
+      expect(
+        h.db.rows('subscriptions').filter((r) => r.account_id === A)
+      ).toHaveLength(1);
+      expect(sub(A)).toMatchObject({
+        status: 'incomplete',
+        plan_id: 'gestionado',
+      });
+      // The plan is published once, too.
+      expect(h.db.rows('plan_provider_history')).toHaveLength(1);
+    });
+
+    it('hours later, past the ten-minute PayPal-Request-Id bucket: still no second subscription', async () => {
+      vi.useFakeTimers({
+        toFake: ['Date'],
+        now: new Date('2026-10-01T10:00:00Z'),
+      });
+      const first = await (await call(BODY)).json();
+      vi.setSystemTime(new Date('2026-10-01T13:00:00Z'));
+      const again = await (await call(BODY)).json();
+
+      expect(again.subscriptionId).toBe(first.subscriptionId);
+      expect(again.approvalUrl).toBe(first.approvalUrl);
+      expect(subscriptionPosts()).toHaveLength(1);
+      expect(h.db.rows('checkout_intents')).toHaveLength(1);
+    });
+
+    it('a pending link PayPal let expire is closed and a new one opened', async () => {
+      vi.useFakeTimers({
+        toFake: ['Date'],
+        now: new Date('2026-10-01T10:00:00Z'),
+      });
+      await call(BODY);
+      remoteStatus['I-NEW-1'] = 'EXPIRED';
+      vi.setSystemTime(new Date('2026-10-04T10:00:00Z'));
+      const again = await (await call(BODY)).json();
+
+      expect(again.subscriptionId).toBe('I-NEW-2');
+      expect(again.reused).toBe(false);
+      expect(subscriptionPosts()).toHaveLength(2);
+      const intents = h.db.rows('checkout_intents');
+      expect(intents).toHaveLength(2);
+      expect(
+        intents.find((r) => r.provider_subscription_id === 'I-NEW-1')?.status
+      ).toBe('cancelled');
+      expect(
+        intents.find((r) => r.provider_subscription_id === 'I-NEW-2')?.status
+      ).toBe('pending');
+    });
+
+    it('a subscription PayPal no longer knows (404) counts as gone', async () => {
+      await call(BODY);
+      remoteStatus['I-NEW-1'] = '404';
+      vi.useFakeTimers({
+        toFake: ['Date'],
+        now: new Date(Date.now() + 86_400_000),
+      });
+      const again = await (await call(BODY)).json();
+      expect(again.subscriptionId).toBe('I-NEW-2');
+      expect(subscriptionPosts()).toHaveLength(2);
+    });
+
+    it('409s once the owner already approved it (webhook on its way), and creates nothing', async () => {
+      await call(BODY);
+      remoteStatus['I-NEW-1'] = 'ACTIVE';
+      const before = JSON.stringify(h.db.tables);
+      const res = await call(BODY);
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe('checkout_in_progress');
+      expect(subscriptionPosts()).toHaveLength(1);
+      expect(JSON.stringify(h.db.tables)).toBe(before);
+    });
+
+    it("another company's pending checkout is never reused (A↔B)", async () => {
+      h.db.rows('checkout_intents').push({
+        id: 'intent-b',
+        account_id: B,
+        plan_id: 'gestionado',
+        cycle: 'month',
+        provider: 'paypal',
+        provider_plan_id: 'P-OTHER',
+        provider_subscription_id: 'I-B-PENDING',
+        status: 'pending',
+        created_at: '2026-09-30T00:00:00.000Z',
+      });
+      const res = await (await call(BODY)).json();
+      expect(res.subscriptionId).toBe('I-NEW-1');
+      expect(res.reused).toBe(false);
+      expect(paypal.requests.some((r) => r.path.endsWith('/I-B-PENDING'))).toBe(
+        false
+      );
+      expect(
+        h.db.rows('checkout_intents').find((r) => r.id === 'intent-b')?.status
+      ).toBe('pending');
+    });
   });
 
   it('502s when PayPal refuses the subscription: no trail, no intent, A unchanged', async () => {

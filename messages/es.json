@@ -2515,7 +2515,8 @@
         "needsCheckout": "No hay suscripción de PayPal que cobre la cuota. Asigna el plan con PayPal desde la ficha.",
         "paypalNotConfigured": "PayPal no está configurado en este servidor. No se cambió nada.",
         "paypalFailed": "PayPal rechazó la operación. No se cambió nada.",
-        "failed": "No se pudo guardar el precio. No se cambió nada."
+        "failed": "No se pudo guardar el precio. No se cambió nada.",
+        "checkoutInProgress": "El propietario ya aprobó el pago en PayPal: espera a que PayPal lo confirme. No se cambió nada."
       }
     }
   },

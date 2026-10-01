@@ -41,7 +41,11 @@ import {
   type PaymentMethod,
 } from '@/lib/billing/entitlements';
 import type { MetaPricing } from '@/lib/billing/meta-pricing';
-import { createSubscription } from '@/lib/billing/paypal';
+import {
+  createSubscription,
+  getSubscription,
+  PayPalError,
+} from '@/lib/billing/paypal';
 import { syncPlanCycle } from '@/lib/billing/plan-sync';
 import { recordPlatformAction } from './audit';
 import {
@@ -59,14 +63,63 @@ export type ManagedPayPalOutcome =
       providerPlanId: string;
       /** True when the plan had to be created at PayPal first. */
       published: boolean;
+      /**
+       * True when the account already had a checkout waiting for the
+       * owner and THAT one is handed out again (no second subscription).
+       */
+      reused: boolean;
       fromPlan: string | null;
       fromProvider: string | null;
     }
   | {
       ok: false;
       reason:
-        'unknown_plan' | 'paypal_active' | 'audit_failed' | 'not_managed_plan';
+        | 'unknown_plan'
+        | 'paypal_active'
+        | 'audit_failed'
+        | 'not_managed_plan'
+        | 'checkout_in_progress';
     };
+
+/** A checkout of this account still waiting for the webhook (048). */
+interface PendingAttempt {
+  id: string;
+  provider_plan_id: string | null;
+  provider_subscription_id: string;
+}
+
+/**
+ * The latest `pending` PayPal attempt of THIS account for this plan, or
+ * null. Scoped by account: it is what decides whether a repeated
+ * assignment opens a second subscription.
+ */
+async function findPendingAttempt(
+  accountId: string,
+  planId: string
+): Promise<PendingAttempt | null> {
+  const { data, error } = await supabaseAdmin()
+    .from('checkout_intents')
+    .select('id, provider_plan_id, provider_subscription_id, created_at')
+    .eq('account_id', accountId)
+    .eq('provider', 'paypal')
+    .eq('plan_id', planId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) {
+    console.error('[platform/managed-plan] pending intent read failed:', error);
+    throw error;
+  }
+  const row = ((data as PendingAttempt[] | null) ?? [])[0];
+  return row?.provider_subscription_id ? row : null;
+}
+
+/** PayPal statuses of a subscription the buyer has already approved. */
+const IN_FLIGHT = new Set(['APPROVED', 'ACTIVE']);
+
+export interface GetSubscriptionFn {
+  (subscriptionId: string): ReturnType<typeof getSubscription>;
+}
 
 export interface CreateSubscriptionFn {
   (
@@ -102,6 +155,7 @@ export async function assignManagedPlanViaPayPal(params: {
   /** Origin PayPal sends the owner back to (`resolveAppOrigin`). */
   origin: string;
   createSubscriptionFn?: CreateSubscriptionFn;
+  getSubscriptionFn?: GetSubscriptionFn;
 }): Promise<ManagedPayPalOutcome> {
   const plan = await loadAssignablePlan(params.planId);
   if (!plan) return { ok: false, reason: 'unknown_plan' };
@@ -117,10 +171,60 @@ export async function assignManagedPlanViaPayPal(params: {
     return { ok: false, reason: 'paypal_active' };
   }
 
+  // 0. A checkout already waiting for the owner? The account stays
+  //    `incomplete` with no gateway id until the webhook, so the live
+  //    PayPal guard above cannot see it, and PayPal only replays the
+  //    same subscription for the same PayPal-Request-Id within the
+  //    ten-minute bucket. Ask PayPal about the pending attempt instead:
+  //      APPROVAL_PENDING      → hand out the same link, create nothing;
+  //      APPROVED / ACTIVE     → the owner already paid, the webhook is
+  //                              on its way: 409, create nothing;
+  //      anything else / 404   → that link is dead: close the attempt
+  //                              and open a new one.
+  const db = supabaseAdmin();
+  const pending = await findPendingAttempt(params.accountId, plan.id);
+  let reused: {
+    id: string;
+    approvalUrl: string;
+    providerPlanId: string | null;
+  } | null = null;
+  if (pending) {
+    const read = params.getSubscriptionFn ?? getSubscription;
+    let remote: Awaited<ReturnType<typeof getSubscription>> | null = null;
+    try {
+      remote = await read(pending.provider_subscription_id);
+    } catch (err) {
+      if (!(err instanceof PayPalError && err.status === 404)) throw err;
+    }
+    if (remote?.status === 'APPROVAL_PENDING' && remote.approvalUrl) {
+      reused = {
+        id: pending.provider_subscription_id,
+        approvalUrl: remote.approvalUrl,
+        providerPlanId: pending.provider_plan_id,
+      };
+    } else if (remote && IN_FLIGHT.has(remote.status)) {
+      return { ok: false, reason: 'checkout_in_progress' };
+    } else {
+      const { error: closeError } = await db
+        .from('checkout_intents')
+        .update({ status: 'cancelled' })
+        .eq('account_id', params.accountId)
+        .eq('id', pending.id);
+      if (closeError) {
+        console.error(
+          '[platform/managed-plan] stale intent close failed:',
+          closeError
+        );
+        throw closeError;
+      }
+    }
+  }
+
   // 1. The plan at PayPal: the s9.3 sync, which records it in the
   //    history like a publication from /platform/plans. Only when it is
   //    missing — an existing id is used as it is.
-  let providerPlanId = plan.provider_plan_id_month?.trim() || null;
+  let providerPlanId =
+    reused?.providerPlanId ?? (plan.provider_plan_id_month?.trim() || null);
   let published = false;
   if (!providerPlanId) {
     const synced = await syncPlanCycle({
@@ -136,19 +240,24 @@ export async function assignManagedPlanViaPayPal(params: {
   // 2. The subscription, created for THIS account: same call, same
   //    `custom_id` and idempotency key as `POST /api/billing/checkout`.
   //    The account is `incomplete`, so PayPal sends the owner back to
-  //    the onboarding's waiting page.
-  const { returnUrl, cancelUrl } = checkoutUrls(params.origin, {
-    onboarding: true,
-  });
-  const create = params.createSubscriptionFn ?? createSubscription;
-  const subscription = await create({
-    planId: providerPlanId,
-    customId: params.accountId,
-    returnUrl,
-    cancelUrl,
-    brandName: CHECKOUT_BRAND_NAME,
-    requestId: checkoutRequestId(params.accountId, plan.id, 'month'),
-  });
+  //    the onboarding's waiting page. A reused attempt keeps its own.
+  let subscription: { id: string; approvalUrl: string };
+  if (reused) {
+    subscription = { id: reused.id, approvalUrl: reused.approvalUrl };
+  } else {
+    const { returnUrl, cancelUrl } = checkoutUrls(params.origin, {
+      onboarding: true,
+    });
+    const create = params.createSubscriptionFn ?? createSubscription;
+    subscription = await create({
+      planId: providerPlanId,
+      customId: params.accountId,
+      returnUrl,
+      cancelUrl,
+      brandName: CHECKOUT_BRAND_NAME,
+      requestId: checkoutRequestId(params.accountId, plan.id, 'month'),
+    });
+  }
 
   const fromPlan = current?.plan_id ?? null;
   const fromProvider = current?.provider ?? null;
@@ -172,23 +281,26 @@ export async function assignManagedPlanViaPayPal(params: {
       provider_plan_id: providerPlanId,
       provider_subscription_id: subscription.id,
       paypal_plan_published: published,
+      reused_pending_checkout: Boolean(reused),
     },
   });
   if (!logged) return { ok: false, reason: 'audit_failed' };
 
   // 4. The attempt, so the webhook can tell which account and plan this
   //    PayPal subscription is (048). Scoped by the account of the file.
-  const db = supabaseAdmin();
-  const { error: intentError } = await db.from('checkout_intents').insert({
-    account_id: params.accountId,
-    plan_id: plan.id,
-    cycle: 'month',
-    provider: 'paypal',
-    provider_plan_id: providerPlanId,
-    provider_subscription_id: subscription.id,
-    created_by: params.actorUserId,
-    status: 'pending',
-  });
+  //    A reused attempt already has its row.
+  const { error: intentError } = reused
+    ? { error: null }
+    : await db.from('checkout_intents').insert({
+        account_id: params.accountId,
+        plan_id: plan.id,
+        cycle: 'month',
+        provider: 'paypal',
+        provider_plan_id: providerPlanId,
+        provider_subscription_id: subscription.id,
+        created_by: params.actorUserId,
+        status: 'pending',
+      });
   // 23505: PayPal replayed the same request id (a second click within
   // the ten-minute bucket) and the intent is already there.
   if (intentError && intentError.code !== '23505') {
@@ -228,6 +340,7 @@ export async function assignManagedPlanViaPayPal(params: {
     subscriptionId: subscription.id,
     providerPlanId,
     published,
+    reused: Boolean(reused),
     fromPlan,
     fromProvider,
   };
