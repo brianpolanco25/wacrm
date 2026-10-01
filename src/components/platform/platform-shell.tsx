@@ -280,7 +280,9 @@ export function PlatformFrame({
         <PlatformNav open={navOpen} onClose={closeNav} />
         <div className="flex flex-1 flex-col overflow-hidden">
           <PlatformHeader onOpenSidebar={() => setNavOpen(true)} />
-          <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
+          <main className="relative flex-1 overflow-y-auto p-4 sm:p-6">
+            {children}
+          </main>
         </div>
       </div>
     </div>

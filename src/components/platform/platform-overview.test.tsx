@@ -164,6 +164,13 @@ describe('PlatformOverviewView', () => {
     expect(html).toContain('<table>');
     expect(html).not.toMatch(/<table[^>]*class="[^"]*sr-only/);
     expect(html).toMatch(/<div class="sr-only"><table>/);
+    // ...and that wrapper's containing block is the card, not the
+    // document (an absolute box with no positioned ancestor still
+    // stretched <html> by 35px).
+    const card = metricCard(html, 'weekly');
+    expect(card).toMatch(
+      /<div data-slot="card-content" class="[^"]*\brelative\b[^"]*">(?:(?!<div data-slot)[\s\S])*<div class="sr-only"><table>/
+    );
   });
 
   it('says there is no data rather than drawing an empty chart', () => {
