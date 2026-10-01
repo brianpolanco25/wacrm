@@ -1870,6 +1870,108 @@ BEGIN
   END IF;
   -- /074 -----------------------------------------------------------
 
+  -- 076 -----------------------------------------------------------
+  -- Tarifario de Meta y política de precio por cuenta (s10.2).
+  IF to_regclass('public.meta_rates') IS NULL THEN
+    RAISE EXCEPTION 'public.meta_rates is missing (migration 076)';
+  END IF;
+  IF to_regclass('public.meta_market_countries') IS NULL THEN
+    RAISE EXCEPTION 'public.meta_market_countries is missing (migration 076)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.meta_rates'::regclass AND contype = 'p'
+      AND pg_get_constraintdef(oid) = 'PRIMARY KEY (market, category, effective_from)'
+  ) THEN
+    RAISE EXCEPTION 'meta_rates primary key must be (market, category, effective_from) (migration 076)';
+  END IF;
+  IF (SELECT format_type(atttypid, atttypmod) FROM pg_attribute
+      WHERE attrelid = 'public.meta_rates'::regclass
+        AND attname = 'usd_per_message') IS DISTINCT FROM 'numeric(8,5)' THEN
+    RAISE EXCEPTION 'meta_rates.usd_per_message must be numeric(8,5) (migration 076)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'meta_rates_category_check'
+                   AND conrelid = 'public.meta_rates'::regclass) THEN
+    RAISE EXCEPTION 'meta_rates_category_check is missing (migration 076)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'meta_rates_usd_check'
+                   AND conrelid = 'public.meta_rates'::regclass) THEN
+    RAISE EXCEPTION 'meta_rates_usd_check is missing (migration 076)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'meta_market_countries_country_check'
+                   AND conrelid = 'public.meta_market_countries'::regclass) THEN
+    RAISE EXCEPTION 'meta_market_countries_country_check is missing (migration 076)';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.meta_rates'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_class
+             WHERE oid = 'public.meta_market_countries'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on meta_rates / meta_market_countries (migration 076)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'meta_rates'
+      AND policyname = 'meta_rates_select' AND cmd = 'SELECT'
+      AND 'authenticated' = ANY (roles)
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'meta_market_countries'
+      AND policyname = 'meta_market_countries_select' AND cmd = 'SELECT'
+      AND 'authenticated' = ANY (roles)
+  ) THEN
+    RAISE EXCEPTION 'the meta_rates / meta_market_countries read policies are missing (migration 076)';
+  END IF;
+  -- Escribe solo el rol de servicio: ninguna política de escritura.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN ('meta_rates', 'meta_market_countries')
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'meta_rates / meta_market_countries must have no write policy (migration 076)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'meta_billing' AND is_nullable = 'NO'
+      AND column_default LIKE '''direct''%'
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.meta_billing is missing or not NOT NULL DEFAULT direct (migration 076)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'subscriptions_meta_billing_check'
+                   AND conrelid = 'public.subscriptions'::regclass) THEN
+    RAISE EXCEPTION 'subscriptions_meta_billing_check is missing (migration 076)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'meta_pricing' AND data_type = 'jsonb'
+      AND is_nullable = 'NO'
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.meta_pricing is missing or nullable (migration 076)';
+  END IF;
+  -- Semilla: la tarjeta del 2026-10-01 para Resto de Latinoamérica y RD.
+  IF (SELECT usd_per_message FROM meta_rates
+      WHERE market = 'rest_of_latam' AND category = 'marketing'
+        AND effective_from = DATE '2026-10-01') IS DISTINCT FROM 0.07400
+     OR (SELECT usd_per_message FROM meta_rates
+         WHERE market = 'rest_of_latam' AND category = 'utility'
+           AND effective_from = DATE '2026-10-01') IS DISTINCT FROM 0.01130
+     OR (SELECT usd_per_message FROM meta_rates
+         WHERE market = 'rest_of_latam' AND category = 'service'
+           AND effective_from = DATE '2026-10-01') IS DISTINCT FROM 0.01130 THEN
+    RAISE EXCEPTION 'the rest_of_latam rate card of 2026-10-01 is missing (migration 076)';
+  END IF;
+  IF (SELECT market FROM meta_market_countries WHERE country_code = 'DO')
+     IS DISTINCT FROM 'rest_of_latam' THEN
+    RAISE EXCEPTION 'DO must map to rest_of_latam (migration 076)';
+  END IF;
+  -- /076 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
