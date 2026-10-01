@@ -12,6 +12,11 @@ import {
 } from '@/lib/contacts/dedupe';
 import { sanitizeBsuid, sanitizeWaUsername } from '@/lib/whatsapp/bsuid';
 import { reopenClosedConversation } from '@/lib/conversations/reopen';
+import {
+  computeEntryPoint,
+  parseReferral,
+  recordEntryPoint,
+} from '@/lib/whatsapp/entry-point';
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature';
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import { dispatchInboundToFlows } from '@/lib/flows/engine';
@@ -79,6 +84,14 @@ interface WhatsAppMessage {
     address?: string;
   };
   reaction?: { message_id: string; emoji: string };
+  /**
+   * Click to WhatsApp (p11.6, migración 082). Supuesto S-E1 SIN verificar:
+   * Meta lo manda en el primer entrante desde un anuncio o publicación,
+   * como objeto con `source_type`, `source_id`, `headline`, `ctwa_clid`…
+   * `unknown` a propósito: la forma no está comprobada y la valida
+   * `parseReferral` (src/lib/whatsapp/entry-point.ts).
+   */
+  referral?: unknown;
   /**
    * Set when the customer taps a button or list row on an interactive
    * message we sent. `button_reply.id` / `list_reply.id` is whatever id
@@ -1090,6 +1103,28 @@ async function processMessage(
 
   if (convError) {
     console.error('Error updating conversation:', convError);
+  }
+
+  // Punto de entrada Click to WhatsApp (p11.6, migración 082): después de
+  // la frontera de idempotencia, así que una repetición de Meta no lo
+  // toca. `recordEntryPoint` no lanza; el `try` es la red de seguridad de
+  // CP11 — un `referral` raro nunca puede costar el resto del pipeline.
+  try {
+    const referral = parseReferral(message.referral);
+    if (referral) {
+      await recordEntryPoint(
+        supabaseAdmin(),
+        accountId,
+        conversation.id,
+        conversation.entry_point_at ?? null,
+        computeEntryPoint(referral, message.timestamp, Date.now())
+      );
+    }
+  } catch (err) {
+    console.error(
+      '[webhook] entry point update failed:',
+      err instanceof Error ? err.message : String(err)
+    );
   }
 
   // A customer writing again re-opens the thread (issue #409). Kept as a

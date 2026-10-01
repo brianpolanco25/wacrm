@@ -2105,6 +2105,32 @@ BEGIN
   END IF;
   -- /079 -----------------------------------------------------------
 
+  -- 082 — punto de entrada CTWA y ventana gratis (p11.6) ------------
+  IF (SELECT count(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'conversations'
+        AND is_nullable = 'YES' AND column_default IS NULL
+        AND ((column_name = 'entry_point_source' AND data_type = 'text')
+          OR (column_name = 'entry_point_at'
+              AND data_type = 'timestamp with time zone')
+          OR (column_name = 'free_window_until'
+              AND data_type = 'timestamp with time zone')
+          OR (column_name = 'entry_point_referral' AND data_type = 'jsonb'))) <> 4 THEN
+    RAISE EXCEPTION 'conversations.entry_point_* / free_window_until columns are missing or not nullable without default (migration 082)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'conversations_entry_point_source_check'
+                   AND conrelid = 'public.conversations'::regclass
+                   AND contype = 'c') THEN
+    RAISE EXCEPTION 'conversations_entry_point_source_check is missing (migration 082)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'conversations_free_window_check'
+                   AND conrelid = 'public.conversations'::regclass
+                   AND contype = 'c') THEN
+    RAISE EXCEPTION 'conversations_free_window_check is missing (migration 082)';
+  END IF;
+  -- /082 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

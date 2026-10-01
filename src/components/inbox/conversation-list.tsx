@@ -1,41 +1,48 @@
-"use client";
+'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import {
   CONVERSATION_SELECT,
   matchesContactFilters,
   normalizeConversations,
-} from "@/lib/inbox/conversations";
+} from '@/lib/inbox/conversations';
 import {
   deriveAttentionState,
   isUnattended,
   offersUnattendedFilter,
   type AttentionState,
-} from "@/lib/inbox/attention";
-import { AttentionBadge } from "@/components/inbox/attention-badge";
-import { useAiAccountStatus } from "@/hooks/use-ai-account-status";
-import { usePresence } from "@/hooks/use-presence";
-import { useAuth } from "@/hooks/use-auth";
-import { presenceLabel, type PresenceStatus } from "@/lib/presence";
-import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus, Profile, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
-import { useTranslations } from "next-intl";
+} from '@/lib/inbox/attention';
+import { AttentionBadge } from '@/components/inbox/attention-badge';
+import { FreeWindowBadge } from '@/components/inbox/free-window-badge';
+import { useAiAccountStatus } from '@/hooks/use-ai-account-status';
+import { usePresence } from '@/hooks/use-presence';
+import { useAuth } from '@/hooks/use-auth';
+import { useBillingStatus } from '@/hooks/use-billing-status';
+import { useMinuteClock } from '@/hooks/use-minute-clock';
+import {
+  freeWindowDateTimeOptions,
+  freeWindowUntil,
+} from '@/lib/inbox/free-window';
+import { presenceLabel, type PresenceStatus } from '@/lib/presence';
+import { cn } from '@/lib/utils';
+import type { Conversation, ConversationStatus, Profile, Tag } from '@/types';
+import { Search, ChevronDown, X } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+import { useFormatter, useTranslations } from 'next-intl';
 import {
   contactDisplayName,
   contactMatchesSearch,
-} from "@/lib/contacts/display";
-import { Input } from "@/components/ui/input";
+} from '@/lib/contacts/display';
+import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from '@/components/ui/dropdown-menu';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -52,14 +59,12 @@ interface ConversationListProps {
 }
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
-  open: "bg-primary",
-  pending: "bg-amber-500",
-  closed: "bg-muted-foreground",
+  open: 'bg-primary',
+  pending: 'bg-amber-500',
+  closed: 'bg-muted-foreground',
 };
 
-
-
-type InboxFilter = ConversationStatus | "all" | "unread" | "unattended";
+type InboxFilter = ConversationStatus | 'all' | 'unread' | 'unattended';
 
 export function ConversationList({
   activeConversationId,
@@ -68,23 +73,33 @@ export function ConversationList({
   onConversationsLoaded,
   resyncToken = 0,
 }: ConversationListProps) {
-  const t = useTranslations("Inbox.conversationList");
+  const t = useTranslations('Inbox.conversationList');
+  // Ventana gratis de punto de entrada (p11.6). Un solo reloj para toda
+  // la lista, nunca uno por fila; y la insignia solo con `metaBilling`
+  // conocido y `direct` (lo decide `freeWindowUntil`).
+  const tFreeWindow = useTranslations('Inbox.freeWindow');
+  const formatter = useFormatter();
+  const clockNow = useMinuteClock();
+  const metaBilling = useBillingStatus()?.metaBilling;
   // The account this list is showing. Normally the signed-in user's own;
   // the customer's during a support session. Every fetch below filters by
   // it — since migration 057, RLS answers a platform operator with both
   // companies' rows (see `useAuth`).
   const { accountId } = useAuth();
-  
-  const ALL_FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
-    { label: t("filterAll"), value: "all" },
-    { label: t("filterUnread"), value: "unread" },
-    // The one that turns the indicator into a tool: the queue nobody
-    // is on (fase 1 §3).
-    { label: t("filterUnattended"), value: "unattended" },
-    { label: t("filterOpen"), value: "open" },
-    { label: t("filterPending"), value: "pending" },
-    { label: t("filterClosed"), value: "closed" },
-  ], [t]);
+
+  const ALL_FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(
+    () => [
+      { label: t('filterAll'), value: 'all' },
+      { label: t('filterUnread'), value: 'unread' },
+      // The one that turns the indicator into a tool: the queue nobody
+      // is on (fase 1 §3).
+      { label: t('filterUnattended'), value: 'unattended' },
+      { label: t('filterOpen'), value: 'open' },
+      { label: t('filterPending'), value: 'pending' },
+      { label: t('filterClosed'), value: 'closed' },
+    ],
+    [t]
+  );
 
   // Account-wide "the bot is answering inbound" flag. ONE request per
   // account, shared with the thread banner — nothing here is per
@@ -98,7 +113,7 @@ export function ConversationList({
   // pane on this same page also calls usePresence, and realtime-js
   // hands back the *existing* channel for a repeated topic (see the
   // hook's doc comment).
-  const { getPresence, getRow, now } = usePresence(true, "inbox-list");
+  const { getPresence, getRow, now } = usePresence(true, 'inbox-list');
 
   // Teammates, once — the list needs a name for `assigned_agent_id`,
   // which realtime UPDATE payloads never carry (no joins). Resolving
@@ -115,8 +130,8 @@ export function ConversationList({
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const teamSize = profiles?.length ?? null;
 
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<InboxFilter>("all");
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<InboxFilter>('all');
 
   // "Unattended" is a hand-off queue; a one-person account has nobody to
   // hand off to, so the chip goes (only once the size is KNOWN to be 1).
@@ -124,14 +139,14 @@ export function ConversationList({
     () =>
       offersUnattendedFilter(teamSize)
         ? ALL_FILTER_OPTIONS
-        : ALL_FILTER_OPTIONS.filter((o) => o.value !== "unattended"),
+        : ALL_FILTER_OPTIONS.filter((o) => o.value !== 'unattended'),
     [ALL_FILTER_OPTIONS, teamSize]
   );
   // …and if it was the active filter, fall back to "all". Adjusted during
   // render (React's "storing information from previous renders" pattern)
   // rather than in an effect, so no frame renders the stale filter.
-  if (filter === "unattended" && !offersUnattendedFilter(teamSize)) {
-    setFilter("all");
+  if (filter === 'unattended' && !offersUnattendedFilter(teamSize)) {
+    setFilter('all');
   }
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
@@ -165,16 +180,16 @@ export function ConversationList({
 
     (async () => {
       const { data, error } = await supabase
-        .from("conversations")
+        .from('conversations')
         .select(CONVERSATION_SELECT)
-        .eq("account_id", accountId)
-        .order("last_message_at", { ascending: false });
+        .eq('account_id', accountId)
+        .order('last_message_at', { ascending: false });
 
       if (cancelled) return;
 
       if (error) {
         // Supabase errors have non-enumerable properties — log fields explicitly
-        console.error("Failed to fetch conversations:", {
+        console.error('Failed to fetch conversations:', {
           message: error.message,
           details: error.details,
           hint: error.hint,
@@ -204,10 +219,10 @@ export function ConversationList({
     let cancelled = false;
     (async () => {
       const { data } = await supabase
-        .from("tags")
-        .select("*")
-        .eq("account_id", accountId)
-        .order("name");
+        .from('tags')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('name');
       if (!cancelled && data) setTags(data as Tag[]);
     })();
     return () => {
@@ -227,16 +242,16 @@ export function ConversationList({
     let cancelled = false;
     (async () => {
       const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("account_id", accountId)
-        .order("full_name");
+        .from('profiles')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('full_name');
       if (cancelled) return;
       if (error) {
         // Not fatal: without names the rows fall back to a generic
         // "Assigned" label, which still beats showing nothing. The team
         // size stays unknown (`null`), so no "Unattended" alarm either.
-        console.error("Failed to fetch profiles:", error.message);
+        console.error('Failed to fetch profiles:', error.message);
         return;
       }
       setProfiles((data as Profile[]) ?? []);
@@ -273,9 +288,9 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = conversations;
 
-    if (filter === "unread") {
+    if (filter === 'unread') {
       result = result.filter((c) => c.unread_count > 0);
-    } else if (filter === "unattended") {
+    } else if (filter === 'unattended') {
       // No operator AND no AI — handed-off threads nobody picked up
       // included, closed ones excluded (this is a work queue). Resolved
       // in memory over the rows already loaded, so it stays correct the
@@ -283,7 +298,7 @@ export function ConversationList({
       // badge: with `aiStatus` or `teamSize` unknown nothing is decided,
       // and a one-person account has no such queue (p8.2).
       result = result.filter((c) => isUnattended(c, aiStatus, teamSize));
-    } else if (filter !== "all") {
+    } else if (filter !== 'all') {
       result = result.filter((c) => c.status === filter);
     }
 
@@ -300,7 +315,7 @@ export function ConversationList({
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter((c) => {
-        const lastMsg = c.last_message_text?.toLowerCase() ?? "";
+        const lastMsg = c.last_message_text?.toLowerCase() ?? '';
         // Nombre, teléfono y —desde fase 6 §5— nombre de usuario, con
         // arroba o sin ella.
         return contactMatchesSearch(c.contact, search) || lastMsg.includes(q);
@@ -329,7 +344,8 @@ export function ConversationList({
     setSelectedCompany(null);
   }, []);
 
-  const hasContactFilters = selectedTagIds.length > 0 || selectedCompany !== null;
+  const hasContactFilters =
+    selectedTagIds.length > 0 || selectedCompany !== null;
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -347,28 +363,43 @@ export function ConversationList({
 
   const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
 
+  // Textos de la insignia de ventana gratis de una fila, o nada. Con el
+  // reloj del minuto: cuando pasa `free_window_until`, la insignia se va
+  // sola en menos de 60 s (R20).
+  const freeWindowTexts = (
+    conv: Conversation
+  ): { freeWindowLabel?: string; freeWindowTitle?: string } => {
+    const until = freeWindowUntil(conv, clockNow, metaBilling);
+    if (!until) return {};
+    const formatted = formatter.dateTime(until, freeWindowDateTimeOptions());
+    return {
+      freeWindowLabel: tFreeWindow('badge', { until: formatted }),
+      freeWindowTitle: tFreeWindow('tooltip', { until: formatted }),
+    };
+  };
+
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
     // row with the thread + contact sidebar.
-    <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
+    <div className="border-border bg-card flex h-full w-full flex-col border-r lg:w-80">
       {/* Search + Filter */}
-      <div className="space-y-2 border-b border-border p-3">
+      <div className="border-border space-y-2 border-b p-3">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
           <Input
             value={search}
             onChange={handleSearchChange}
-            placeholder={t("searchPlaceholder")}
-            className="border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
+            placeholder={t('searchPlaceholder')}
+            className="border-border bg-muted text-foreground placeholder-muted-foreground focus:border-primary/50 pl-9 text-sm"
           />
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
-                {activeFilter?.label ?? t("filterAll")}
-                <ChevronDown className="h-3 w-3" />
+            <DropdownMenuTrigger className="text-muted-foreground hover:text-foreground hover:bg-muted inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-xs">
+              {activeFilter?.label ?? t('filterAll')}
+              <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
@@ -379,10 +410,10 @@ export function ConversationList({
                   key={opt.value}
                   onClick={() => setFilter(opt.value)}
                   className={cn(
-                    "text-sm",
+                    'text-sm',
                     filter === opt.value
-                      ? "text-primary"
-                      : "text-popover-foreground"
+                      ? 'text-primary'
+                      : 'text-popover-foreground'
                   )}
                 >
                   {opt.label}
@@ -395,15 +426,15 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  'hover:bg-muted inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-xs',
                   selectedTagIds.length > 0
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? 'text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                {t("tags")}
+                {t('tags')}
                 {selectedTagIds.length > 0 && (
-                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                  <span className="bg-primary text-primary-foreground flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold">
                     {selectedTagIds.length}
                   </span>
                 )}
@@ -411,14 +442,14 @@ export function ConversationList({
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
-                className="max-h-64 w-56 border-border bg-popover"
+                className="border-border bg-popover max-h-64 w-56"
               >
                 {tags.map((t) => (
                   <DropdownMenuCheckboxItem
                     key={t.id}
                     checked={selectedTagIds.includes(t.id)}
                     onCheckedChange={() => toggleTag(t.id)}
-                    className="text-sm text-popover-foreground"
+                    className="text-popover-foreground text-sm"
                   >
                     <span className="flex items-center gap-2">
                       <span
@@ -437,39 +468,41 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  'hover:bg-muted inline-flex h-7 max-w-40 items-center justify-center gap-1 rounded-md px-2 text-xs',
                   selectedCompany
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? 'text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                <span className="truncate">{selectedCompany ?? t("company")}</span>
+                <span className="truncate">
+                  {selectedCompany ?? t('company')}
+                </span>
                 <ChevronDown className="h-3 w-3 shrink-0" />
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="start"
-                className="max-h-64 w-56 border-border bg-popover"
+                className="border-border bg-popover max-h-64 w-56"
               >
                 <DropdownMenuItem
                   onClick={() => setSelectedCompany(null)}
                   className={cn(
-                    "text-sm",
+                    'text-sm',
                     selectedCompany === null
-                      ? "text-primary"
-                      : "text-popover-foreground"
+                      ? 'text-primary'
+                      : 'text-popover-foreground'
                   )}
                 >
-                  {t("allCompanies")}
+                  {t('allCompanies')}
                 </DropdownMenuItem>
                 {companies.map((co) => (
                   <DropdownMenuItem
                     key={co}
                     onClick={() => setSelectedCompany(co)}
                     className={cn(
-                      "text-sm",
+                      'text-sm',
                       selectedCompany === co
-                        ? "text-primary"
-                        : "text-popover-foreground"
+                        ? 'text-primary'
+                        : 'text-popover-foreground'
                     )}
                   >
                     <span className="truncate">{co}</span>
@@ -488,13 +521,17 @@ export function ConversationList({
                 <button
                   key={id}
                   onClick={() => toggleTag(id)}
-                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground hover:bg-muted/70"
+                  className="bg-muted text-foreground hover:bg-muted/70 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
                 >
                   <span
                     className="h-1.5 w-1.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: tag?.color ?? "var(--muted-foreground)" }}
+                    style={{
+                      backgroundColor: tag?.color ?? 'var(--muted-foreground)',
+                    }}
                   />
-                  <span className="max-w-24 truncate">{tag?.name ?? t("tags")}</span>
+                  <span className="max-w-24 truncate">
+                    {tag?.name ?? t('tags')}
+                  </span>
                   <X className="h-3 w-3" />
                 </button>
               );
@@ -502,7 +539,7 @@ export function ConversationList({
             {selectedCompany && (
               <button
                 onClick={() => setSelectedCompany(null)}
-                className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground hover:bg-muted/70"
+                className="bg-muted text-foreground hover:bg-muted/70 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
               >
                 <span className="max-w-24 truncate">{selectedCompany}</span>
                 <X className="h-3 w-3" />
@@ -510,9 +547,9 @@ export function ConversationList({
             )}
             <button
               onClick={clearContactFilters}
-              className="px-1 text-[11px] text-muted-foreground hover:text-foreground"
+              className="text-muted-foreground hover:text-foreground px-1 text-[11px]"
             >
-              {t("clearAll")}
+              {t('clearAll')}
             </button>
           </div>
         )}
@@ -527,11 +564,13 @@ export function ConversationList({
       <ScrollArea className="min-h-0 flex-1">
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <div className="border-primary h-5 w-5 animate-spin rounded-full border-2 border-t-transparent" />
           </div>
         ) : filtered.length === 0 ? (
           <div className="px-4 py-12 text-center">
-            <p className="text-sm text-muted-foreground">{t("noConversations")}</p>
+            <p className="text-muted-foreground text-sm">
+              {t('noConversations')}
+            </p>
           </div>
         ) : (
           <div className="flex flex-col">
@@ -558,12 +597,12 @@ export function ConversationList({
                   onSelect={handleSelect}
                   attention={state}
                   attentionLabel={
-                    state === "ai"
-                      ? t("attentionAi")
-                      : state === "assigned"
-                        ? (profilesByUserId.get(assigneeId ?? "")?.full_name ||
-                          t("attentionAssigned"))
-                        : t("attentionUnattended")
+                    state === 'ai'
+                      ? t('attentionAi')
+                      : state === 'assigned'
+                        ? profilesByUserId.get(assigneeId ?? '')?.full_name ||
+                          t('attentionAssigned')
+                        : t('attentionUnattended')
                   }
                   presence={presence}
                   presenceTitle={
@@ -571,10 +610,11 @@ export function ConversationList({
                       ? presenceLabel(
                           presence,
                           getRow(assigneeId)?.last_seen_at ?? null,
-                          now,
+                          now
                         )
                       : undefined
                   }
+                  {...freeWindowTexts(conv)}
                   t={t}
                 />
               );
@@ -597,6 +637,9 @@ interface ConversationItemProps {
   attentionLabel: string;
   presence?: PresenceStatus;
   presenceTitle?: string;
+  /** «Ventana gratis hasta …» (p11.6); ausente = sin insignia. */
+  freeWindowLabel?: string;
+  freeWindowTitle?: string;
   t: ReturnType<typeof useTranslations>;
 }
 
@@ -608,10 +651,12 @@ function ConversationItem({
   attentionLabel,
   presence,
   presenceTitle,
+  freeWindowLabel,
+  freeWindowTitle,
   t,
 }: ConversationItemProps) {
   const contact = conversation.contact;
-  const displayName = contactDisplayName(contact, t("unknown"));
+  const displayName = contactDisplayName(contact, t('unknown'));
   const initials = displayName.charAt(0).toUpperCase();
 
   const handleClick = useCallback(() => {
@@ -622,18 +667,18 @@ function ConversationItem({
     ? formatDistanceToNow(new Date(conversation.last_message_at), {
         addSuffix: false,
       })
-    : "";
+    : '';
 
   return (
     <button
       onClick={handleClick}
       className={cn(
-        "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50",
-        isActive && "border-l-2 border-primary bg-muted/70"
+        'hover:bg-muted/50 flex w-full items-start gap-3 px-3 py-3 text-left transition-colors',
+        isActive && 'border-primary bg-muted/70 border-l-2'
       )}
     >
       {/* Avatar */}
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+      <div className="bg-muted text-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-medium">
         {contact?.avatar_url ? (
           <img
             src={contact.avatar_url}
@@ -648,24 +693,26 @@ function ConversationItem({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-foreground">
+          <span className="text-foreground truncate text-sm font-medium">
             {displayName}
           </span>
-          <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
+          <span className="text-muted-foreground shrink-0 text-[10px]">
+            {timeAgo}
+          </span>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
-          <p className="truncate text-xs text-muted-foreground">
-            {conversation.last_message_text || t("noMessagesYet")}
+          <p className="text-muted-foreground truncate text-xs">
+            {conversation.last_message_text || t('noMessagesYet')}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             {conversation.unread_count > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+              <span className="bg-primary text-primary-foreground flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold">
                 {conversation.unread_count}
               </span>
             )}
             <span
               className={cn(
-                "h-2 w-2 rounded-full",
+                'h-2 w-2 rounded-full',
                 STATUS_COLORS[conversation.status]
               )}
               title={conversation.status}
@@ -674,14 +721,22 @@ function ConversationItem({
         </div>
         {/* Who is attending. Its own line so the operator's name isn't
             fighting the message preview for the 320px the list gets. */}
-        {attention && (
-          <div className="mt-1 flex min-w-0 items-center">
-            <AttentionBadge
-              state={attention}
-              label={attentionLabel}
-              presence={presence}
-              presenceTitle={presenceTitle}
-            />
+        {(attention || freeWindowLabel) && (
+          <div className="mt-1 flex min-w-0 items-center gap-2">
+            {attention && (
+              <AttentionBadge
+                state={attention}
+                label={attentionLabel}
+                presence={presence}
+                presenceTitle={presenceTitle}
+              />
+            )}
+            {freeWindowLabel && (
+              <FreeWindowBadge
+                label={freeWindowLabel}
+                title={freeWindowTitle ?? freeWindowLabel}
+              />
+            )}
           </div>
         )}
       </div>

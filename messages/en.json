@@ -360,6 +360,10 @@
       "resumed": "AI resumed.",
       "updateError": "Couldn’t update the AI assistant.",
       "networkError": "Couldn’t reach the server."
+    },
+    "freeWindow": {
+      "badge": "Free window until {until}",
+      "tooltip": "This customer came from a Click to WhatsApp ad. If you reply within 24 hours of their first message, Meta does not charge for the messages in this conversation until {until}."
     }
   },
   "Contacts": {

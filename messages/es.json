@@ -360,6 +360,10 @@
       "resumed": "IA reanudada.",
       "updateError": "No se pudo actualizar el asistente de IA.",
       "networkError": "No se pudo contactar con el servidor."
+    },
+    "freeWindow": {
+      "badge": "Ventana gratis hasta {until}",
+      "tooltip": "Este cliente llegó desde un anuncio Click to WhatsApp. Si respondes en las 24 h siguientes a su primer mensaje, Meta no cobra los mensajes de esta conversación hasta {until}."
     }
   },
   "Contacts": {

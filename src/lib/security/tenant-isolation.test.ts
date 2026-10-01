@@ -2054,6 +2054,61 @@ describe('/api/whatsapp/webhook (service role, tenant from phone_number_id)', ()
     expectBUnchanged(before);
   });
 
+  it('p11.6: un entrante con referral de anuncio por el número de A guarda el punto de entrada en A y no toca la conversación de B (mismo teléfono)', async () => {
+    const before = h.db.snapshot(B);
+    const ts = Math.floor(Date.now() / 1000) - 60;
+    const body = inboundWebhookBody('pn-a', 'vengo del anuncio');
+    const msg = body.entry[0].changes[0].value.messages[0] as Record<
+      string,
+      unknown
+    >;
+    msg.timestamp = String(ts);
+    msg.referral = {
+      source_type: 'ad',
+      source_id: '123',
+      headline: 'Promo',
+      ctwa_clid: 'x',
+    };
+
+    const res = await waWebhook.POST(
+      req('POST', '/api/whatsapp/webhook', body, {
+        'x-hub-signature-256': 'sha256=stub',
+      })
+    );
+    expect(res.status).toBe(200);
+    await drainAfter();
+
+    const convA = h.db.rows('conversations').find((c) => c.id === 'conv-a');
+    expect(convA?.entry_point_source).toBe('ctwa_ad');
+    expect(convA?.entry_point_at).toBe(new Date(ts * 1000).toISOString());
+    expect(convA?.free_window_until).toBe(
+      new Date(ts * 1000 + 72 * 3600 * 1000).toISOString()
+    );
+    const convB = h.db.rows('conversations').find((c) => c.id === 'conv-b');
+    expect(convB?.entry_point_source ?? null).toBeNull();
+    expect(convB?.free_window_until ?? null).toBeNull();
+    // El UPDATE nuevo lleva el filtro de cuenta (lo exige además el
+    // audit de unscopedServiceRoleQueries del afterEach).
+    const epUpdates = h.db.log.filter(
+      (l) =>
+        l.table === 'conversations' &&
+        l.op === 'update' &&
+        JSON.stringify(l).includes('entry_point_source')
+    );
+    expect(epUpdates).toHaveLength(1);
+    expect(epUpdates[0].filters).toContainEqual({
+      column: 'account_id',
+      op: 'eq',
+      value: A,
+    });
+    expect(epUpdates[0].filters).toContainEqual({
+      column: 'id',
+      op: 'eq',
+      value: 'conv-a',
+    });
+    expectBUnchanged(before);
+  });
+
   it('an inbound for an unknown number is dropped without touching either account', async () => {
     const beforeA = h.db.snapshot(A);
     const beforeB = h.db.snapshot(B);
