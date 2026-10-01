@@ -31,6 +31,16 @@ and polish.
 - Giving a company any plan without a Meta price takes it out of managed billing. The managed plan cannot be given without terms (also from «New company»: the plan step then fails and is finished from the file).
 - Publishing a hidden plan to PayPal from `/platform/plans` now needs an explicit «publish anyway» tick; the CLI bootstrap only publishes public plans. Hidden plans still never appear in `/billing`, onboarding or the public checkout.
 
+### Managed Meta billing: statements at the cut-off (migration required: 078, new variable)
+
+- **Migration required:** apply `supabase/migrations/078_statements.sql`. It adds `statements` (one per company and cut-off date) and lets the platform audit log record `payment_confirmed` and `statement_void`. Account owners and admins can read the totals of their own statements; the Meta cost, the internal breakdown and the payment details are readable only by the service role.
+- **New variable `BILLING_CRON_SECRET`** and a new scheduler entry: `GET /api/billing/cron` with the secret in `x-cron-secret` (503 until it is set; see `docs/docker.md`). Once a managed company's period ends it issues its statement — the package fee (none when PayPal charges it) plus every delivered message over the package at its category price, in delivery order — due three days later, and the company goes past due. Running it again never issues a second statement. A PayPal company with no overage gets no statement and its period moves on a month. A company whose deliveries have no Meta rate loaded is skipped and reported; the others are billed.
+- Unpaid three days after the cut-off, the company becomes read-only — even if PayPal renewed the fee in between. Inbound messages keep arriving and the inbox stays readable.
+- Every delivered message with a Meta category counts towards the package, including those Meta did not charge for; the real Meta cost only counts the charged ones. Delivered messages without a Meta category are listed on the statement and never billed.
+- Operator console, company file: new «Statements» card with the total, status, due date, Meta cost, margin and the customer's «I have paid» note. «Confirm payment» (date, reference, note) and «Void» (with a reason) reopen the company and set the next cut-off one month after the statement's — paying late does not move the billing day. Both are recorded in the audit log first.
+- `/billing`: new «Statements» section with the breakdown (number, category, delivered, price applied, amount) and the total, without Meta's own figures. The billing banner shows the open statement (amount, period, days left) and, once overdue, a read-only notice of its own; both offer «I have paid», which leaves a note for the operator and changes nothing else.
+- No e-mail is sent: the repository has no mail provider, so the banner is the notice.
+
 ### Platform console: tag filter during a support session
 
 - Filtering contacts by tag works during a support session: the browser now runs the read-only `filter_contacts_by_tags` while the session is open. Every other database function called from the browser (`touch_presence` included) stays refused.
