@@ -10,10 +10,14 @@ import es from '../../../messages/es.json';
 import type {
   DirectBroadcastEstimate,
   ManagedBroadcastEstimate,
+  ManagedPricingMissingEstimate,
 } from '@/lib/billing/meta-usage';
 import {
   BroadcastCostEstimate,
   OverageConsentText,
+  canConfirmSend,
+  estimateKey,
+  estimateStateFor,
   fetchBroadcastEstimate,
   needsOverageConsent,
   templateCategory,
@@ -55,6 +59,15 @@ const MANAGED: ManagedBroadcastEstimate = {
   overage: 500,
   unitPriceUsd: 0.185,
   overageUsd: 92.5,
+  pricingMissing: false,
+};
+
+const PRICING_MISSING: ManagedPricingMissingEstimate = {
+  metaBilling: 'managed',
+  recipients: 200,
+  category: 'marketing',
+  market: 'rest_of_latam',
+  pricingMissing: true,
 };
 
 describe('the line on the scheduling step', () => {
@@ -135,15 +148,13 @@ describe('explicit confirmation when it generates overage', () => {
     );
   });
 
-  it('step 4 disables «Enviar» until the tick, and only in that case', () => {
-    const source = readFileSync(
-      path.join(__dirname, 'step4-schedule-send.tsx'),
-      'utf8'
-    );
-    expect(source).toContain('disabled={consentNeeded && !overageConsent}');
-    expect(source).toContain('needsOverageConsent(costEstimate)');
-    // Re-asked on every opening of the dialog.
-    expect(source).toContain('if (open) setOverageConsent(false)');
+  it('a managed account without a price set up: no invented split, no tick, says so', () => {
+    expect(needsOverageConsent(PRICING_MISSING)).toBe(false);
+    const html = render(<BroadcastCostEstimate estimate={PRICING_MISSING} />);
+    expect(html).toContain('data-pricing-missing');
+    expect(html).toContain('El precio de tu plan aún no está configurado');
+    expect(html).not.toContain('excedente a');
+    expect(render(<OverageConsentText estimate={PRICING_MISSING} />)).toBe('');
   });
 });
 
@@ -185,5 +196,84 @@ describe('fetchBroadcastEstimate', () => {
     expect(templateCategory('Utility')).toBe('utility');
     expect(templateCategory('Authentication')).toBe('authentication');
     expect(templateCategory(undefined)).toBe('marketing');
+  });
+});
+
+describe('when the dialog may send (step 4)', () => {
+  const key = estimateKey({
+    recipients: 5000,
+    whatsAppConfigId: 'cfg-a',
+    category: 'marketing',
+  });
+
+  it('while the estimate of this send is in flight: no', () => {
+    expect(canConfirmSend(estimateStateFor(null, key, false), true)).toBe(
+      false
+    );
+    // The reach is still being counted.
+    expect(
+      canConfirmSend(
+        estimateStateFor({ key, estimate: DIRECT }, key, true),
+        true
+      )
+    ).toBe(false);
+  });
+
+  it('an answer for another number or reach is stale: loading, not the old figure', () => {
+    const other = estimateKey({
+      recipients: 5000,
+      whatsAppConfigId: 'cfg-b',
+      category: 'marketing',
+    });
+    expect(
+      estimateStateFor({ key: other, estimate: DIRECT }, key, false)
+    ).toEqual({ status: 'loading' });
+    expect(
+      estimateStateFor(
+        {
+          key: estimateKey({
+            recipients: 10,
+            whatsAppConfigId: 'cfg-a',
+            category: 'marketing',
+          }),
+          estimate: DIRECT,
+        },
+        key,
+        false
+      ).status
+    ).toBe('loading');
+  });
+
+  it('with overage: only after the tick', () => {
+    const state = estimateStateFor({ key, estimate: MANAGED }, key, false);
+    expect(canConfirmSend(state, false)).toBe(false);
+    expect(canConfirmSend(state, true)).toBe(true);
+  });
+
+  it('a failed estimate never blocks (CP11)', () => {
+    const state = estimateStateFor({ key, estimate: null }, key, false);
+    expect(state).toEqual({ status: 'failed' });
+    expect(canConfirmSend(state, false)).toBe(true);
+  });
+
+  it('without overage, direct, or pricing not set up: sends as today', () => {
+    for (const estimate of [
+      { ...MANAGED, overage: 0, inPackage: 1000 },
+      DIRECT,
+      PRICING_MISSING,
+    ]) {
+      expect(
+        canConfirmSend(estimateStateFor({ key, estimate }, key, false), false)
+      ).toBe(true);
+    }
+  });
+
+  it('step 4 wires the dialog to canConfirmSend', () => {
+    const source = readFileSync(
+      path.join(__dirname, 'step4-schedule-send.tsx'),
+      'utf8'
+    );
+    expect(source).toContain('disabled={!canSend}');
+    expect(source).toContain('if (open) setOverageConsent(false)');
   });
 });

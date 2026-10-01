@@ -21,6 +21,9 @@ import type { BroadcastEstimate } from '@/lib/billing/meta-usage';
 import {
   BroadcastCostEstimate,
   OverageConsentText,
+  canConfirmSend,
+  estimateKey,
+  estimateStateFor,
   fetchBroadcastEstimate,
   needsOverageConsent,
   templateCategory,
@@ -86,9 +89,12 @@ export function Step4ScheduleSend({
   // s10.5: what this send will cost, and the explicit tick the dialog
   // asks for when it generates overage. Information only: a failed or
   // pending estimate never blocks the send.
-  const [costEstimate, setCostEstimate] = useState<BroadcastEstimate | null>(
-    null
-  );
+  // The last answer, with the key (reach, number, category) it was asked
+  // for: an answer for another key is stale and counts as loading.
+  const [costAnswer, setCostAnswer] = useState<{
+    key: string;
+    estimate: BroadcastEstimate | null;
+  } | null>(null);
   const [overageConsent, setOverageConsent] = useState(false);
   const category = templateCategory(template.category);
 
@@ -161,22 +167,37 @@ export function Step4ScheduleSend({
     calculateReach();
   }, [audience, accountId]);
 
+  const currentKey = estimateKey({
+    recipients: estimatedReach,
+    whatsAppConfigId,
+    category,
+  });
+
   useEffect(() => {
     if (loadingReach) return;
     let cancelled = false;
+    const key = estimateKey({
+      recipients: estimatedReach,
+      whatsAppConfigId,
+      category,
+    });
     void fetchBroadcastEstimate({
       recipients: estimatedReach,
       whatsAppConfigId,
       category,
     }).then((value) => {
-      if (!cancelled) setCostEstimate(value);
+      if (!cancelled) setCostAnswer({ key, estimate: value });
     });
     return () => {
       cancelled = true;
     };
   }, [loadingReach, estimatedReach, whatsAppConfigId, category]);
 
+  const estimateState = estimateStateFor(costAnswer, currentKey, loadingReach);
+  const costEstimate =
+    estimateState.status === 'ready' ? estimateState.estimate : null;
   const consentNeeded = needsOverageConsent(costEstimate);
+  const canSend = canConfirmSend(estimateState, overageConsent);
 
   const audienceLabel =
     audience.type === 'all'
@@ -276,7 +297,7 @@ export function Step4ScheduleSend({
             <p className="text-foreground">{template.language ?? 'en_US'}</p>
           </div>
         </div>
-        {costEstimate && !loadingReach ? (
+        {costEstimate ? (
           <div className="border-border border-t pt-3">
             <p className="text-muted-foreground mb-1 text-xs">
               {t('scheduleSend.cost.label')}
@@ -369,6 +390,15 @@ export function Step4ScheduleSend({
                   template. This action cannot be undone.
                 </DialogDescription>
               </DialogHeader>
+              {estimateState.status === 'loading' ? (
+                <p
+                  className="text-muted-foreground flex items-center gap-2 text-sm"
+                  data-estimate-loading
+                >
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t('scheduleSend.cost.loading')}
+                </p>
+              ) : null}
               {consentNeeded && costEstimate ? (
                 <label
                   className="border-border flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
@@ -394,7 +424,7 @@ export function Step4ScheduleSend({
                   {t('cancel')}
                 </Button>
                 <Button
-                  disabled={consentNeeded && !overageConsent}
+                  disabled={!canSend}
                   onClick={() => {
                     setShowConfirm(false);
                     onSend();

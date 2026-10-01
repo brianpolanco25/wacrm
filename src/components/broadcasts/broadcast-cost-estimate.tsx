@@ -61,7 +61,62 @@ export function templateCategory(value: unknown): BroadcastCategory {
 export function needsOverageConsent(
   estimate: BroadcastEstimate | null
 ): boolean {
-  return estimate?.metaBilling === 'managed' && estimate.overage > 0;
+  return (
+    estimate?.metaBilling === 'managed' &&
+    !estimate.pricingMissing &&
+    estimate.overage > 0
+  );
+}
+
+/**
+ * Where the estimate of THIS send stands. `loading` covers the request
+ * in flight and an estimate made for another reach or number; `failed`
+ * means no figure (the send goes on as before, CP11).
+ */
+export type EstimateState =
+  | { status: 'loading' }
+  | { status: 'ready'; estimate: BroadcastEstimate }
+  | { status: 'failed' };
+
+/** What the estimate was asked for: a change of any of these invalidates it. */
+export function estimateKey(args: {
+  recipients: number;
+  whatsAppConfigId: string | null;
+  category: BroadcastCategory;
+}): string {
+  return `${args.recipients}|${args.whatsAppConfigId ?? ''}|${args.category}`;
+}
+
+/**
+ * The state of the estimate for the send on screen, from the last
+ * answer and the key it was asked with. While the reach is still being
+ * counted, or the answer is for another key, it is `loading`.
+ */
+export function estimateStateFor(
+  answer: { key: string; estimate: BroadcastEstimate | null } | null,
+  currentKey: string,
+  reachLoading: boolean
+): EstimateState {
+  if (reachLoading || !answer || answer.key !== currentKey) {
+    return { status: 'loading' };
+  }
+  return answer.estimate
+    ? { status: 'ready', estimate: answer.estimate }
+    : { status: 'failed' };
+}
+
+/**
+ * May the confirmation dialog send? Not while the estimate of this send
+ * is in flight; with overage only after the explicit tick; a failed
+ * estimate never blocks (CP11).
+ */
+export function canConfirmSend(
+  state: EstimateState,
+  overageConsent: boolean
+): boolean {
+  if (state.status === 'loading') return false;
+  if (state.status === 'failed') return true;
+  return !needsOverageConsent(state.estimate) || overageConsent;
 }
 
 export function BroadcastCostEstimate({
@@ -95,6 +150,16 @@ export function BroadcastCostEstimate({
           </p>
         )}
         <p className="text-muted-foreground mt-1 text-xs">{t('directNote')}</p>
+      </div>
+    );
+  }
+
+  if (estimate.pricingMissing) {
+    return (
+      <div className="text-sm" data-broadcast-cost="managed">
+        <p className="text-muted-foreground" data-pricing-missing>
+          {t('managedPricingMissing')}
+        </p>
       </div>
     );
   }
@@ -143,7 +208,9 @@ export function OverageConsentText({
 }) {
   const t = useTranslations('Broadcasts.wizard.scheduleSend.cost');
   const locale = useLocale();
-  if (estimate.metaBilling !== 'managed') return null;
+  if (estimate.metaBilling !== 'managed' || estimate.pricingMissing) {
+    return null;
+  }
   return (
     <>
       {estimate.overageUsd === null

@@ -39,6 +39,7 @@ import {
   loadMetaUsageSubscription,
   managedBroadcastEstimate,
   type BroadcastCategory,
+  type ManagedPricingMissingEstimate,
 } from '@/lib/billing/meta-usage';
 import { countryFromPhone } from '@/lib/whatsapp/phone-country';
 import { metaBillingOf } from '@/lib/whatsapp/payment-method';
@@ -127,15 +128,15 @@ export async function GET(request: Request) {
         const cycle = await loadManagedCycle(db, ctx.accountId, sub, now);
         const market = cycle.rateCard.marketFor(country);
         if (!cycle.pricing) {
-          return NextResponse.json(
-            managedBroadcastEstimate({
-              recipients,
-              category,
-              market,
-              remaining: 0,
-              unitPriceUsd: null,
-            })
-          );
+          // Neither the package nor the price is known: no split invented.
+          const missing: ManagedPricingMissingEstimate = {
+            metaBilling: 'managed',
+            recipients,
+            category,
+            market,
+            pricingMissing: true,
+          };
+          return NextResponse.json(missing);
         }
         const counted = countPackage(
           cycle.charges,

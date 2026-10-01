@@ -156,6 +156,10 @@ export function ManagedUsageBlock({ usage }: { usage: ManagedUsage }) {
           <p className="text-muted-foreground text-sm" data-pricing-missing>
             {t('pricingMissing')}
           </p>
+        ) : usage.state === 'no_period' ? (
+          <p className="text-muted-foreground text-sm" data-no-period>
+            {t('noPeriod', { start: formatDay(usage.periodStart, locale) })}
+          </p>
         ) : (
           <>
             <div>

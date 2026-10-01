@@ -165,6 +165,28 @@ describe('managed: «Consumo del ciclo»', () => {
     expect(html).toContain('7000 de 7000');
   });
 
+  it('no cycle in progress yet: says so instead of a bar', () => {
+    const html = render(
+      <MetaUsageCard
+        initial={{
+          ...MANAGED,
+          state: 'no_period',
+          periodStart: '2026-12-15T00:00:00.000Z',
+          packageUsed: 0,
+          overageMessages: 0,
+          alert: null,
+          overageByCategory: [],
+          overageUsd: null,
+          estimatedTotalUsd: null,
+          dueAtCutUsd: null,
+        }}
+      />
+    );
+    expect(html).toContain('data-no-period');
+    expect(html).toContain('Aún no hay un ciclo en curso');
+    expect(html).not.toContain('data-estimate');
+  });
+
   it('no Meta free-quota bar for a managed account', () => {
     const html = render(<MetaUsageCard initial={MANAGED} />);
     expect(html).not.toContain('gratis');

@@ -200,6 +200,7 @@ describe('managed', () => {
       overage: 500,
       unitPriceUsd: 0.185,
       overageUsd: 92.5,
+      pricingMissing: false,
     });
     // Meta's rate is internal for a managed account.
     expect(body).not.toHaveProperty('unitUsd');
@@ -227,6 +228,33 @@ describe('managed', () => {
       unitPriceUsd: null,
       overageUsd: null,
       ratePending: true,
+    });
+  });
+
+  it('no valid price policy: pricingMissing, without an invented split', async () => {
+    seed({ ...MANAGED, meta_pricing: {} }, { charges: delivered(10) });
+    const res = await estimate('recipients=200');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      metaBilling: 'managed',
+      recipients: 200,
+      category: 'marketing',
+      market: 'rest_of_latam',
+      pricingMissing: true,
+    });
+  });
+
+  it('an anchor more than a month ahead: no cycle in progress, the whole package is available', async () => {
+    seed(
+      { ...MANAGED, statement_period_end: '2027-01-15T00:00:00.000Z' },
+      { charges: delivered(100) }
+    );
+    const res = await estimate('recipients=10');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      remaining: 7000,
+      inPackage: 10,
+      overage: 0,
     });
   });
 });

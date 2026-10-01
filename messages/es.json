@@ -888,7 +888,9 @@
           "managedOveragePending": "{overage} van a excedente; el precio de {category} está pendiente de tarifa.",
           "managedNoOverage": "Sin excedente.",
           "consent": "Entiendo que este envío genera {overage} mensajes de excedente, unos {total} que se cobran al corte.",
-          "consentPending": "Entiendo que este envío genera {overage} mensajes de excedente que se cobran al corte."
+          "consentPending": "Entiendo que este envío genera {overage} mensajes de excedente que se cobran al corte.",
+          "loading": "Calculando el costo del envío…",
+          "managedPricingMissing": "El precio de tu plan aún no está configurado: no se puede estimar cuántos mensajes entran en el paquete. El envío no se bloquea."
         }
       }
     }
@@ -2202,7 +2204,8 @@
       "freeFull": "Cuota gratis agotada: Meta cobra los mensajes de servicio de este número hasta fin de mes.",
       "metaCostLabel": "Costo estimado que Meta te cobrará este mes",
       "metaCostLine": "{category}: {count} mensajes cobrados",
-      "metaCostNote": "Solo cuenta los mensajes que Meta marcó como cobrados, a su tarifa vigente. Lo cobra Meta a tu método de pago; su factura es la cifra final."
+      "metaCostNote": "Solo cuenta los mensajes que Meta marcó como cobrados, a su tarifa vigente. Lo cobra Meta a tu método de pago; su factura es la cifra final.",
+      "noPeriod": "Aún no hay un ciclo en curso: el próximo empieza el {start}. Tu paquete está entero."
     }
   },
   "Platform": {

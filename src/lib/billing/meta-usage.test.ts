@@ -321,6 +321,26 @@ describe('«Consumo del ciclo» (managed)', () => {
     ]);
   });
 
+  it('a cycle that starts in the future (anchor more than a month ahead) is «sin periodo en curso», not a 500', () => {
+    const period = currentCycle({
+      anchor: '2027-01-15T00:00:00.000Z',
+      lastStatementEnd: null,
+      now: NOW,
+    });
+    expect(Date.parse(period.start)).toBeGreaterThan(NOW.getTime());
+    const usage = managedUsageOf(
+      'acct-a',
+      cycleOf(rows(10, 'marketing'), { period })
+    );
+    expect(usage).toMatchObject({
+      state: 'no_period',
+      packageUsed: 0,
+      includedMessages: 7000,
+      feeUsd: 1036,
+      estimatedTotalUsd: null,
+    });
+  });
+
   it('an account without a valid price policy says so instead of failing', () => {
     const usage = managedUsageOf('acct-a', cycleOf([], { pricing: null }));
     expect(usage.state).toBe('pricing_missing');

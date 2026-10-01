@@ -174,7 +174,12 @@ export interface OverageByCategory {
   chargeUsd: number | null;
 }
 
-export type ManagedUsageState = 'ok' | 'rate_pending' | 'pricing_missing';
+/**
+ * `no_period`: the cycle in progress starts in the future (an anchor more
+ * than a month ahead), so there is nothing to count yet.
+ */
+export type ManagedUsageState =
+  'ok' | 'rate_pending' | 'pricing_missing' | 'no_period';
 
 export interface ManagedUsage {
   metaBilling: 'managed';
@@ -452,10 +457,25 @@ export interface ManagedBroadcastEstimate {
   /** Price per overage message for this account; null while unknown. */
   unitPriceUsd: number | null;
   overageUsd: number | null;
+  pricingMissing: false;
+}
+
+/**
+ * A managed account with no valid price policy: neither the size of the
+ * package nor the price is known, so no split is invented.
+ */
+export interface ManagedPricingMissingEstimate {
+  metaBilling: 'managed';
+  recipients: number;
+  category: BroadcastCategory;
+  market: string | null;
+  pricingMissing: true;
 }
 
 export type BroadcastEstimate =
-  DirectBroadcastEstimate | ManagedBroadcastEstimate;
+  | DirectBroadcastEstimate
+  | ManagedBroadcastEstimate
+  | ManagedPricingMissingEstimate;
 
 /** {n} × Meta's rate, for an account that pays Meta itself. */
 export function directBroadcastEstimate(args: {
@@ -502,6 +522,7 @@ export function managedBroadcastEstimate(args: {
     overage,
     unitPriceUsd: args.unitPriceUsd,
     overageUsd: pending ? null : roundUsd(overage * args.unitPriceUsd!),
+    pricingMissing: false,
   };
 }
 
@@ -598,28 +619,27 @@ export function managedUsageOf(
   cycle: ManagedCycle
 ): ManagedUsage {
   const { period, pricing, paymentMethod } = cycle;
-  if (!pricing) {
-    return {
-      metaBilling: 'managed',
-      state: 'pricing_missing',
-      periodStart: period.start,
-      cutAt: period.cutAt,
-      asOf: period.asOf,
-      paymentMethod,
-      includedMessages: 0,
-      packageUsed: 0,
-      overageMessages: 0,
-      percent: 0,
-      alert: null,
-      overageByCategory: [],
-      uncategorized: 0,
-      feeUsd: 0,
-      overageUsd: null,
-      estimatedTotalUsd: null,
-      dueAtCutUsd: null,
-      missingRate: null,
-    };
-  }
+  const empty = (state: ManagedUsageState): ManagedUsage => ({
+    metaBilling: 'managed',
+    state,
+    periodStart: period.start,
+    cutAt: period.cutAt,
+    asOf: period.asOf,
+    paymentMethod,
+    includedMessages: 0,
+    packageUsed: 0,
+    overageMessages: 0,
+    percent: 0,
+    alert: null,
+    overageByCategory: [],
+    uncategorized: 0,
+    feeUsd: 0,
+    overageUsd: null,
+    estimatedTotalUsd: null,
+    dueAtCutUsd: null,
+    missingRate: null,
+  });
+  if (!pricing) return empty('pricing_missing');
   const end = new Date(Date.parse(period.asOf) + 1).toISOString();
   try {
     const built = buildStatement(accountId, period.start, end, {
@@ -638,6 +658,15 @@ export function managedUsageOf(
         period,
         missing: err,
       });
+    }
+    // The period starts after now (anchor more than a month ahead):
+    // `buildStatement` refuses it, and there is nothing to count yet.
+    if (err instanceof RangeError) {
+      return {
+        ...empty('no_period'),
+        includedMessages: pricing.included_messages,
+        feeUsd: pricing.fee_usd,
+      };
     }
     throw err;
   }

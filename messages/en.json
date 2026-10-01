@@ -888,7 +888,9 @@
           "managedOveragePending": "{overage} go to overage; the {category} price is pending a rate.",
           "managedNoOverage": "No overage.",
           "consent": "I understand this send generates {overage} overage messages, about {total} billed at the cut-off.",
-          "consentPending": "I understand this send generates {overage} overage messages billed at the cut-off."
+          "consentPending": "I understand this send generates {overage} overage messages billed at the cut-off.",
+          "loading": "Working out the cost of this send…",
+          "managedPricingMissing": "Your plan's pricing isn't set up yet, so we can't estimate how many messages fit in the package. The send is not blocked."
         }
       }
     }
@@ -2202,7 +2204,8 @@
       "freeFull": "Free quota used up: Meta charges this number's service messages until the end of the month.",
       "metaCostLabel": "Estimated cost Meta will charge you this month",
       "metaCostLine": "{category}: {count} charged messages",
-      "metaCostNote": "Counts only the messages Meta marked as charged, at its current rate. Meta charges your payment method; its invoice is the final figure."
+      "metaCostNote": "Counts only the messages Meta marked as charged, at its current rate. Meta charges your payment method; its invoice is the final figure.",
+      "noPeriod": "No cycle in progress yet: the next one starts on {start}. Your package is untouched."
     }
   },
   "Platform": {
