@@ -1078,6 +1078,14 @@
         "matchWordHint": "Busca la palabra clave solo como palabra suelta, así que «k» ya no se dispara con «thanks». Va bien para palabras clave cortas en idiomas con espacios; usa Contiene para idiomas que se escriben sin espacios.",
         "matchExact": "Exacta",
         "closeConversationHint": "Pone la conversación en estado «cerrada». No hay nada que configurar."
+      },
+      "templateWindow": {
+        "title": "Ventana de atención abierta",
+        "utility": "Esta automatización responde a un mensaje del cliente: un mensaje de texto normal cuesta lo mismo o menos que esta plantilla de utilidad.",
+        "marketing": "Esta automatización responde a un mensaje del cliente: esta plantilla se cobra a tarifa de marketing, la más cara. Un mensaje de texto normal cuesta menos.",
+        "quotaNote": "Las plantillas no entran en los {freeTier, number} mensajes de servicio gratis del mes.",
+        "estimate": "Es una estimación según la tarifa vigente de Meta; puedes guardar la automatización igual.",
+        "badge": "Plantilla con la ventana abierta: puede costar más que un texto"
       }
     }
   },

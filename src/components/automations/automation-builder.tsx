@@ -63,6 +63,13 @@ import {
 import { interactivePayloadPreviewText } from '@/lib/whatsapp/interactive';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useBillingStatus } from '@/hooks/use-billing-status';
+import {
+  TemplateWindowBadge,
+  TemplateWindowNotice,
+  TemplateWindowProvider,
+  useTemplateWindow,
+} from '@/components/automations/template-window-notice';
 import {
   childPath,
   insertAt,
@@ -863,28 +870,62 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:20px_20px]" />
         <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-0 px-4 py-10">
           <ResourcesProvider>
-            <TriggerCard
-              type={state.trigger_type}
-              config={state.trigger_config}
-              onTypeChange={(tVal) => patchTop('trigger_type', tVal)}
-              onConfigChange={(c) => patchTop('trigger_config', c)}
-              t={t}
-            />
-            <StepList
+            <BuilderTemplateWindow
+              triggerType={state.trigger_type}
               steps={state.steps}
-              basePath={[]}
-              scope={{ kind: 'root' }}
-              expandedId={expandedId}
-              setExpandedId={setExpandedId}
-              updateStep={updateStep}
-              addStepAt={addStepAt}
-              deleteStepAt={deleteStepAt}
-              moveStepAt={moveStepAt}
-            />
+            >
+              <TriggerCard
+                type={state.trigger_type}
+                config={state.trigger_config}
+                onTypeChange={(tVal) => patchTop('trigger_type', tVal)}
+                onConfigChange={(c) => patchTop('trigger_config', c)}
+                t={t}
+              />
+              <StepList
+                steps={state.steps}
+                basePath={[]}
+                scope={{ kind: 'root' }}
+                expandedId={expandedId}
+                setExpandedId={setExpandedId}
+                updateStep={updateStep}
+                addStepAt={addStepAt}
+                deleteStepAt={deleteStepAt}
+                moveStepAt={moveStepAt}
+              />
+            </BuilderTemplateWindow>
           </ResourcesProvider>
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * p11.5: feeds the template-window notice with the synced templates
+ * (already loaded by `ResourcesProvider`, `category` included) and the
+ * account's `metaBilling` from the shared billing-status cache. No query
+ * of its own.
+ */
+function BuilderTemplateWindow({
+  triggerType,
+  steps,
+  children,
+}: {
+  triggerType: AutomationTriggerType;
+  steps: BuilderStep[];
+  children: ReactNode;
+}) {
+  const { templates } = useResources();
+  const billing = useBillingStatus();
+  return (
+    <TemplateWindowProvider
+      triggerType={triggerType}
+      steps={steps}
+      templates={templates}
+      metaBilling={billing?.metaBilling}
+    >
+      {children}
+    </TemplateWindowProvider>
   );
 }
 
@@ -1215,6 +1256,7 @@ function StepRenderer({
   const meta = STEP_META[step.step_type];
   const Icon = meta.icon;
   const expanded = props.expandedId === step.cid;
+  const windowWarning = useTemplateWindow().warnings.get(step.cid);
   const isCondition = step.step_type === 'condition';
   const nested = basePath.length > 0;
   // Card widths on mobile fill the full canvas column (max-w-2xl px-4
@@ -1271,6 +1313,7 @@ function StepRenderer({
                 {previewFor(step)}
               </div>
             </div>
+            {!expanded && windowWarning && <TemplateWindowBadge />}
             <ChevronDown
               className={cn(
                 'text-muted-foreground h-4 w-4 transition-transform',
@@ -1436,6 +1479,7 @@ function StepEditor({
   onChange: (s: BuilderStep) => void;
 }) {
   const t = useTranslations('Automations.builder');
+  const templateWindow = useTemplateWindow();
   const cfg = step.step_config;
   const set = (patch: Record<string, unknown>) =>
     onChange({ ...step, step_config: { ...cfg, ...patch } });
@@ -1466,12 +1510,18 @@ function StepEditor({
       );
     case 'send_template':
       return (
-        <SendTemplateFields
-          templateName={(cfg.template_name as string) ?? ''}
-          language={(cfg.language as string) ?? ''}
-          onChange={(patch) => set(patch)}
-          t={t}
-        />
+        <>
+          <SendTemplateFields
+            templateName={(cfg.template_name as string) ?? ''}
+            language={(cfg.language as string) ?? ''}
+            onChange={(patch) => set(patch)}
+            t={t}
+          />
+          <TemplateWindowNotice
+            kind={templateWindow.warnings.get(step.cid)}
+            metaBilling={templateWindow.metaBilling}
+          />
+        </>
       );
     case 'add_tag':
     case 'remove_tag':
