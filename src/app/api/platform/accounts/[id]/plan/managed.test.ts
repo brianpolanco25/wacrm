@@ -400,6 +400,31 @@ describe('manual', () => {
     });
   });
 
+  it('re-assigning it to a company already managed keeps its cut-off anchor (and the period follows it)', async () => {
+    const ANCHOR = '2026-10-20T00:00:00.000Z';
+    Object.assign(sub(A), {
+      plan_id: 'gestionado',
+      provider: 'manual',
+      status: 'active',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: DEFAULT_PRICING,
+      current_period_end: ANCHOR,
+      statement_period_end: ANCHOR,
+    });
+    const res = await call({
+      planId: 'gestionado',
+      reason: REASON,
+      paymentMethod: 'manual',
+    });
+    expect(res.status).toBe(200);
+    expect(sub(A)).toMatchObject({
+      meta_billing: 'managed',
+      statement_period_end: ANCHOR,
+      current_period_end: ANCHOR,
+    });
+  });
+
   it('stores an edited price (fixed USD for marketing) instead of the default', async () => {
     const edited = {
       ...DEFAULT_PRICING,
@@ -554,6 +579,32 @@ describe('paypal', () => {
       meta_pricing: DEFAULT_PRICING,
       provider_subscription_id: 'I-NEW-1',
       paypal_plan_published: true,
+    });
+  });
+
+  it('re-assigning it to a company already managed keeps its cut-off anchor', async () => {
+    const ANCHOR = '2026-10-20T00:00:00.000Z';
+    Object.assign(sub(A), {
+      plan_id: 'gestionado',
+      provider: 'manual',
+      status: 'active',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: DEFAULT_PRICING,
+      current_period_end: ANCHOR,
+      statement_period_end: ANCHOR,
+    });
+    const res = await call({
+      planId: 'gestionado',
+      reason: REASON,
+      paymentMethod: 'paypal',
+    });
+    expect(res.status).toBe(200);
+    expect(sub(A)).toMatchObject({
+      provider: 'paypal',
+      status: 'incomplete',
+      meta_billing: 'managed',
+      statement_period_end: ANCHOR,
     });
   });
 

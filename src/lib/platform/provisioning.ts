@@ -242,6 +242,31 @@ export interface CurrentSubscription {
   meta_billing?: string | null;
   meta_pricing?: unknown;
   payment_method?: string | null;
+  /** The cut-off anchor of a managed account (078, s10.4). */
+  statement_period_end?: string | null;
+}
+
+/**
+ * The statement cut-off (078, s10.4) of an account that is being given
+ * managed billing. An account that was ALREADY managed keeps the anchor
+ * it has: what it used since its last cut-off is still to be billed, and
+ * a fresh `now() + 1 month` would leave that stretch out of every
+ * statement (the period of the next one starts at most a month before
+ * its cut-off). Only an account that becomes managed now — or one with
+ * no anchor — gets a new one, a month from the assignment (decision of
+ * the leader, 2026-10-01).
+ */
+export function managedStatementAnchor(
+  previous: Pick<
+    CurrentSubscription,
+    'meta_billing' | 'statement_period_end'
+  > | null,
+  now: Date = new Date()
+): string {
+  if (previous?.meta_billing === 'managed' && previous.statement_period_end) {
+    return previous.statement_period_end;
+  }
+  return addCycle(now.toISOString(), 'month');
 }
 
 /**
@@ -265,7 +290,7 @@ export async function loadCurrentSubscription(
   const { data, error } = await supabaseAdmin()
     .from('subscriptions')
     .select(
-      'plan_id, provider, status, provider_subscription_id, meta_billing, meta_pricing, payment_method'
+      'plan_id, provider, status, provider_subscription_id, meta_billing, meta_pricing, payment_method, statement_period_end'
     )
     .eq('account_id', accountId)
     .maybeSingle();
@@ -306,15 +331,22 @@ export interface ManualManagedTerms {
  *
  * With `terms` (s10.3, `gestionado` paid by hand): monthly, the period
  * ends one month from now — that is the first cut-off of s10.4 — and the
- * terms are stored on the row.
+ * terms are stored on the row. An account that `previous`ly was already
+ * managed keeps its cut-off anchor (`managedStatementAnchor`), and its
+ * period end follows it, as the cut-off moves it on a manual account.
  */
 export function manualPlanRow(
   accountId: string,
   planId: string,
   terms?: ManualManagedTerms,
-  now: Date = new Date()
+  now: Date = new Date(),
+  previous: Pick<
+    CurrentSubscription,
+    'meta_billing' | 'statement_period_end'
+  > | null = null
 ) {
   const managed = terms?.metaBilling === 'managed';
+  const anchor = managed ? managedStatementAnchor(previous, now) : null;
   return {
     account_id: accountId,
     plan_id: planId,
@@ -324,14 +356,17 @@ export function manualPlanRow(
     cycle: terms ? 'month' : null,
     trial_ends_at: null,
     grace_until: null,
-    current_period_end: terms ? addCycle(now.toISOString(), 'month') : null,
+    current_period_end: terms
+      ? (anchor ?? addCycle(now.toISOString(), 'month'))
+      : null,
     cancel_at_period_end: false,
     payment_method: terms ? 'manual' : null,
     meta_billing: managed ? 'managed' : 'direct',
     meta_pricing: managed && terms?.metaPricing ? terms.metaPricing : {},
-    // s10.4 (078): the cut-off anchor of the statement, a month from now.
-    // Null when the account leaves managed billing.
-    statement_period_end: managed ? addCycle(now.toISOString(), 'month') : null,
+    // s10.4 (078): the cut-off anchor of the statement — a month from
+    // now, or the one it had if it was already managed. Null when the
+    // account leaves managed billing.
+    statement_period_end: anchor,
   };
 }
 
@@ -392,7 +427,13 @@ export async function overridePlan(params: {
 
   const fromPlan = current?.plan_id ?? null;
   const fromProvider = current?.provider ?? null;
-  const row = manualPlanRow(params.accountId, params.planId, terms, params.now);
+  const row = manualPlanRow(
+    params.accountId,
+    params.planId,
+    terms,
+    params.now,
+    current
+  );
 
   const logged = await recordPlatformAction({
     action: 'plan_override',

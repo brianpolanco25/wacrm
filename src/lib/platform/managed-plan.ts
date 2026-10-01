@@ -47,12 +47,12 @@ import {
   PayPalError,
 } from '@/lib/billing/paypal';
 import { syncPlanCycle } from '@/lib/billing/plan-sync';
-import { addCycle } from '@/lib/billing/webhook-events';
 import { recordPlatformAction } from './audit';
 import {
   isLivePayPalSubscription,
   loadAssignablePlan,
   loadCurrentSubscription,
+  managedStatementAnchor,
   planPricingOf,
 } from './provisioning';
 
@@ -328,10 +328,10 @@ export async function assignManagedPlanViaPayPal(params: {
       meta_billing: managed ? 'managed' : 'direct',
       meta_pricing: metaPricing,
       // s10.4 (078): the statement's own cut-off, a month from the
-      // assignment. PayPal moves `current_period_end`, never this.
-      statement_period_end: managed
-        ? addCycle(new Date().toISOString(), 'month')
-        : null,
+      // assignment — or the one it had if it was already managed, so
+      // what it used since its last cut-off is still billed. PayPal
+      // moves `current_period_end`, never this.
+      statement_period_end: managed ? managedStatementAnchor(current) : null,
     },
     { onConflict: 'account_id' }
   );

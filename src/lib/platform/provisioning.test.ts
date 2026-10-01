@@ -234,6 +234,40 @@ describe('manualPlanRow with managed terms (s10.3)', () => {
   });
 });
 
+describe('managedStatementAnchor (s10.4)', () => {
+  const NOW = new Date('2026-10-01T00:00:00.000Z');
+  it('keeps the anchor of an account already managed', () => {
+    expect(
+      p.managedStatementAnchor(
+        {
+          meta_billing: 'managed',
+          statement_period_end: '2026-10-20T00:00:00.000Z',
+        },
+        NOW
+      )
+    ).toBe('2026-10-20T00:00:00.000Z');
+  });
+  it('a new one, a month on, for an account that becomes managed or has no anchor', () => {
+    const next = '2026-11-01T00:00:00.000Z';
+    expect(p.managedStatementAnchor(null, NOW)).toBe(next);
+    expect(
+      p.managedStatementAnchor(
+        {
+          meta_billing: 'direct',
+          statement_period_end: '2026-10-20T00:00:00.000Z',
+        },
+        NOW
+      )
+    ).toBe(next);
+    expect(
+      p.managedStatementAnchor(
+        { meta_billing: 'managed', statement_period_end: null },
+        NOW
+      )
+    ).toBe(next);
+  });
+});
+
 describe('overridePlan', () => {
   function params() {
     return {
@@ -404,6 +438,68 @@ describe('overridePlan with a plan that carries a Meta price policy (s10.3)', ()
     expect(order.indexOf('AUDIT:insert')).toBeLessThan(
       order.indexOf('subscriptions:upsert')
     );
+  });
+
+  it('a company that was already managed keeps its cut-off anchor, and the period follows it', async () => {
+    h.results['subscriptions:select'] = {
+      data: {
+        plan_id: 'gestionado',
+        provider: 'manual',
+        status: 'active',
+        provider_subscription_id: null,
+        meta_billing: 'managed',
+        meta_pricing: DEFAULT,
+        payment_method: 'manual',
+        statement_period_end: '2026-10-20T00:00:00.000Z',
+      },
+      error: null,
+    };
+    const out = await p.overridePlan(
+      params({
+        terms: {
+          paymentMethod: 'manual',
+          metaBilling: 'managed',
+          metaPricing: null,
+        },
+      })
+    );
+    expect(out.ok).toBe(true);
+    const write = h.calls.find((c) => c.op === 'upsert')!;
+    expect(write.payload).toMatchObject({
+      statement_period_end: '2026-10-20T00:00:00.000Z',
+      current_period_end: '2026-10-20T00:00:00.000Z',
+    });
+  });
+
+  it('a company that becomes managed now (it was direct) gets a new anchor, a month from the assignment', async () => {
+    h.results['subscriptions:select'] = {
+      data: {
+        plan_id: 'inicio',
+        provider: 'manual',
+        status: 'active',
+        provider_subscription_id: null,
+        meta_billing: 'direct',
+        meta_pricing: {},
+        payment_method: null,
+        // Stale: a direct account's anchor is never reused.
+        statement_period_end: '2026-10-20T00:00:00.000Z',
+      },
+      error: null,
+    };
+    await p.overridePlan(
+      params({
+        terms: {
+          paymentMethod: 'manual',
+          metaBilling: 'managed',
+          metaPricing: null,
+        },
+      })
+    );
+    const write = h.calls.find((c) => c.op === 'upsert')!;
+    expect(write.payload).toMatchObject({
+      statement_period_end: '2026-11-01T00:00:00.000Z',
+      current_period_end: '2026-11-01T00:00:00.000Z',
+    });
   });
 
   it('stores the edited price, not the default', async () => {
