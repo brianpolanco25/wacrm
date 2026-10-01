@@ -31,6 +31,12 @@ and polish.
 - Giving a company any plan without a Meta price takes it out of managed billing. The managed plan cannot be given without terms (also from «New company»: the plan step then fails and is finished from the file).
 - Publishing a hidden plan to PayPal from `/platform/plans` now needs an explicit «publish anyway» tick; the CLI bootstrap only publishes public plans. Hidden plans still never appear in `/billing`, onboarding or the public checkout.
 
+### Managed numbers in the Cabbity CRM Meta portfolio
+
+- Settings → WhatsApp, for managed accounts only (Cabbity CRM pays Meta): a checklist for connecting the number by hand. The steps are creating the WABA in the Cabbity CRM Business Manager, registering the number, generating a permanent system-user token, getting the display name verified, and where to paste each value. Each step says it is done in Meta. The boxes live in the browser only and are not saved. For these accounts the manual connection opens unfolded.
+- The token renewal sweep ignores numbers whose token has no expiry date (permanent system-user tokens): no renewal attempt and no warning.
+- Platform console, company file: each WhatsApp number shows its WABA id and `phone_number_id`, each with a copy button, and how it was connected (Embedded Signup or manual). On managed companies it also shows the tag «In the Cabbity CRM portfolio».
+
 ### Platform console: tag filter during a support session
 
 - Filtering contacts by tag works during a support session: the browser now runs the read-only `filter_contacts_by_tags` while the session is open. Every other database function called from the browser (`touch_presence` included) stays refused.
