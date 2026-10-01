@@ -11,9 +11,13 @@ import es from '../../../messages/es.json';
 
 const h = vi.hoisted(() => ({
   status: null as Record<string, unknown> | null,
+  supportSession: false,
 }));
 vi.mock('@/hooks/use-billing-status', () => ({
   useBillingStatus: () => h.status,
+}));
+vi.mock('@/hooks/use-auth', () => ({
+  useAuth: () => ({ supportSession: h.supportSession }),
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: () => {} }) }));
 
@@ -170,6 +174,47 @@ describe('BillingStatusAlert — statement_due (s10.4)', () => {
     const html = render();
     expect(html).toContain(es.Billing.heldTitle);
     expect(html).not.toContain(es.Billing.statementAlert.dueTitle);
+  });
+
+  it('locked by the subscription with a statement not yet due: the subscription banner and its way out, the statement as a warning', () => {
+    h.status = {
+      ...BASE,
+      status: 'past_due',
+      // A PayPal charge failed and its grace ran out before the cut-off.
+      graceUntil: '2026-11-01T00:00:00.000Z',
+      readOnly: true,
+      readOnlyReason: 'subscription',
+      manualHold: false,
+      statement: STATEMENT,
+      readAt: READ_AT,
+    };
+    const html = render();
+    expect(html).toContain(es.Billing.lockedTitle);
+    expect(html).toContain(es.Billing.fixNow);
+    expect(html).toContain('data-statement-alert="due"');
+    expect(html).toContain('te quedan 2 días');
+    expect(html).not.toContain('data-statement-alert="locked"');
+    expect(html).not.toContain(es.Billing.statementAlert.lockedTitle);
+  });
+
+  it('no «Ya pagué» during a support session: the route refuses it', () => {
+    h.status = {
+      ...BASE,
+      status: 'past_due',
+      readOnly: false,
+      manualHold: false,
+      statement: STATEMENT,
+      readAt: READ_AT,
+    };
+    h.supportSession = true;
+    try {
+      const html = render();
+      expect(html).toContain(es.Billing.statementAlert.dueTitle);
+      expect(html).toContain(es.Billing.statementAlert.view);
+      expect(html).not.toContain(es.Billing.statementAlert.claim);
+    } finally {
+      h.supportSession = false;
+    }
   });
 
   it('the due-today wording', () => {

@@ -32,7 +32,13 @@
 //              pendiente») and /billing, where the breakdown is. Both
 //              offer «Ya pagué», which leaves a note for Cabbity and
 //              changes nothing (the amount and the button are for
-//              admin+: `totalUsd` comes back null below that).
+//              admin+: `totalUsd` comes back null below that; and not
+//              during a support session, where the route answers 403).
+//              The locked wording only when the lock IS the statement
+//              (`readOnlyReason = 'statement'`): an account locked by its
+//              subscription with a statement not yet due gets the
+//              subscription banner, with its way out, and the statement
+//              below it as a warning.
 //
 // `active` and `cancelled` (still inside the paid period) render
 // nothing: a banner that is always there is a banner nobody reads.
@@ -44,6 +50,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { CreditCard, ReceiptText, TriangleAlert } from 'lucide-react';
 
+import { useAuth } from '@/hooks/use-auth';
 import { useBillingStatus } from '@/hooks/use-billing-status';
 import { Button } from '@/components/ui/button';
 import {
@@ -74,15 +81,20 @@ export function BillingStatusAlert() {
   if (!status) return null;
   const locked = status.readOnly;
   const held = locked && status.manualHold === true;
-  if (!held && status.statement) {
-    return (
+  // The statement speaks for the lock only when it is the reason for it
+  // (an overdue statement). Locked by the subscription (a failed PayPal
+  // charge past its grace, `expired`…) with a statement not yet due, the
+  // subscription banner says what to fix and the statement follows it.
+  const statementLocked = locked && status.readOnlyReason === 'statement';
+  const statementAlert =
+    !held && status.statement ? (
       <StatementDueAlert
         statement={status.statement}
-        locked={locked}
+        locked={statementLocked}
         readAt={status.readAt}
       />
-    );
-  }
+    ) : null;
+  if (statementAlert && (!locked || statementLocked)) return statementAlert;
   const incomplete = locked && !held && status.status === 'incomplete';
   const warning = !locked && status.status === 'past_due';
   if (!locked && !warning) return null;
@@ -92,43 +104,48 @@ export function BillingStatusAlert() {
     : null;
 
   return (
-    <Alert variant="destructive" className="mb-4">
-      {locked ? <TriangleAlert /> : <CreditCard />}
-      <AlertTitle>
-        {held
-          ? t('heldTitle')
-          : incomplete
-            ? t('incomplete.title')
-            : locked
-              ? t('lockedTitle')
-              : t('pastDueTitle')}
-      </AlertTitle>
-      <AlertDescription>
-        {held
-          ? t('heldBody')
-          : incomplete
-            ? t('incomplete.body')
-            : locked
-              ? t('lockedBody')
-              : graceDate
-                ? t('pastDueBodyWithDate', { date: graceDate })
-                : t('pastDueBody')}
-      </AlertDescription>
-      {/* No "fix now" for a manual hold: `/billing` cannot lift one, and
+    <>
+      <Alert variant="destructive" className="mb-4">
+        {locked ? <TriangleAlert /> : <CreditCard />}
+        <AlertTitle>
+          {held
+            ? t('heldTitle')
+            : incomplete
+              ? t('incomplete.title')
+              : locked
+                ? t('lockedTitle')
+                : t('pastDueTitle')}
+        </AlertTitle>
+        <AlertDescription>
+          {held
+            ? t('heldBody')
+            : incomplete
+              ? t('incomplete.body')
+              : locked
+                ? t('lockedBody')
+                : graceDate
+                  ? t('pastDueBodyWithDate', { date: graceDate })
+                  : t('pastDueBody')}
+        </AlertDescription>
+        {/* No "fix now" for a manual hold: `/billing` cannot lift one, and
           a button that charges the card without unlocking anything is
           worse than no button. */}
-      {held ? null : (
-        <AlertAction>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => router.push(incomplete ? '/onboarding' : '/billing')}
-          >
-            {incomplete ? t('incomplete.action') : t('fixNow')}
-          </Button>
-        </AlertAction>
-      )}
-    </Alert>
+        {held ? null : (
+          <AlertAction>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                router.push(incomplete ? '/onboarding' : '/billing')
+              }
+            >
+              {incomplete ? t('incomplete.action') : t('fixNow')}
+            </Button>
+          </AlertAction>
+        )}
+      </Alert>
+      {statementAlert}
+    </>
   );
 }
 
@@ -155,6 +172,9 @@ export function StatementDueAlert({
   const router = useRouter();
   const t = useTranslations('Billing.statementAlert');
   const locale = useLocale();
+  // A support session reads the statement but cannot claim it (the
+  // route answers 403 to an operator): no button that can only fail.
+  const { supportSession } = useAuth();
   const [claimed, setClaimed] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -206,7 +226,7 @@ export function StatementDueAlert({
         >
           {t('view')}
         </Button>
-        {isAdmin && !claimed ? (
+        {isAdmin && !claimed && !supportSession ? (
           <Button size="sm" variant="outline" disabled={busy} onClick={claim}>
             {t('claim')}
           </Button>
