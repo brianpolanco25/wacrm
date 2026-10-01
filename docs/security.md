@@ -466,6 +466,16 @@ holds it together:
   emailed. Whoever holds it can only pay for that company's
   subscription (`custom_id` and the checkout intent pin the account; the
   webhook activates it).
+- **Managed numbers use permanent tokens** (s10.6). A managed company's
+  WABA lives in Cabbity's own Meta portfolio, and its number is
+  connected through the manual form with a system-user token that does
+  not expire. Such a row has no `token_expires_at`, so the renewal sweep
+  of migration 067 never touches it and never warns about it. A leaked
+  token therefore stays valid until someone revokes it in Meta's
+  Business Manager: revoke it there, generate a new one and paste it
+  again. The token is stored encrypted like any other (`ENCRYPTION_KEY`).
+  The set-up checklist on Settings → WhatsApp stores nothing. The
+  operator file shows the WABA id and `phone_number_id`, never the token.
 
 **The local seed** (`supabase/seed.sql`) creates those two users and a
 demo customer (`cliente.demo@example.com`, unpaid) with the password
