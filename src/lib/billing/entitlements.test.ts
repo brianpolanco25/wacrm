@@ -10,6 +10,8 @@ const h = vi.hoisted(() => ({
     plans: {} as Record<string, Record<string, unknown>>,
     usage: null as Record<string, unknown> | null,
     usageError: null as { message: string } | null,
+    statement: null as Record<string, unknown> | null,
+    statementError: null as { message: string } | null,
     queries: [] as {
       table: string;
       filters: [string, unknown][];
@@ -32,7 +34,15 @@ vi.mock('@/lib/automations/admin-client', () => ({
           q.filters.push([col, val]);
           return chain;
         },
+        order: () => chain,
+        limit: () => chain,
         maybeSingle: () => {
+          if (table === 'statements') {
+            return Promise.resolve({
+              data: h.state.statement,
+              error: h.state.statementError,
+            });
+          }
           if (table === 'subscriptions') {
             return Promise.resolve({
               data: h.state.subscription,
@@ -119,6 +129,8 @@ beforeEach(() => {
   h.state.plans = { pro: PRO, negocio: NEGOCIO, inicio: INICIO };
   h.state.usage = null;
   h.state.usageError = null;
+  h.state.statement = null;
+  h.state.statementError = null;
   h.state.queries = [];
 });
 
@@ -313,12 +325,107 @@ describe('getEntitlements', () => {
       expect(e.paymentMethod).toBeNull();
     });
 
+    it('a direct account never looks for statements (no extra query on the write path)', async () => {
+      subscribed();
+      const e = await getEntitlements(ACCOUNT);
+      expect(e.openStatement).toBeNull();
+      expect(h.state.queries.some((q) => q.table === 'statements')).toBe(false);
+    });
+
     it('an unknown stored value never reads as managed', async () => {
       subscribed({ meta_billing: 'bogus', payment_method: 'cash' });
       const e = await getEntitlements(ACCOUNT);
       expect(e.metaBilling).toBe('direct');
       expect(e.paymentMethod).toBeNull();
     });
+  });
+});
+
+describe('the open statement of a managed account (s10.4, migration 078)', () => {
+  const STATEMENT = {
+    id: 'st-1',
+    period_start: '2026-10-01T00:00:00.000Z',
+    period_end: '2026-11-01T00:00:00.000Z',
+    total_usd: '1069.90',
+    due_at: '2026-11-04T00:00:00.000Z',
+  };
+
+  function managed(overrides: Record<string, unknown> = {}) {
+    subscribed({
+      plan_id: 'negocio',
+      meta_billing: 'managed',
+      payment_method: 'manual',
+      ...overrides,
+    });
+  }
+
+  it('before the due date: writable, with the statement to show in the banner', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-02T10:00:00Z'));
+    managed({ status: 'past_due', grace_until: STATEMENT.due_at });
+    h.state.statement = STATEMENT;
+
+    const e = await getEntitlements(ACCOUNT);
+    expect(e.readOnly).toBe(false);
+    expect(e.readOnlyReason).toBeNull();
+    expect(e.openStatement).toEqual({
+      id: 'st-1',
+      periodStart: STATEMENT.period_start,
+      periodEnd: STATEMENT.period_end,
+      totalUsd: 1069.9,
+      dueAt: STATEMENT.due_at,
+    });
+    const q = h.state.queries.find((x) => x.table === 'statements');
+    expect(q?.filters).toContainEqual(['account_id', ACCOUNT]);
+    expect(q?.filters).toContainEqual(['status', 'issued']);
+  });
+
+  it('past the due date: read-only for the statement', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-04T00:00:01Z'));
+    managed({ status: 'past_due', grace_until: STATEMENT.due_at });
+    h.state.statement = STATEMENT;
+
+    const e = await getEntitlements(ACCOUNT);
+    expect(e.readOnly).toBe(true);
+    expect(e.readOnlyReason).toBe('statement');
+  });
+
+  it('PayPal renewing the fee (row back to active) does not lift an overdue overage', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-10T00:00:00Z'));
+    managed({ status: 'active', grace_until: null, payment_method: 'paypal' });
+    h.state.statement = STATEMENT;
+
+    const e = await getEntitlements(ACCOUNT);
+    expect(e.status).toBe('active');
+    expect(e.readOnly).toBe(true);
+    expect(e.readOnlyReason).toBe('statement');
+  });
+
+  it('a manual hold keeps its own label over the statement', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-10T00:00:00Z'));
+    managed({ manual_hold_at: '2026-11-05T00:00:00Z' });
+    h.state.statement = STATEMENT;
+    const e = await getEntitlements(ACCOUNT);
+    expect(e.readOnlyReason).toBe('manual_hold');
+  });
+
+  it('a failed lookup reads as «no statement» and keeps the status lock', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-10T00:00:00Z'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    managed({ status: 'past_due', grace_until: STATEMENT.due_at });
+    h.state.statementError = {
+      message: 'relation "statements" does not exist',
+    };
+
+    const e = await getEntitlements(ACCOUNT);
+    expect(e.openStatement).toBeNull();
+    expect(e.readOnly).toBe(true);
+    expect(e.readOnlyReason).toBe('subscription');
+    spy.mockRestore();
   });
 });
 
@@ -350,6 +457,7 @@ describe('hasFeature / assertFeature', () => {
     trialEndsAt: null,
     metaBilling: 'direct',
     paymentMethod: null,
+    openStatement: null,
   };
   it('is a plain membership check', () => {
     expect(hasFeature(e, 'ai_autoreply')).toBe(true);
