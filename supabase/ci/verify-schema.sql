@@ -2137,6 +2137,112 @@ BEGIN
     RAISE EXCEPTION 'plans / subscriptions must have no client write policy (migrations 041, 077)';
   END IF;
   -- /077 -----------------------------------------------------------
+  -- 078 ------------------------------------------------------------
+  -- s10.4: estados de cuenta al corte y los dos actos nuevos de la
+  -- bitácora.
+  IF to_regclass('public.statements') IS NULL THEN
+    RAISE EXCEPTION 'statements table missing (migration 078)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'statements'
+      AND column_name IN ('id', 'account_id', 'period_start', 'period_end',
+                          'plan_fee_usd', 'usage', 'meta_cost_usd',
+                          'usage_charge_usd', 'total_usd',
+                          'included_messages', 'messages_total',
+                          'overage_messages', 'status', 'issued_at',
+                          'due_at', 'paid_at', 'paid_by', 'paid_reference',
+                          'paid_note', 'claimed_paid_at', 'claimed_by',
+                          'claim_note', 'created_at')
+  ) <> 23 THEN
+    RAISE EXCEPTION 'statements is missing columns (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.statements'::regclass
+      AND conname = 'statements_account_period_key' AND contype = 'u'
+  ) THEN
+    RAISE EXCEPTION 'statements (account_id, period_end) must be UNIQUE (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.statements'::regclass
+      AND conname = 'statements_status_check'
+      AND pg_get_constraintdef(oid) LIKE '%issued%'
+      AND pg_get_constraintdef(oid) LIKE '%paid%'
+      AND pg_get_constraintdef(oid) LIKE '%void%'
+  ) THEN
+    RAISE EXCEPTION 'statements status CHECK missing (migration 078)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM pg_constraint
+    WHERE conrelid = 'public.statements'::regclass AND contype = 'c'
+      AND conname IN ('statements_period_check', 'statements_due_check',
+                      'statements_amounts_check', 'statements_paid_check',
+                      'statements_usage_object_check')
+  ) <> 5 THEN
+    RAISE EXCEPTION 'statements CHECKs missing (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'statements'
+      AND indexname = 'statements_account_open_idx'
+  ) THEN
+    RAISE EXCEPTION 'statements_account_open_idx missing (migration 078)';
+  END IF;
+
+  IF NOT (SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.statements'::regclass) THEN
+    RAISE EXCEPTION 'statements must have RLS enabled (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'statements'
+      AND policyname = 'statements_select' AND cmd = 'SELECT'
+      AND qual LIKE '%can_read_account(account_id, ''admin''%'
+  ) OR EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'statements'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'statements must be readable by admin+ only and writable by nobody but service_role (migration 078)';
+  END IF;
+
+  IF has_table_privilege('authenticated', 'public.statements', 'INSERT')
+     OR has_table_privilege('authenticated', 'public.statements', 'UPDATE')
+     OR has_table_privilege('authenticated', 'public.statements', 'DELETE')
+     OR has_table_privilege('anon', 'public.statements', 'SELECT')
+     OR has_table_privilege('anon', 'public.statements', 'INSERT') THEN
+    RAISE EXCEPTION 'statements must not be writable by anon/authenticated (migration 078)';
+  END IF;
+
+  -- Lo interno no se lee con un JWT de inquilino.
+  IF has_column_privilege('authenticated', 'public.statements', 'meta_cost_usd', 'SELECT')
+     OR has_column_privilege('authenticated', 'public.statements', 'usage', 'SELECT')
+     OR has_column_privilege('authenticated', 'public.statements', 'paid_reference', 'SELECT')
+     OR has_column_privilege('authenticated', 'public.statements', 'paid_note', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'public.statements', 'total_usd', 'SELECT') THEN
+    RAISE EXCEPTION 'statements: tenants read the totals but never meta_cost_usd, usage or the payment data (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_action_check'
+      AND pg_get_constraintdef(oid) LIKE '%payment_confirmed%'
+      AND pg_get_constraintdef(oid) LIKE '%statement_void%'
+      AND pg_get_constraintdef(oid) LIKE '%plan_override%'
+      AND pg_get_constraintdef(oid) LIKE '%operator_revoke%'
+      AND pg_get_constraintdef(oid) LIKE '%impersonation%'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_log.action must admit payment_confirmed and statement_void without dropping the earlier acts (migration 078)';
+  END IF;
+  -- /078 -----------------------------------------------------------
 
   RAISE NOTICE 'schema verification passed';
 END
