@@ -4717,7 +4717,27 @@ describe('statements (s10.4, service role)', () => {
         by: [],
         reason: 'The country → market table is global (076).',
       },
+      {
+        table: 'subscriptions',
+        op: 'select',
+        by: ['meta_billing'],
+        reason:
+          'The reconciliation sweep of the same cron (s10.7) lists the ' +
+          'managed subscriptions across accounts by design; the numbers ' +
+          'it reads next are filtered by those account ids and every ' +
+          'snapshot read and write by the account being processed.',
+      },
     ];
+    // s10.7: the same run asks Graph for A's pricing_analytics. Mocked:
+    // no test reaches the network.
+    const graph = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ pricing_analytics: { data: [{ data_points: [] }] } })
+        )
+    );
+    vi.stubGlobal('fetch', graph);
+    h.db.rows('meta_spend_snapshots');
     const subA = h.db.rows('subscriptions').find((r) => r.account_id === A)!;
     Object.assign(subA, {
       plan_id: 'gestionado',
@@ -4777,6 +4797,15 @@ describe('statements (s10.4, service role)', () => {
     expect(issued).toHaveLength(1);
     expect(issued[0]).toMatchObject({ account_id: A, messages_total: 1 });
     expect(subA).toMatchObject({ status: 'past_due' });
+    // Only A's WABA was asked, and only A got a snapshot.
+    expect(graph).toHaveBeenCalledTimes(1);
+    for (const [url] of graph.mock.calls as unknown as [string][]) {
+      expect(url).not.toContain('waba-b');
+    }
+    for (const row of h.db.rows('meta_spend_snapshots')) {
+      expect(row.account_id).toBe(A);
+    }
+    vi.unstubAllGlobals();
     expectBUnchanged(beforeB);
   });
 });

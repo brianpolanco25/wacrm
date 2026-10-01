@@ -27,6 +27,7 @@ and polish.
 - When a customer writes from a Click to WhatsApp ad, the inbound webhook stores where they came from and when the free window ends (72 hours after their message). Organic posts and unknown origins are stored without a window. A malformed `referral`, an invalid or future timestamp, or a failed write never makes the webhook fail, and a Meta retry never writes twice.
 - The inbox list and the conversation header show «Free window until {time}» while that window is open, with a tooltip explaining it; it disappears on its own within a minute of expiring. It is hidden for accounts whose Meta bill Cabbity pays (`managed`) and while the account's billing mode is unknown.
 - The shape of Meta's `referral` and the window rules are unverified assumptions (S-E1…S-E5 in `specs/free-entry-point-badge/design.md`); in doubt, no badge is shown.
+
 ### WhatsApp: free service quota per number
 
 - **Migration required: `080_service_cap.sql`.** Adds `accounts.service_cap_action` (`warn` by default, or `pause_ai`) and the `service_quota_usage()` function, executable only by the service role, that counts each number's delivered service messages of the month from `message_charges`. It goes after 075–079; on the hosted project, if it lands before 077/078, apply it with `supabase db push --include-all`.
@@ -76,6 +77,12 @@ and polish.
 - `/billing`: new «Statements» section with the breakdown (number, category, delivered, price applied, amount) and the total, without Meta's own figures. The billing banner shows the open statement (amount, period, days left) and, once overdue, a read-only notice of its own; both offer «I have paid», which leaves a note for the operator and changes nothing else. A company locked by its subscription (not by the statement) sees the subscription notice with its way out, and the open statement below it. «I have paid» is hidden during a support session.
 - Giving the managed plan again to a company that already had it keeps its billing day: what it used since its last statement is still billed.
 - No e-mail is sent: the repository has no mail provider, so the banner is the notice.
+
+### Managed Meta billing: reconciliation with Meta (migration required: 084)
+
+- **Migration required:** apply `supabase/migrations/084_meta_spend_snapshots.sql`. It adds `meta_spend_snapshots` (what Meta reports a WABA cost, per day, number and category), readable and writable only by the service role.
+- `GET /api/billing/cron` now also downloads, at most once a day per company, Meta's `pricing_analytics` (cost and volume per number and category, previous and current month) for every managed company with a connected number, and reports it in a new `reconciliation` block (`scanned`, `fetched`, `skipped`, `failed`). An unexpected answer from Meta stores nothing and never makes the cron fail. No new variable; the shape of Meta's answer is still unverified (see `docs/docker.md`).
+- Operator console, company file, «Statements»: each statement shows what Meta reports for its period, our own Meta cost and the difference, or «no Meta data». Nothing is adjusted automatically: Meta's invoice is what counts, and a difference is settled as a manual line on the next statement.
 
 ### Platform console: tag filter during a support session
 

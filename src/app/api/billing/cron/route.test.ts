@@ -177,11 +177,19 @@ beforeEach(() => {
   process.env.BILLING_CRON_SECRET = SECRET;
   h.db = new FakeDatabase(seed());
   vi.spyOn(console, 'error').mockImplementation(() => {});
+  // s10.7: no test reaches Graph. A test that wants answers stubs its own.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      throw new Error('no network in tests');
+    })
+  );
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   delete process.env.BILLING_CRON_SECRET;
 });
 
@@ -456,5 +464,71 @@ describe('the cut-off', () => {
     await GET(req(SECRET));
     const issued = statementsOf(A).find((s) => s.period_end === PERIOD_END)!;
     expect(issued.period_start).toBe('2026-10-03T00:00:00.000Z');
+  });
+});
+
+describe('the reconciliation with Meta (s10.7)', () => {
+  it('the response carries the `reconciliation` block; managed WABAs are fetched (Graph mocked), the direct one is not', async () => {
+    const { encrypt } = await import('@/lib/whatsapp/encryption');
+    process.env.ENCRYPTION_KEY = 'b'.repeat(64);
+    for (const cfg of h.db.rows('whatsapp_config')) {
+      cfg.status = 'connected';
+      cfg.waba_id = `W-${cfg.account_id}`;
+      cfg.access_token = encrypt(`token-${cfg.account_id}`);
+    }
+    const fetchMock = vi.fn(async (url: string) => {
+      const waba = new URL(url).pathname.split('/').pop();
+      return new Response(
+        JSON.stringify({
+          id: waba,
+          pricing_analytics: {
+            data: [
+              {
+                data_points: [
+                  {
+                    start: Date.parse('2026-10-05T00:00:00.000Z') / 1000,
+                    end: Date.parse('2026-10-06T00:00:00.000Z') / 1000,
+                    phone_number: '18090000000',
+                    pricing_category: 'MARKETING',
+                    volume: 10,
+                    cost: 0.74,
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await GET(req(SECRET));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.statements).toMatchObject({ issued: 2 });
+      // A, B, C, D, F are managed with a connected number (G has none); E
+      // is direct and is never asked.
+      expect(body.reconciliation).toEqual({
+        scanned: 5,
+        fetched: 5,
+        skipped: 0,
+        failed: 0,
+      });
+      const asked = fetchMock.mock.calls.map((c) => String(c[0]));
+      expect(asked.some((u) => u.includes(`/W-${E}?`))).toBe(false);
+      const snaps = h.db.rows('meta_spend_snapshots');
+      expect(snaps.filter((s) => s.account_id === A)).toEqual([
+        expect.objectContaining({ waba_id: `W-${A}`, cost_usd: 0.74 }),
+      ]);
+
+      // Same day again: nothing asked, everything skipped.
+      fetchMock.mockClear();
+      const again = await (await GET(req(SECRET))).json();
+      expect(again.reconciliation).toMatchObject({ fetched: 0, skipped: 5 });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

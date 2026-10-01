@@ -13,6 +13,11 @@
 //
 // Both reopen the account and move the cut-off a month from the period
 // end (the routes do it; this only asks and reports).
+//
+// s10.7: under the figures, the reconciliation with Meta — what Meta's
+// `pricing_analytics` reports for the period against our real cost, or
+// «sin dato de Meta». Only shown: the difference is settled as a manual
+// line on the next statement, and the text says so.
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react';
@@ -27,6 +32,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { MIN_REASON_LENGTH } from '@/lib/auth/support-cookie';
 import type { PlatformStatement } from '@/lib/platform/statements';
+import type { StatementReconciliation } from '@/lib/billing/meta-reconciliation';
 import {
   formatDay,
   formatPeriod,
@@ -247,6 +253,12 @@ function StatementItem({
           overageMessages: statement.overageMessages,
         })}
       </p>
+      {statement.reconciliation ? (
+        <Reconciliation
+          reconciliation={statement.reconciliation}
+          ourCostUsd={statement.metaCostUsd}
+        />
+      ) : null}
       {statement.uncategorized.total > 0 ? (
         <p className="text-muted-foreground text-xs" data-uncategorized>
           {t('uncategorized', {
@@ -366,5 +378,63 @@ function StatementItem({
         </div>
       ) : null}
     </li>
+  );
+}
+
+function Reconciliation({
+  reconciliation,
+  ourCostUsd,
+}: {
+  reconciliation: StatementReconciliation;
+  ourCostUsd: number;
+}) {
+  const t = useTranslations('Platform.statements');
+  const locale = useLocale();
+  const usd = (value: number) => `US$ ${formatUsd(value, locale)}`;
+  const signed = (value: number) =>
+    value > 0 ? `+${usd(value)}` : value < 0 ? `−${usd(-value)}` : usd(0);
+
+  if (
+    reconciliation.metaReportedCostUsd === null ||
+    reconciliation.differenceUsd === null
+  ) {
+    return (
+      <p className="text-muted-foreground text-xs" data-reconciliation="none">
+        {t('reconciliation.noData')}
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1 text-xs" data-reconciliation="data">
+      <p className="text-muted-foreground">
+        {t('reconciliation.figures', {
+          meta: usd(reconciliation.metaReportedCostUsd),
+          volume: reconciliation.volume ?? 0,
+          ours: usd(ourCostUsd),
+          difference: signed(reconciliation.differenceUsd),
+        })}
+      </p>
+      {reconciliation.wabas.length > 1 ? (
+        <ul className="text-muted-foreground flex flex-col">
+          {reconciliation.wabas.map((w) => (
+            <li key={w.wabaId}>
+              {t('reconciliation.waba', {
+                waba: w.wabaId,
+                meta: usd(w.metaReportedCostUsd),
+                volume: w.volume,
+              })}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {reconciliation.partial && reconciliation.lastFetchedAt ? (
+        <p className="text-muted-foreground" data-reconciliation-partial>
+          {t('reconciliation.partial', {
+            date: formatDay(reconciliation.lastFetchedAt, locale),
+          })}
+        </p>
+      ) : null}
+      <p className="text-muted-foreground">{t('reconciliation.adjust')}</p>
+    </div>
   );
 }

@@ -2708,6 +2708,13 @@
         "notFound": "Ese estado de cuenta no existe en esta empresa.",
         "invalid": "Revisa los datos: {detail}",
         "failed": "No se pudo completar. No se cambió nada."
+      },
+      "reconciliation": {
+        "noData": "Conciliación con Meta: sin dato de Meta para este periodo.",
+        "figures": "Conciliación con Meta: Meta reporta {meta} ({volume} mensajes) · nuestro cálculo {ours} · diferencia {difference}",
+        "waba": "WABA {waba}: {meta} ({volume} mensajes)",
+        "partial": "Dato de Meta incompleto: la última lectura es del {date}, antes del fin del periodo.",
+        "adjust": "Meta advierte que ese costo es aproximado y su factura es la que vale. Si hay diferencia, ajústala como línea manual en el siguiente estado de cuenta; aquí no se ajusta nada."
       }
     }
   },

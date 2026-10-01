@@ -35,6 +35,10 @@ import {
   type StatementRow,
   type StatementUsage,
 } from '@/lib/billing/statements';
+import {
+  reconcileStatements,
+  type StatementReconciliation,
+} from '@/lib/billing/meta-reconciliation';
 import { recordPlatformAction } from './audit';
 
 export interface PlatformStatement {
@@ -61,6 +65,11 @@ export interface PlatformStatement {
   overageMessages: number;
   uncategorized: { total: number; byCategory: Record<string, number> };
   lines: StatementLine[];
+  /**
+   * s10.7: Meta's own cost for the period (`meta_spend_snapshots`) and
+   * the difference with `metaCostUsd`. Absent when it could not be read.
+   */
+  reconciliation?: StatementReconciliation;
 }
 
 /** Statements shown on the file, newest first. */
@@ -120,7 +129,26 @@ export async function listAccountStatements(
     .order('period_end', { ascending: false })
     .limit(STATEMENT_LIST_LIMIT);
   if (error) throw error;
-  return ((data ?? []) as StatementRow[]).map(platformStatement);
+  const statements = ((data ?? []) as StatementRow[]).map(platformStatement);
+  // s10.7. The list still loads if the reconciliation cannot be read:
+  // the statements are what the operator acts on.
+  try {
+    const reconciled = await reconcileStatements(
+      supabaseAdmin(),
+      accountId,
+      statements
+    );
+    for (const st of statements) {
+      const r = reconciled.get(st.id);
+      if (r) st.reconciliation = r;
+    }
+  } catch (err) {
+    console.error(
+      `[platform/statements] reconciliation unavailable for account ${accountId}:`,
+      err
+    );
+  }
+  return statements;
 }
 
 interface SubscriptionState {

@@ -323,6 +323,50 @@ export async function getWabaFundingInfo(
   return response.json();
 }
 
+export interface GetWabaPricingAnalyticsArgs {
+  wabaId: string;
+  accessToken: string;
+  /** Inicio del tramo, segundos Unix (UTC). */
+  start: number;
+  /** Fin del tramo, segundos Unix (UTC). */
+  end: number;
+  /** El llamante fija el timeout (s10.7: 10 s). */
+  signal?: AbortSignal;
+}
+
+/**
+ * s10.7 — `pricing_analytics` del WABA: COST y VOLUME por día, número
+ * (PHONE) y categoría (PRICING_CATEGORY), para conciliar el estado de
+ * cuenta con lo que Meta dice que costó.
+ *
+ * SUPUESTO SIN VERIFICAR (sin red en el desarrollo): que `pricing_analytics`
+ * es un campo del nodo WABA con parámetros por expansión de campo
+ * (`start`, `end`, `granularity`, `metric_types`, `dimensions`) y que
+ * responde `{ pricing_analytics: { data: [{ data_points: [...] }] } }`.
+ * Igual que `getWabaFundingInfo`, solo devuelve el JSON tal cual: quien
+ * lo interpreta (`parsePricingAnalytics`) rechaza cualquier forma rara.
+ */
+export async function getWabaPricingAnalytics(
+  args: GetWabaPricingAnalyticsArgs
+): Promise<unknown> {
+  const { wabaId, accessToken, start, end, signal } = args;
+  const field =
+    `pricing_analytics.start(${Math.floor(start)}).end(${Math.floor(end)})` +
+    '.granularity(DAILY)' +
+    '.metric_types(["COST","VOLUME"])' +
+    '.dimensions(["PHONE","PRICING_CATEGORY"])';
+  const url = `${META_API_BASE}/${wabaId}?fields=${encodeURIComponent(field)}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  return response.json();
+}
+
 // ============================================================
 // Sending
 // ============================================================
