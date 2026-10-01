@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import {
   createContext,
@@ -10,21 +10,21 @@ import {
   useRef,
   useSyncExternalStore,
   type ReactNode,
-} from "react";
-import { createClient, endSupportSession } from "@/lib/supabase/client";
+} from 'react';
+import { createClient, endSupportSession } from '@/lib/supabase/client';
 import {
   supportAccountFromFlag,
   supportFlagValue,
-} from "@/lib/auth/support-cookie";
-import type { SupabaseClient, User } from "@supabase/supabase-js";
-import { DEFAULT_CURRENCY } from "@/lib/currency";
+} from '@/lib/auth/support-cookie';
+import type { SupabaseClient, User } from '@supabase/supabase-js';
+import { DEFAULT_CURRENCY } from '@/lib/currency';
 import {
   canEditSettings as canEditSettingsFor,
   canManageMembers as canManageMembersFor,
   canSendMessages as canSendMessagesFor,
   isAccountRole,
   type AccountRole,
-} from "@/lib/auth/roles";
+} from '@/lib/auth/roles';
 
 interface Profile {
   id: string;
@@ -61,13 +61,13 @@ interface AccountSummary {
  */
 export type AccountStatus =
   /** Profile row still in flight. */
-  | "loading"
+  | 'loading'
   /** Account + role resolved; normal operation. */
-  | "ready"
+  | 'ready'
   /** Signed in, but no profile row / no account / no role on it. */
-  | "unlinked"
+  | 'unlinked'
   /** The profile lookup itself failed after retrying. */
-  | "error";
+  | 'error';
 
 interface AuthContextValue {
   user: User | null;
@@ -111,6 +111,15 @@ interface AuthContextValue {
   accountStatus: AccountStatus;
   /** Underlying message when `accountStatus` is 'error' / 'unlinked'. */
   accountStatusDetail: string | null;
+  /**
+   * True while this browser is inside a support session (the server set
+   * the support flag cookie). Effects that write the OPERATOR'S own rows
+   * on their own — the presence heartbeat — check it and stand down: the
+   * browser client refuses those writes during a session anyway
+   * (`guardReadOnly`), and letting them try only fills the console with
+   * errors nobody can act on (s9.12).
+   */
+  supportSession: boolean;
   /**
    * Account the panel is looking at. The current user's own, except
    * during a support session, when it is the impersonated one — every
@@ -186,7 +195,7 @@ interface ProfileRow {
 
 /** The raw support flag, or null outside a browser / outside a session. */
 function readSupportFlag(): string | null {
-  if (typeof document === "undefined") return null;
+  if (typeof document === 'undefined') return null;
   return supportFlagValue(document.cookie);
 }
 
@@ -197,12 +206,12 @@ function readSupportFlag(): string | null {
  * second tab, the 30-minute expiry) becomes visible here.
  */
 function subscribeSupportFlag(onChange: () => void): () => void {
-  if (typeof document === "undefined") return () => {};
-  document.addEventListener("visibilitychange", onChange);
-  window.addEventListener("focus", onChange);
+  if (typeof document === 'undefined') return () => {};
+  document.addEventListener('visibilitychange', onChange);
+  window.addEventListener('focus', onChange);
   return () => {
-    document.removeEventListener("visibilitychange", onChange);
-    window.removeEventListener("focus", onChange);
+    document.removeEventListener('visibilitychange', onChange);
+    window.removeEventListener('focus', onChange);
   };
 }
 
@@ -218,7 +227,7 @@ function subscribeSupportFlag(onChange: () => void): () => void {
  */
 export function effectiveAccountId(
   ownAccountId: string | null,
-  supportFlag: string | null,
+  supportFlag: string | null
 ): string | null {
   if (supportFlag === null) return ownAccountId;
   return supportAccountFromFlag(supportFlag);
@@ -234,10 +243,10 @@ export function effectiveAccountId(
  */
 export function effectiveAccountRole(
   ownRole: AccountRole | null,
-  supportFlag: string | null,
+  supportFlag: string | null
 ): AccountRole | null {
   if (supportFlag === null) return ownRole;
-  return "admin";
+  return 'admin';
 }
 
 /** The raw support flag as a hook (same store as `useEffectiveAccountId`). */
@@ -245,7 +254,7 @@ function useSupportFlag(): string | null {
   return useSyncExternalStore(
     subscribeSupportFlag,
     readSupportFlag,
-    readSupportFlag,
+    readSupportFlag
   );
 }
 
@@ -256,7 +265,7 @@ function useSupportFlag(): string | null {
  * `document` there) that the client corrects on hydration.
  */
 export function useEffectiveAccountId(
-  ownAccountId: string | null,
+  ownAccountId: string | null
 ): string | null {
   const flag = useSupportFlag();
   return effectiveAccountId(ownAccountId, flag);
@@ -275,17 +284,17 @@ export function useEffectiveAccountId(
  */
 export async function fetchAccountSummary(
   supabase: SupabaseClient,
-  accountId: string,
+  accountId: string
 ): Promise<AccountSummary | null> {
   const { data, error } = await supabase
-    .from("accounts")
+    .from('accounts')
     // default_currency added in migration 021; narrowed to the USD
     // fallback here for older schemas where it reads null.
-    .select("id, name, default_currency")
-    .eq("id", accountId)
+    .select('id, name, default_currency')
+    .eq('id', accountId)
     .maybeSingle();
   if (error) {
-    console.error("[AuthProvider] fetchAccount error:", {
+    console.error('[AuthProvider] fetchAccount error:', {
       message: error.message,
       details: error.details,
       hint: error.hint,
@@ -315,7 +324,7 @@ export async function fetchAccountSummary(
  */
 export function accountSummaryFor(
   summary: AccountSummary | null,
-  effectiveAccountId: string | null,
+  effectiveAccountId: string | null
 ): AccountSummary | null {
   if (!summary || !effectiveAccountId) return null;
   return summary.id === effectiveAccountId ? summary : null;
@@ -362,11 +371,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let data: ProfileRow | null = null;
       for (let attempt = 1; ; attempt++) {
         const result = await supabase
-          .from("profiles")
+          .from('profiles')
           .select(
-            "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
+            'id, full_name, email, avatar_url, role, beta_features, account_id, account_role'
           )
-          .eq("user_id", userId)
+          .eq('user_id', userId)
           .maybeSingle();
 
         if (!result.error) {
@@ -375,7 +384,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         const error = result.error;
-        console.error("[AuthProvider] fetchProfile error:", {
+        console.error('[AuthProvider] fetchProfile error:', {
           message: error.message,
           details: error.details,
           hint: error.hint,
@@ -425,17 +434,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // failure as a WARNING) or one predating that migration.
           // Every insert and update they attempt will be denied by RLS.
           setStatusDetail(
-            `profile ${data.id} has no ${!data.account_id ? "account_id" : "account_role"}`,
+            `profile ${data.id} has no ${!data.account_id ? 'account_id' : 'account_role'}`
           );
         }
       } else {
         lastFetchedUserIdRef.current = null;
-        setStatusDetail("no profiles row for the signed-in user");
+        setStatusDetail('no profiles row for the signed-in user');
       }
     } catch (err) {
-      console.error("[AuthProvider] fetchProfile threw:", err);
+      console.error('[AuthProvider] fetchProfile threw:', err);
       lastFetchedUserIdRef.current = null;
-      setStatusDetail(err instanceof Error ? err.message : "profile fetch failed");
+      setStatusDetail(
+        err instanceof Error ? err.message : 'profile fetch failed'
+      );
     } finally {
       setProfileLoading(false);
     }
@@ -447,7 +458,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const safetyTimer = setTimeout(() => {
       if (mounted) {
-        console.warn("[AuthProvider] getSession() timed out after 3s");
+        console.warn('[AuthProvider] getSession() timed out after 3s');
         setLoading(false);
         setProfileLoading(false);
       }
@@ -460,7 +471,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error,
         } = await supabase.auth.getSession();
 
-        if (error) console.error("[AuthProvider] getSession error:", error.message);
+        if (error)
+          console.error('[AuthProvider] getSession error:', error.message);
 
         if (!mounted) return;
         const currentUser = session?.user ?? null;
@@ -479,7 +491,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setProfileLoading(false);
         }
       } catch (err) {
-        console.error("[AuthProvider] init threw:", err);
+        console.error('[AuthProvider] init threw:', err);
       } finally {
         if (mounted) setLoading(false);
         clearTimeout(safetyTimer);
@@ -531,7 +543,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
-    window.location.href = "/login";
+    window.location.href = '/login';
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -564,7 +576,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!userId || !effectiveAccount) return;
     let cancelled = false;
     (async () => {
-      const summary = await fetchAccountSummary(createClient(), effectiveAccount);
+      const summary = await fetchAccountSummary(
+        createClient(),
+        effectiveAccount
+      );
       if (!cancelled) setAccount(summary);
     })();
     return () => {
@@ -575,18 +590,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const derived = useMemo(() => {
     const role = effectiveAccountRole(
       profile?.account_role ?? null,
-      supportFlag,
+      supportFlag
     );
     return {
       accountRole: role,
       accountId: effectiveAccount,
-      isOwner: role === "owner",
-      isAdmin: role === "admin",
-      isAgent: role === "agent",
-      isViewer: role === "viewer",
+      isOwner: role === 'owner',
+      isAdmin: role === 'admin',
+      isAgent: role === 'agent',
+      isViewer: role === 'viewer',
       canManageMembers: role ? canManageMembersFor(role) : false,
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
+      supportSession: supportFlag !== null,
     };
   }, [profile?.account_role, effectiveAccount, supportFlag]);
 
@@ -597,14 +613,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Signed out is not a broken account — the shell redirects to /login
   // before anything reads this.
   const accountStatus: AccountStatus = !user
-    ? "loading"
+    ? 'loading'
     : profileLoading
-      ? "loading"
+      ? 'loading'
       : !profile
-        ? "error"
+        ? 'error'
         : derived.accountId && derived.accountRole
-          ? "ready"
-          : "unlinked";
+          ? 'ready'
+          : 'unlinked';
 
   return (
     <AuthContext.Provider
@@ -644,14 +660,14 @@ export function useAuth(): AuthContextValue {
       loading: false,
       profileLoading: false,
       signOut: async () => {
-        window.location.href = "/login";
+        window.location.href = '/login';
       },
       refreshProfile: async () => {},
       account: null,
       defaultCurrency: DEFAULT_CURRENCY,
       // Outside the provider there is nothing to resolve yet — 'loading'
       // keeps the access alert from firing on, say, the login page.
-      accountStatus: "loading",
+      accountStatus: 'loading',
       accountStatusDetail: null,
       accountId: null,
       accountRole: null,
@@ -662,6 +678,7 @@ export function useAuth(): AuthContextValue {
       canManageMembers: false,
       canEditSettings: false,
       canSendMessages: false,
+      supportSession: false,
     };
   }
   return ctx;

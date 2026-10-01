@@ -249,6 +249,32 @@ describe('«Añadir miembro»: the one-time link survives the reload (review s9.
     ).toEqual(expected);
   });
 
+  it.each(CATALOGUES)(
+    '[%s] the support-session button works with an empty reason; suspending does not (s9.12)',
+    (locale, messages) => {
+      const html = render(
+        <PlatformAccountDetail
+          accountId={DETAIL.accountId}
+          initial={{ detail: DETAIL }}
+        />,
+        locale,
+        messages
+      );
+      const button = (label: string) => {
+        const m = html.match(
+          new RegExp(`<button[^>]*>(?:(?!</button>).)*?${label}</button>`)
+        );
+        if (!m) throw new Error(`no button labelled ${label}`);
+        return m[0];
+      };
+      const p = messages.Platform;
+      expect(button(p.impersonate)).not.toMatch(/\sdisabled=""/);
+      expect(button(p.suspend)).toMatch(/\sdisabled=""/);
+      // The help says which act needs the reason and which one does not.
+      expect(html).toContain(p.reasonHelp.replace('{min}', '10'));
+    }
+  );
+
   it.each([
     [{ loading: true, failed: null, hasDetail: false }, 'loading'],
     [{ loading: false, failed: 'error', hasDetail: false }, 'failed'],
