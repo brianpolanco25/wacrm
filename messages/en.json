@@ -1079,6 +1079,14 @@
         "matchWordHint": "Matches the keyword only as a standalone word, so \"k\" no longer fires on \"thanks\". Best for short keywords in space-separated languages; use Contains for languages written without spaces.",
         "matchExact": "Exact",
         "closeConversationHint": "Sets the conversation status to \"closed\". No configuration needed."
+      },
+      "templateWindow": {
+        "title": "Customer service window open",
+        "utility": "This automation replies to a customer message: a plain text message costs the same or less than this utility template.",
+        "marketing": "This automation replies to a customer message: this template is billed at the marketing rate, the most expensive one. A plain text message costs less.",
+        "quotaNote": "Templates don't count towards the {freeTier, number} free service messages of the month.",
+        "estimate": "This is an estimate based on Meta's current rates; you can still save the automation.",
+        "badge": "Template sent with the window open: it may cost more than a text"
       }
     }
   },

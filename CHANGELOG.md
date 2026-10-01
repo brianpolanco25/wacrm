@@ -17,6 +17,10 @@ and polish.
 - The plan picker (`/billing` and onboarding) words messages, AI replies and broadcast recipients as included in the plan, lists the plan's WhatsApp numbers with Meta's free service messages for them, and notes that Meta charges separately, with a link to `/precios`.
 - The usage section of the subscription and the `quota_exceeded` API error now say what happens when the included amount is used up (that kind of send pauses until the next cycle; a bigger plan includes more). Nothing changes in what is blocked.
 
+### Automations: template sent with the window open
+
+- The automation builder warns, without blocking the save, when a «Send template» step goes out while the customer-service window is still open (the automation is fired by an inbound message and the waits before the step add up to less than 23 h): a utility template costs the same or more than a plain text, and a marketing one is billed at the most expensive rate. The category is read from the synced template; the step header shows an amber marker while collapsed. It is an estimate based on Meta's current rates; the utility notice can be switched off with `WARN_UTILITY_IN_WINDOW` in `src/lib/automations/template-window.ts` if Meta confirms utility templates are free inside the window.
+
 ### WhatsApp: payment method in Meta
 
 - **Migration required: `079_meta_payment_status.sql`.** Adds `meta_payment_status` (`ok` | `missing` | `unknown`), `meta_payment_checked_at` and `meta_payment_error` to `whatsapp_config`, a partial index for the sweep, and a trigger that keeps a browser session from writing those columns (only the server does) and resets them when the WABA or the token is changed from Settings. On the hosted project it can be applied before 075–078 only with `supabase db push --include-all`.
