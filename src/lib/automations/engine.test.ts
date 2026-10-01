@@ -228,7 +228,11 @@ import {
   runAutomationsForTrigger,
   triggerMatches,
 } from './engine';
-import { engineSendText } from './meta-send';
+import {
+  engineSendInteractive,
+  engineSendTemplate,
+  engineSendText,
+} from './meta-send';
 import type { Automation, KeywordMatchTriggerConfig } from '@/types';
 
 const ACCOUNT = 'acct-1';
@@ -1260,3 +1264,97 @@ function removeTagStep(tagId: string) {
     step_config: { tag_id: tagId },
   };
 }
+
+// ============================================================
+// p11.4 (R11) — one send per step, and a throwing send is never
+// retried: the step is `failed`, the run stops there. «sent to Meta but
+// DB insert failed» means the customer already has it; a retry would be
+// a second billed message.
+// ============================================================
+describe('send steps — one send per step, no retry (p11.4)', () => {
+  const SENDS = [
+    {
+      type: 'send_message',
+      config: { text: 'Hola' },
+      fn: () => vi.mocked(engineSendText),
+    },
+    {
+      type: 'send_buttons',
+      config: {
+        kind: 'buttons',
+        body: '¿Seguimos?',
+        buttons: [{ id: 'si', title: 'Sí' }],
+      },
+      fn: () => vi.mocked(engineSendInteractive),
+    },
+    {
+      type: 'send_list',
+      config: {
+        kind: 'list',
+        body: 'Elige',
+        button_label: 'Ver',
+        sections: [{ title: 'A', rows: [{ id: 'r1', title: 'Uno' }] }],
+      },
+      fn: () => vi.mocked(engineSendInteractive),
+    },
+    {
+      type: 'send_template',
+      config: { template_name: 'hola', language: 'es' },
+      fn: () => vi.mocked(engineSendTemplate),
+    },
+  ] as const;
+
+  for (const { type, config, fn } of SENDS) {
+    for (const message of [
+      'Meta API error: (#131000) Something went wrong',
+      'sent to Meta but DB insert failed',
+    ]) {
+      it(`${type} throwing («${message}»): one call, next step not run, log failed`, async () => {
+        h.state.owned = { id: 'c1' };
+        h.state.automations = [automationWithUpdateStep()];
+        h.state.steps = [
+          {
+            id: 's1',
+            automation_id: 'a1',
+            step_type: type,
+            position: 0,
+            parent_step_id: null,
+            step_config: config,
+          },
+          {
+            id: 's2',
+            automation_id: 'a1',
+            step_type: 'send_message',
+            position: 1,
+            parent_step_id: null,
+            step_config: { text: 'Paso siguiente' },
+          },
+        ];
+        fn().mockRejectedValueOnce(new Error(message));
+
+        await runAutomationsForTrigger({
+          accountId: ACCOUNT,
+          triggerType: 'new_message_received',
+          contactId: 'c1',
+          context: { conversation_id: 'cv-1' },
+        });
+
+        expect(fn()).toHaveBeenCalledTimes(1);
+        // The follow-up send_message never ran.
+        const textCalls = vi.mocked(engineSendText).mock.calls;
+        expect(
+          textCalls.filter(
+            ([a]) => (a as { text: string }).text === 'Paso siguiente'
+          )
+        ).toEqual([]);
+        const final = h.state.logUpdates.filter((u) => 'status' in u).at(-1);
+        expect(final).toMatchObject({
+          status: 'failed',
+          error_message: message,
+        });
+        const steps = final!.steps_executed as { status: string }[];
+        expect(steps.map((st) => st.status)).toEqual(['failed']);
+      });
+    }
+  }
+});

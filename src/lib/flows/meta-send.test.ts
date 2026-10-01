@@ -258,3 +258,40 @@ describe('the engine senders stop for a suspended account (fase 3 §5)', () => {
     expect(h.assertWritable).not.toHaveBeenCalledWith('acct-1');
   });
 });
+
+// ---------------------------------------------------------------------------
+// p11.4 (R14) — the phone-variant loop only tries the next variant when
+// Meta said «recipient not allowed» (#131030). Any other error — a 5xx,
+// a network failure — may or may not have delivered, so trying another
+// variant could send (and bill) the same message twice.
+// ---------------------------------------------------------------------------
+describe('engineSendText — phone variants (p11.4, R14)', () => {
+  it('a 500 on the first variant: one call to Meta, nothing saved', async () => {
+    h.sendTextMessage.mockRejectedValueOnce(
+      new Error('Meta API error 500: (#1) An unknown error occurred')
+    );
+    await expect(engineSendText({ ...ARGS, text: 'hola' })).rejects.toThrow(
+      /500/
+    );
+    expect(h.sendTextMessage).toHaveBeenCalledTimes(1);
+    expect(h.state.inserts.filter((r) => 'message_id' in r)).toEqual([]);
+  });
+
+  it('a network failure on the first variant: one call to Meta', async () => {
+    h.sendTextMessage.mockRejectedValueOnce(new TypeError('fetch failed'));
+    await expect(engineSendText({ ...ARGS, text: 'hola' })).rejects.toThrow(
+      'fetch failed'
+    );
+    expect(h.sendTextMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('«recipient not allowed» on the first: tries the next, saves one message', async () => {
+    h.sendTextMessage.mockRejectedValueOnce(
+      new Error('(#131030) Recipient phone number not in allowed list')
+    );
+    const out = await engineSendText({ ...ARGS, text: 'hola' });
+    expect(out.whatsapp_message_id).toBe('wamid.text');
+    expect(h.sendTextMessage).toHaveBeenCalledTimes(2);
+    expect(h.state.inserts.filter((r) => 'message_id' in r)).toHaveLength(1);
+  });
+});

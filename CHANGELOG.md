@@ -11,6 +11,12 @@ and polish.
 
 ## [Unreleased]
 
+### One outbound message per automatic turn
+
+- An AI reply longer than WhatsApp's 4,096-character limit is now sent truncated, ending in «…», instead of being rejected by Meta and lost. Paragraphs still go out in one single message; the AI never splits a reply.
+- Flows: two replies to the same step arriving at the same time (two quick button taps, two texts to a question) now run the next steps once instead of twice; a re-asked question is re-sent once.
+- Flows: when sending buttons or a list fails, the run ends as failed and the inbound stays with the flow, so automations and the AI no longer answer the same message on top of it.
+
 ### Pricing: what Cabbity charges and what Meta charges
 
 - New public page `/precios` (no sign-in, `?lang=es|en`), linked from the login page: the Inicio, Pro and Negocio plans with what each includes, what Cabbity charges (the plan) and what Meta charges separately and directly (each delivered WhatsApp message by category and country), Meta's free service messages (1,000 per number and month since 2026-10-01, so 3,000 with Negocio's 3 numbers), the 72-hour free window, the Dominican Republic example rate, the payment method Meta needs, and an FAQ.
@@ -27,6 +33,7 @@ and polish.
 - When a customer writes from a Click to WhatsApp ad, the inbound webhook stores where they came from and when the free window ends (72 hours after their message). Organic posts and unknown origins are stored without a window. A malformed `referral`, an invalid or future timestamp, or a failed write never makes the webhook fail, and a Meta retry never writes twice.
 - The inbox list and the conversation header show «Free window until {time}» while that window is open, with a tooltip explaining it; it disappears on its own within a minute of expiring. It is hidden for accounts whose Meta bill Cabbity pays (`managed`) and while the account's billing mode is unknown.
 - The shape of Meta's `referral` and the window rules are unverified assumptions (S-E1…S-E5 in `specs/free-entry-point-badge/design.md`); in doubt, no badge is shown.
+
 ### WhatsApp: free service quota per number
 
 - **Migration required: `080_service_cap.sql`.** Adds `accounts.service_cap_action` (`warn` by default, or `pause_ai`) and the `service_quota_usage()` function, executable only by the service role, that counts each number's delivered service messages of the month from `message_charges`. It goes after 075–079; on the hosted project, if it lands before 077/078, apply it with `supabase db push --include-all`.
