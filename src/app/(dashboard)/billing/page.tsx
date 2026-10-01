@@ -10,11 +10,14 @@
 import { Suspense } from 'react';
 
 import { PlanPicker } from '@/components/billing/plan-picker';
+import { StatementsSection } from '@/components/billing/statements-section';
 
 export default function BillingPage() {
   return (
     <Suspense fallback={null}>
       <PlanPicker />
+      {/* s10.4: renders nothing unless the account has statements. */}
+      <StatementsSection />
     </Suspense>
   );
 }

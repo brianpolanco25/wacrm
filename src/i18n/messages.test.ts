@@ -54,6 +54,7 @@ const IDENTICAL_TO_SOURCE_OK: Record<string, string> = {
   'Platform.rates.import.placeholder': 'literal CSV sample',
   'Platform.managed.category.marketing': 'same word in Spanish',
   'Platform.managed.methodShort.paypal': 'proper noun',
+  'Billing.statements.category.marketing': 'same word in Spanish',
 };
 
 function load(locale: string): Record<string, unknown> {
