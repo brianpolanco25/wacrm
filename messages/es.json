@@ -106,7 +106,8 @@
     "menuApiDocs": "Documentación de la API"
   },
   "ModeToggle": {
-    "switchMode": "Cambiar al modo {mode}"
+    "switchMode": "Cambiar al modo {mode}",
+    "toggle": "Cambiar modo"
   },
   "AccountAccess": {
     "unlinkedTitle": "Este usuario no está vinculado a ninguna cuenta",

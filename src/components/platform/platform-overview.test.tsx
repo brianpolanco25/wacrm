@@ -153,7 +153,17 @@ describe('PlatformOverviewView', () => {
     expect(card).toMatch(/height="116" rx="4"/);
     // Hover tooltip and the text alternative.
     expect(card).toContain('<title>Week of');
-    expect(card).toContain('<table class="sr-only">');
+    expect(card).toContain('<div class="sr-only"><table>');
+    expect(card).toContain('<caption>');
+  });
+
+  it('never puts sr-only on a <table> itself, only on its wrapper (s9.11)', () => {
+    // A <table> ignores sr-only's 1px height/overflow clip; absolutely
+    // positioned, it stretched the document and made /platform scroll.
+    const html = render(<PlatformOverviewView state={ready} />, 'en', en);
+    expect(html).toContain('<table>');
+    expect(html).not.toMatch(/<table[^>]*class="[^"]*sr-only/);
+    expect(html).toMatch(/<div class="sr-only"><table>/);
   });
 
   it('says there is no data rather than drawing an empty chart', () => {
