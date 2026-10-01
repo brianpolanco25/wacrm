@@ -2334,6 +2334,45 @@ BEGIN
     RAISE EXCEPTION 'conversations_free_window_check is missing (migration 082)';
   END IF;
   -- /082 -----------------------------------------------------------
+  -- 083 — bitácora de correos de facturación (p11.7) ---------------
+  IF to_regclass('public.notification_emails') IS NULL THEN
+    RAISE EXCEPTION 'notification_emails table is missing (migration 083)';
+  END IF;
+  IF (SELECT count(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'notification_emails'
+        AND column_name IN ('id', 'account_id', 'kind', 'ref', 'status',
+                            'attempts', 'recipients', 'last_error',
+                            'sent_at', 'created_at', 'updated_at')) <> 11 THEN
+    RAISE EXCEPTION 'notification_emails is missing columns (migration 083)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'notification_emails_key'
+                   AND conrelid = 'public.notification_emails'::regclass
+                   AND contype = 'u') THEN
+    RAISE EXCEPTION 'notification_emails_key UNIQUE (account_id, kind, ref) is missing (migration 083)';
+  END IF;
+  IF (SELECT count(*) FROM pg_constraint
+      WHERE conrelid = 'public.notification_emails'::regclass
+        AND contype = 'c'
+        AND conname IN ('notification_emails_kind_check',
+                        'notification_emails_status_check',
+                        'notification_emails_attempts_check')) <> 3 THEN
+    RAISE EXCEPTION 'notification_emails CHECK constraints are missing (migration 083)';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.notification_emails'::regclass) THEN
+    RAISE EXCEPTION 'notification_emails must have RLS enabled (migration 083)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'notification_emails') THEN
+    RAISE EXCEPTION 'notification_emails must have no RLS policies (migration 083)';
+  END IF;
+  IF has_table_privilege('authenticated', 'public.notification_emails', 'SELECT')
+     OR has_table_privilege('anon', 'public.notification_emails', 'SELECT')
+     OR has_table_privilege('authenticated', 'public.notification_emails', 'INSERT') THEN
+    RAISE EXCEPTION 'notification_emails is granted to a client role (migration 083)';
+  END IF;
+  -- /083 -----------------------------------------------------------
 
   RAISE NOTICE 'schema verification passed';
 END
