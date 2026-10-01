@@ -14,13 +14,30 @@
 // in the summary; the others go on.
 //
 // CP11: nothing here touches inbound messages.
+//
+// Billing emails (fase 11, p11.7): right after the statements, the same
+// run sends the optional emails — 80 % / 100 % of a direct number's free
+// service quota, a statement issued or overdue — if an email provider is
+// configured (`src/lib/email/provider.ts`). Each sweep has its own `try`:
+// an email failure never touches the statements block nor its status
+// code, and a statement failure does not stop the emails. Without a
+// provider the email sweep makes no query and answers
+// `emails.enabled = false`.
 // ============================================================
 
 import { timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 
+import { resolveLocale } from '@/i18n/request';
+import {
+  sweepBillingEmails,
+  type BillingEmailSweep,
+} from '@/lib/billing/billing-emails';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
-import { sweepStatements } from '@/lib/billing/statement-cron';
+import {
+  sweepStatements,
+  type StatementSweep,
+} from '@/lib/billing/statement-cron';
 
 function secretMatches(supplied: string, expected: string): boolean {
   const suppliedBuf = Buffer.from(supplied);
@@ -40,16 +57,47 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const admin = supabaseAdmin();
+
+  let statements: StatementSweep | null = null;
+  let statementsError: unknown = null;
   try {
-    const statements = await sweepStatements(supabaseAdmin());
-    return NextResponse.json({ statements });
+    statements = await sweepStatements(admin);
   } catch (err) {
     // Only the listing itself can land here (one account's failure is in
     // the summary). Nothing was issued by this run.
-    console.error('[GET /api/billing/cron] sweep failed:', err);
+    statementsError = err;
+  }
+
+  let emails: BillingEmailSweep;
+  try {
+    emails = await sweepBillingEmails(admin, {
+      locale: resolveLocale(process.env.NEXT_PUBLIC_APP_LOCALE),
+      siteUrl: process.env.NEXT_PUBLIC_SITE_URL ?? null,
+    });
+  } catch (err) {
+    // `sweepBillingEmails` never throws; this is the belt to its braces.
+    console.error(
+      '[GET /api/billing/cron] email sweep failed:',
+      err instanceof Error ? err.message : err
+    );
+    emails = {
+      enabled: false,
+      accounts: 0,
+      truncated: false,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      errors: 1,
+    };
+  }
+
+  if (statementsError) {
+    console.error('[GET /api/billing/cron] sweep failed:', statementsError);
     return NextResponse.json(
-      { error: 'The statement sweep failed' },
+      { error: 'The statement sweep failed', emails },
       { status: 500 }
     );
   }
+  return NextResponse.json({ statements, emails });
 }

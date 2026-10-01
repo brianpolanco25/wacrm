@@ -2915,5 +2915,26 @@
     },
     "footerTerms": "Términos",
     "footerPrivacy": "Privacidad"
+  },
+  "Emails": {
+    "billing": {
+      "service_quota_80": {
+        "subject": "Cabbity CRM: {number} lleva {used} de sus {limit} mensajes de servicio gratis",
+        "body": "Tu número de WhatsApp {number} ya usó {used} de los {limit} mensajes de servicio que Meta entrega gratis cada mes ({month}). Después de {limit}, Meta cobra cada mensaje de servicio a tarifa de utilidad hasta que acabe el mes."
+      },
+      "service_quota_100": {
+        "subject": "Cabbity CRM: {number} agotó sus mensajes de servicio gratis de {month}",
+        "body": "Tu número de WhatsApp {number} ya usó los {limit} mensajes de servicio gratis de {month}. Desde ahora y hasta que acabe el mes, Meta cobra cada mensaje de servicio a tarifa de utilidad en tu método de pago."
+      },
+      "statement_issued": {
+        "subject": "Cabbity CRM: tu estado de cuenta de {period} está listo",
+        "body": "Tu estado de cuenta de {period} es de US$ {total} y vence el {dueDate}. Si no está pagado para entonces, la cuenta pasa a solo lectura: seguirás recibiendo y leyendo mensajes, pero no podrás enviarlos."
+      },
+      "statement_due": {
+        "subject": "Cabbity CRM: tu estado de cuenta de {period} está vencido",
+        "body": "Tu estado de cuenta de {period} por US$ {total} venció el {dueDate} y no consta como pagado. La cuenta está en solo lectura: los mensajes entrantes se siguen recibiendo, pero no se puede enviar nada hasta que se confirme el pago."
+      },
+      "link": "Detalles: {url}"
+    }
   }
 }

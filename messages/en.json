@@ -2915,5 +2915,26 @@
     },
     "footerTerms": "Terms",
     "footerPrivacy": "Privacy"
+  },
+  "Emails": {
+    "billing": {
+      "service_quota_80": {
+        "subject": "Cabbity CRM: {number} has used {used} of its {limit} free service messages",
+        "body": "Your WhatsApp number {number} has used {used} of the {limit} service messages Meta delivers free each month ({month}). After {limit}, Meta charges every service message at the utility rate until the month ends."
+      },
+      "service_quota_100": {
+        "subject": "Cabbity CRM: {number} used up its free service messages for {month}",
+        "body": "Your WhatsApp number {number} has used the {limit} free service messages of {month}. From now until the month ends, Meta charges every service message at the utility rate to your payment method."
+      },
+      "statement_issued": {
+        "subject": "Cabbity CRM: your statement for {period} is ready",
+        "body": "Your statement for {period} is US$ {total} and is due on {dueDate}. If it is not paid by then, the account becomes read-only: you will keep receiving and reading messages, but you will not be able to send them."
+      },
+      "statement_due": {
+        "subject": "Cabbity CRM: your statement for {period} is overdue",
+        "body": "Your statement for {period} for US$ {total} was due on {dueDate} and has not been confirmed as paid. The account is now read-only: incoming messages are still received, but nothing can be sent until the payment is confirmed."
+      },
+      "link": "Details: {url}"
+    }
   }
 }

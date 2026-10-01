@@ -4780,3 +4780,230 @@ describe('statements (s10.4, service role)', () => {
     expectBUnchanged(beforeB);
   });
 });
+
+// ============================================================
+// p11.7 — billing emails from GET /api/billing/cron (migration 083). A
+// and B sit on the same quota threshold and each has a statement issued
+// an hour ago; B's rows are seeded first, so an unscoped recipient or
+// log lookup would land on B.
+// ============================================================
+
+describe('billing emails (p11.7, service role, cron)', () => {
+  const ST_A = 'aaaaaaaa-7777-4000-8000-000000000001';
+  const ST_B = 'bbbbbbbb-7777-4000-8000-000000000002';
+
+  it("every email carries only its own account's addresses and data, and every log row its account_id", async () => {
+    vi.stubEnv('BILLING_CRON_SECRET', 'billing-secret');
+    vi.stubEnv('EMAIL_API_URL', '');
+    vi.stubEnv('EMAIL_API_KEY', '');
+    vi.stubEnv('EMAIL_FROM', '');
+    vi.stubEnv('EMAIL_PROVIDER', 'console');
+    vi.stubEnv('NEXT_PUBLIC_APP_LOCALE', 'es');
+    extraWaivers = [
+      {
+        table: 'subscriptions',
+        op: 'select',
+        by: ['meta_billing', 'statement_period_end'],
+        reason:
+          'The cut-off sweep (GET /api/billing/cron) lists every managed ' +
+          'subscription whose period ended, across accounts by design.',
+      },
+      {
+        table: 'whatsapp_config',
+        op: 'select',
+        by: ['status'],
+        reason:
+          'The billing-email sweep (p11.7) lists the connected numbers of ' +
+          'every account: it is where each account of the pass comes from. ' +
+          'Read-only; every query after it is filtered by the account of ' +
+          'the row.',
+      },
+      {
+        table: 'statements',
+        op: 'select',
+        by: ['status', 'issued_at'],
+        reason:
+          'The billing-email sweep (p11.7) lists the statements issued in ' +
+          'the last days across accounts. Read-only; each event carries ' +
+          'the account_id of its row and everything after it is scoped.',
+      },
+    ];
+
+    const now = Date.now();
+    const hourAgo = new Date(now - 3600_000).toISOString();
+    for (const [acc, tag, total] of [
+      [B, 'b', 222.22],
+      [A, 'a', 111.11],
+    ] as const) {
+      const p = h.db.rows('profiles').find((r) => r.account_id === acc)!;
+      p.email = `owner-${tag}@${tag}.test`;
+      h.db.rows('statements').push({
+        id: acc === A ? ST_A : ST_B,
+        account_id: acc,
+        period_start: new Date(now - 31 * 86400_000).toISOString(),
+        period_end: new Date(now - 2 * 3600_000).toISOString(),
+        total_usd: total,
+        status: 'issued',
+        issued_at: hourAgo,
+        due_at: new Date(now + 3 * 86400_000).toISOString(),
+        paid_at: null,
+      });
+    }
+    // Both numbers on the same threshold.
+    h.db.rpcHandlers.service_quota_usage = (args) => [
+      {
+        whatsapp_config_id: args.p_account_id === A ? 'cfg-a' : 'cfg-b',
+        used: 850,
+        billable: 0,
+      },
+    ];
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const beforeB = h.db.snapshot(B);
+
+    const res = await billingCron.GET(
+      req('GET', '/api/billing/cron', undefined, {
+        'x-cron-secret': 'billing-secret',
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.emails).toMatchObject({ enabled: true, sent: 4, errors: 0 });
+
+    const log = h.db.rows('notification_emails');
+    expect(log.map((r) => `${r.account_id}|${r.kind}|${r.ref}`).sort()).toEqual(
+      [
+        `${A}|service_quota_80|cfg-a:${new Date(now).toISOString().slice(0, 7)}`,
+        `${A}|statement_issued|${ST_A}`,
+        `${B}|service_quota_80|cfg-b:${new Date(now).toISOString().slice(0, 7)}`,
+        `${B}|statement_issued|${ST_B}`,
+      ].sort()
+    );
+    expect(info).toHaveBeenCalledTimes(4);
+
+    // What each provider call carried: the console provider logs no
+    // addresses, so the recipients and the text are checked on the
+    // rendered emails through the log rows and the subjects.
+    const lines = info.mock.calls.map((c) => String(c[0]));
+    const quotaLines = lines.filter((l) => l.includes('service_quota_80'));
+    expect(quotaLines).toHaveLength(2);
+    for (const l of lines) expect(l).toContain('1 recipient');
+
+    // No row of A points at B's number or statement, and the other way.
+    for (const r of log) {
+      const ref = String(r.ref);
+      if (r.account_id === A) {
+        expect(ref.includes('cfg-b') || ref === ST_B).toBe(false);
+      } else {
+        expect(ref.includes('cfg-a') || ref === ST_A).toBe(false);
+      }
+    }
+    // Writes by the email sweep are scoped like every other write.
+    const emailWrites = h.db.log.filter(
+      (e) => e.table === 'notification_emails' && e.op !== 'select'
+    );
+    for (const w of emailWrites) {
+      if (w.op === 'update') {
+        expect(w.filters.some((f) => f.column === 'account_id')).toBe(true);
+      } else {
+        for (const row of w.payload ?? []) {
+          expect([A, B]).toContain(row.account_id);
+        }
+      }
+    }
+    // Only notification_emails was written for B: its snapshot is the
+    // same once those rows are left out.
+    const afterB = h.db.snapshot(B);
+    delete (afterB as Record<string, unknown>).notification_emails;
+    delete (beforeB as Record<string, unknown>).notification_emails;
+    expect(afterB).toEqual(beforeB);
+  });
+
+  it("A's email goes to A's owner only and names A's data (rendered, not the console line)", async () => {
+    const { sweepBillingEmails } = await import('@/lib/billing/billing-emails');
+    extraWaivers = [
+      {
+        table: 'whatsapp_config',
+        op: 'select',
+        by: ['status'],
+        reason:
+          'Billing-email sweep (p11.7): connected numbers of every account.',
+      },
+      {
+        table: 'statements',
+        op: 'select',
+        by: ['status', 'issued_at'],
+        reason:
+          'Billing-email sweep (p11.7): recent statements of every account.',
+      },
+    ];
+    const now = Date.parse('2026-10-20T12:00:00.000Z');
+    for (const [acc, tag, total] of [
+      [B, 'b', 222.22],
+      [A, 'a', 111.11],
+    ] as const) {
+      const p = h.db.rows('profiles').find((r) => r.account_id === acc)!;
+      p.email = `owner-${tag}@${tag}.test`;
+      h.db.rows('statements').push({
+        id: acc === A ? ST_A : ST_B,
+        account_id: acc,
+        period_start: '2026-09-01T00:00:00.000Z',
+        period_end:
+          acc === A ? '2026-10-01T00:00:00.000Z' : '2026-10-02T00:00:00.000Z',
+        total_usd: total,
+        status: 'issued',
+        issued_at: new Date(now - 3600_000).toISOString(),
+        due_at: '2026-10-23T00:00:00.000Z',
+        paid_at: null,
+      });
+    }
+    h.db.rpcHandlers.service_quota_usage = (args) => [
+      {
+        whatsapp_config_id: args.p_account_id === A ? 'cfg-a' : 'cfg-b',
+        used: 900,
+        billable: 0,
+      },
+    ];
+    const sent: {
+      to: string[];
+      subject: string;
+      text: string;
+      kind: string;
+    }[] = [];
+    await sweepBillingEmails(h.db.admin as never, {
+      nowMs: now,
+      locale: 'es',
+      siteUrl: null,
+      resolution: {
+        reason: null,
+        provider: {
+          name: 'console',
+          send: async (m) => {
+            sent.push(m);
+            return { ok: true };
+          },
+        },
+      },
+    });
+    expect(sent).toHaveLength(4);
+    for (const m of sent) {
+      const isA = m.to.includes('owner-a@a.test');
+      expect(m.to).toEqual([isA ? 'owner-a@a.test' : 'owner-b@b.test']);
+      const all = `${m.subject}\n${m.text}`;
+      if (isA) {
+        expect(all).not.toMatch(/222,22|pn-b|owner-b|2 de octubre/);
+      } else {
+        expect(all).not.toMatch(
+          /111,11|pn-a|owner-a|1 de octubre de 2026 está/
+        );
+      }
+    }
+    const aStatement = sent.find(
+      (m) => m.kind === 'statement_issued' && m.to.includes('owner-a@a.test')
+    )!;
+    expect(aStatement.text).toContain('US$ 111,11');
+    const aQuota = sent.find(
+      (m) => m.kind === 'service_quota_80' && m.to.includes('owner-a@a.test')
+    )!;
+    expect(aQuota.subject).toContain('pn-a');
+  });
+});

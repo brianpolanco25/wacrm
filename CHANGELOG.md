@@ -1199,6 +1199,12 @@ no-store`; before, a shared cache could keep them for five minutes.
   (`cliente.demo@example.com`), all with the public lab password `bcmp1994`.
   It runs on `supabase db reset --local`; CI and the migration replay skip it.
 
+### Billing emails (optional; migration required: 083, new variables)
+
+- **Migration required: `083_notification_emails.sql`. Apply it before the code.** Adds the `notification_emails` table (one row per billing notice, UNIQUE per account, kind and reference), with RLS on and no policies: only the service role reads or writes it. If the code goes first, each notice fails to reserve, counts in `emails.errors` and the rest of the cron answers as before.
+- `GET /api/billing/cron` can now email the owner and the admins of an account when a number of an account that pays Meta directly reaches 80 % and 100 % of its free service messages of the month, when a statement is issued and when it falls due unpaid. Each notice goes out once; a failed send is retried after an hour, three times at most. An email failure never changes the statements part of the run. The response gains an `emails` block.
+- Off by default. New variables `EMAIL_API_URL`, `EMAIL_API_KEY` and `EMAIL_FROM` (a generic HTTP provider, no new dependency) and `EMAIL_PROVIDER=console` for development; see `docs/docker.md`. To get the quota emails, schedule the billing cron even with no managed accounts.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same
