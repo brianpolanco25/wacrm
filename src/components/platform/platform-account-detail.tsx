@@ -43,6 +43,7 @@ import {
 } from './platform-provisioning';
 import { ImpersonationActions } from './impersonation-actions';
 import { CheckoutLinkNotice, ManagedPricingCard } from './platform-managed';
+import { PlatformStatements } from './platform-statements';
 import { useSubscriptionStatusLabel } from './subscription-status';
 import { AccountNumbersCard, type WhatsAppNumber } from './platform-numbers';
 
@@ -397,6 +398,10 @@ export function PlatformAccountDetail({
           paymentMethod={detail.paymentMethod ?? null}
           onChanged={load}
         />
+      ) : null}
+      {/* s10.4: the statements of a managed account. */}
+      {detail.metaBilling === 'managed' ? (
+        <PlatformStatements accountId={detail.accountId} onChanged={load} />
       ) : null}
       <AddMemberForm
         accountId={detail.accountId}

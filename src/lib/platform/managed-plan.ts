@@ -52,6 +52,7 @@ import {
   isLivePayPalSubscription,
   loadAssignablePlan,
   loadCurrentSubscription,
+  managedStatementAnchor,
   planPricingOf,
 } from './provisioning';
 
@@ -326,6 +327,11 @@ export async function assignManagedPlanViaPayPal(params: {
       payment_method: 'paypal',
       meta_billing: managed ? 'managed' : 'direct',
       meta_pricing: metaPricing,
+      // s10.4 (078): the statement's own cut-off, a month from the
+      // assignment — or the one it had if it was already managed, so
+      // what it used since its last cut-off is still billed. PayPal
+      // moves `current_period_end`, never this.
+      statement_period_end: managed ? managedStatementAnchor(current) : null,
     },
     { onConflict: 'account_id' }
   );

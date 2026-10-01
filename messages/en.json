@@ -2060,6 +2060,62 @@
       "title": "Your sign-up is not finished",
       "body": "This account has no paid plan yet, so nothing can be saved. Fill in the company details and buy a plan to get started.",
       "action": "Finish signing up"
+    },
+    "statementAlert": {
+      "dueTitle": "You have a statement due",
+      "dueBody": "Your statement for {period} of US$ {total} is due on {date}: {days, plural, =0 {it is due today} one {# day left} other {# days left}}. If it is not paid by then, the account becomes read-only.",
+      "dueBodyNoAmount": "The statement for {period} is due on {date}: {days, plural, =0 {it is due today} one {# day left} other {# days left}}. If it is not paid by then, the account becomes read-only. An administrator can see it under Billing.",
+      "lockedTitle": "Account read-only: a statement is overdue",
+      "lockedBody": "The statement for {period} is past due with no payment confirmed, so no messages or broadcasts are sent and the AI does not reply. Incoming messages keep arriving and nothing is deleted. As soon as the payment is confirmed, everything is back as it was.",
+      "view": "View statement",
+      "claim": "I have paid",
+      "claimed": "We told Cabbity CRM about your payment. We will confirm it as soon as it arrives.",
+      "claimErrors": {
+        "notOpen": "This statement is no longer pending.",
+        "forbidden": "Only an administrator can report the payment.",
+        "failed": "The notice could not be sent. Please try again."
+      }
+    },
+    "statements": {
+      "title": "Statements",
+      "subtitle": "What is billed at each cut-off: the package fee and the messages delivered beyond it.",
+      "taxNote": "Amounts in USD, before tax: the tax invoice is issued separately.",
+      "status": {
+        "issued": "Pending",
+        "paid": "Paid",
+        "void": "Void"
+      },
+      "dueOn": "Due on {date}",
+      "paidOn": "Paid on {date}",
+      "package": "{used} of {included} package messages used · {overage} over the package",
+      "col": {
+        "number": "Number",
+        "category": "Category",
+        "delivered": "Delivered",
+        "overage": "Overage",
+        "price": "Price per message",
+        "amount": "Amount"
+      },
+      "category": {
+        "service": "Service",
+        "utility": "Utility",
+        "marketing": "Marketing",
+        "authentication": "Authentication",
+        "authentication_international": "International authentication"
+      },
+      "uncategorized": "{count, plural, one {# message delivered without a Meta category: not billed.} other {# messages delivered without a Meta category: not billed.}}",
+      "fee": "Package fee",
+      "feeNone": "Charged by your PayPal subscription",
+      "overageTotal": "Overage",
+      "total": "Total due",
+      "claim": "I have paid",
+      "claimed": "We told Cabbity CRM about your payment. We will confirm it as soon as it arrives.",
+      "claimedOn": "You reported the payment on {date}. Pending confirmation.",
+      "claimErrors": {
+        "notOpen": "This statement is no longer pending.",
+        "forbidden": "Only an administrator can report the payment.",
+        "failed": "The notice could not be sent. Please try again."
+      }
     }
   },
   "Platform": {
@@ -2560,6 +2616,41 @@
       "modeManual": "Manual setup",
       "inCabbityPortfolio": "In the Cabbity CRM portfolio",
       "managedHint": "Cabbity CRM pays Meta for this account: its WABA lives in the Cabbity CRM Meta portfolio and each number is connected by hand with a system-user token."
+    },
+    "statements": {
+      "title": "Statements",
+      "help": "Issued by the monthly cut-off. The Meta cost counts only the messages Meta charged for; the difference with the total is the margin.",
+      "loading": "Loading statements…",
+      "loadFailed": "The statements could not be loaded.",
+      "none": "No statements yet.",
+      "status": {
+        "issued": "Pending",
+        "paid": "Paid",
+        "void": "Void"
+      },
+      "dueOn": "due on {date}",
+      "figures": "Fee {fee} · overage {overage} · Meta cost {cost} · margin {margin} · {messages} delivered, {overageMessages} over the package",
+      "uncategorized": "{count} delivered without a category, not billed ({detail})",
+      "claim": "The customer reported paying on {date}: {note}",
+      "paid": "Paid on {date}, reference {reference}",
+      "confirm": "Confirm payment",
+      "void": "Void",
+      "paidAtLabel": "Payment date",
+      "referenceLabel": "Reference",
+      "noteLabel": "Note",
+      "confirmHelp": "With no date, today is used. The account can write again and the next cut-off is one month after this statement’s, even when paid late.",
+      "confirmSubmit": "Confirm the payment",
+      "voidReasonLabel": "Reason for voiding",
+      "voidHelp": "At least {min} characters. The account can write again and the period is extended as on a confirmation.",
+      "voidSubmit": "Void the statement",
+      "confirmed": "Payment confirmed.",
+      "voided": "Statement voided.",
+      "errors": {
+        "notOpen": "That statement is no longer pending.",
+        "notFound": "That statement does not exist in this company.",
+        "invalid": "Check the data: {detail}",
+        "failed": "It could not be completed. Nothing was changed."
+      }
     }
   },
   "Developers": {

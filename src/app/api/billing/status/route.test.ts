@@ -135,8 +135,64 @@ describe('GET /api/billing/status (fase 3 §5)', () => {
       'graceUntil',
       'planId',
       'readOnly',
+      'statement',
       'status',
       'trialEndsAt',
     ]);
+  });
+
+  describe('the open statement of a managed account (s10.4)', () => {
+    const OPEN = {
+      id: 'st-1',
+      periodStart: '2026-10-01T00:00:00.000Z',
+      periodEnd: '2026-11-01T00:00:00.000Z',
+      totalUsd: 1069.9,
+      dueAt: '2026-11-04T00:00:00.000Z',
+    };
+
+    it('says which statement, its period and due date — not the amount to a viewer', async () => {
+      mocks.getEntitlements.mockResolvedValue({
+        planId: 'gestionado',
+        status: 'past_due',
+        limits: {},
+        features: [],
+        readOnly: false,
+        readOnlyReason: null,
+        trialEndsAt: null,
+        openStatement: OPEN,
+      });
+      const json = await (await GET()).json();
+      expect(json.statement).toEqual({
+        id: 'st-1',
+        periodStart: OPEN.periodStart,
+        periodEnd: OPEN.periodEnd,
+        dueAt: OPEN.dueAt,
+        totalUsd: null,
+      });
+    });
+
+    it('gives the amount to an admin, and the statement lock as its reason', async () => {
+      mocks.getCurrentAccount.mockResolvedValue({
+        supabase: supabaseMock(),
+        accountId: 'acct-1',
+        userId: 'user-1',
+        role: 'admin',
+        account: { id: 'acct-1', name: 'Acme' },
+      });
+      mocks.getEntitlements.mockResolvedValue({
+        planId: 'gestionado',
+        status: 'active',
+        limits: {},
+        features: [],
+        readOnly: true,
+        readOnlyReason: 'statement',
+        trialEndsAt: null,
+        openStatement: OPEN,
+      });
+      const json = await (await GET()).json();
+      expect(json.readOnly).toBe(true);
+      expect(json.readOnlyReason).toBe('statement');
+      expect(json.statement.totalUsd).toBe(1069.9);
+    });
   });
 });

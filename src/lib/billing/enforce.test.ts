@@ -94,6 +94,7 @@ function entitlements(overrides: Partial<Entitlements> = {}): Entitlements {
     trialEndsAt: null,
     metaBilling: 'direct',
     paymentMethod: null,
+    openStatement: null,
     ...overrides,
   };
 }

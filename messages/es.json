@@ -2060,6 +2060,62 @@
       "title": "Tu alta está incompleta",
       "body": "Esta cuenta aún no tiene un plan pagado, así que no se puede guardar nada. Completa los datos de la empresa y contrata un plan para empezar.",
       "action": "Completar el alta"
+    },
+    "statementAlert": {
+      "dueTitle": "Tienes un estado de cuenta pendiente",
+      "dueBody": "Tu estado de cuenta de {period} por US$ {total} vence el {date}: {days, plural, =0 {vence hoy} one {te queda # día} other {te quedan # días}}. Si no está pagado para entonces, la cuenta pasa a solo lectura.",
+      "dueBodyNoAmount": "El estado de cuenta de {period} vence el {date}: {days, plural, =0 {vence hoy} one {queda # día} other {quedan # días}}. Si no está pagado para entonces, la cuenta pasa a solo lectura. Un administrador puede verlo en Facturación.",
+      "lockedTitle": "Cuenta en solo lectura por estado de cuenta pendiente",
+      "lockedBody": "El estado de cuenta de {period} venció sin pago confirmado, así que no se envían mensajes ni difusiones y la IA no responde. Los mensajes entrantes siguen llegando y no se borra nada. En cuanto se confirme el pago, todo vuelve como estaba.",
+      "view": "Ver estado de cuenta",
+      "claim": "Ya pagué",
+      "claimed": "Avisamos a Cabbity CRM de tu pago. Lo confirmaremos en cuanto lo recibamos.",
+      "claimErrors": {
+        "notOpen": "Este estado de cuenta ya no está pendiente.",
+        "forbidden": "Solo un administrador puede avisar del pago.",
+        "failed": "No se pudo enviar el aviso. Inténtalo de nuevo."
+      }
+    },
+    "statements": {
+      "title": "Estados de cuenta",
+      "subtitle": "Lo que se factura en cada corte: la cuota del paquete y los mensajes entregados por encima de él.",
+      "taxNote": "Importes en USD, sin impuestos: la factura fiscal se emite aparte.",
+      "status": {
+        "issued": "Pendiente",
+        "paid": "Pagado",
+        "void": "Anulado"
+      },
+      "dueOn": "Vence el {date}",
+      "paidOn": "Pagado el {date}",
+      "package": "{used} de {included} mensajes del paquete usados · {overage} de excedente",
+      "col": {
+        "number": "Número",
+        "category": "Categoría",
+        "delivered": "Entregados",
+        "overage": "Excedente",
+        "price": "Precio por mensaje",
+        "amount": "Importe"
+      },
+      "category": {
+        "service": "Servicio",
+        "utility": "Utilidad",
+        "marketing": "Marketing",
+        "authentication": "Autenticación",
+        "authentication_international": "Autenticación internacional"
+      },
+      "uncategorized": "{count, plural, one {# mensaje entregado sin categoría de Meta: no se cobra.} other {# mensajes entregados sin categoría de Meta: no se cobran.}}",
+      "fee": "Cuota del paquete",
+      "feeNone": "Cobrada por tu suscripción de PayPal",
+      "overageTotal": "Excedente",
+      "total": "Total a pagar",
+      "claim": "Ya pagué",
+      "claimed": "Avisamos a Cabbity CRM de tu pago. Lo confirmaremos en cuanto lo recibamos.",
+      "claimedOn": "Avisaste del pago el {date}. Pendiente de confirmar.",
+      "claimErrors": {
+        "notOpen": "Este estado de cuenta ya no está pendiente.",
+        "forbidden": "Solo un administrador puede avisar del pago.",
+        "failed": "No se pudo enviar el aviso. Inténtalo de nuevo."
+      }
     }
   },
   "Platform": {
@@ -2560,6 +2616,41 @@
       "modeManual": "Configuración manual",
       "inCabbityPortfolio": "En el portafolio de Cabbity CRM",
       "managedHint": "Cabbity CRM le paga a Meta por esta cuenta: su WABA vive en el portafolio de Meta de Cabbity CRM y cada número se conecta a mano con un token de usuario de sistema."
+    },
+    "statements": {
+      "title": "Estados de cuenta",
+      "help": "Emitidos por el corte mensual. El costo de Meta solo cuenta los mensajes que Meta cobró; la diferencia con el total es el margen.",
+      "loading": "Cargando estados de cuenta…",
+      "loadFailed": "No se pudieron cargar los estados de cuenta.",
+      "none": "Todavía no hay estados de cuenta.",
+      "status": {
+        "issued": "Pendiente",
+        "paid": "Pagado",
+        "void": "Anulado"
+      },
+      "dueOn": "vence el {date}",
+      "figures": "Cuota {fee} · excedente {overage} · costo de Meta {cost} · margen {margin} · {messages} entregados, {overageMessages} de excedente",
+      "uncategorized": "{count} entregados sin categoría, no cobrados ({detail})",
+      "claim": "El cliente avisó que pagó el {date}: {note}",
+      "paid": "Pago del {date}, referencia {reference}",
+      "confirm": "Confirmar pago",
+      "void": "Anular",
+      "paidAtLabel": "Fecha del pago",
+      "referenceLabel": "Referencia",
+      "noteLabel": "Nota",
+      "confirmHelp": "Sin fecha, se toma hoy. La cuenta vuelve a escribir y el próximo corte queda un mes después del de este estado, aunque se pague tarde.",
+      "confirmSubmit": "Confirmar el pago",
+      "voidReasonLabel": "Motivo de la anulación",
+      "voidHelp": "Mínimo {min} caracteres. La cuenta vuelve a escribir y el periodo se extiende igual que al confirmar.",
+      "voidSubmit": "Anular el estado de cuenta",
+      "confirmed": "Pago confirmado.",
+      "voided": "Estado de cuenta anulado.",
+      "errors": {
+        "notOpen": "Ese estado de cuenta ya no está pendiente.",
+        "notFound": "Ese estado de cuenta no existe en esta empresa.",
+        "invalid": "Revisa los datos: {detail}",
+        "failed": "No se pudo completar. No se cambió nada."
+      }
     }
   },
   "Developers": {

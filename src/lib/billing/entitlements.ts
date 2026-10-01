@@ -78,7 +78,7 @@ export interface Entitlements {
    * telling a manually suspended tenant to go and pay would send them
    * to a checkout that changes nothing.
    */
-  readOnlyReason: 'subscription' | 'manual_hold' | null;
+  readOnlyReason: 'subscription' | 'manual_hold' | 'statement' | null;
   /** A platform operator suspended this account by hand (058). */
   manualHold: boolean;
   /** ISO timestamp, or null when the account is not on a dated trial. */
@@ -97,6 +97,23 @@ export interface Entitlements {
    * Null = whatever `provider` says — every row written before 077.
    */
   paymentMethod: PaymentMethod | null;
+  /**
+   * The oldest statement still `issued` of a managed account (078,
+   * s10.4), or null. Past its `dueAt` the account is read-only
+   * (`readOnlyReason = 'statement'`) whatever `status` says: the PayPal
+   * webhook renews the FEE of a PayPal account and puts its row back to
+   * `active`, and the overage still cuts off at three days (spec,
+   * decision 2). Always null for `direct` accounts.
+   */
+  openStatement: OpenStatement | null;
+}
+
+export interface OpenStatement {
+  id: string;
+  periodStart: string;
+  periodEnd: string;
+  totalUsd: number;
+  dueAt: string;
 }
 
 export type MetaBilling = 'direct' | 'managed';
@@ -287,26 +304,96 @@ export async function getEntitlements(
     status,
     subscription?.grace_until ?? null
   );
+  const metaBilling = asMetaBilling(subscription?.meta_billing);
+  // s10.4: only a managed account has statements, so a direct one (every
+  // account before fase 10) costs no extra query on the write path.
+  const openStatement =
+    metaBilling === 'managed' ? await loadOpenStatement(accountId) : null;
+  const statementLock = isStatementOverdue(openStatement);
 
   return {
     planId,
     status,
     limits: normalizeLimits(planRow.limits),
     features: Array.isArray(planRow.features) ? planRow.features : [],
-    readOnly: subscriptionLock || manualHold,
+    readOnly: subscriptionLock || manualHold || statementLock,
     // The hold wins the label when both apply: it is the one the tenant
     // cannot resolve on their own, so it is the one they must be told
-    // about.
+    // about. An overdue statement comes next: it says what to pay.
     readOnlyReason: manualHold
       ? 'manual_hold'
-      : subscriptionLock
-        ? 'subscription'
-        : null,
+      : statementLock
+        ? 'statement'
+        : subscriptionLock
+          ? 'subscription'
+          : null,
     manualHold,
     trialEndsAt: subscription?.trial_ends_at ?? null,
-    metaBilling: asMetaBilling(subscription?.meta_billing),
+    metaBilling,
     paymentMethod: asPaymentMethod(subscription?.payment_method),
+    openStatement,
   };
+}
+
+/** True once an open statement is past its due date (s10.4). */
+export function isStatementOverdue(
+  statement: Pick<OpenStatement, 'dueAt'> | null,
+  now: Date = new Date()
+): boolean {
+  if (!statement) return false;
+  const due = Date.parse(statement.dueAt);
+  return Number.isFinite(due) && due < now.getTime();
+}
+
+/**
+ * The oldest `issued` statement of the account (078), or null.
+ *
+ * A failed read (the 078 not applied yet, a blip) is logged and read as
+ * «none» rather than thrown: the status-based lock the cron already set
+ * (`past_due` + `grace_until`) still applies, and failing every write of
+ * a managed account over this extra check would be worse.
+ */
+async function loadOpenStatement(
+  accountId: string
+): Promise<OpenStatement | null> {
+  try {
+    const { data, error } = await supabaseAdmin()
+      .from('statements')
+      .select('id, period_start, period_end, total_usd, due_at')
+      .eq('account_id', accountId)
+      .eq('status', 'issued')
+      .order('due_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const row = data as {
+      id?: unknown;
+      period_start?: unknown;
+      period_end?: unknown;
+      total_usd?: unknown;
+      due_at?: unknown;
+    } | null;
+    if (
+      !row ||
+      typeof row.id !== 'string' ||
+      typeof row.due_at !== 'string' ||
+      typeof row.period_start !== 'string' ||
+      typeof row.period_end !== 'string'
+    ) {
+      return null;
+    }
+    const total = Number(row.total_usd);
+    return {
+      id: row.id,
+      periodStart: row.period_start,
+      periodEnd: row.period_end,
+      totalUsd: Number.isFinite(total) ? total : 0,
+      dueAt: row.due_at,
+    };
+  } catch (err) {
+    console.error('[entitlements] open statement lookup failed:', err);
+    return null;
+  }
 }
 
 /**

@@ -377,6 +377,8 @@ describe('manual', () => {
     const days = (end - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(27);
     expect(days).toBeLessThan(32);
+    // s10.4 (078): the statement anchor starts equal to the period.
+    expect(row.statement_period_end).toBe(row.current_period_end);
 
     // B untouched; PayPal never called.
     expect(JSON.stringify(sub(B))).toBe(bBefore);
@@ -395,6 +397,31 @@ describe('manual', () => {
       payment_method: 'manual',
       meta_billing: 'managed',
       meta_pricing: DEFAULT_PRICING,
+    });
+  });
+
+  it('re-assigning it to a company already managed keeps its cut-off anchor (and the period follows it)', async () => {
+    const ANCHOR = '2026-10-20T00:00:00.000Z';
+    Object.assign(sub(A), {
+      plan_id: 'gestionado',
+      provider: 'manual',
+      status: 'active',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: DEFAULT_PRICING,
+      current_period_end: ANCHOR,
+      statement_period_end: ANCHOR,
+    });
+    const res = await call({
+      planId: 'gestionado',
+      reason: REASON,
+      paymentMethod: 'manual',
+    });
+    expect(res.status).toBe(200);
+    expect(sub(A)).toMatchObject({
+      meta_billing: 'managed',
+      statement_period_end: ANCHOR,
+      current_period_end: ANCHOR,
     });
   });
 
@@ -522,6 +549,14 @@ describe('paypal', () => {
       }),
     ]);
 
+    // s10.4 (078): the statement anchor is a month from the assignment,
+    // set now; PayPal's own period end comes later with the webhook.
+    const anchor = Date.parse(sub(A).statement_period_end as string);
+    const anchorDays = (anchor - Date.now()) / 86_400_000;
+    expect(anchorDays).toBeGreaterThan(27);
+    expect(anchorDays).toBeLessThan(32);
+    expect(sub(A).current_period_end).toBeNull();
+
     // A is unpaid until PayPal confirms; B never moved.
     expect(sub(A)).toMatchObject({
       plan_id: 'gestionado',
@@ -544,6 +579,32 @@ describe('paypal', () => {
       meta_pricing: DEFAULT_PRICING,
       provider_subscription_id: 'I-NEW-1',
       paypal_plan_published: true,
+    });
+  });
+
+  it('re-assigning it to a company already managed keeps its cut-off anchor', async () => {
+    const ANCHOR = '2026-10-20T00:00:00.000Z';
+    Object.assign(sub(A), {
+      plan_id: 'gestionado',
+      provider: 'manual',
+      status: 'active',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: DEFAULT_PRICING,
+      current_period_end: ANCHOR,
+      statement_period_end: ANCHOR,
+    });
+    const res = await call({
+      planId: 'gestionado',
+      reason: REASON,
+      paymentMethod: 'paypal',
+    });
+    expect(res.status).toBe(200);
+    expect(sub(A)).toMatchObject({
+      provider: 'paypal',
+      status: 'incomplete',
+      meta_billing: 'managed',
+      statement_period_end: ANCHOR,
     });
   });
 
