@@ -1076,3 +1076,121 @@ describe('dispatchInboundToAiReply — plan entitlements (fase 3 §4/§5)', () =
     expect(billing.recordUsage).not.toHaveBeenCalled();
   });
 });
+
+describe('dispatchInboundToAiReply — free service quota (p11.3)', () => {
+  const exhausted = () => {
+    h.state.serviceCapAction = 'pause_ai';
+    h.state.quotaRows = [
+      { whatsapp_config_id: 'cfg-1', used: 1000, billable: 2 },
+    ];
+  };
+
+  it('reads the conversation number with the gate columns', async () => {
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.state.conversationSelectColumns).toContain('whatsapp_config_id');
+  });
+
+  it('pause_ai + exhausted number: no reservation, no model, no send, no usage (R9)', async () => {
+    exhausted();
+    h.state.conv = { ...h.state.conv, whatsapp_config_id: 'cfg-1' };
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.state.claimUpserts).toEqual([]);
+    expect(h.generateReply).not.toHaveBeenCalled();
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(billing.recordUsage).not.toHaveBeenCalled();
+    // The pause is not sticky: the conversation is not touched.
+    expect(h.state.updateAttempts).toBe(0);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('acct-1'));
+    info.mockRestore();
+  });
+
+  it('pause_ai + exhausted default number with a NULL-sealed thread also pauses (R12)', async () => {
+    exhausted();
+    h.state.conv = { ...h.state.conv, whatsapp_config_id: null };
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('every service-cap read is scoped to the dispatching account (CP3)', async () => {
+    exhausted();
+    h.state.conv = { ...h.state.conv, whatsapp_config_id: 'cfg-1' };
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    await dispatchInboundToAiReply(ARGS);
+    info.mockRestore();
+    expect(
+      h.state.capFilters.filter(
+        ([t, c]) =>
+          (t === 'accounts' && c === 'id') ||
+          ((t === 'subscriptions' || t === 'whatsapp_config') &&
+            c === 'account_id')
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        ['accounts', 'id', 'acct-1'],
+        ['subscriptions', 'account_id', 'acct-1'],
+        ['whatsapp_config', 'account_id', 'acct-1'],
+      ])
+    );
+    const quota = h.state.rpcCalls.find(
+      (c) => c.name === 'service_quota_usage'
+    );
+    expect((quota?.args as { p_account_id: string }).p_account_id).toBe(
+      'acct-1'
+    );
+  });
+
+  it('warn: replies as today and never asks for the count (R10)', async () => {
+    h.state.serviceCapAction = 'warn';
+    h.state.quotaRows = [
+      { whatsapp_config_id: 'cfg-1', used: 5000, billable: 4000 },
+    ];
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalledOnce();
+    expect(h.state.rpcCalls.some((c) => c.name === 'service_quota_usage')).toBe(
+      false
+    );
+  });
+
+  it('managed account: replies as today and never asks for the count (R10, A6)', async () => {
+    exhausted();
+    h.state.metaBilling = 'managed';
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalledOnce();
+    expect(h.state.rpcCalls.some((c) => c.name === 'service_quota_usage')).toBe(
+      false
+    );
+  });
+
+  it('pause_ai with the number under the free tier: replies (R10)', async () => {
+    h.state.serviceCapAction = 'pause_ai';
+    h.state.quotaRows = [
+      { whatsapp_config_id: 'cfg-1', used: 999, billable: 0 },
+    ];
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalledOnce();
+  });
+
+  it('pause_ai with no number to resolve: replies (R10)', async () => {
+    exhausted();
+    h.state.numbers = [];
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalledOnce();
+  });
+
+  it('the count failing fails open: the reply goes out (R11)', async () => {
+    exhausted();
+    h.state.quotaError = { message: 'boom' };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalledOnce();
+    expect(billing.recordUsage).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('[service-cap]'),
+      expect.anything()
+    );
+    warn.mockRestore();
+  });
+});

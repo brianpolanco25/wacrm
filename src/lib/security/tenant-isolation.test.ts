@@ -309,6 +309,7 @@ import * as waConfig from '@/app/api/whatsapp/config/route';
 import * as waConfigById from '@/app/api/whatsapp/config/[id]/route';
 import * as waEmbeddedSignup from '@/app/api/whatsapp/embedded-signup/route';
 import * as waPaymentStatus from '@/app/api/whatsapp/config/payment-status/route';
+import * as waServiceCap from '@/app/api/whatsapp/service-cap/route';
 import * as waTemplateById from '@/app/api/whatsapp/templates/[id]/route';
 import * as waTemplateSubmit from '@/app/api/whatsapp/templates/submit/route';
 import * as automationsCron from '@/app/api/automations/cron/route';
@@ -2705,6 +2706,42 @@ describe('/api/whatsapp/config', () => {
     expect(res.status).toBe(200);
     const a = h.db.rows('whatsapp_config').find((r) => r.id === 'cfg-a');
     expect(a?.meta_payment_status).toBe('ok');
+    expectBUnchanged(before);
+  });
+});
+
+// p11.3: the free service quota. The count runs with the service role
+// (message_charges is admin-only under RLS and the inbox banner is for
+// every member), so the session account in the RPC is all there is.
+describe('/api/whatsapp/service-cap', () => {
+  beforeEach(() => {
+    h.db.rpcHandlers.service_quota_usage = (args) =>
+      args.p_account_id === B
+        ? [{ whatsapp_config_id: 'cfg-b', used: 4000, billable: 3000 }]
+        : [];
+  });
+
+  it("A sees only its own number at 0 — never B's exhausted one", async () => {
+    const res = await waServiceCap.GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.numbers).toEqual([
+      expect.objectContaining({ id: 'cfg-a', used: 0, exhausted: false }),
+    ]);
+    expect(JSON.stringify(body)).not.toContain('cfg-b');
+    const calls = h.db.log.filter((e) => e.table === 'rpc:service_quota_usage');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args?.p_account_id).toBe(A);
+  });
+
+  it("PATCH writes A's setting and leaves B untouched", async () => {
+    const before = h.db.snapshot(B);
+    const res = await waServiceCap.PATCH(
+      req('PATCH', '/api/whatsapp/service-cap', { action: 'pause_ai' })
+    );
+    expect(res.status).toBe(200);
+    const a = h.db.rows('accounts').find((r) => r.id === A);
+    expect(a?.service_cap_action).toBe('pause_ai');
     expectBUnchanged(before);
   });
 });
