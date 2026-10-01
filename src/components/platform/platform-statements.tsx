@@ -418,20 +418,24 @@ function Reconciliation({
         <ul className="text-muted-foreground flex flex-col">
           {reconciliation.wabas.map((w) => (
             <li key={w.wabaId}>
-              {t('reconciliation.waba', {
-                waba: w.wabaId,
-                meta: usd(w.metaReportedCostUsd),
-                volume: w.volume,
-              })}
+              {w.metaReportedCostUsd === null
+                ? t('reconciliation.wabaNoData', { waba: w.wabaId })
+                : t('reconciliation.waba', {
+                    waba: w.wabaId,
+                    meta: usd(w.metaReportedCostUsd),
+                    volume: w.volume ?? 0,
+                  })}
             </li>
           ))}
         </ul>
       ) : null}
-      {reconciliation.partial && reconciliation.lastFetchedAt ? (
+      {reconciliation.partial ? (
         <p className="text-muted-foreground" data-reconciliation-partial>
-          {t('reconciliation.partial', {
-            date: formatDay(reconciliation.lastFetchedAt, locale),
-          })}
+          {reconciliation.lastFetchedAt
+            ? t('reconciliation.partial', {
+                date: formatDay(reconciliation.lastFetchedAt, locale),
+              })
+            : t('reconciliation.partialMissing')}
         </p>
       ) : null}
       <p className="text-muted-foreground">{t('reconciliation.adjust')}</p>

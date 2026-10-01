@@ -2714,7 +2714,9 @@
         "figures": "Conciliación con Meta: Meta reporta {meta} ({volume} mensajes) · nuestro cálculo {ours} · diferencia {difference}",
         "waba": "WABA {waba}: {meta} ({volume} mensajes)",
         "partial": "Dato de Meta incompleto: la última lectura es del {date}, antes del fin del periodo.",
-        "adjust": "Meta advierte que ese costo es aproximado y su factura es la que vale. Si hay diferencia, ajústala como línea manual en el siguiente estado de cuenta; aquí no se ajusta nada."
+        "adjust": "Meta advierte que ese costo es aproximado y su factura es la que vale. Si hay diferencia, ajústala como línea manual en el siguiente estado de cuenta; aquí no se ajusta nada.",
+        "wabaNoData": "WABA {waba}: sin dato de Meta",
+        "partialMissing": "Dato de Meta incompleto: algún WABA todavía no se ha podido leer."
       }
     }
   },

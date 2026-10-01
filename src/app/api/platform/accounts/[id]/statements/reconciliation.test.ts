@@ -121,6 +121,7 @@ beforeEach(() => {
       snap(B, '2026-10-03T00:00:00.000Z', 5000, 70000),
     ],
     impersonation_log: [],
+    whatsapp_config: [],
   });
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -151,7 +152,15 @@ describe('GET — reconciliation on the file', () => {
       metaReportedCostUsd: 295.5,
       differenceUsd: 4.5,
       volume: 200,
-      wabas: [{ wabaId: 'W-SHARED', metaReportedCostUsd: 295.5, volume: 200 }],
+      wabas: [
+        {
+          wabaId: 'W-SHARED',
+          metaReportedCostUsd: 295.5,
+          volume: 200,
+          lastFetchedAt: '2026-11-02T06:00:00.000Z',
+          partial: false,
+        },
+      ],
       lastFetchedAt: '2026-11-02T06:00:00.000Z',
       partial: false,
     });

@@ -6,11 +6,14 @@
 //   1. `sweepMetaReconciliation` — un barrido más de `GET /api/billing/cron`
 //      (mismo secreto, sin cron nuevo). Para cada cuenta
 //      `meta_billing = 'managed'` con un número conectado que tenga WABA y
-//      token, como mucho una vez al día (por `fetched_at`), pide a Graph
+//      token, como mucho una vez al día por WABA (por `fetched_at`; un
+//      WABA que falló se reintenta en la pasada siguiente), pide a Graph
 //      `pricing_analytics` del WABA —COST + VOLUME por PHONE y
 //      PRICING_CATEGORY, granularidad diaria, desde el día 1 del mes
 //      anterior (UTC) hasta ahora— y lo guarda en `meta_spend_snapshots`
-//      (084): una fila por día, número y categoría.
+//      (084): una fila por día, número y categoría. Cada bajada
+//      REEMPLAZA lo que la cuenta tenía de ese WABA en la ventana (borra y
+//      escribe): re-bajar nunca suma dos veces el mismo día.
 //
 //   2. `reconcileStatements` — para la ficha del superadmin: por cada
 //      estado de cuenta, la suma de `cost_usd` de los días de su periodo
@@ -70,9 +73,9 @@ const ERROR_MAX_LENGTH = 300;
 export interface ReconciliationSweep {
   /** Cuentas managed con al menos un número conectado con WABA y token. */
   scanned: number;
-  /** Cuentas cuyos WABA se bajaron y guardaron sin error. */
+  /** Cuentas cuyos WABA pendientes se bajaron y guardaron sin error. */
   fetched: number;
-  /** Bajadas hace menos de un día, o fuera del lote de esta pasada. */
+  /** Todos sus WABA leídos hace menos de un día, o fuera del lote. */
   skipped: number;
   /** Algún WABA de la cuenta falló (Meta, respuesta rara, token, base). */
   failed: number;
@@ -279,14 +282,17 @@ interface ConfigRow {
   display_phone_number: string | null;
 }
 
+/** Última bajada de un WABA de una cuenta (el gate es por cuenta+WABA). */
 async function lastFetchedAt(
   db: SupabaseClient,
-  accountId: string
+  accountId: string,
+  wabaId: string
 ): Promise<number | null> {
   const { data, error } = await db
     .from('meta_spend_snapshots')
     .select('fetched_at')
     .eq('account_id', accountId)
+    .eq('waba_id', wabaId)
     .order('fetched_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -344,6 +350,20 @@ async function fetchWaba(
       );
       return false;
     }
+
+    // Reemplaza, no suma: lo que esta cuenta guardó de este WABA en la
+    // ventana pedida se borra antes de escribir lo que Meta dice ahora.
+    // Si el casado PHONE → número cambió entre pasadas (número
+    // desconectado, reconectado con otra fila, otro display), la fila
+    // vieja con otro `whatsapp_config_id` no queda junto a la nueva.
+    const { error: deleteErr } = await db
+      .from('meta_spend_snapshots')
+      .delete()
+      .eq('account_id', accountId)
+      .eq('waba_id', wabaId)
+      .gte('period_start', window.start.toISOString())
+      .lte('period_start', window.end.toISOString());
+    if (deleteErr) throw deleteErr;
 
     const fetchedAt = now.toISOString();
     const rows =
@@ -431,16 +451,31 @@ export async function sweepMetaReconciliation(
 
   summary.scanned = byAccount.size;
 
-  // ¿A quién le toca? Los nunca bajados primero, luego los más viejos.
-  const due: { accountId: string; last: number | null }[] = [];
-  for (const accountId of byAccount.keys()) {
+  // ¿A quién le toca? El gate es por cuenta+WABA: un WABA que falló no
+  // gana `fetched_at` y se reintenta en la pasada siguiente aunque otro
+  // WABA de la misma cuenta se haya guardado. Una cuenta entra si alguno
+  // de sus WABA toca; solo se piden esos. Los nunca bajados primero.
+  const due: { accountId: string; wabas: string[]; last: number }[] = [];
+  for (const [accountId, wabas] of byAccount) {
     try {
-      const last = await lastFetchedAt(db, accountId);
-      if (last !== null && now.getTime() - last < RECONCILIATION_INTERVAL_MS) {
+      const dueWabas: string[] = [];
+      let oldest = Infinity;
+      for (const wabaId of wabas.keys()) {
+        const last = await lastFetchedAt(db, accountId, wabaId);
+        if (
+          last !== null &&
+          now.getTime() - last < RECONCILIATION_INTERVAL_MS
+        ) {
+          continue;
+        }
+        dueWabas.push(wabaId);
+        oldest = Math.min(oldest, last ?? -Infinity);
+      }
+      if (dueWabas.length === 0) {
         summary.skipped += 1;
         continue;
       }
-      due.push({ accountId, last });
+      due.push({ accountId, wabas: dueWabas, last: oldest });
     } catch (err) {
       summary.failed += 1;
       console.warn(
@@ -449,19 +484,20 @@ export async function sweepMetaReconciliation(
       );
     }
   }
-  due.sort((a, b) => (a.last ?? -Infinity) - (b.last ?? -Infinity));
+  due.sort((a, b) => a.last - b.last);
 
-  for (const [i, { accountId }] of due.entries()) {
+  for (const [i, { accountId, wabas }] of due.entries()) {
     if (i >= fetchLimit) {
       summary.skipped += 1;
       continue;
     }
+    const byWaba = byAccount.get(accountId) ?? new Map<string, ConfigRow[]>();
     let ok = true;
-    for (const [wabaId, configs] of byAccount.get(accountId) ?? []) {
+    for (const wabaId of wabas) {
       const stored = await fetchWaba(db, {
         accountId,
         wabaId,
-        configs,
+        configs: byWaba.get(wabaId) ?? [],
         now,
         fetchAnalytics,
       });
@@ -479,23 +515,41 @@ export async function sweepMetaReconciliation(
 
 export interface WabaReconciliation {
   wabaId: string;
-  /** Suma de `cost_usd` de Meta en el periodo, redondeada a centavos. */
-  metaReportedCostUsd: number;
-  volume: number;
+  /**
+   * Suma de `cost_usd` de Meta en el periodo, redondeada a centavos;
+   * `null` = sin dato de ese WABA en el periodo.
+   */
+  metaReportedCostUsd: number | null;
+  volume: number | null;
+  /** Última bajada de ESTE WABA; `null` si nunca se bajó. */
+  lastFetchedAt: string | null;
+  /** Este WABA no se ha leído después del fin del periodo. */
+  partial: boolean;
 }
 
 export interface StatementReconciliation {
-  /** `null` = sin dato de Meta para ese periodo. */
+  /** `null` = sin dato de Meta para ese periodo (ningún WABA). */
   metaReportedCostUsd: number | null;
   /** Nuestro `meta_cost_usd` − lo que reporta Meta; `null` sin dato. */
   differenceUsd: number | null;
   /** Mensajes que Meta reporta en el periodo; `null` sin dato. */
   volume: number | null;
   wabas: WabaReconciliation[];
-  /** Última bajada de la cuenta (cualquier WABA). */
+  /**
+   * La lectura más vieja entre los WABA del periodo; `null` si alguno no
+   * se ha leído nunca.
+   */
   lastFetchedAt: string | null;
-  /** La última bajada es anterior al fin del periodo: dato incompleto. */
+  /** Algún WABA del periodo no se ha leído después de su fin. */
   partial: boolean;
+}
+
+/** Un WABA de la cuenta y su última bajada. */
+export interface WabaReading {
+  wabaId: string;
+  lastFetchedAt: string | null;
+  /** Hoy tiene un número conectado: cuenta aunque no tenga filas. */
+  connected: boolean;
 }
 
 function round2(value: number): number {
@@ -516,31 +570,25 @@ interface SnapshotReadRow {
  * [día(period_start), día(period_end)) contiene su inicio: los periodos
  * anclados a media jornada se redondean al día UTC, así cada día cae en
  * un solo estado (hasta un día de desfase en cada borde, documentado).
+ *
+ * Los WABA del periodo son los que tienen filas en él y los que hoy
+ * tienen un número conectado. Cada uno es `partial` si su última bajada
+ * es anterior al fin del periodo (o no existe): un WABA que falló no se
+ * esconde detrás de otro que sí se leyó.
  */
 export function reconcileOne(
   statement: { periodStart: string; periodEnd: string; metaCostUsd: number },
   rows: SnapshotReadRow[],
-  lastFetchedAt: string | null
+  readings: WabaReading[]
 ): StatementReconciliation {
   const from = floorDayUtc(statement.periodStart);
   const to = floorDayUtc(statement.periodEnd);
+  const end = Date.parse(statement.periodEnd);
   const inPeriod = rows.filter((r) => {
     const at = Date.parse(r.period_start);
     return Number.isFinite(at) && at >= from && at < to;
   });
-  const partial =
-    lastFetchedAt === null ||
-    Date.parse(lastFetchedAt) < Date.parse(statement.periodEnd);
-  if (inPeriod.length === 0) {
-    return {
-      metaReportedCostUsd: null,
-      differenceUsd: null,
-      volume: null,
-      wabas: [],
-      lastFetchedAt,
-      partial,
-    };
-  }
+
   const byWaba = new Map<string, { cost: number; volume: number }>();
   for (const r of inPeriod) {
     const acc = byWaba.get(r.waba_id) ?? { cost: 0, volume: 0 };
@@ -548,13 +596,44 @@ export function reconcileOne(
     if (r.category !== NO_DATA_CATEGORY) acc.volume += Number(r.volume) || 0;
     byWaba.set(r.waba_id, acc);
   }
-  const wabas = [...byWaba.entries()]
-    .map(([wabaId, v]) => ({
-      wabaId,
-      metaReportedCostUsd: round2(v.cost),
-      volume: v.volume,
-    }))
-    .sort((a, b) => a.wabaId.localeCompare(b.wabaId));
+
+  const lastOf = new Map(readings.map((r) => [r.wabaId, r.lastFetchedAt]));
+  const relevant = new Set<string>([
+    ...byWaba.keys(),
+    ...readings.filter((r) => r.connected).map((r) => r.wabaId),
+  ]);
+  const wabas: WabaReconciliation[] = [...relevant]
+    .sort((a, b) => a.localeCompare(b))
+    .map((wabaId) => {
+      const last = lastOf.get(wabaId) ?? null;
+      const v = byWaba.get(wabaId);
+      return {
+        wabaId,
+        metaReportedCostUsd: v ? round2(v.cost) : null,
+        volume: v ? v.volume : null,
+        lastFetchedAt: last,
+        partial: last === null || Date.parse(last) < end,
+      };
+    });
+
+  const partial = wabas.length === 0 || wabas.some((w) => w.partial);
+  const lastFetchedAt =
+    wabas.length === 0 || wabas.some((w) => w.lastFetchedAt === null)
+      ? null
+      : wabas
+          .map((w) => w.lastFetchedAt as string)
+          .reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
+
+  if (inPeriod.length === 0) {
+    return {
+      metaReportedCostUsd: null,
+      differenceUsd: null,
+      volume: null,
+      wabas,
+      lastFetchedAt,
+      partial,
+    };
+  }
   const totalCost = [...byWaba.values()].reduce((s, v) => s + v.cost, 0);
   const volume = [...byWaba.values()].reduce((s, v) => s + v.volume, 0);
   return {
@@ -590,6 +669,9 @@ export async function reconcileStatements(
 
   const rows: SnapshotReadRow[] = [];
   for (let page = 0; ; page += 1) {
+    // `id` desempata: `period_start` se repite (varias categorías y
+    // números por día) y sin un orden total `.range()` puede repetir u
+    // omitir filas entre páginas.
     const { data, error } = await db
       .from('meta_spend_snapshots')
       .select('waba_id, period_start, category, volume, cost_usd, fetched_at')
@@ -597,6 +679,7 @@ export async function reconcileStatements(
       .gte('period_start', new Date(from).toISOString())
       .lt('period_start', new Date(to).toISOString())
       .order('period_start', { ascending: true })
+      .order('id', { ascending: true })
       .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
     if (error) throw error;
     const batch = (data ?? []) as SnapshotReadRow[];
@@ -604,10 +687,30 @@ export async function reconcileStatements(
     if (batch.length < PAGE_SIZE) break;
   }
 
-  const last = await lastFetchedAt(db, accountId);
-  const lastIso = last === null ? null : new Date(last).toISOString();
+  const { data: configs, error: configsErr } = await db
+    .from('whatsapp_config')
+    .select('waba_id')
+    .eq('account_id', accountId)
+    .eq('status', 'connected')
+    .not('waba_id', 'is', null);
+  if (configsErr) throw configsErr;
+  const connected = new Set(
+    ((configs ?? []) as { waba_id: string | null }[])
+      .map((c) => c.waba_id?.trim() ?? '')
+      .filter(Boolean)
+  );
+
+  const readings: WabaReading[] = [];
+  for (const wabaId of new Set([...rows.map((r) => r.waba_id), ...connected])) {
+    const last = await lastFetchedAt(db, accountId, wabaId);
+    readings.push({
+      wabaId,
+      lastFetchedAt: last === null ? null : new Date(last).toISOString(),
+      connected: connected.has(wabaId),
+    });
+  }
   for (const s of statements) {
-    out.set(s.id, reconcileOne(s, rows, lastIso));
+    out.set(s.id, reconcileOne(s, rows, readings));
   }
   return out;
 }

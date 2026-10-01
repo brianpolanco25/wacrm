@@ -429,7 +429,14 @@ describe('sweepMetaReconciliation — the billing cron sweep', () => {
     expect(writes.length).toBeGreaterThan(0);
     for (const w of writes) {
       expect(w.table).toBe('meta_spend_snapshots');
-      expect(w.op).toBe('upsert');
+      expect(['delete', 'upsert']).toContain(w.op);
+      if (w.op === 'delete') {
+        // The replace step: scoped to one account AND one WABA.
+        const cols = w.filters.map((f) => f.column);
+        expect(cols).toContain('account_id');
+        expect(cols).toContain('waba_id');
+        continue;
+      }
       const accounts = new Set((w.payload ?? []).map((r) => r.account_id));
       expect(accounts.size).toBe(1);
     }
@@ -451,6 +458,189 @@ describe('sweepMetaReconciliation — the billing cron sweep', () => {
         .rows('meta_spend_snapshots')
         .filter((r) => r.whatsapp_config_id === 'num-a1')
     ).toHaveLength(1);
+  });
+
+  it('re-downloading REPLACES the window: the same day matched to another number is not summed twice', async () => {
+    const day = point(3, { cost: 7.4, volume: 100 });
+    await sweepMetaReconciliation(db.admin as never, {
+      now: NOW,
+      fetchAnalytics: graph({ 'W-A': analytics([day]) }).fn,
+    });
+    expect(snapshotsOf(A)).toEqual([
+      expect.objectContaining({ whatsapp_config_id: 'num-a1', cost_usd: 7.4 }),
+    ]);
+    // The number changes its display: Meta's PHONE no longer matches it,
+    // so the same day and category now lands with config NULL.
+    db
+      .rows('whatsapp_config')
+      .find((r) => r.id === 'num-a1')!.display_phone_number = '+1 809-555-9999';
+    const later = new Date(NOW.getTime() + 25 * 60 * 60_000);
+    await sweepMetaReconciliation(db.admin as never, {
+      now: later,
+      fetchAnalytics: graph({ 'W-A': analytics([day]) }).fn,
+    });
+    expect(snapshotsOf(A)).toEqual([
+      expect.objectContaining({ whatsapp_config_id: null, cost_usd: 7.4 }),
+    ]);
+    const out = await reconcileStatements(db.admin as never, A, [
+      {
+        id: 'st',
+        periodStart: '2026-10-01T00:00:00.000Z',
+        periodEnd: '2026-11-01T00:00:00.000Z',
+        metaCostUsd: 7.4,
+      },
+    ]);
+    expect(out.get('st')).toMatchObject({
+      metaReportedCostUsd: 7.4,
+      differenceUsd: 0,
+    });
+  });
+
+  it('replacing never touches days outside the window, another WABA or another account', async () => {
+    db.rows('meta_spend_snapshots').push(
+      {
+        id: 'old-a',
+        account_id: A,
+        whatsapp_config_id: null,
+        waba_id: 'W-A',
+        period_start: '2026-09-20T00:00:00.000Z',
+        period_end: '2026-09-21T00:00:00.000Z',
+        category: 'marketing',
+        volume: 1,
+        cost_usd: 1,
+        fetched_at: '2026-09-21T00:00:00.000Z',
+        raw: {},
+      },
+      {
+        id: 'other-waba-a',
+        account_id: A,
+        whatsapp_config_id: null,
+        waba_id: 'W-OLD',
+        period_start: '2026-10-05T00:00:00.000Z',
+        period_end: '2026-10-06T00:00:00.000Z',
+        category: 'marketing',
+        volume: 1,
+        cost_usd: 1,
+        fetched_at: '2026-10-06T00:00:00.000Z',
+        raw: {},
+      },
+      {
+        id: 'b-same-waba-id',
+        account_id: B,
+        whatsapp_config_id: null,
+        waba_id: 'W-A',
+        period_start: '2026-10-05T00:00:00.000Z',
+        period_end: '2026-10-06T00:00:00.000Z',
+        category: 'marketing',
+        volume: 1,
+        cost_usd: 1,
+        fetched_at: NOW.toISOString(),
+        raw: {},
+      }
+    );
+    await sweepMetaReconciliation(db.admin as never, {
+      now: NOW,
+      fetchAnalytics: graph({
+        'W-A': analytics([point(4)]),
+        'W-B': analytics([point(0, { phone_number: '18095550002' })]),
+      }).fn,
+    });
+    const ids = db.rows('meta_spend_snapshots').map((r) => r.id);
+    expect(ids).toEqual(
+      expect.arrayContaining(['old-a', 'other-waba-a', 'b-same-waba-id'])
+    );
+  });
+
+  it('the once-a-day gate is per WABA: with two WABAs, the one that failed is retried next run, the other is not re-asked', async () => {
+    db.rows('whatsapp_config').push({
+      id: 'num-a2',
+      account_id: A,
+      status: 'connected',
+      waba_id: 'W-A2',
+      access_token: encrypt('token-a2'),
+      display_phone_number: '+1 809-555-0011',
+    });
+    const first = graph({
+      'W-A': analytics([point(0)]),
+      'W-A2': new Error('timeout'),
+      'W-B': analytics([point(0, { phone_number: '18095550002' })]),
+    });
+    const s1 = await sweepMetaReconciliation(db.admin as never, {
+      now: NOW,
+      fetchAnalytics: first.fn,
+    });
+    expect(s1).toEqual({ scanned: 2, fetched: 1, skipped: 0, failed: 1 });
+
+    const second = graph({
+      'W-A2': analytics([point(0, { phone_number: '18095550011', cost: 2 })]),
+    });
+    const s2 = await sweepMetaReconciliation(db.admin as never, {
+      now: new Date(NOW.getTime() + 60 * 60_000),
+      fetchAnalytics: second.fn,
+    });
+    expect(second.calls.map((c) => c.wabaId)).toEqual(['W-A2']);
+    expect(s2).toEqual({ scanned: 2, fetched: 1, skipped: 1, failed: 0 });
+    expect(snapshotsOf(A).filter((r) => r.waba_id === 'W-A2')).toEqual([
+      expect.objectContaining({ whatsapp_config_id: 'num-a2' }),
+    ]);
+  });
+
+  it('partial per WABA: one WABA read after the period end, the other never read → the statement is partial', async () => {
+    db.rows('whatsapp_config').push({
+      id: 'num-a2',
+      account_id: A,
+      status: 'connected',
+      waba_id: 'W-A2',
+      access_token: encrypt('token-a2'),
+      display_phone_number: '+1 809-555-0011',
+    });
+    await sweepMetaReconciliation(db.admin as never, {
+      now: NOW,
+      fetchAnalytics: graph({
+        'W-A': analytics([point(0)]),
+        'W-A2': new Error('timeout'),
+      }).fn,
+    });
+    const out = await reconcileStatements(db.admin as never, A, [
+      {
+        id: 'st',
+        periodStart: '2026-10-01T00:00:00.000Z',
+        periodEnd: '2026-11-01T00:00:00.000Z',
+        metaCostUsd: 7.4,
+      },
+    ]);
+    const r = out.get('st')!;
+    expect(r.partial).toBe(true);
+    expect(r.lastFetchedAt).toBeNull();
+    expect(r.wabas).toEqual([
+      expect.objectContaining({ wabaId: 'W-A', partial: false }),
+      expect.objectContaining({
+        wabaId: 'W-A2',
+        metaReportedCostUsd: null,
+        lastFetchedAt: null,
+        partial: true,
+      }),
+    ]);
+  });
+
+  it('pagination of the file has a unique tie-breaker (period_start, then id)', async () => {
+    await reconcileStatements(db.admin as never, A, [
+      {
+        id: 'st',
+        periodStart: '2026-10-01T00:00:00.000Z',
+        periodEnd: '2026-11-01T00:00:00.000Z',
+        metaCostUsd: 0,
+      },
+    ]);
+    // The fake records filters, not orders: check the source instead.
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(
+      new URL('./meta-reconciliation.ts', import.meta.url),
+      'utf8'
+    );
+    expect(src).toMatch(
+      /\.order\('period_start', \{ ascending: true \}\)\s*\.order\('id', \{ ascending: true \}\)\s*\.range\(/
+    );
   });
 
   it('the default Graph call: GET the WABA with the pricing_analytics expansion, bearer token, nothing in the URL', async () => {
@@ -553,8 +743,20 @@ describe('reconcileOne / reconcileStatements — the operator file', () => {
       differenceUsd: 5.76,
       volume: 6250,
       wabas: [
-        { wabaId: 'W-A', metaReportedCostUsd: 510.5, volume: 6200 },
-        { wabaId: 'W-A2', metaReportedCostUsd: 4, volume: 50 },
+        {
+          wabaId: 'W-A',
+          metaReportedCostUsd: 510.5,
+          volume: 6200,
+          lastFetchedAt: '2026-11-02T00:00:00.000Z',
+          partial: false,
+        },
+        {
+          wabaId: 'W-A2',
+          metaReportedCostUsd: 4,
+          volume: 50,
+          lastFetchedAt: '2026-11-02T00:00:00.000Z',
+          partial: false,
+        },
       ],
       lastFetchedAt: '2026-11-02T00:00:00.000Z',
       partial: false,
@@ -579,7 +781,10 @@ describe('reconcileOne / reconcileStatements — the operator file', () => {
       metaReportedCostUsd: null,
       differenceUsd: null,
       volume: null,
-      wabas: [],
+      // W-A has a connected number: listed, without data of its own.
+      wabas: [
+        expect.objectContaining({ wabaId: 'W-A', metaReportedCostUsd: null }),
+      ],
     });
   });
 
@@ -596,7 +801,13 @@ describe('reconcileOne / reconcileStatements — the operator file', () => {
           fetched_at: '2026-10-20T06:00:00.000Z',
         },
       ],
-      '2026-10-20T06:00:00.000Z'
+      [
+        {
+          wabaId: 'W-A',
+          lastFetchedAt: '2026-10-20T06:00:00.000Z',
+          connected: true,
+        },
+      ]
     );
     expect(r).toMatchObject({
       metaReportedCostUsd: 0,
@@ -626,7 +837,13 @@ describe('reconcileOne / reconcileStatements — the operator file', () => {
         metaCostUsd: 2,
       },
       rows,
-      '2026-12-01T00:00:00.000Z'
+      [
+        {
+          wabaId: 'W-A',
+          lastFetchedAt: '2026-12-01T00:00:00.000Z',
+          connected: true,
+        },
+      ]
     );
     const second = reconcileOne(
       {
@@ -635,7 +852,13 @@ describe('reconcileOne / reconcileStatements — the operator file', () => {
         metaCostUsd: 1,
       },
       rows,
-      '2026-12-01T00:00:00.000Z'
+      [
+        {
+          wabaId: 'W-A',
+          lastFetchedAt: '2026-12-01T00:00:00.000Z',
+          connected: true,
+        },
+      ]
     );
     expect(first).toMatchObject({ metaReportedCostUsd: 2, differenceUsd: 0 });
     expect(second).toMatchObject({

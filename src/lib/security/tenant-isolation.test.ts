@@ -4737,75 +4737,79 @@ describe('statements (s10.4, service role)', () => {
         )
     );
     vi.stubGlobal('fetch', graph);
-    h.db.rows('meta_spend_snapshots');
-    const subA = h.db.rows('subscriptions').find((r) => r.account_id === A)!;
-    Object.assign(subA, {
-      plan_id: 'gestionado',
-      provider: 'manual',
-      payment_method: 'manual',
-      meta_billing: 'managed',
-      meta_pricing: PRICING,
-      current_period_end: '2026-01-01T00:00:00.000Z',
-      statement_period_end: '2026-01-01T00:00:00.000Z',
-    });
-    // B delivered too — none of it may end up on A's statement.
-    h.db.rows('message_charges').push(
-      {
-        id: 'mc-b',
-        account_id: B,
-        wamid: 'wamid.b',
-        whatsapp_config_id: 'cfg-B',
-        recipient_phone: '18095550000',
-        pricing_category: 'marketing',
-        pricing_billable: true,
-        status: 'delivered',
-        delivered_at: '2025-12-15T00:00:00.000Z',
-      },
-      {
-        id: 'mc-a',
-        account_id: A,
-        wamid: 'wamid.a',
-        whatsapp_config_id: 'cfg-A',
-        recipient_phone: '18095550000',
-        pricing_category: 'marketing',
-        pricing_billable: true,
-        status: 'delivered',
-        delivered_at: '2025-12-16T00:00:00.000Z',
-      }
-    );
-    h.db.rows('meta_rates').push({
-      market: 'rest_of_latam',
-      category: 'marketing',
-      usd_per_message: '0.07400',
-      effective_from: '2025-01-01',
-    });
-    h.db.rows('meta_market_countries').push({
-      country_code: 'DO',
-      market: 'rest_of_latam',
-    });
-    h.db.rows('statements');
-    const beforeB = h.db.snapshot(B);
+    try {
+      h.db.rows('meta_spend_snapshots');
+      const subA = h.db.rows('subscriptions').find((r) => r.account_id === A)!;
+      Object.assign(subA, {
+        plan_id: 'gestionado',
+        provider: 'manual',
+        payment_method: 'manual',
+        meta_billing: 'managed',
+        meta_pricing: PRICING,
+        current_period_end: '2026-01-01T00:00:00.000Z',
+        statement_period_end: '2026-01-01T00:00:00.000Z',
+      });
+      // B delivered too — none of it may end up on A's statement.
+      h.db.rows('message_charges').push(
+        {
+          id: 'mc-b',
+          account_id: B,
+          wamid: 'wamid.b',
+          whatsapp_config_id: 'cfg-B',
+          recipient_phone: '18095550000',
+          pricing_category: 'marketing',
+          pricing_billable: true,
+          status: 'delivered',
+          delivered_at: '2025-12-15T00:00:00.000Z',
+        },
+        {
+          id: 'mc-a',
+          account_id: A,
+          wamid: 'wamid.a',
+          whatsapp_config_id: 'cfg-A',
+          recipient_phone: '18095550000',
+          pricing_category: 'marketing',
+          pricing_billable: true,
+          status: 'delivered',
+          delivered_at: '2025-12-16T00:00:00.000Z',
+        }
+      );
+      h.db.rows('meta_rates').push({
+        market: 'rest_of_latam',
+        category: 'marketing',
+        usd_per_message: '0.07400',
+        effective_from: '2025-01-01',
+      });
+      h.db.rows('meta_market_countries').push({
+        country_code: 'DO',
+        market: 'rest_of_latam',
+      });
+      h.db.rows('statements');
+      const beforeB = h.db.snapshot(B);
 
-    const res = await billingCron.GET(
-      req('GET', '/api/billing/cron', undefined, {
-        'x-cron-secret': 'billing-secret',
-      })
-    );
-    expect(res.status).toBe(200);
-    expectNoBIds(await res.json());
-    const issued = h.db.rows('statements');
-    expect(issued).toHaveLength(1);
-    expect(issued[0]).toMatchObject({ account_id: A, messages_total: 1 });
-    expect(subA).toMatchObject({ status: 'past_due' });
-    // Only A's WABA was asked, and only A got a snapshot.
-    expect(graph).toHaveBeenCalledTimes(1);
-    for (const [url] of graph.mock.calls as unknown as [string][]) {
-      expect(url).not.toContain('waba-b');
+      const res = await billingCron.GET(
+        req('GET', '/api/billing/cron', undefined, {
+          'x-cron-secret': 'billing-secret',
+        })
+      );
+      expect(res.status).toBe(200);
+      expectNoBIds(await res.json());
+      const issued = h.db.rows('statements');
+      expect(issued).toHaveLength(1);
+      expect(issued[0]).toMatchObject({ account_id: A, messages_total: 1 });
+      expect(subA).toMatchObject({ status: 'past_due' });
+      // Only A's WABA was asked, and only A got a snapshot.
+      expect(graph).toHaveBeenCalledTimes(1);
+      for (const [url] of graph.mock.calls as unknown as [string][]) {
+        expect(url).not.toContain('waba-b');
+      }
+      for (const row of h.db.rows('meta_spend_snapshots')) {
+        expect(row.account_id).toBe(A);
+      }
+      expectBUnchanged(beforeB);
+    } finally {
+      // Even if an assertion above fails, the mock does not leak.
+      vi.unstubAllGlobals();
     }
-    for (const row of h.db.rows('meta_spend_snapshots')) {
-      expect(row.account_id).toBe(A);
-    }
-    vi.unstubAllGlobals();
-    expectBUnchanged(beforeB);
   });
 });

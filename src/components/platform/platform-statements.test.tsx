@@ -122,8 +122,20 @@ describe('PlatformStatements — reconciliation with Meta (s10.7)', () => {
       differenceUsd: 5.76,
       volume: 6250,
       wabas: [
-        { wabaId: 'W-1', metaReportedCostUsd: 510.5, volume: 6200 },
-        { wabaId: 'W-2', metaReportedCostUsd: 4, volume: 50 },
+        {
+          wabaId: 'W-1',
+          metaReportedCostUsd: 510.5,
+          volume: 6200,
+          lastFetchedAt: '2026-10-20T06:00:00.000Z',
+          partial: true,
+        },
+        {
+          wabaId: 'W-2',
+          metaReportedCostUsd: 4,
+          volume: 50,
+          lastFetchedAt: '2026-11-02T06:00:00.000Z',
+          partial: false,
+        },
       ],
       lastFetchedAt: '2026-10-20T06:00:00.000Z',
       partial: true,
@@ -190,6 +202,38 @@ describe('PlatformStatements — reconciliation with Meta (s10.7)', () => {
       <PlatformStatements accountId={ACCOUNT} initial={[PAID]} />
     );
     expect(absent).not.toContain('data-reconciliation');
+  });
+
+  it('a WABA without data is named as such, and a WABA never read says the data is incomplete', () => {
+    const html = render(
+      <PlatformStatements
+        accountId={ACCOUNT}
+        initial={[
+          {
+            ...WITH_META,
+            reconciliation: {
+              ...WITH_META.reconciliation!,
+              lastFetchedAt: null,
+              partial: true,
+              wabas: [
+                WITH_META.reconciliation!.wabas[0],
+                {
+                  wabaId: 'W-9',
+                  metaReportedCostUsd: null,
+                  volume: null,
+                  lastFetchedAt: null,
+                  partial: true,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    );
+    expect(html).toContain('WABA W-9: sin dato de Meta');
+    expect(html).toContain(
+      es.Platform.statements.reconciliation.partialMissing
+    );
   });
 
   it('is translated in en', () => {

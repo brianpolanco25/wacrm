@@ -533,14 +533,18 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   ```
 
   The same run also reconciles with Meta (migration 084): at most once a
-  day per managed account with a connected number (WABA id and token),
+  day per WABA of each managed account with a connected number (WABA id
+  and token; a WABA that failed is retried on the next run even if
+  another WABA of the account was stored),
   it asks Graph for the WABA's `pricing_analytics` from the first day of
   the previous month (UTC) until now and stores one row per day, number
-  and category in `meta_spend_snapshots`. The operator's statement card
+  and category in `meta_spend_snapshots`, replacing what that account
+  had stored for that WABA in the window (re-downloading never counts a
+  day twice). The operator's statement card
   shows the difference between our Meta cost and Meta's. Its counts
   travel in a `reconciliation` block (`scanned`, `fetched`, `skipped`,
-  `failed`); `skipped` is an account already read in the last 24 hours
-  or beyond the batch of 10 per run. No new variable.
+  `failed`); `skipped` is an account whose WABAs were all read in the
+  last 24 hours, or beyond the batch of 10 per run. No new variable.
 
   **Unverified assumption** (written without network access): the call
   is
@@ -551,5 +555,8 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   `volume`, a negative figure — stores nothing for that WABA (it counts
   as `failed` and is retried on the next run) and the statement says
   «no Meta data»; it never makes the cron fail. An empty `data` is
-  stored as a zero mark for the day. Meta calls this cost approximate:
-  its invoice is what counts.
+  stored as a zero mark for the day. A `paging` cursor (`paging.next`)
+  in the answer is NOT followed: when checking the format against a real
+  WABA, look for it; if Meta pages `pricing_analytics`, the stored cost
+  would be incomplete. Meta calls this cost approximate: its invoice is
+  what counts.

@@ -190,6 +190,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   delete process.env.BILLING_CRON_SECRET;
 });
 
@@ -470,7 +471,7 @@ describe('the cut-off', () => {
 describe('the reconciliation with Meta (s10.7)', () => {
   it('the response carries the `reconciliation` block; managed WABAs are fetched (Graph mocked), the direct one is not', async () => {
     const { encrypt } = await import('@/lib/whatsapp/encryption');
-    process.env.ENCRYPTION_KEY = 'b'.repeat(64);
+    vi.stubEnv('ENCRYPTION_KEY', 'b'.repeat(64));
     for (const cfg of h.db.rows('whatsapp_config')) {
       cfg.status = 'connected';
       cfg.waba_id = `W-${cfg.account_id}`;
