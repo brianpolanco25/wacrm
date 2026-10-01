@@ -309,8 +309,9 @@ describe('isAiPausedByServiceCap (R9–R13)', () => {
         ? []
         : [{ whatsapp_config_id: 'cfg-A1', used: 1000, billable: 1 }];
     const client = makeClient();
-    const origRpc = (client as unknown as { rpc: Function }).rpc;
-    (client as unknown as { rpc: Function }).rpc = (
+    type RpcFn = (name: string, args: Record<string, unknown>) => unknown;
+    const origRpc = (client as unknown as { rpc: RpcFn }).rpc;
+    (client as unknown as { rpc: RpcFn }).rpc = (
       name: string,
       args: Record<string, unknown>
     ) => {
