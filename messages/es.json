@@ -1932,6 +1932,36 @@
       "reindex": "Reindexar",
       "reindexTooltip": "Volver a generar los embeddings de todos los documentos (por ejemplo, tras añadir una clave)",
       "loading": "Cargando…"
+    },
+    "managedSetup": {
+      "title": "Alta del número en el portafolio de Cabbity CRM",
+      "description": "Esta cuenta es gestionada: Cabbity CRM le paga a Meta, así que el WABA del cliente se crea en el portafolio de Meta de Cabbity CRM y el número se conecta con la configuración manual, no con el diálogo de Meta. Los cuatro primeros pasos son trámites en Meta, no en el CRM.",
+      "inMeta": "Trámite en Meta: verificar en el Business Manager.",
+      "inCrm": "En el CRM, en esta pantalla.",
+      "localOnly": "Las casillas son solo una ayuda en este navegador: no se guardan y se vacían al recargar. El CRM no comprueba ninguno de estos pasos en Meta.",
+      "tokenNote": "Un token de usuario de sistema no caduca: el CRM no intenta renovarlo ni avisa de su caducidad. Si se revoca en Meta, hay que generar otro y volver a pegarlo aquí.",
+      "steps": {
+        "waba": {
+          "title": "Crear el WABA en el Business Manager de Cabbity CRM",
+          "body": "En el portafolio de Meta de Cabbity CRM (no en el del cliente), crea una cuenta de WhatsApp Business para esta empresa. Su método de pago debe ser el de Cabbity CRM, porque es Cabbity CRM quien le paga a Meta. La propiedad del WABA va por contrato."
+        },
+        "number": {
+          "title": "Registrar el número",
+          "body": "Añade el número del cliente a ese WABA y verifícalo con el código que envía Meta. Ten a mano el teléfono del cliente para recibir el código."
+        },
+        "token": {
+          "title": "Generar el token de usuario de sistema (permanente)",
+          "body": "En la configuración del negocio de Cabbity CRM, usa un usuario de sistema con acceso a ese WABA y genera un token sin caducidad con los permisos de WhatsApp (whatsapp_business_messaging y whatsapp_business_management). Guárdalo: Meta lo muestra una sola vez."
+        },
+        "displayName": {
+          "title": "Verificación del nombre visible",
+          "body": "Envía a revisión el nombre visible del número y espera la aprobación de Meta. Mientras no esté aprobado, el número puede enviar con restricciones."
+        },
+        "paste": {
+          "title": "Pegar los datos en el CRM",
+          "body": "Pulsa «{addNumber}» y, en «{manualSetup}», pega el id del número en «{phoneNumberId}», el id del WABA en «{wabaId}» y el token de usuario de sistema en «{accessToken}». Guarda y usa «{testConnection}»."
+        }
+      }
     }
   },
   "Billing": {
@@ -2518,6 +2548,18 @@
         "failed": "No se pudo guardar el precio. No se cambió nada.",
         "checkoutInProgress": "El propietario ya aprobó el pago en PayPal: espera a que PayPal lo confirme. No se cambió nada."
       }
+    },
+    "numbers": {
+      "wabaId": "Id del WABA",
+      "phoneNumberId": "Id del número",
+      "copy": "Copiar {what}",
+      "copied": "Copiado al portapapeles",
+      "copyFailed": "No se pudo copiar",
+      "missing": "sin dato",
+      "modeEmbedded": "Conectado con el diálogo de Meta (Embedded Signup)",
+      "modeManual": "Configuración manual",
+      "inCabbityPortfolio": "En el portafolio de Cabbity CRM",
+      "managedHint": "Cabbity CRM le paga a Meta por esta cuenta: su WABA vive en el portafolio de Meta de Cabbity CRM y cada número se conecta a mano con un token de usuario de sistema."
     }
   },
   "Developers": {

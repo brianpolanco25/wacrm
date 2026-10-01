@@ -263,3 +263,90 @@ describe('renewExpiringTokens', () => {
     expect(printed).toContain('Invalid OAuth access token.');
   });
 });
+
+// ---------------------------------------------------------------------------
+// s10.6: a managed number lives in Cabbity's own Meta portfolio and is
+// connected by hand with a system-user token, which never expires. Such a
+// config has no `token_expires_at`, and the sweep must leave it alone
+// without a warning: no Meta call, no write, no console line, not counted.
+// ---------------------------------------------------------------------------
+
+describe('renewExpiringTokens and permanent (system-user) tokens (s10.6)', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('skips a manual config without expiry silently: no call, no write, no warning', async () => {
+    const { db, supabase } = client([
+      row({
+        id: 'managed-manual',
+        provisioned_via: 'manual',
+        access_token: 'enc:EAAB-system-user',
+        token_expires_at: null,
+      }),
+    ]);
+
+    const result = await sweep(supabase);
+
+    expect(result).toEqual({
+      enabled: true,
+      scanned: 0,
+      renewed: 0,
+      failed: 0,
+      skipped: 0,
+    });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(db.log.filter((e) => e.op === 'update')).toEqual([]);
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    const saved = db.rows('whatsapp_config')[0]!;
+    expect(saved.access_token).toBe('enc:EAAB-system-user');
+    expect(saved.token_renewal_attempted_at).toBeNull();
+    expect(saved.token_renewal_error).toBeNull();
+  });
+
+  it('drops a row without expiry even if one ever slips past the query filter', async () => {
+    // A client that ignores every filter and hands back whatever it holds:
+    // the in-code gate, not the SQL one, is what is pinned here.
+    const rows: Row[] = [
+      row({ id: 'permanent', token_expires_at: null }),
+      row({ id: 'due', token_expires_at: iso(3 * DAY) }),
+    ];
+    const updates: string[] = [];
+    const builder = {
+      select: () => builder,
+      eq: () => builder,
+      not: () => builder,
+      lte: () => builder,
+      order: () => builder,
+      limit: () => Promise.resolve({ data: rows, error: null }),
+      update: () => ({
+        eq: (_col: string, id: string) => {
+          updates.push(id);
+          return Promise.resolve({ error: null });
+        },
+      }),
+    };
+    const supabase = { from: () => builder } as unknown as SupabaseClient;
+    refresh.mockResolvedValue({
+      accessToken: 'EAAB-fresh',
+      expiresAt: iso(60 * DAY),
+    });
+
+    const result = await sweep(supabase);
+
+    expect(result.scanned).toBe(1);
+    expect(result.renewed).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(updates).toEqual(['due']);
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+});

@@ -18,6 +18,8 @@
 // of the time.
 //
 // Per row, in order:
+//   0. ignore rows without `token_expires_at` (permanent system-user
+//      tokens, s10.6) — no warning, no write, not even counted;
 //   1. skip if a renewal was attempted less than RETRY_MS ago (the
 //      sweep is a minute apart; Meta is not to be hammered);
 //   2. skip — and record why — if the token already expired: Meta
@@ -74,7 +76,8 @@ interface RenewableRow {
   id: string;
   account_id: string;
   access_token: string;
-  token_expires_at: string;
+  /** Null on a permanent token; such rows are dropped before the loop. */
+  token_expires_at: string | null;
   token_renewal_attempted_at: string | null;
   token_renewal_error: string | null;
 }
@@ -140,7 +143,17 @@ export async function renewExpiringTokens(
     return result;
   }
 
-  const rows = (data ?? []) as unknown as RenewableRow[];
+  // A token with no expiry is a permanent one — a system-user token
+  // pasted through the manual form, which is how a managed number in
+  // Cabbity's own Meta portfolio is connected (s10.6). The query above
+  // already leaves those rows out; this second gate makes the rule hold
+  // even if the filter ever changes: such a row is not "due", not
+  // "expired" (`Date.parse(null)` is NaN, which the expiry check below
+  // would read as "still alive" and send to Meta), and not worth a log
+  // line. It is dropped before counting, silently.
+  const rows = ((data ?? []) as unknown as RenewableRow[]).filter(
+    (row) => typeof row.token_expires_at === 'string' && row.token_expires_at
+  );
   result.scanned = rows.length;
 
   for (const row of rows) {
@@ -152,7 +165,7 @@ export async function renewExpiringTokens(
       continue;
     }
 
-    const expiresAt = Date.parse(row.token_expires_at);
+    const expiresAt = Date.parse(row.token_expires_at as string);
     if (Number.isFinite(expiresAt) && expiresAt <= nowMs) {
       // Too late for Meta to help. Record it once (the retry gate keeps
       // this write from repeating every minute) so the settings screen
