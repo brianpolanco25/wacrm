@@ -17,6 +17,9 @@
 // ============================================================
 
 import { supabaseAdmin } from '@/lib/auth/admin-client';
+import type { MetaBilling } from '@/lib/billing/entitlements';
+import { parseMetaPricing, type MetaPricing } from '@/lib/billing/meta-pricing';
+import { addCycle } from '@/lib/billing/webhook-events';
 import { recordPlatformAction } from './audit';
 
 // ------------------------------------------------------------
@@ -164,6 +167,18 @@ export interface PlanOption {
   id: string;
   name: string;
   isPublic: boolean;
+  /**
+   * The plan's default Meta price policy (`plans.meta_pricing`, 077), or
+   * null when it has none. A plan with one (`gestionado`) is assigned
+   * with a payment method and a price the operator may edit (s10.3).
+   */
+  metaPricing: MetaPricing | null;
+}
+
+/** `plans.meta_pricing` as a policy, or null when empty or malformed. */
+export function planPricingOf(raw: unknown): MetaPricing | null {
+  const parsed = parseMetaPricing(raw ?? {});
+  return parsed.ok ? parsed.value : null;
 }
 
 /**
@@ -174,7 +189,7 @@ export interface PlanOption {
 export async function listPlanOptions(): Promise<PlanOption[]> {
   const { data, error } = await supabaseAdmin()
     .from('plans')
-    .select('id, name, is_public, sort_order')
+    .select('id, name, is_public, sort_order, meta_pricing')
     .order('sort_order', { ascending: true });
 
   if (error) {
@@ -185,28 +200,48 @@ export async function listPlanOptions(): Promise<PlanOption[]> {
     id: row.id as string,
     name: (row.name as string) ?? (row.id as string),
     isPublic: Boolean(row.is_public),
+    metaPricing: planPricingOf(row.meta_pricing),
   }));
 }
 
-/** True iff `planId` names a row of the catalogue. */
-export async function planExists(planId: string): Promise<boolean> {
+/** The columns of `plans` an assignment needs. */
+export interface AssignablePlan {
+  id: string;
+  name: string;
+  price_usd_month: number | string | null;
+  provider_plan_id_month: string | null;
+  meta_pricing: unknown;
+}
+
+/** One plan of the catalogue, or null. `plans` is global, not tenant data. */
+export async function loadAssignablePlan(
+  planId: string
+): Promise<AssignablePlan | null> {
   const { data, error } = await supabaseAdmin()
     .from('plans')
-    .select('id')
+    .select('id, name, price_usd_month, provider_plan_id_month, meta_pricing')
     .eq('id', planId)
     .maybeSingle();
   if (error) {
     console.error('[platform/provisioning] plan lookup failed:', error);
     throw error;
   }
-  return Boolean(data);
+  return (data as AssignablePlan | null) ?? null;
 }
 
-interface CurrentSubscription {
+/** True iff `planId` names a row of the catalogue. */
+export async function planExists(planId: string): Promise<boolean> {
+  return (await loadAssignablePlan(planId)) !== null;
+}
+
+export interface CurrentSubscription {
   plan_id: string | null;
   provider: string | null;
   status: string | null;
   provider_subscription_id: string | null;
+  meta_billing?: string | null;
+  meta_pricing?: unknown;
+  payment_method?: string | null;
 }
 
 /**
@@ -224,12 +259,14 @@ export function isLivePayPalSubscription(
   );
 }
 
-async function loadCurrentSubscription(
+export async function loadCurrentSubscription(
   accountId: string
 ): Promise<CurrentSubscription | null> {
   const { data, error } = await supabaseAdmin()
     .from('subscriptions')
-    .select('plan_id, provider, status, provider_subscription_id')
+    .select(
+      'plan_id, provider, status, provider_subscription_id, meta_billing, meta_pricing, payment_method'
+    )
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -240,37 +277,84 @@ async function loadCurrentSubscription(
 }
 
 /**
- * The row a manual plan leaves behind. Everything the gateway owns is
- * reset — no id, no cycle, no trial, no grace, no period end — so no later reader can
- * mistake it for a PayPal subscription. `manual_hold_*` is NOT here: a
- * suspension is a separate axis (058) and giving a plan does not lift it.
+ * How a plan with a Meta price policy (`gestionado`, s10.3) is given
+ * BY HAND: paid by statement (`manual`), with Cabbity paying Meta or not,
+ * and the price the operator settled on (already validated).
  */
-export function manualPlanRow(accountId: string, planId: string) {
+export interface ManualManagedTerms {
+  paymentMethod: 'manual';
+  metaBilling: MetaBilling;
+  /**
+   * The price of the account. Null = the plan's default
+   * (`plans.meta_pricing`); ignored for `direct`.
+   */
+  metaPricing: MetaPricing | null;
+}
+
+/**
+ * The row a manual plan leaves behind. Everything the gateway owns is
+ * reset — no id, no trial, no grace — so no later reader can mistake it
+ * for a PayPal subscription. `manual_hold_*` is NOT here: a suspension is
+ * a separate axis (058) and giving a plan does not lift it.
+ *
+ * Without `terms` (any plan with no Meta price policy): no cycle and no
+ * period end — a manual plan has no renewal date, and the one of a
+ * previous PayPal subscription would show as a stale "renews on" — and
+ * the account leaves the managed Meta billing (`direct`, `{}`, no
+ * payment method): a price policy only means something with the plan
+ * that carries the package.
+ *
+ * With `terms` (s10.3, `gestionado` paid by hand): monthly, the period
+ * ends one month from now — that is the first cut-off of s10.4 — and the
+ * terms are stored on the row.
+ */
+export function manualPlanRow(
+  accountId: string,
+  planId: string,
+  terms?: ManualManagedTerms,
+  now: Date = new Date()
+) {
+  const managed = terms?.metaBilling === 'managed';
   return {
     account_id: accountId,
     plan_id: planId,
     provider: 'manual',
     status: 'active',
     provider_subscription_id: null,
-    cycle: null,
+    cycle: terms ? 'month' : null,
     trial_ends_at: null,
     grace_until: null,
-    // A manual plan has no renewal date; the one of a previous PayPal
-    // subscription would show as a stale "renews on" in billing.
-    current_period_end: null,
+    current_period_end: terms ? addCycle(now.toISOString(), 'month') : null,
     cancel_at_period_end: false,
+    payment_method: terms ? 'manual' : null,
+    meta_billing: managed ? 'managed' : 'direct',
+    meta_pricing: managed && terms?.metaPricing ? terms.metaPricing : {},
   };
 }
 
 export type PlanOverrideOutcome =
   | { ok: true; fromPlan: string | null; fromProvider: string | null }
-  | { ok: false; reason: 'unknown_plan' | 'paypal_active' | 'audit_failed' };
+  | {
+      ok: false;
+      reason:
+        | 'unknown_plan'
+        | 'paypal_active'
+        | 'audit_failed'
+        | 'needs_terms'
+        | 'no_pricing';
+    };
 
 /**
  * Give one company a plan by hand (`provider = 'manual'`).
  *
  * The audit comes first, as in `[id]/hold`: an unrecorded plan change
  * does not happen at all.
+ *
+ * A plan that carries a Meta price policy (077) is refused without
+ * `terms` (`needs_terms`): given blind, `gestionado` would bill the fee
+ * with nobody paying Meta and no price on the account. The panel always
+ * sends them; «Nueva empresa» does not, and its plan step then fails
+ * soft (`planError`) so the operator finishes it from the file.
  */
 export async function overridePlan(params: {
   accountId: string;
@@ -278,9 +362,24 @@ export async function overridePlan(params: {
   planId: string;
   actorUserId: string;
   reason: string;
+  terms?: ManualManagedTerms;
+  now?: Date;
 }): Promise<PlanOverrideOutcome> {
-  if (!(await planExists(params.planId))) {
-    return { ok: false, reason: 'unknown_plan' };
+  const plan = await loadAssignablePlan(params.planId);
+  if (!plan) return { ok: false, reason: 'unknown_plan' };
+
+  const planPricing = planPricingOf(plan.meta_pricing);
+  if (planPricing && !params.terms) {
+    return { ok: false, reason: 'needs_terms' };
+  }
+  const terms: ManualManagedTerms | undefined = params.terms
+    ? {
+        ...params.terms,
+        metaPricing: params.terms.metaPricing ?? planPricing,
+      }
+    : undefined;
+  if (terms?.metaBilling === 'managed' && !terms.metaPricing) {
+    return { ok: false, reason: 'no_pricing' };
   }
 
   const current = await loadCurrentSubscription(params.accountId);
@@ -290,6 +389,7 @@ export async function overridePlan(params: {
 
   const fromPlan = current?.plan_id ?? null;
   const fromProvider = current?.provider ?? null;
+  const row = manualPlanRow(params.accountId, params.planId, terms, params.now);
 
   const logged = await recordPlatformAction({
     action: 'plan_override',
@@ -301,15 +401,22 @@ export async function overridePlan(params: {
       from_plan: fromPlan,
       to_plan: params.planId,
       from_provider: fromProvider,
+      ...(terms
+        ? {
+            payment_method: row.payment_method,
+            meta_billing: row.meta_billing,
+            meta_pricing: row.meta_pricing,
+            from_meta_billing: current?.meta_billing ?? null,
+            current_period_end: row.current_period_end,
+          }
+        : {}),
     },
   });
   if (!logged) return { ok: false, reason: 'audit_failed' };
 
-  const { error } = await supabaseAdmin()
-    .from('subscriptions')
-    .upsert(manualPlanRow(params.accountId, params.planId), {
-      onConflict: 'account_id',
-    });
+  const { error } = await supabaseAdmin().from('subscriptions').upsert(row, {
+    onConflict: 'account_id',
+  });
   if (error) {
     console.error('[platform/provisioning] manual plan write failed:', error);
     throw error;

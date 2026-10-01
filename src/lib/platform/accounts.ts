@@ -210,6 +210,14 @@ export interface AccountDetail {
    * «Asignado a mano» on the file. Null with no subscription row.
    */
   provider: string | null;
+  /**
+   * Fase 10 (076/077): who pays Meta (`direct` | `managed`), the price of
+   * a managed account (`{}` otherwise) and how it pays (`paypal` |
+   * `manual`, null = whatever `provider` says).
+   */
+  metaBilling: 'direct' | 'managed';
+  metaPricing: Record<string, unknown>;
+  paymentMethod: 'paypal' | 'manual' | null;
   /** Consumption of the current cycle against the plan's caps. */
   usage: UsageLine[];
   /** Caps that are a headcount of rows, not a counter. */
@@ -234,6 +242,7 @@ interface SubscriptionRow {
   manual_hold_at: string | null;
   manual_hold_by: string | null;
   manual_hold_reason: string | null;
+  meta_pricing?: unknown;
 }
 
 /** Name + creation date, or null when there is no such account. */
@@ -267,7 +276,7 @@ async function loadSubscription(
     .select(
       'plan_id, provider, status, provider_subscription_id, current_period_end, ' +
         'grace_until, trial_ends_at, cancel_at_period_end, cycle, ' +
-        'manual_hold_at, manual_hold_by, manual_hold_reason'
+        'manual_hold_at, manual_hold_by, manual_hold_reason, meta_pricing'
     )
     .eq('account_id', accountId)
     .maybeSingle();
@@ -525,6 +534,14 @@ export async function loadAccountDetail(
     cycle: subscription?.cycle ?? null,
     providerSubscriptionId: subscription?.provider_subscription_id ?? null,
     provider: subscription?.provider ?? null,
+    metaBilling: entitlements.metaBilling,
+    metaPricing:
+      subscription?.meta_pricing &&
+      typeof subscription.meta_pricing === 'object' &&
+      !Array.isArray(subscription.meta_pricing)
+        ? (subscription.meta_pricing as Record<string, unknown>)
+        : {},
+    paymentMethod: entitlements.paymentMethod,
     usage: buildUsage(entitlements.limits, counters),
     limits: entitlements.limits,
     members,

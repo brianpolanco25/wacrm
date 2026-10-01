@@ -194,6 +194,10 @@ async function main(): Promise<void> {
         .select(
           'id, name, price_usd_month, price_usd_year, provider_plan_id_month, provider_plan_id_year'
         )
+        // Only what is for sale (s10.3): a hidden plan (`ilimitado`,
+        // `gestionado`) is published on purpose from the panel, never in
+        // bulk by this script.
+        .eq('is_public', true)
         .order('sort_order', { ascending: true });
       if (error) throw new Error(`plans query failed: ${error.message}`);
       return (data ?? []) as PlanRow[];

@@ -41,6 +41,7 @@ import { createSubscription, PayPalError } from '@/lib/billing/paypal';
 import {
   alreadyContracted,
   checkoutRequestId,
+  CHECKOUT_BRAND_NAME,
   checkoutUrls,
   isBillingCycle,
   isOnboardingCheckout,
@@ -57,9 +58,6 @@ const INTENT_COLUMNS =
   'id, plan_id, cycle, status, provider, provider_subscription_id, created_at';
 const SUBSCRIPTION_COLUMNS =
   'plan_id, status, provider_subscription_id, current_period_end, cancel_at_period_end';
-
-/** Brand shown on PayPal's approval screen. */
-const BRAND_NAME = 'Cabbity CRM';
 
 interface IntentRow {
   id: string;
@@ -250,7 +248,7 @@ export async function POST(request: Request) {
         customId: ctx.accountId,
         returnUrl,
         cancelUrl,
-        brandName: BRAND_NAME,
+        brandName: CHECKOUT_BRAND_NAME,
         requestId: checkoutRequestId(ctx.accountId, plan.id, cycle),
       });
     } catch (err) {

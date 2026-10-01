@@ -42,6 +42,7 @@ import {
   type MemberInviteOutcome,
 } from './platform-provisioning';
 import { ImpersonationActions } from './impersonation-actions';
+import { CheckoutLinkNotice, ManagedPricingCard } from './platform-managed';
 import { useSubscriptionStatusLabel } from './subscription-status';
 
 interface UsageLine {
@@ -99,6 +100,10 @@ export interface Detail {
   subscriptionStatus: string;
   /** `manual` when an operator assigned the plan by hand (s9.4). */
   provider: string | null;
+  /** Fase 10 (s10.3): who pays Meta, the price, how the account pays. */
+  metaBilling?: 'direct' | 'managed';
+  metaPricing?: Record<string, unknown>;
+  paymentMethod?: 'paypal' | 'manual' | null;
   readOnly: boolean;
   manualHold: boolean;
   manualHoldAt: string | null;
@@ -142,7 +147,11 @@ export function PlatformAccountDetail({
 }: {
   accountId: string;
   /** Pre-seeded state (server render, tests); normally absent. */
-  initial?: { detail: Detail; inviteLink?: string | null };
+  initial?: {
+    detail: Detail;
+    inviteLink?: string | null;
+    checkoutLink?: string | null;
+  };
 }) {
   const t = useTranslations('Platform');
   const statusLabel = useSubscriptionStatusLabel();
@@ -151,6 +160,11 @@ export function PlatformAccountDetail({
   const [failed, setFailed] = useState<'notFound' | 'error' | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(
     initial?.inviteLink ?? null
+  );
+  // s10.3: the PayPal approval link of a managed plan. Shown once, by
+  // the file (not the form), so a reload keeps it — like `inviteLink`.
+  const [checkoutLink, setCheckoutLink] = useState<string | null>(
+    initial?.checkoutLink ?? null
   );
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -382,7 +396,19 @@ export function PlatformAccountDetail({
         subscriptionStatus={detail.subscriptionStatus}
         plans={plans}
         onChanged={load}
+        onCheckoutLink={setCheckoutLink}
       />
+      <CheckoutLinkNotice url={checkoutLink} />
+      {detail.metaBilling === 'managed' ? (
+        <ManagedPricingCard
+          // A new key after each reload re-seeds the form from the row.
+          key={JSON.stringify([detail.metaPricing, detail.paymentMethod])}
+          accountId={detail.accountId}
+          metaPricing={detail.metaPricing ?? {}}
+          paymentMethod={detail.paymentMethod ?? null}
+          onChanged={load}
+        />
+      ) : null}
       <AddMemberForm
         accountId={detail.accountId}
         link={inviteLink}
