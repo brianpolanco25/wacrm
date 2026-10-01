@@ -17,6 +17,12 @@ and polish.
 - Categories Meta adds later (for example `marketing_lite`) are stored as received, with a single warning in the log per value. Recording a charge never makes the webhook fail, and inbound messages are stored as before, read-only accounts included.
 - Deploy the migration before the code: until the table exists, every status event logs a `record_message_charge` error (harmless: statuses are still mirrored).
 
+### Platform console: Meta rate card (migration required: 076)
+
+- **Migration required:** apply `supabase/migrations/076_meta_rates.sql`. It adds `meta_rates` (what Meta charges per delivered message, by market, category and effective date) and `meta_market_countries` (recipient country → Meta market), both readable by any signed-in user and written only by the service role, plus `subscriptions.meta_billing` (`direct` by default) and `subscriptions.meta_pricing` (`{}` by default). Seeded with Meta's 2026-10-01 card for Rest of Latin America only (service and utility 0.0113 USD, marketing 0.0740 USD; the Dominican Republic and its neighbours mapped to it); authentication and every other market must be loaded from the console before they can be billed.
+- New **Meta rates** section in the operator console (`/platform/rates`): rates by market and category with their effective date and state (in force, scheduled, past), "New rate" (a rate in force is never edited: a change is a new row with a later date), a CSV importer with a preview before saving, and the editable country → market table.
+- A message to a market without a rate is never priced at 0: the rate lookup fails with an error that names the missing market and category.
+
 ### Platform console: tag filter during a support session
 
 - Filtering contacts by tag works during a support session: the browser now runs the read-only `filter_contacts_by_tags` while the session is open. Every other database function called from the browser (`touch_presence` included) stays refused.

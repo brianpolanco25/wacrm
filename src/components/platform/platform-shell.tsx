@@ -19,6 +19,7 @@ import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
   Building2,
+  Coins,
   CreditCard,
   LayoutDashboard,
   LayoutGrid,
@@ -43,7 +44,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import type { SupportBanner } from '@/lib/auth/support-view';
 
-export type PlatformSection = 'overview' | 'accounts' | 'plans' | 'operators';
+export type PlatformSection =
+  'overview' | 'accounts' | 'plans' | 'rates' | 'operators';
 
 export const PLATFORM_NAV: ReadonlyArray<{
   key: PlatformSection;
@@ -53,6 +55,7 @@ export const PLATFORM_NAV: ReadonlyArray<{
   { key: 'overview', href: '/platform', icon: LayoutDashboard },
   { key: 'accounts', href: '/platform/accounts', icon: Building2 },
   { key: 'plans', href: '/platform/plans', icon: CreditCard },
+  { key: 'rates', href: '/platform/rates', icon: Coins },
   { key: 'operators', href: '/platform/operators', icon: ShieldUser },
 ];
 

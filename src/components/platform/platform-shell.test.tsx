@@ -74,7 +74,7 @@ function hrefs(html: string): string[] {
 }
 
 describe('PlatformFrame — the operator nav', () => {
-  it('offers Resumen, Cuentas, Planes and Operadores, in that order', () => {
+  it('offers Resumen, Cuentas, Planes, Tarifas de Meta and Operadores, in that order', () => {
     const links = hrefs(frame());
     const nav = links.filter((h) => h.startsWith('/platform'));
     // The logo links to /platform too, before the nav.
@@ -83,6 +83,7 @@ describe('PlatformFrame — the operator nav', () => {
       '/platform',
       '/platform/accounts',
       '/platform/plans',
+      '/platform/rates',
       '/platform/operators',
     ]);
   });
@@ -143,7 +144,13 @@ describe('PlatformFrame — the operator nav', () => {
 
   it.each(CATALOGUES)('is translated in %s (CP6)', (locale, messages) => {
     const html = frame('/platform', locale);
-    for (const key of ['overview', 'accounts', 'plans', 'operators'] as const) {
+    for (const key of [
+      'overview',
+      'accounts',
+      'plans',
+      'rates',
+      'operators',
+    ] as const) {
       expect(html).toContain(messages.Platform.shell.nav[key]);
     }
     expect(html).toContain(messages.Platform.shell.goToCrm);
@@ -191,6 +198,7 @@ describe('platformSectionFor', () => {
     ['/platform/', 'overview'],
     ['/platform/accounts', 'accounts'],
     ['/platform/plans', 'plans'],
+    ['/platform/rates', 'rates'],
     ['/platform/operators', 'operators'],
     // An account file belongs to «Cuentas».
     ['/platform/aaaaaaaa-0000-4000-8000-000000000001', 'accounts'],

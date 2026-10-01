@@ -31,6 +31,7 @@ const Overview = (await import('./platform/page')).default;
 const Accounts = (await import('./platform/accounts/page')).default;
 const Plans = (await import('./platform/plans/page')).default;
 const Operators = (await import('./platform/operators/page')).default;
+const Rates = (await import('./platform/rates/page')).default;
 const AccountFile = (await import('./platform/[id]/page')).default;
 const Layout = (await import('./layout')).default;
 
@@ -45,6 +46,7 @@ const ROUTES: Array<[string, () => Promise<unknown>]> = [
   ['/platform/accounts', () => Accounts()],
   ['/platform/plans', () => Plans()],
   ['/platform/operators', () => Operators()],
+  ['/platform/rates', () => Rates()],
   [
     '/platform/[id]',
     () => AccountFile({ params: Promise.resolve({ id: 'acc-1' }) }),
