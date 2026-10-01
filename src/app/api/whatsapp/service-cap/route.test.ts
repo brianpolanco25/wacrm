@@ -276,6 +276,26 @@ describe('PATCH /api/whatsapp/service-cap', () => {
     ).toHaveLength(0);
   });
 
+  it('a support session → 403 and nothing written (s9.5, 072)', async () => {
+    h.requireRole.mockImplementation(async () => ({
+      ...ctx(A, 'admin'),
+      impersonation: {
+        logId: 'log-1',
+        actorUserId: 'operator-1',
+        accountId: A,
+        expiresAt: Date.now() + 60_000,
+      },
+    }));
+    const res = await patch({ action: 'warn' });
+    expect(res.status).toBe(403);
+    expect(
+      h.db.log.filter((e) => e.table === 'accounts' && e.op === 'update')
+    ).toHaveLength(0);
+    expect(
+      h.db.rows('accounts').find((r) => r.id === A)?.service_cap_action
+    ).toBe('pause_ai');
+  });
+
   it('no session → 401', async () => {
     h.requireRole.mockRejectedValue(new UnauthorizedError());
     const res = await patch({ action: 'warn' });

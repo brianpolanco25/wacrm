@@ -61,4 +61,33 @@ describe('fetchServiceCap', () => {
       cache: 'no-store',
     });
   });
+
+  it('a slow request A cannot overwrite a forced request B that finished first', async () => {
+    let releaseA!: (res: Response) => void;
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseA = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        async () =>
+          new Response(JSON.stringify({ ...BODY, action: 'pause_ai' }), {
+            status: 200,
+          })
+      );
+
+    const a = fetchServiceCap('acct-a');
+    const b = fetchServiceCap('acct-a', { force: true });
+    expect((await b)?.action).toBe('pause_ai');
+
+    // A answers late, with the action from before the PATCH.
+    releaseA(new Response(JSON.stringify(BODY), { status: 200 }));
+    expect((await a)?.action).toBe('warn');
+
+    // The cache stays with B: no third fetch, and B's action.
+    expect((await fetchServiceCap('acct-a'))?.action).toBe('pause_ai');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

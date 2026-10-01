@@ -103,6 +103,14 @@ export function ServiceCapCard({
   // Lo elegido aquí manda sobre lo leído hasta que el padre refresque.
   const [chosen, setChosen] = useState<ServiceCapAction | null>(null);
   const [saving, setSaving] = useState(false);
+  // Una lectura nueva (el refresh tras guardar, o el TTL) manda sobre lo
+  // elegido: si otro admin cambió el ajuste, esta vista no se queda con
+  // el valor viejo hasta volver a montarse.
+  const [seenStatus, setSeenStatus] = useState(status);
+  if (status !== seenStatus) {
+    setSeenStatus(status);
+    setChosen(null);
+  }
 
   if (!status || status.metaBilling !== 'direct') return null;
   if (status.numbers.length === 0) return null;

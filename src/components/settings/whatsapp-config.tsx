@@ -66,6 +66,7 @@ export function WhatsAppConfig() {
     loading: authLoading,
     profileLoading,
     canEditSettings,
+    supportSession,
   } = useAuth();
 
   // Fase 4 §1. ONE flag, answered by the server, governs every
@@ -1128,7 +1129,10 @@ export function WhatsAppConfig() {
 
               <ServiceCapCard
                 status={serviceCap}
-                canEdit={canEditSettings}
+                // A support session is admin by role, but `accounts`
+                // stays out of what it may write (072): the PATCH
+                // answers 403, so the radios must not look editable.
+                canEdit={canEditSettings && !supportSession}
                 onSaved={refreshServiceCap}
               />
 

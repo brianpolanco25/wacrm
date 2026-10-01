@@ -5,7 +5,8 @@
 //   GET   cualquier miembro: la acción de la cuenta y, por número, los
 //         mensajes de servicio entregados este mes y si agotó la cuota.
 //         Lo pintan la bandeja (aviso) y Ajustes → WhatsApp.
-//   PATCH admin+: cambia `accounts.service_cap_action` (warn | pause_ai).
+//   PATCH admin+, fuera de una sesión de soporte: cambia
+//         `accounts.service_cap_action` (warn | pause_ai).
 //
 // El conteo sale de `service_quota_usage` (080), que solo ejecuta
 // `service_role`: la RLS de `message_charges` (075) deja leer solo a
@@ -20,6 +21,7 @@
 import { NextResponse } from 'next/server';
 
 import {
+  assertNotSupportSession,
   getCurrentAccount,
   requireRole,
   toErrorResponse,
@@ -116,6 +118,9 @@ export async function GET() {
 export async function PATCH(request: Request) {
   try {
     const ctx = await requireRole('admin');
+    // Una sesión de soporte actúa como admin, pero `accounts` queda fuera de
+    // lo que puede escribir (072): 403 explícito y auditado, no un 404 por RLS.
+    await assertNotSupportSession(ctx);
 
     let body: unknown;
     try {

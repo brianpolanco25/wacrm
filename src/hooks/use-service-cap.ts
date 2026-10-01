@@ -47,6 +47,12 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<ServiceCapStatus | null>>();
+/**
+ * Generación de la última petición por cuenta. Una petición forzada (tras
+ * guardar el ajuste) no anula la que ya iba en vuelo; si la vieja responde
+ * después, no puede pisar la caché con la acción anterior.
+ */
+const generation = new Map<string, number>();
 
 /** `null` cuando no se pudo leer (respuesta no OK o error de red). */
 export function fetchServiceCap(
@@ -61,6 +67,8 @@ export function fetchServiceCap(
   const pending = inFlight.get(accountId);
   if (pending && !opts.force) return pending;
 
+  const gen = (generation.get(accountId) ?? 0) + 1;
+  generation.set(accountId, gen);
   const request = (async () => {
     try {
       const res = await fetch('/api/whatsapp/service-cap', {
@@ -69,7 +77,9 @@ export function fetchServiceCap(
       if (!res.ok) return null;
       const status = (await res.json()) as ServiceCapStatus;
       if (!status || !Array.isArray(status.numbers)) return null;
-      cache.set(accountId, { status, at: Date.now() });
+      if (generation.get(accountId) === gen) {
+        cache.set(accountId, { status, at: Date.now() });
+      }
       return status;
     } catch {
       return null;
@@ -87,6 +97,7 @@ export function fetchServiceCap(
 export function __resetServiceCapCache() {
   cache.clear();
   inFlight.clear();
+  generation.clear();
 }
 
 /**
