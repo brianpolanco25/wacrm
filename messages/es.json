@@ -359,6 +359,12 @@
       "resumed": "IA reanudada.",
       "updateError": "No se pudo actualizar el asistente de IA.",
       "networkError": "No se pudo contactar con el servidor."
+    },
+    "serviceCap": {
+      "title": "Cuota gratis de Meta agotada",
+      "numbers": "{numbers}: se usaron los {freeTier, number} mensajes de servicio gratis de este mes. Desde ahora Meta cobra cada respuesta de {count, plural, one {este número} other {estos números}}.",
+      "paused": "La IA no responde sola desde {count, plural, one {este número} other {estos números}} hasta el {date}. El equipo puede seguir escribiendo.",
+      "warnOnly": "La IA sigue respondiendo. Puedes pausarla en Ajustes → WhatsApp."
     }
   },
   "Contacts": {
@@ -1634,7 +1640,19 @@
       "paymentPending": "Pendiente de comprobar",
       "paymentCheckedAt": "Comprobado el {date}",
       "paymentRecheck": "Comprobar de nuevo",
-      "paymentRecheckFailed": "No se pudo comprobar el método de pago. Inténtalo en un momento."
+      "paymentRecheckFailed": "No se pudo comprobar el método de pago. Inténtalo en un momento.",
+      "serviceCap": {
+        "usage": "Mensajes de servicio este mes: {used, number} de {freeTier, number} gratis",
+        "exhausted": "Cuota gratis agotada",
+        "cardTitle": "Cuota gratis de Meta",
+        "cardDesc": "Meta regala {freeTier, number} mensajes de servicio por número cada mes. Elige qué hace la IA cuando se acaban.",
+        "warn": "Solo avisar",
+        "warnDesc": "La IA sigue respondiendo y Meta cobra cada mensaje de servicio de más. Verás un aviso en la bandeja.",
+        "pauseAi": "Pausar la IA del número",
+        "pauseAiDesc": "La IA deja de responder sola desde ese número hasta el mes siguiente. El equipo y las automatizaciones siguen enviando.",
+        "saveFailed": "No se pudo guardar el ajuste de la cuota gratis.",
+        "saved": "Ajuste de la cuota gratis guardado."
+      }
     },
     "sections": {
       "overview": "Resumen",

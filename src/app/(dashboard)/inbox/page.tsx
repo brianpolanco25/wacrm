@@ -22,6 +22,7 @@ import { ContactSidebar } from '@/components/inbox/contact-sidebar';
 import { toast } from 'sonner';
 import { WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { InboxServiceCapAlert } from '@/components/inbox/service-cap-alert';
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -579,6 +580,7 @@ function InboxPageInner() {
           <p className="text-xs text-amber-400">{t('whatsappNotConnected')}</p>
         </div>
       )}
+      <InboxServiceCapAlert />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel: Conversation list.
