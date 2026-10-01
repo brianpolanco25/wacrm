@@ -25,14 +25,32 @@
 //              gate normally sends these users there before this renders;
 //              it shows during a support session, which the gate lets in.
 //
+//   statement  a managed account with an open statement (s10.4,
+//              `statement_due`): from the cut-off to its due date, the
+//              amount, the period and the days left; after it, the lock
+//              with its own words («solo lectura por estado de cuenta
+//              pendiente») and /billing, where the breakdown is. Both
+//              offer «Ya pagué», which leaves a note for Cabbity and
+//              changes nothing (the amount and the button are for
+//              admin+: `totalUsd` comes back null below that; and not
+//              during a support session, where the route answers 403).
+//              The locked wording only when the lock IS the statement
+//              (`readOnlyReason = 'statement'`): an account locked by its
+//              subscription with a statement not yet due gets the
+//              subscription banner, with its way out, and the statement
+//              below it as a warning.
+//
 // `active` and `cancelled` (still inside the paid period) render
 // nothing: a banner that is always there is a banner nobody reads.
 // ============================================================
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
-import { CreditCard, TriangleAlert } from 'lucide-react';
+import { useLocale, useTranslations } from 'next-intl';
+import { toast } from 'sonner';
+import { CreditCard, ReceiptText, TriangleAlert } from 'lucide-react';
 
+import { useAuth } from '@/hooks/use-auth';
 import { useBillingStatus } from '@/hooks/use-billing-status';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,6 +59,13 @@ import {
   AlertDescription,
   AlertTitle,
 } from '@/components/ui/alert';
+import {
+  claimStatementPaid,
+  daysLeft,
+  formatDay,
+  formatPeriod,
+  formatUsd,
+} from './statement-claim';
 
 export function BillingStatusAlert() {
   const router = useRouter();
@@ -56,6 +81,20 @@ export function BillingStatusAlert() {
   if (!status) return null;
   const locked = status.readOnly;
   const held = locked && status.manualHold === true;
+  // The statement speaks for the lock only when it is the reason for it
+  // (an overdue statement). Locked by the subscription (a failed PayPal
+  // charge past its grace, `expired`…) with a statement not yet due, the
+  // subscription banner says what to fix and the statement follows it.
+  const statementLocked = locked && status.readOnlyReason === 'statement';
+  const statementAlert =
+    !held && status.statement ? (
+      <StatementDueAlert
+        statement={status.statement}
+        locked={statementLocked}
+        readAt={status.readAt}
+      />
+    ) : null;
+  if (statementAlert && (!locked || statementLocked)) return statementAlert;
   const incomplete = locked && !held && status.status === 'incomplete';
   const warning = !locked && status.status === 'past_due';
   if (!locked && !warning) return null;
@@ -65,42 +104,134 @@ export function BillingStatusAlert() {
     : null;
 
   return (
-    <Alert variant="destructive" className="mb-4">
-      {locked ? <TriangleAlert /> : <CreditCard />}
-      <AlertTitle>
-        {held
-          ? t('heldTitle')
-          : incomplete
-            ? t('incomplete.title')
-            : locked
-              ? t('lockedTitle')
-              : t('pastDueTitle')}
-      </AlertTitle>
-      <AlertDescription>
-        {held
-          ? t('heldBody')
-          : incomplete
-            ? t('incomplete.body')
-            : locked
-              ? t('lockedBody')
-              : graceDate
-                ? t('pastDueBodyWithDate', { date: graceDate })
-                : t('pastDueBody')}
-      </AlertDescription>
-      {/* No "fix now" for a manual hold: `/billing` cannot lift one, and
+    <>
+      <Alert variant="destructive" className="mb-4">
+        {locked ? <TriangleAlert /> : <CreditCard />}
+        <AlertTitle>
+          {held
+            ? t('heldTitle')
+            : incomplete
+              ? t('incomplete.title')
+              : locked
+                ? t('lockedTitle')
+                : t('pastDueTitle')}
+        </AlertTitle>
+        <AlertDescription>
+          {held
+            ? t('heldBody')
+            : incomplete
+              ? t('incomplete.body')
+              : locked
+                ? t('lockedBody')
+                : graceDate
+                  ? t('pastDueBodyWithDate', { date: graceDate })
+                  : t('pastDueBody')}
+        </AlertDescription>
+        {/* No "fix now" for a manual hold: `/billing` cannot lift one, and
           a button that charges the card without unlocking anything is
           worse than no button. */}
-      {held ? null : (
-        <AlertAction>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => router.push(incomplete ? '/onboarding' : '/billing')}
-          >
-            {incomplete ? t('incomplete.action') : t('fixNow')}
+        {held ? null : (
+          <AlertAction>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                router.push(incomplete ? '/onboarding' : '/billing')
+              }
+            >
+              {incomplete ? t('incomplete.action') : t('fixNow')}
+            </Button>
+          </AlertAction>
+        )}
+      </Alert>
+      {statementAlert}
+    </>
+  );
+}
+
+/**
+ * The `statement_due` variant (s10.4). Before the due date a warning
+ * with the amount and the days left; after it, the lock in its own
+ * words. «Ya pagué» on both, for admin+ (the amount is null below).
+ */
+export function StatementDueAlert({
+  statement,
+  locked,
+  readAt,
+}: {
+  statement: {
+    id: string;
+    periodStart: string;
+    periodEnd: string;
+    dueAt: string;
+    totalUsd: number | null;
+  };
+  locked: boolean;
+  readAt: number;
+}) {
+  const router = useRouter();
+  const t = useTranslations('Billing.statementAlert');
+  const locale = useLocale();
+  // A support session reads the statement but cannot claim it (the
+  // route answers 403 to an operator): no button that can only fail.
+  const { supportSession } = useAuth();
+  const [claimed, setClaimed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const period = formatPeriod(
+    statement.periodStart,
+    statement.periodEnd,
+    locale
+  );
+  const date = formatDay(statement.dueAt, locale);
+  const days = daysLeft(statement.dueAt, readAt);
+  const isAdmin = statement.totalUsd !== null;
+  const total = isAdmin ? formatUsd(statement.totalUsd!, locale) : null;
+
+  async function claim() {
+    setBusy(true);
+    try {
+      const outcome = await claimStatementPaid(statement.id);
+      if (outcome.kind === 'claimed') {
+        setClaimed(true);
+        toast.success(t('claimed'));
+      } else {
+        toast.error(t(`claimErrors.${outcome.reason}`));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Alert
+      variant="destructive"
+      className="mb-4"
+      data-statement-alert={locked ? 'locked' : 'due'}
+    >
+      {locked ? <TriangleAlert /> : <ReceiptText />}
+      <AlertTitle>{locked ? t('lockedTitle') : t('dueTitle')}</AlertTitle>
+      <AlertDescription>
+        {locked
+          ? t('lockedBody', { period })
+          : total !== null
+            ? t('dueBody', { period, total, date, days })
+            : t('dueBodyNoAmount', { period, date, days })}
+      </AlertDescription>
+      <AlertAction className="flex gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => router.push('/billing')}
+        >
+          {t('view')}
+        </Button>
+        {isAdmin && !claimed && !supportSession ? (
+          <Button size="sm" variant="outline" disabled={busy} onClick={claim}>
+            {t('claim')}
           </Button>
-        </AlertAction>
-      )}
+        ) : null}
+      </AlertAction>
     </Alert>
   );
 }

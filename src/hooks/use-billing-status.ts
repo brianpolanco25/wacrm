@@ -41,6 +41,19 @@ export interface BillingStatus {
   readOnly: boolean;
   /** A platform operator suspended the account by hand (fase 4 §2). */
   manualHold?: boolean;
+  /** Why it is read-only (`statement`: an overdue statement, s10.4). */
+  readOnlyReason?: 'subscription' | 'manual_hold' | 'statement' | null;
+  /**
+   * The open statement of a managed account (s10.4), for the
+   * `statement_due` banner. `totalUsd` is null below admin.
+   */
+  statement?: {
+    id: string;
+    periodStart: string;
+    periodEnd: string;
+    dueAt: string;
+    totalUsd: number | null;
+  } | null;
   graceUntil: string | null;
   trialEndsAt: string | null;
   currentPeriodEnd: string | null;

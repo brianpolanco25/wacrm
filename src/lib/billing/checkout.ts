@@ -10,6 +10,12 @@
 
 import type { BillingCycle } from './paypal';
 
+/**
+ * Brand shown on PayPal's approval screen — the tenant's own checkout
+ * and the one an operator starts for a managed account (s10.3).
+ */
+export const CHECKOUT_BRAND_NAME = 'Cabbity CRM';
+
 /** The subset of a `plans` row the checkout needs. */
 export interface CheckoutPlanRow {
   id: string;

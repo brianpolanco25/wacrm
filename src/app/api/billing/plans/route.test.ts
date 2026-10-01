@@ -157,6 +157,26 @@ describe('GET /api/billing/plans', () => {
     expect(JSON.stringify(json)).not.toContain('Ilimitado');
   });
 
+  it('never lists the managed plan of the 077, even once it is published to PayPal (s10.3)', async () => {
+    plans.push({
+      id: 'gestionado',
+      name: 'Gestionado',
+      is_public: false,
+      sort_order: 90,
+      limits: { messages_out: null, broadcast_recipients: null, numbers: 3 },
+      price_usd_month: '1036.00',
+      price_usd_year: null,
+      // Published for the operator's PayPal checkout: still not for sale.
+      provider_plan_id_month: 'P-GESTIONADO',
+      provider_plan_id_year: null,
+    });
+    const json = await (await GET()).json();
+    const ids = json.plans.map((p: { id: string }) => p.id);
+    expect(ids).toEqual(['inicio', 'negocio']);
+    expect(JSON.stringify(json)).not.toContain('Gestionado');
+    expect(JSON.stringify(json)).not.toContain('1036');
+  });
+
   it('is open to any member, not just admins', async () => {
     role = 'viewer';
     expect((await GET()).status).toBe(200);

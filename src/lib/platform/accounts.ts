@@ -169,6 +169,13 @@ export interface AccountNumber {
   verifiedName: string | null;
   label: string | null;
   wabaId: string | null;
+  /**
+   * How the row got here (054): through the Embedded Signup dialog, or
+   * typed into the manual form — the only way for a managed number in
+   * Cabbity's own portfolio (s10.6). Anything unknown reads as manual,
+   * the column's default.
+   */
+  provisionedVia: 'embedded_signup' | 'manual';
   status: string;
   isDefault: boolean;
   connectedAt: string | null;
@@ -216,6 +223,14 @@ export interface AccountDetail {
    * «Asignado a mano» on the file. Null with no subscription row.
    */
   provider: string | null;
+  /**
+   * Fase 10 (076/077): who pays Meta (`direct` | `managed`), the price of
+   * a managed account (`{}` otherwise) and how it pays (`paypal` |
+   * `manual`, null = whatever `provider` says).
+   */
+  metaBilling: 'direct' | 'managed';
+  metaPricing: Record<string, unknown>;
+  paymentMethod: 'paypal' | 'manual' | null;
   /** Consumption of the current cycle against the plan's caps. */
   usage: UsageLine[];
   /** Caps that are a headcount of rows, not a counter. */
@@ -240,6 +255,7 @@ interface SubscriptionRow {
   manual_hold_at: string | null;
   manual_hold_by: string | null;
   manual_hold_reason: string | null;
+  meta_pricing?: unknown;
 }
 
 /** Name + creation date, or null when there is no such account. */
@@ -273,7 +289,7 @@ async function loadSubscription(
     .select(
       'plan_id, provider, status, provider_subscription_id, current_period_end, ' +
         'grace_until, trial_ends_at, cancel_at_period_end, cycle, ' +
-        'manual_hold_at, manual_hold_by, manual_hold_reason'
+        'manual_hold_at, manual_hold_by, manual_hold_reason, meta_pricing'
     )
     .eq('account_id', accountId)
     .maybeSingle();
@@ -322,7 +338,7 @@ async function loadNumbers(accountId: string): Promise<AccountNumber[]> {
     .select(
       'id, phone_number_id, display_phone_number, verified_name, label, ' +
         'waba_id, status, is_default, connected_at, registered_at, ' +
-        'last_registration_error, meta_payment_status, ' +
+        'last_registration_error, provisioned_via, meta_payment_status, ' +
         'meta_payment_checked_at, meta_payment_error'
     )
     .eq('account_id', accountId)
@@ -340,6 +356,8 @@ async function loadNumbers(accountId: string): Promise<AccountNumber[]> {
     verifiedName: (row.verified_name as string | null) ?? null,
     label: (row.label as string | null) ?? null,
     wabaId: (row.waba_id as string | null) ?? null,
+    provisionedVia:
+      row.provisioned_via === 'embedded_signup' ? 'embedded_signup' : 'manual',
     status: (row.status as string) ?? 'disconnected',
     isDefault: Boolean(row.is_default),
     connectedAt: (row.connected_at as string | null) ?? null,
@@ -542,6 +560,14 @@ export async function loadAccountDetail(
     cycle: subscription?.cycle ?? null,
     providerSubscriptionId: subscription?.provider_subscription_id ?? null,
     provider: subscription?.provider ?? null,
+    metaBilling: entitlements.metaBilling,
+    metaPricing:
+      subscription?.meta_pricing &&
+      typeof subscription.meta_pricing === 'object' &&
+      !Array.isArray(subscription.meta_pricing)
+        ? (subscription.meta_pricing as Record<string, unknown>)
+        : {},
+    paymentMethod: entitlements.paymentMethod,
     usage: buildUsage(entitlements.limits, counters),
     limits: entitlements.limits,
     members,

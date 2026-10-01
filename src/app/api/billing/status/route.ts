@@ -10,7 +10,8 @@
 //
 // Open to any member (`getCurrentAccount`, no role floor): a `viewer`
 // is exactly who needs to be told why nothing saves. It exposes no
-// money figures and no provider ids — status, plan and dates only.
+// money figures and no provider ids — status, plan and dates only —
+// except the total of an open statement (s10.4), and only to admin+.
 // Changing the subscription is not possible from here; this route has
 // no writes at all.
 //
@@ -25,6 +26,7 @@
 import { NextResponse } from 'next/server';
 
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account';
+import { hasMinRole } from '@/lib/auth/roles';
 import { getEntitlements } from '@/lib/billing/enforce';
 import { getPlatformSignupConfig } from '@/lib/whatsapp/platform-mode';
 import {
@@ -126,6 +128,21 @@ export async function GET() {
       cancelAtPeriodEnd: dates?.cancel_at_period_end ?? false,
       metaPayment,
       metaBilling,
+      // s10.4: the open statement of a managed account, for the
+      // `statement_due` banner — period and due date for every member
+      // (a viewer needs to know why the account is about to lock), the
+      // amount only for admin+, like the rest of the money of /billing.
+      statement: entitlements.openStatement
+        ? {
+            id: entitlements.openStatement.id,
+            periodStart: entitlements.openStatement.periodStart,
+            periodEnd: entitlements.openStatement.periodEnd,
+            dueAt: entitlements.openStatement.dueAt,
+            totalUsd: hasMinRole(ctx.role, 'admin')
+              ? entitlements.openStatement.totalUsd
+              : null,
+          }
+        : null,
     });
   } catch (err) {
     return toErrorResponse(err);

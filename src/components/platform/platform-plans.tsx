@@ -148,6 +148,8 @@ export function PlatformPlans({
     action: 'sync' | 'unpublish';
   } | null>(null);
   const [syncing, setSyncing] = useState(false);
+  // s10.3: publishing a hidden plan to PayPal is asked for explicitly.
+  const [confirmHidden, setConfirmHidden] = useState(false);
   const [open, setOpen] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
@@ -238,8 +240,11 @@ export function PlatformPlans({
     }
   }
 
+  const hiddenSync = confirm?.action === 'sync' && !confirm.plan.isPublic;
+
   async function sync() {
     if (!confirm) return;
+    if (hiddenSync && !confirmHidden) return;
     setSyncing(true);
     try {
       const res = await fetch(
@@ -250,6 +255,7 @@ export function PlatformPlans({
           body: JSON.stringify({
             cycle: confirm.cycle,
             action: confirm.action,
+            ...(hiddenSync ? { confirmHidden } : {}),
           }),
         }
       );
@@ -377,9 +383,10 @@ export function PlatformPlans({
                   onEdit={() =>
                     setEditor({ mode: 'edit', form: planToForm(plan) })
                   }
-                  onSync={(cycle) =>
-                    setConfirm({ plan, cycle, action: 'sync' })
-                  }
+                  onSync={(cycle) => {
+                    setConfirmHidden(false);
+                    setConfirm({ plan, cycle, action: 'sync' });
+                  }}
                   onUnpublish={(cycle) =>
                     setConfirm({ plan, cycle, action: 'unpublish' })
                   }
@@ -444,6 +451,23 @@ export function PlatformPlans({
                   {t('confirm.verifyRule')}
                 </p>
               ) : null}
+              {hiddenSync ? (
+                <div
+                  className="flex items-start gap-2"
+                  data-confirm-hidden={confirm.plan.id}
+                >
+                  <Checkbox
+                    id="confirm-hidden"
+                    checked={confirmHidden}
+                    onCheckedChange={(checked) =>
+                      setConfirmHidden(checked === true)
+                    }
+                  />
+                  <Label htmlFor="confirm-hidden" className="leading-snug">
+                    {t('confirm.hiddenBox')}
+                  </Label>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <DialogFooter>
@@ -454,7 +478,10 @@ export function PlatformPlans({
             >
               {t('cancel')}
             </Button>
-            <Button onClick={sync} disabled={syncing}>
+            <Button
+              onClick={sync}
+              disabled={syncing || (hiddenSync && !confirmHidden)}
+            >
               {syncing ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (

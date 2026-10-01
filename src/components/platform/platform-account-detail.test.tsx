@@ -8,9 +8,9 @@ import es from '../../../messages/es.json';
 import { PlatformAccountDetail, type Detail } from './platform-account-detail';
 
 // p11.1 R21 — the operator's file shows, per number, the WABA payment
-// method in Meta, when it was last checked, Meta's error when it could
-// not be checked, and «Comprobar de nuevo». Also for `managed` accounts:
-// there the WABA is Cabbity's and the operator is who must see it.
+// method in Meta and «Comprobar de nuevo». Since s10.6 the line lives in
+// `AccountNumbersCard`; the file keeps the state and the POST and passes
+// them down. Detailed markup tests: platform-numbers.test.tsx.
 
 type Catalogue = typeof es;
 
@@ -70,11 +70,14 @@ function paymentLine(html: string): string {
 }
 
 describe('PlatformAccountDetail — payment method per number (p11.1)', () => {
-  it('a missing number of a managed account: red badge, date and the re-check button', () => {
-    // The file does not branch on meta_billing at all: the line shows
-    // whatever the number is, managed or not.
+  // The markup of the line itself (badge per state, date, Meta's error,
+  // disabled while checking) is tested on the card it lives in since
+  // s10.6: platform-numbers.test.tsx. Here, only that the file wires it.
+
+  it('the numbers card shows the payment line with an enabled re-check button', () => {
     const html = render({
       ...DETAIL,
+      metaBilling: 'managed',
       numbers: [
         {
           ...NUMBER,
@@ -84,55 +87,16 @@ describe('PlatformAccountDetail — payment method per number (p11.1)', () => {
         },
       ],
     });
-    const line = paymentLine(html);
+    const card = html.slice(html.indexOf('data-testid="account-numbers"'));
+    const line = paymentLine(card);
     expect(line).toContain('data-payment-status="missing"');
-    expect(line).toContain(es.Platform.paymentStatus);
     expect(line).toContain(es.Platform.paymentMissing);
     expect(line).toContain('Comprobado el');
     expect(line).toContain(es.Platform.paymentRecheck);
-  });
-
-  it("unknown shows Meta's error", () => {
-    const html = render({
-      ...DETAIL,
-      numbers: [
-        {
-          ...NUMBER,
-          metaPaymentStatus: 'unknown',
-          metaPaymentCheckedAt: '2026-10-01T10:00:00.000Z',
-          metaPaymentError: '(#200) Permissions error',
-        },
-      ],
-    });
-    const line = paymentLine(html);
-    expect(line).toContain(es.Platform.paymentUnknown);
-    expect(line).toContain('(#200) Permissions error');
-  });
-
-  it('ok hides the error; never checked reads as pending', () => {
-    const ok = paymentLine(
-      render({
-        ...DETAIL,
-        numbers: [
-          {
-            ...NUMBER,
-            metaPaymentStatus: 'ok',
-            metaPaymentCheckedAt: '2026-10-01T10:00:00.000Z',
-            metaPaymentError: 'stale',
-          },
-        ],
-      })
-    );
-    expect(ok).toContain(es.Platform.paymentOk);
-    expect(ok).not.toContain('stale');
-    const pending = paymentLine(
-      render({
-        ...DETAIL,
-        numbers: [{ ...NUMBER, metaPaymentStatus: null }],
-      })
-    );
-    expect(pending).toContain(es.Platform.paymentPending);
-    expect(pending).not.toContain('Comprobado el');
+    expect(line).not.toContain('disabled=""');
+    // s10.6 next to it: the WABA id and the Cabbity portfolio tag.
+    expect(card).toContain('waba-1');
+    expect(card).toContain(es.Platform.numbers.inCabbityPortfolio);
   });
 
   it('a number without WABA has no payment line', () => {

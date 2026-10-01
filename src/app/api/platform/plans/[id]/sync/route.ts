@@ -8,6 +8,10 @@
 //   id at the same price   → nothing                                   200
 //   price empty or 0       → 400 (nothing free is published)
 //   no PayPal credentials  → 503
+//   hidden plan            → 409 `hidden_plan`, unless the body says
+//                            `confirmHidden: true` (s10.3): a plan that
+//                            is not for sale is published only on
+//                            purpose (the box in the dialog)
 //
 // `{ cycle, action: 'unpublish' }` stops selling that cycle: the id goes
 // back to NULL, the history is kept, PayPal is not called.
@@ -67,6 +71,7 @@ export async function POST(
     const body = (await request.json().catch(() => null)) as {
       cycle?: unknown;
       action?: unknown;
+      confirmHidden?: unknown;
     } | null;
     const cycle = body?.cycle;
     if (cycle !== 'month' && cycle !== 'year') {
@@ -94,6 +99,7 @@ export async function POST(
       planId: id,
       cycle,
       actorUserId: ctx.userId,
+      allowHidden: body?.confirmHidden === true,
     });
     const plan = await loadPlatformPlan(id);
     return NextResponse.json({ ...result, plan });

@@ -1821,9 +1821,10 @@ BEGIN
     RAISE EXCEPTION 'plan ilimitado is missing (migration 074)';
   END IF;
 
-  -- Catálogo de una base limpia: los tres de la 041 y el de la 074.
-  IF (SELECT count(*) FROM plans) <> 4 THEN
-    RAISE EXCEPTION 'expected exactly 4 rows in plans (inicio/pro/negocio/ilimitado), found % (migration 074)',
+  -- Catálogo de una base limpia: los tres de la 041, el de la 074 y
+  -- el `gestionado` de la 077.
+  IF (SELECT count(*) FROM plans) <> 5 THEN
+    RAISE EXCEPTION 'expected exactly 5 rows in plans (inicio/pro/negocio/ilimitado/gestionado), found % (migrations 074, 077)',
       (SELECT count(*) FROM plans);
   END IF;
 
@@ -2080,6 +2081,180 @@ BEGIN
   END IF;
   -- /076 -----------------------------------------------------------
 
+  -- 077 ------------------------------------------------------------
+  -- s10.3: plan oculto `gestionado`, su política de precio por defecto
+  -- en `plans.meta_pricing` y `subscriptions.payment_method`.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans'
+      AND column_name = 'meta_pricing' AND data_type = 'jsonb'
+      AND is_nullable = 'NO'
+      AND column_default LIKE '''{}''::jsonb%'
+  ) THEN
+    RAISE EXCEPTION 'plans.meta_pricing is missing, nullable or not DEFAULT {} (migration 077)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'plans_meta_pricing_object_check'
+                   AND conrelid = 'public.plans'::regclass) THEN
+    RAISE EXCEPTION 'plans_meta_pricing_object_check is missing (migration 077)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM plans
+    WHERE id = 'gestionado'
+      AND is_public = false
+      AND price_usd_month = 1036
+      AND price_usd_year IS NULL
+      AND limits = '{"operators": 30, "contacts": 50000, "messages_out": null, "ai_replies": 15000, "broadcast_recipients": null, "knowledge_documents": 200, "numbers": 3, "retention_months": null}'::jsonb
+      AND features @> ARRAY['ai_autoreply', 'ai_knowledge', 'auto_assign', 'api',
+                            'webhooks', 'multi_number', 'priority_support']::text[]
+      AND description IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'plan gestionado is missing or not hidden/1036/monthly-only/unlimited sends (migration 077)';
+  END IF;
+  IF (SELECT meta_pricing FROM plans WHERE id = 'gestionado') IS DISTINCT FROM
+     '{"included_messages": 7000, "fee_usd": 1036, "overage": {"service": {"multiplier": 2.5}, "utility": {"multiplier": 2.5}, "marketing": {"multiplier": 2.5}, "authentication": {"multiplier": 2.5}, "authentication_international": {"multiplier": 2.5}}}'::jsonb THEN
+    RAISE EXCEPTION 'plan gestionado must carry the default meta_pricing (migration 077)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'payment_method' AND data_type = 'text'
+      AND is_nullable = 'YES' AND column_default IS NULL
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.payment_method is missing or not a nullable text (migration 077)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'subscriptions_payment_method_check'
+                   AND conrelid = 'public.subscriptions'::regclass
+                   AND pg_get_constraintdef(oid) LIKE '%paypal%'
+                   AND pg_get_constraintdef(oid) LIKE '%manual%') THEN
+    RAISE EXCEPTION 'subscriptions_payment_method_check is missing (migration 077)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public'
+               AND tablename IN ('plans', 'subscriptions')
+               AND cmd IN ('INSERT', 'UPDATE', 'DELETE', 'ALL')) THEN
+    RAISE EXCEPTION 'plans / subscriptions must have no client write policy (migrations 041, 077)';
+  END IF;
+  -- /077 -----------------------------------------------------------
+  -- 078 ------------------------------------------------------------
+  -- s10.4: estados de cuenta al corte y los dos actos nuevos de la
+  -- bitácora.
+  IF to_regclass('public.statements') IS NULL THEN
+    RAISE EXCEPTION 'statements table missing (migration 078)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'statements'
+      AND column_name IN ('id', 'account_id', 'period_start', 'period_end',
+                          'plan_fee_usd', 'usage', 'meta_cost_usd',
+                          'usage_charge_usd', 'total_usd',
+                          'included_messages', 'messages_total',
+                          'overage_messages', 'status', 'issued_at',
+                          'due_at', 'paid_at', 'paid_by', 'paid_reference',
+                          'paid_note', 'claimed_paid_at', 'claimed_by',
+                          'claim_note', 'created_at')
+  ) <> 23 THEN
+    RAISE EXCEPTION 'statements is missing columns (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.statements'::regclass
+      AND conname = 'statements_account_period_key' AND contype = 'u'
+  ) THEN
+    RAISE EXCEPTION 'statements (account_id, period_end) must be UNIQUE (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.statements'::regclass
+      AND conname = 'statements_status_check'
+      AND pg_get_constraintdef(oid) LIKE '%issued%'
+      AND pg_get_constraintdef(oid) LIKE '%paid%'
+      AND pg_get_constraintdef(oid) LIKE '%void%'
+  ) THEN
+    RAISE EXCEPTION 'statements status CHECK missing (migration 078)';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM pg_constraint
+    WHERE conrelid = 'public.statements'::regclass AND contype = 'c'
+      AND conname IN ('statements_period_check', 'statements_due_check',
+                      'statements_amounts_check', 'statements_paid_check',
+                      'statements_usage_object_check')
+  ) <> 5 THEN
+    RAISE EXCEPTION 'statements CHECKs missing (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'statements'
+      AND indexname = 'statements_account_open_idx'
+  ) THEN
+    RAISE EXCEPTION 'statements_account_open_idx missing (migration 078)';
+  END IF;
+
+  IF NOT (SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.statements'::regclass) THEN
+    RAISE EXCEPTION 'statements must have RLS enabled (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'statements'
+      AND policyname = 'statements_select' AND cmd = 'SELECT'
+      AND qual LIKE '%can_read_account(account_id, ''admin''%'
+  ) OR EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'statements'
+      AND cmd <> 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'statements must be readable by admin+ only and writable by nobody but service_role (migration 078)';
+  END IF;
+
+  IF has_table_privilege('authenticated', 'public.statements', 'INSERT')
+     OR has_table_privilege('authenticated', 'public.statements', 'UPDATE')
+     OR has_table_privilege('authenticated', 'public.statements', 'DELETE')
+     OR has_table_privilege('anon', 'public.statements', 'SELECT')
+     OR has_table_privilege('anon', 'public.statements', 'INSERT') THEN
+    RAISE EXCEPTION 'statements must not be writable by anon/authenticated (migration 078)';
+  END IF;
+
+  -- Lo interno no se lee con un JWT de inquilino.
+  IF has_column_privilege('authenticated', 'public.statements', 'meta_cost_usd', 'SELECT')
+     OR has_column_privilege('authenticated', 'public.statements', 'usage', 'SELECT')
+     OR has_column_privilege('authenticated', 'public.statements', 'paid_reference', 'SELECT')
+     OR has_column_privilege('authenticated', 'public.statements', 'paid_note', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'public.statements', 'total_usd', 'SELECT') THEN
+    RAISE EXCEPTION 'statements: tenants read the totals but never meta_cost_usd, usage or the payment data (migration 078)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_action_check'
+      AND pg_get_constraintdef(oid) LIKE '%payment_confirmed%'
+      AND pg_get_constraintdef(oid) LIKE '%statement_void%'
+      AND pg_get_constraintdef(oid) LIKE '%plan_override%'
+      AND pg_get_constraintdef(oid) LIKE '%operator_revoke%'
+      AND pg_get_constraintdef(oid) LIKE '%impersonation%'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_log.action must admit payment_confirmed and statement_void without dropping the earlier acts (migration 078)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'statement_period_end'
+      AND data_type = 'timestamp with time zone' AND is_nullable = 'YES'
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.statement_period_end is missing or not a nullable timestamptz (migration 078)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM subscriptions
+             WHERE meta_billing = 'managed' AND statement_period_end IS NULL) THEN
+    RAISE EXCEPTION 'a managed subscription has no statement_period_end (migration 078)';
+  END IF;
+  -- /078 -----------------------------------------------------------
   -- 079 — estado del método de pago del WABA (p11.1) ----------------
   IF (SELECT count(*) FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'whatsapp_config'

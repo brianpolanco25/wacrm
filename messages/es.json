@@ -1970,6 +1970,36 @@
       "reindex": "Reindexar",
       "reindexTooltip": "Volver a generar los embeddings de todos los documentos (por ejemplo, tras añadir una clave)",
       "loading": "Cargando…"
+    },
+    "managedSetup": {
+      "title": "Alta del número en el portafolio de Cabbity CRM",
+      "description": "Esta cuenta es gestionada: Cabbity CRM le paga a Meta, así que el WABA del cliente se crea en el portafolio de Meta de Cabbity CRM y el número se conecta con la configuración manual, no con el diálogo de Meta. Los cuatro primeros pasos son trámites en Meta, no en el CRM.",
+      "inMeta": "Trámite en Meta: verificar en el Business Manager.",
+      "inCrm": "En el CRM, en esta pantalla.",
+      "localOnly": "Las casillas son solo una ayuda en este navegador: no se guardan y se vacían al recargar. El CRM no comprueba ninguno de estos pasos en Meta.",
+      "tokenNote": "Un token de usuario de sistema no caduca: el CRM no intenta renovarlo ni avisa de su caducidad. Si se revoca en Meta, hay que generar otro y volver a pegarlo aquí.",
+      "steps": {
+        "waba": {
+          "title": "Crear el WABA en el Business Manager de Cabbity CRM",
+          "body": "En el portafolio de Meta de Cabbity CRM (no en el del cliente), crea una cuenta de WhatsApp Business para esta empresa. Su método de pago debe ser el de Cabbity CRM, porque es Cabbity CRM quien le paga a Meta. La propiedad del WABA va por contrato."
+        },
+        "number": {
+          "title": "Registrar el número",
+          "body": "Añade el número del cliente a ese WABA y verifícalo con el código que envía Meta. Ten a mano el teléfono del cliente para recibir el código."
+        },
+        "token": {
+          "title": "Generar el token de usuario de sistema (permanente)",
+          "body": "En la configuración del negocio de Cabbity CRM, usa un usuario de sistema con acceso a ese WABA y genera un token sin caducidad con los permisos de WhatsApp (whatsapp_business_messaging y whatsapp_business_management). Guárdalo: Meta lo muestra una sola vez."
+        },
+        "displayName": {
+          "title": "Verificación del nombre visible",
+          "body": "Envía a revisión el nombre visible del número y espera la aprobación de Meta. Mientras no esté aprobado, el número puede enviar con restricciones."
+        },
+        "paste": {
+          "title": "Pegar los datos en el CRM",
+          "body": "Pulsa «{addNumber}» y, en «{manualSetup}», pega el id del número en «{phoneNumberId}», el id del WABA en «{wabaId}» y el token de usuario de sistema en «{accessToken}». Guarda y usa «{testConnection}»."
+        }
+      }
     }
   },
   "Billing": {
@@ -2080,6 +2110,62 @@
       "unknownTitle": "No pudimos comprobar tu método de pago en Meta",
       "unknownBody": "Revisa en el Billing Hub de Meta que tu cuenta de WhatsApp tenga una tarjeta: sin ella, desde el 1 de octubre de 2026 Meta no entrega tus mensajes.",
       "openBillingHub": "Abrir Billing Hub de Meta"
+    },
+    "statementAlert": {
+      "dueTitle": "Tienes un estado de cuenta pendiente",
+      "dueBody": "Tu estado de cuenta de {period} por US$ {total} vence el {date}: {days, plural, =0 {vence hoy} one {te queda # día} other {te quedan # días}}. Si no está pagado para entonces, la cuenta pasa a solo lectura.",
+      "dueBodyNoAmount": "El estado de cuenta de {period} vence el {date}: {days, plural, =0 {vence hoy} one {queda # día} other {quedan # días}}. Si no está pagado para entonces, la cuenta pasa a solo lectura. Un administrador puede verlo en Facturación.",
+      "lockedTitle": "Cuenta en solo lectura por estado de cuenta pendiente",
+      "lockedBody": "El estado de cuenta de {period} venció sin pago confirmado, así que no se envían mensajes ni difusiones y la IA no responde. Los mensajes entrantes siguen llegando y no se borra nada. En cuanto se confirme el pago, todo vuelve como estaba.",
+      "view": "Ver estado de cuenta",
+      "claim": "Ya pagué",
+      "claimed": "Avisamos a Cabbity CRM de tu pago. Lo confirmaremos en cuanto lo recibamos.",
+      "claimErrors": {
+        "notOpen": "Este estado de cuenta ya no está pendiente.",
+        "forbidden": "Solo un administrador puede avisar del pago.",
+        "failed": "No se pudo enviar el aviso. Inténtalo de nuevo."
+      }
+    },
+    "statements": {
+      "title": "Estados de cuenta",
+      "subtitle": "Lo que se factura en cada corte: la cuota del paquete y los mensajes entregados por encima de él.",
+      "taxNote": "Importes en USD, sin impuestos: la factura fiscal se emite aparte.",
+      "status": {
+        "issued": "Pendiente",
+        "paid": "Pagado",
+        "void": "Anulado"
+      },
+      "dueOn": "Vence el {date}",
+      "paidOn": "Pagado el {date}",
+      "package": "{used} de {included} mensajes del paquete usados · {overage} de excedente",
+      "col": {
+        "number": "Número",
+        "category": "Categoría",
+        "delivered": "Entregados",
+        "overage": "Excedente",
+        "price": "Precio por mensaje",
+        "amount": "Importe"
+      },
+      "category": {
+        "service": "Servicio",
+        "utility": "Utilidad",
+        "marketing": "Marketing",
+        "authentication": "Autenticación",
+        "authentication_international": "Autenticación internacional"
+      },
+      "uncategorized": "{count, plural, one {# mensaje entregado sin categoría de Meta: no se cobra.} other {# mensajes entregados sin categoría de Meta: no se cobran.}}",
+      "fee": "Cuota del paquete",
+      "feeNone": "Cobrada por tu suscripción de PayPal",
+      "overageTotal": "Excedente",
+      "total": "Total a pagar",
+      "claim": "Ya pagué",
+      "claimed": "Avisamos a Cabbity CRM de tu pago. Lo confirmaremos en cuanto lo recibamos.",
+      "claimedOn": "Avisaste del pago el {date}. Pendiente de confirmar.",
+      "claimErrors": {
+        "notOpen": "Este estado de cuenta ya no está pendiente.",
+        "forbidden": "Solo un administrador puede avisar del pago.",
+        "failed": "No se pudo enviar el aviso. Inténtalo de nuevo."
+      }
     }
   },
   "Platform": {
@@ -2266,7 +2352,8 @@
         "price": "Precio que se publica: {price}.",
         "newPlanRule": "PayPal no permite cambiar el precio de un plan con suscriptores. Si el precio cambió, se crea un plan NUEVO en PayPal y los clientes nuevos pagan el precio nuevo; los clientes actuales siguen en el plan anterior al precio anterior. No se puede deshacer.",
         "verifyRule": "No consta con qué precio se creó este plan de PayPal: primero se lee de PayPal y solo se crea un plan nuevo si no coincide o si ya no está activo en PayPal.",
-        "action": "Sincronizar"
+        "action": "Sincronizar",
+        "hiddenBox": "Este plan es oculto. Publicarlo en PayPal no lo pone a la venta (sigue fuera de /billing y del onboarding), pero crea un plan en PayPal. Publicar igualmente."
       },
       "history": {
         "toggle": "Historial",
@@ -2517,7 +2604,112 @@
     "paymentPending": "Pendiente",
     "paymentCheckedAt": "Comprobado el {date}",
     "paymentRecheck": "Comprobar de nuevo",
-    "paymentRecheckFailed": "No se pudo comprobar el método de pago."
+    "paymentRecheckFailed": "No se pudo comprobar el método de pago.",
+    "managed": {
+      "termsTitle": "Facturación gestionada de Meta",
+      "termsHelp": "Este plan lo cobra Cabbity CRM al corte del mes: cuota fija con un paquete de mensajes entregados y excedente por categoría. El precio sale del plan y se puede cambiar para esta empresa.",
+      "paymentMethod": "Método de pago",
+      "methods": {
+        "manual": "Manual: estado de cuenta confirmado a mano",
+        "paypal": "PayPal: la cuota por suscripción, el excedente por estado de cuenta"
+      },
+      "methodShort": {
+        "manual": "Pago manual",
+        "paypal": "PayPal"
+      },
+      "manualHelp": "Queda activa ya, con ciclo mensual: el primer corte es dentro de un mes.",
+      "paypalHelp": "Se crea el plan en PayPal si falta y una suscripción para esta empresa. La cuenta queda pendiente de pago (solo lectura) hasta que PayPal confirme.",
+      "metaManaged": "Meta lo paga Cabbity CRM",
+      "metaManagedHelp": "Los mensajes de esta empresa se cobran con el precio de abajo y Cabbity CRM paga a Meta.",
+      "metaDirectHelp": "Sin marcar, Meta le cobra a la empresa directamente y no se guarda precio.",
+      "included": "Mensajes incluidos",
+      "fee": "Cuota mensual (USD)",
+      "overageTitle": "Precio por mensaje del excedente",
+      "overageHelp": "Del mensaje siguiente al paquete en adelante: un multiplicador de la tarifa de Meta de su categoría o un importe fijo en USD.",
+      "modeLabel": "Cómo se calcula",
+      "mode": {
+        "multiplier": "× tarifa de Meta",
+        "usd": "USD fijo por mensaje"
+      },
+      "category": {
+        "service": "Servicio",
+        "utility": "Utilidad",
+        "marketing": "Marketing",
+        "authentication": "Autenticación",
+        "authentication_international": "Autenticación internacional"
+      },
+      "invalidPricing": "Revisa el precio: {error}",
+      "assignConfirmManual": "¿Asignar el plan {plan} a {account} con pago manual? Quedará activo, con corte mensual desde hoy.",
+      "assignConfirmPayPal": "¿Asignar el plan {plan} a {account} con PayPal? Quedará pendiente de pago hasta que el propietario pague en PayPal.",
+      "assignedPayPal": "Plan asignado. Falta que el propietario pague en PayPal: envíale el enlace.",
+      "checkoutTitle": "Enlace de pago de PayPal",
+      "checkoutHelp": "Envíaselo al propietario: no se manda por correo. La cuenta queda pendiente de pago hasta que PayPal confirme el cobro.",
+      "pricingTitle": "Precio de Meta gestionado",
+      "managedBadge": "Meta lo paga Cabbity CRM",
+      "pricingHelp": "Los cambios rigen desde el próximo estado de cuenta; los ya emitidos no cambian.",
+      "methodChangeHelp": "Pasar a manual exige cancelar antes la suscripción de PayPal; pasar a PayPal se hace asignando el plan con PayPal.",
+      "reasonLabel": "Motivo",
+      "reasonHelp": "Obligatorio, al menos {min} caracteres. Queda en la bitácora de la plataforma con el precio anterior y el nuevo.",
+      "save": "Guardar precio",
+      "saved": "Precio actualizado.",
+      "unchanged": "No había nada que cambiar.",
+      "errors": {
+        "notManaged": "Cabbity CRM no paga a Meta por esta empresa: asígnale primero el plan gestionado.",
+        "paypalActive": "PayPal sigue cobrando la cuota de esta empresa. Cancélala en PayPal primero.",
+        "needsCheckout": "No hay suscripción de PayPal que cobre la cuota. Asigna el plan con PayPal desde la ficha.",
+        "paypalNotConfigured": "PayPal no está configurado en este servidor. No se cambió nada.",
+        "paypalFailed": "PayPal rechazó la operación. No se cambió nada.",
+        "failed": "No se pudo guardar el precio. No se cambió nada.",
+        "checkoutInProgress": "El propietario ya aprobó el pago en PayPal: espera a que PayPal lo confirme. No se cambió nada."
+      }
+    },
+    "numbers": {
+      "wabaId": "Id del WABA",
+      "phoneNumberId": "Id del número",
+      "copy": "Copiar {what}",
+      "copied": "Copiado al portapapeles",
+      "copyFailed": "No se pudo copiar",
+      "missing": "sin dato",
+      "modeEmbedded": "Conectado con el diálogo de Meta (Embedded Signup)",
+      "modeManual": "Configuración manual",
+      "inCabbityPortfolio": "En el portafolio de Cabbity CRM",
+      "managedHint": "Cabbity CRM le paga a Meta por esta cuenta: su WABA vive en el portafolio de Meta de Cabbity CRM y cada número se conecta a mano con un token de usuario de sistema."
+    },
+    "statements": {
+      "title": "Estados de cuenta",
+      "help": "Emitidos por el corte mensual. El costo de Meta solo cuenta los mensajes que Meta cobró; la diferencia con el total es el margen.",
+      "loading": "Cargando estados de cuenta…",
+      "loadFailed": "No se pudieron cargar los estados de cuenta.",
+      "none": "Todavía no hay estados de cuenta.",
+      "status": {
+        "issued": "Pendiente",
+        "paid": "Pagado",
+        "void": "Anulado"
+      },
+      "dueOn": "vence el {date}",
+      "figures": "Cuota {fee} · excedente {overage} · costo de Meta {cost} · margen {margin} · {messages} entregados, {overageMessages} de excedente",
+      "uncategorized": "{count} entregados sin categoría, no cobrados ({detail})",
+      "claim": "El cliente avisó que pagó el {date}: {note}",
+      "paid": "Pago del {date}, referencia {reference}",
+      "confirm": "Confirmar pago",
+      "void": "Anular",
+      "paidAtLabel": "Fecha del pago",
+      "referenceLabel": "Referencia",
+      "noteLabel": "Nota",
+      "confirmHelp": "Sin fecha, se toma hoy. La cuenta vuelve a escribir y el próximo corte queda un mes después del de este estado, aunque se pague tarde.",
+      "confirmSubmit": "Confirmar el pago",
+      "voidReasonLabel": "Motivo de la anulación",
+      "voidHelp": "Mínimo {min} caracteres. La cuenta vuelve a escribir y el periodo se extiende igual que al confirmar.",
+      "voidSubmit": "Anular el estado de cuenta",
+      "confirmed": "Pago confirmado.",
+      "voided": "Estado de cuenta anulado.",
+      "errors": {
+        "notOpen": "Ese estado de cuenta ya no está pendiente.",
+        "notFound": "Ese estado de cuenta no existe en esta empresa.",
+        "invalid": "Revisa los datos: {detail}",
+        "failed": "No se pudo completar. No se cambió nada."
+      }
+    }
   },
   "Developers": {
     "ui": {

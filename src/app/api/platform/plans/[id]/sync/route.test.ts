@@ -50,6 +50,13 @@ vi.mock('@/lib/auth/admin-client', () => ({
   }),
 }));
 
+// The suite fires more syncs than the per-operator limit allows; the
+// limiter has its own tests.
+vi.mock('@/lib/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/rate-limit')>()),
+  checkRateLimit: () => ({ success: true, limit: 1, remaining: 1, reset: 0 }),
+}));
+
 const { FakeDatabase } = await import('@/lib/security/fake-supabase');
 const { __resetPayPalForTests } = await import('@/lib/billing/paypal');
 const support = await import('@/lib/billing/plan-admin.test-support');
@@ -529,5 +536,44 @@ describe('unpublish a cycle (round 2)', () => {
     );
     h.user = { id: PLAIN_OWNER };
     expect((await unpublish()).status).toBe(403);
+  });
+});
+
+describe('a hidden plan is published only on purpose (s10.3)', () => {
+  function hidePro() {
+    const plan = planRow('pro');
+    plan.is_public = false;
+    return plan;
+  }
+
+  it('409s hidden_plan without confirmHidden, and calls nothing', async () => {
+    hidePro();
+    const res = await call('pro');
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('hidden_plan');
+    expect(planRow('pro').provider_plan_id_month).toBeNull();
+    expect(history()).toEqual([]);
+    expect(paypal.requests).toEqual([]);
+  });
+
+  it('does not take a truthy string for a yes', async () => {
+    hidePro();
+    const res = await call('pro', { cycle: 'month', confirmHidden: 'true' });
+    expect(res.status).toBe(409);
+    expect(paypal.requests).toEqual([]);
+  });
+
+  it('publishes it with confirmHidden: true — and it stays hidden', async () => {
+    hidePro();
+    const res = await call('pro', { cycle: 'month', confirmHidden: true });
+    expect(res.status).toBe(200);
+    expect((await res.json()).action).toBe('created');
+    expect(planRow('pro').provider_plan_id_month).toBe('P-NEW-1');
+    expect(planRow('pro').is_public).toBe(false);
+  });
+
+  it('a public plan needs no confirmation', async () => {
+    const res = await call('pro');
+    expect(res.status).toBe(200);
   });
 });

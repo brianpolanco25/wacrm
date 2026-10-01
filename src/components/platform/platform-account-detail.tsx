@@ -42,7 +42,10 @@ import {
   type MemberInviteOutcome,
 } from './platform-provisioning';
 import { ImpersonationActions } from './impersonation-actions';
+import { CheckoutLinkNotice, ManagedPricingCard } from './platform-managed';
+import { PlatformStatements } from './platform-statements';
 import { useSubscriptionStatusLabel } from './subscription-status';
+import { AccountNumbersCard, type WhatsAppNumber } from './platform-numbers';
 
 interface UsageLine {
   metric: string;
@@ -56,24 +59,6 @@ interface Member {
   fullName: string | null;
   email: string | null;
   role: string | null;
-}
-
-interface WhatsAppNumber {
-  id: string;
-  phoneNumberId: string;
-  displayPhoneNumber: string | null;
-  verifiedName: string | null;
-  label: string | null;
-  status: string;
-  isDefault: boolean;
-  registeredAt: string | null;
-  lastRegistrationError: string | null;
-  /** Sent by the API since f4.2; used here only to hide the payment line. */
-  wabaId?: string | null;
-  /** p11.1: método de pago del WABA en Meta; NULL = sin comprobar. */
-  metaPaymentStatus?: 'ok' | 'missing' | 'unknown' | null;
-  metaPaymentCheckedAt?: string | null;
-  metaPaymentError?: string | null;
 }
 
 interface BillingEntry {
@@ -105,6 +90,10 @@ export interface Detail {
   subscriptionStatus: string;
   /** `manual` when an operator assigned the plan by hand (s9.4). */
   provider: string | null;
+  /** Fase 10 (s10.3): who pays Meta, the price, how the account pays. */
+  metaBilling?: 'direct' | 'managed';
+  metaPricing?: Record<string, unknown>;
+  paymentMethod?: 'paypal' | 'manual' | null;
   readOnly: boolean;
   manualHold: boolean;
   manualHoldAt: string | null;
@@ -148,7 +137,11 @@ export function PlatformAccountDetail({
 }: {
   accountId: string;
   /** Pre-seeded state (server render, tests); normally absent. */
-  initial?: { detail: Detail; inviteLink?: string | null };
+  initial?: {
+    detail: Detail;
+    inviteLink?: string | null;
+    checkoutLink?: string | null;
+  };
 }) {
   const t = useTranslations('Platform');
   const statusLabel = useSubscriptionStatusLabel();
@@ -157,6 +150,11 @@ export function PlatformAccountDetail({
   const [failed, setFailed] = useState<'notFound' | 'error' | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(
     initial?.inviteLink ?? null
+  );
+  // s10.3: the PayPal approval link of a managed plan. Shown once, by
+  // the file (not the form), so a reload keeps it — like `inviteLink`.
+  const [checkoutLink, setCheckoutLink] = useState<string | null>(
+    initial?.checkoutLink ?? null
   );
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -417,7 +415,23 @@ export function PlatformAccountDetail({
         subscriptionStatus={detail.subscriptionStatus}
         plans={plans}
         onChanged={load}
+        onCheckoutLink={setCheckoutLink}
       />
+      <CheckoutLinkNotice url={checkoutLink} />
+      {detail.metaBilling === 'managed' ? (
+        <ManagedPricingCard
+          // A new key after each reload re-seeds the form from the row.
+          key={JSON.stringify([detail.metaPricing, detail.paymentMethod])}
+          accountId={detail.accountId}
+          metaPricing={detail.metaPricing ?? {}}
+          paymentMethod={detail.paymentMethod ?? null}
+          onChanged={load}
+        />
+      ) : null}
+      {/* s10.4: the statements of a managed account. */}
+      {detail.metaBilling === 'managed' ? (
+        <PlatformStatements accountId={detail.accountId} onChanged={load} />
+      ) : null}
       <AddMemberForm
         accountId={detail.accountId}
         link={inviteLink}
@@ -455,101 +469,13 @@ export function PlatformAccountDetail({
         </CardContent>
       </Card>
 
-      {/* ---- WhatsApp ------------------------------------------------ */}
-      <Card>
-        <CardContent className="flex flex-col gap-3 p-4">
-          <h2 className="text-foreground text-sm font-semibold">
-            {t('whatsappTitle')}
-          </h2>
-          {detail.numbers.length === 0 ? (
-            <p className="text-muted-foreground text-sm">{t('whatsappNone')}</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {detail.numbers.map((number) => (
-                <li
-                  key={number.id}
-                  className="border-border flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm"
-                >
-                  <span className="font-medium">
-                    {number.displayPhoneNumber ?? number.phoneNumberId}
-                  </span>
-                  {number.label ? (
-                    <span className="text-muted-foreground">
-                      {number.label}
-                    </span>
-                  ) : null}
-                  <Badge
-                    variant={
-                      number.status === 'connected' ? 'outline' : 'destructive'
-                    }
-                  >
-                    {number.status}
-                  </Badge>
-                  {number.isDefault ? (
-                    <Badge variant="secondary">{t('defaultNumber')}</Badge>
-                  ) : null}
-                  {number.lastRegistrationError ? (
-                    <span className="text-destructive text-xs">
-                      {number.lastRegistrationError}
-                    </span>
-                  ) : null}
-                  {number.wabaId ? (
-                    <span
-                      className="flex basis-full flex-wrap items-center gap-2 text-xs"
-                      data-payment-status={
-                        number.metaPaymentStatus ?? 'pending'
-                      }
-                    >
-                      <span className="text-muted-foreground">
-                        {t('paymentStatus')}
-                      </span>
-                      <Badge
-                        variant={
-                          number.metaPaymentStatus === 'missing'
-                            ? 'destructive'
-                            : number.metaPaymentStatus === 'ok'
-                              ? 'outline'
-                              : 'secondary'
-                        }
-                      >
-                        {number.metaPaymentStatus === 'ok'
-                          ? t('paymentOk')
-                          : number.metaPaymentStatus === 'missing'
-                            ? t('paymentMissing')
-                            : number.metaPaymentStatus === 'unknown'
-                              ? t('paymentUnknown')
-                              : t('paymentPending')}
-                      </Badge>
-                      {number.metaPaymentCheckedAt ? (
-                        <span className="text-muted-foreground">
-                          {t('paymentCheckedAt', {
-                            date: moment(number.metaPaymentCheckedAt),
-                          })}
-                        </span>
-                      ) : null}
-                      {number.metaPaymentStatus === 'unknown' &&
-                      number.metaPaymentError ? (
-                        <span className="text-muted-foreground">
-                          {number.metaPaymentError}
-                        </span>
-                      ) : null}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-xs"
-                        disabled={checkingNumber !== null}
-                        onClick={() => recheckPayment(number.id)}
-                      >
-                        {t('paymentRecheck')}
-                      </Button>
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      {/* ---- WhatsApp (s10.6: ids, mode, portfolio; p11.1: payment) -- */}
+      <AccountNumbersCard
+        numbers={detail.numbers}
+        metaBilling={detail.metaBilling}
+        checkingNumber={checkingNumber}
+        onRecheckPayment={recheckPayment}
+      />
 
       {/* ---- members ------------------------------------------------- */}
       <Card>

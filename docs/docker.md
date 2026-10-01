@@ -347,11 +347,11 @@ origin (the same value as `NEXT_PUBLIC_SITE_URL`) and add these to **Redirect
 URLs**, for each origin the app is served from (production, staging,
 `http://localhost:3000`):
 
-| Redirect URL | Why |
-| --- | --- |
-| `<site>/auth/callback**` | Every auth email. The `**` covers the query string (`?next=/reset-password&invite=…`). |
-| `<site>/reset-password**` | Only if you point a custom template straight at it. |
-| `<site>/join/**` | Invitation links sent before this change, which pointed at `/join/<token>` directly. |
+| Redirect URL              | Why                                                                                    |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `<site>/auth/callback**`  | Every auth email. The `**` covers the query string (`?next=/reset-password&invite=…`). |
+| `<site>/reset-password**` | Only if you point a custom template straight at it.                                    |
+| `<site>/join/**`          | Invitation links sent before this change, which pointed at `/join/<token>` directly.   |
 
 A `redirectTo` that is not allowed is silently replaced by the Site URL, and the
 person lands on the home page with a link nobody reads.
@@ -501,3 +501,33 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   WABA with and without a card in the Graph API Explorer, keep
   `META_PAYMENT_CHECK_DISABLED=1` at hand: if the field does not behave
   as described, set it and the whole feature goes quiet.
+
+- **Managed Meta billing needs the cut-off scheduler** (migration 078).
+  `GET /api/billing/cron` issues the monthly statement of every account
+  whose Meta messages Cabbity CRM pays (`meta_billing = 'managed'`) once
+  its statement cut-off (`subscriptions.statement_period_end`, its own
+  anchor: a PayPal renewal moving `current_period_end` never skips a
+  month) has passed: package fee plus the overage of
+  delivered messages, due three days after the cut-off. Until it is paid
+  the account is `past_due`; past the due date it is read-only (it can
+  still read, and inbound messages keep arriving). A PayPal account with
+  no overage gets no statement and its cut-off simply moves on a month.
+  Same contract as the crons above: the secret travels in
+  `x-cron-secret`, and the route answers 503 until the variable is set.
+
+  | Variable              | Required                                 | What it is                                                                                              |
+  | --------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+  | `BILLING_CRON_SECRET` | to bill accounts on managed Meta billing | Random string, compared in constant time. Without it no statement is ever issued and nobody is cut off. |
+
+  Run it **at least hourly** (it is idempotent: one statement per account
+  and cut-off, so running it every few minutes is safe too). The response
+  carries a `statements` block (`scanned`, `issued`, `existing`,
+  `extended`, `failed`, `errors`); an account whose deliveries have no
+  Meta rate loaded is skipped with a `rate_missing` error naming the
+  market and category — load it from `/platform/rates` and the next run
+  bills it.
+
+  ```bash
+  0 * * * * curl -fsS -H "x-cron-secret: $BILLING_CRON_SECRET" \
+    https://your-crm.example.com/api/billing/cron >/dev/null
+  ```

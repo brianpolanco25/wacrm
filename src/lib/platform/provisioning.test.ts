@@ -162,11 +162,109 @@ describe('manualPlanRow', () => {
       grace_until: null,
       current_period_end: null,
       cancel_at_period_end: false,
+      // s10.3: a plan with no Meta price policy leaves managed billing.
+      payment_method: null,
+      meta_billing: 'direct',
+      meta_pricing: {},
+      // s10.4: no statement anchor outside managed billing.
+      statement_period_end: null,
     });
     // A suspension is its own axis (058): giving a plan must not lift it.
     expect(Object.keys(row).some((k) => k.startsWith('manual_hold'))).toBe(
       false
     );
+  });
+});
+
+describe('manualPlanRow with managed terms (s10.3)', () => {
+  const PRICING = {
+    included_messages: 7000,
+    fee_usd: 1036,
+    overage: {
+      service: { multiplier: 2.5 },
+      utility: { multiplier: 2.5 },
+      marketing: { usd_per_message: 0.2 },
+      authentication: { multiplier: 2.5 },
+      authentication_international: { multiplier: 2.5 },
+    },
+  };
+
+  it('is active, monthly, first cut-off one month from now, with the price', () => {
+    const row = p.manualPlanRow(
+      A,
+      'gestionado',
+      { paymentMethod: 'manual', metaBilling: 'managed', metaPricing: PRICING },
+      new Date('2026-10-01T15:00:00.000Z')
+    );
+    expect(row).toMatchObject({
+      provider: 'manual',
+      status: 'active',
+      cycle: 'month',
+      current_period_end: '2026-11-01T15:00:00.000Z',
+      // s10.4 (078): the statement anchor starts equal to the period.
+      statement_period_end: '2026-11-01T15:00:00.000Z',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: PRICING,
+      provider_subscription_id: null,
+      grace_until: null,
+    });
+  });
+
+  it('clamps the month: from the 31st of January to the 28th of February', () => {
+    const row = p.manualPlanRow(
+      A,
+      'gestionado',
+      { paymentMethod: 'manual', metaBilling: 'managed', metaPricing: PRICING },
+      new Date('2027-01-31T00:00:00.000Z')
+    );
+    expect(row.current_period_end).toBe('2027-02-28T00:00:00.000Z');
+  });
+
+  it('without «Meta lo paga Cabbity»: direct, and no price is stored', () => {
+    const row = p.manualPlanRow(A, 'gestionado', {
+      paymentMethod: 'manual',
+      metaBilling: 'direct',
+      metaPricing: PRICING,
+    });
+    expect(row.meta_billing).toBe('direct');
+    expect(row.meta_pricing).toEqual({});
+    expect(row.payment_method).toBe('manual');
+    expect(row.statement_period_end).toBeNull();
+  });
+});
+
+describe('managedStatementAnchor (s10.4)', () => {
+  const NOW = new Date('2026-10-01T00:00:00.000Z');
+  it('keeps the anchor of an account already managed', () => {
+    expect(
+      p.managedStatementAnchor(
+        {
+          meta_billing: 'managed',
+          statement_period_end: '2026-10-20T00:00:00.000Z',
+        },
+        NOW
+      )
+    ).toBe('2026-10-20T00:00:00.000Z');
+  });
+  it('a new one, a month on, for an account that becomes managed or has no anchor', () => {
+    const next = '2026-11-01T00:00:00.000Z';
+    expect(p.managedStatementAnchor(null, NOW)).toBe(next);
+    expect(
+      p.managedStatementAnchor(
+        {
+          meta_billing: 'direct',
+          statement_period_end: '2026-10-20T00:00:00.000Z',
+        },
+        NOW
+      )
+    ).toBe(next);
+    expect(
+      p.managedStatementAnchor(
+        { meta_billing: 'managed', statement_period_end: null },
+        NOW
+      )
+    ).toBe(next);
   });
 });
 
@@ -267,6 +365,203 @@ describe('overridePlan', () => {
     const out = await p.overridePlan(params());
     expect(out).toEqual({ ok: true, fromPlan: null, fromProvider: null });
     expect(h.calls.some((c) => c.op === 'upsert')).toBe(true);
+  });
+});
+
+describe('overridePlan with a plan that carries a Meta price policy (s10.3)', () => {
+  const DEFAULT = {
+    included_messages: 7000,
+    fee_usd: 1036,
+    overage: {
+      service: { multiplier: 2.5 },
+      utility: { multiplier: 2.5 },
+      marketing: { multiplier: 2.5 },
+      authentication: { multiplier: 2.5 },
+      authentication_international: { multiplier: 2.5 },
+    },
+  };
+  function params(extra: Record<string, unknown> = {}) {
+    return {
+      accountId: A,
+      accountName: 'Company A',
+      planId: 'gestionado',
+      actorUserId: OPERATOR,
+      reason: REASON,
+      now: new Date('2026-10-01T00:00:00.000Z'),
+      ...extra,
+    };
+  }
+  beforeEach(() => {
+    h.results['plans:select'] = {
+      data: { id: 'gestionado', meta_pricing: DEFAULT },
+      error: null,
+    };
+  });
+
+  it('refuses it without terms (needs_terms) and writes nothing', async () => {
+    expect(await p.overridePlan(params())).toEqual({
+      ok: false,
+      reason: 'needs_terms',
+    });
+    expect(h.audit).toEqual([]);
+    expect(h.calls.some((c) => c.op === 'upsert')).toBe(false);
+  });
+
+  it('copies the plan default when no price is given, and logs method, meta_billing and price', async () => {
+    const out = await p.overridePlan(
+      params({
+        terms: {
+          paymentMethod: 'manual',
+          metaBilling: 'managed',
+          metaPricing: null,
+        },
+      })
+    );
+    expect(out.ok).toBe(true);
+    expect(h.audit[0].details).toMatchObject({
+      to_plan: 'gestionado',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: DEFAULT,
+      current_period_end: '2026-11-01T00:00:00.000Z',
+    });
+    const write = h.calls.find((c) => c.op === 'upsert')!;
+    expect(write.payload).toMatchObject({
+      account_id: A,
+      plan_id: 'gestionado',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: DEFAULT,
+      cycle: 'month',
+    });
+    const order = h.calls.map((c) => `${c.table}:${c.op}`);
+    expect(order.indexOf('AUDIT:insert')).toBeLessThan(
+      order.indexOf('subscriptions:upsert')
+    );
+  });
+
+  it('a company that was already managed keeps its cut-off anchor, and the period follows it', async () => {
+    h.results['subscriptions:select'] = {
+      data: {
+        plan_id: 'gestionado',
+        provider: 'manual',
+        status: 'active',
+        provider_subscription_id: null,
+        meta_billing: 'managed',
+        meta_pricing: DEFAULT,
+        payment_method: 'manual',
+        statement_period_end: '2026-10-20T00:00:00.000Z',
+      },
+      error: null,
+    };
+    const out = await p.overridePlan(
+      params({
+        terms: {
+          paymentMethod: 'manual',
+          metaBilling: 'managed',
+          metaPricing: null,
+        },
+      })
+    );
+    expect(out.ok).toBe(true);
+    const write = h.calls.find((c) => c.op === 'upsert')!;
+    expect(write.payload).toMatchObject({
+      statement_period_end: '2026-10-20T00:00:00.000Z',
+      current_period_end: '2026-10-20T00:00:00.000Z',
+    });
+  });
+
+  it('a company that becomes managed now (it was direct) gets a new anchor, a month from the assignment', async () => {
+    h.results['subscriptions:select'] = {
+      data: {
+        plan_id: 'inicio',
+        provider: 'manual',
+        status: 'active',
+        provider_subscription_id: null,
+        meta_billing: 'direct',
+        meta_pricing: {},
+        payment_method: null,
+        // Stale: a direct account's anchor is never reused.
+        statement_period_end: '2026-10-20T00:00:00.000Z',
+      },
+      error: null,
+    };
+    await p.overridePlan(
+      params({
+        terms: {
+          paymentMethod: 'manual',
+          metaBilling: 'managed',
+          metaPricing: null,
+        },
+      })
+    );
+    const write = h.calls.find((c) => c.op === 'upsert')!;
+    expect(write.payload).toMatchObject({
+      statement_period_end: '2026-11-01T00:00:00.000Z',
+      current_period_end: '2026-11-01T00:00:00.000Z',
+    });
+  });
+
+  it('stores the edited price, not the default', async () => {
+    const edited = { ...DEFAULT, fee_usd: 900, included_messages: 5000 };
+    await p.overridePlan(
+      params({
+        terms: {
+          paymentMethod: 'manual',
+          metaBilling: 'managed',
+          metaPricing: edited,
+        },
+      })
+    );
+    const write = h.calls.find((c) => c.op === 'upsert')!;
+    expect((write.payload as Record<string, unknown>).meta_pricing).toEqual(
+      edited
+    );
+  });
+});
+
+describe('listPlanOptions (s10.3)', () => {
+  it('hands back the default Meta price of a plan that has one, null otherwise', async () => {
+    const pricing = {
+      included_messages: 7000,
+      fee_usd: 1036,
+      overage: {
+        service: { multiplier: 2.5 },
+        utility: { multiplier: 2.5 },
+        marketing: { multiplier: 2.5 },
+        authentication: { multiplier: 2.5 },
+        authentication_international: { multiplier: 2.5 },
+      },
+    };
+    h.results['plans:select'] = {
+      data: [
+        { id: 'pro', name: 'Pro', is_public: true, meta_pricing: {} },
+        {
+          id: 'gestionado',
+          name: 'Gestionado',
+          is_public: false,
+          meta_pricing: pricing,
+        },
+        // Malformed: never offered as a price to start from.
+        {
+          id: 'roto',
+          name: 'Roto',
+          is_public: false,
+          meta_pricing: { fee_usd: 'x' },
+        },
+      ],
+      error: null,
+    };
+    expect(await p.listPlanOptions()).toEqual([
+      { id: 'pro', name: 'Pro', isPublic: true, metaPricing: null },
+      {
+        id: 'gestionado',
+        name: 'Gestionado',
+        isPublic: false,
+        metaPricing: pricing,
+      },
+      { id: 'roto', name: 'Roto', isPublic: false, metaPricing: null },
+    ]);
   });
 });
 

@@ -45,6 +45,11 @@ import {
   EmbeddedSignupButton,
   useEmbeddedSignup,
 } from './embedded-signup-button';
+import {
+  ManagedSetupChecklist,
+  fetchMetaBilling,
+  type ManagedSetupBilling,
+} from './managed-setup-checklist';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
 
 const MASKED_TOKEN = '••••••••••••••••';
@@ -78,7 +83,10 @@ export function WhatsAppConfig() {
   const platformMode = signup?.enabled === true;
   // p11.1: who pays Meta. Rides on the shared `/api/billing/status`
   // read (no request of its own); `managed` hides the payment badge.
-  const metaBilling = useBillingStatus()?.metaBilling;
+  // Named apart from s10.6's `metaBilling` below (read from the
+  // subscription row under RLS, drives the managed checklist) so the
+  // two merged sides keep their own source.
+  const statusMetaBilling = useBillingStatus()?.metaBilling;
   // p11.3: free service quota per number and the account's setting.
   const { status: serviceCap, refresh: refreshServiceCap } = useServiceCap();
 
@@ -131,6 +139,26 @@ export function WhatsAppConfig() {
   // multi-number bug that prompted this work.
   const isRegistered = Boolean(config?.registered_at);
   const lastRegistrationError = config?.last_registration_error ?? null;
+
+  // s10.6: who pays Meta for this account. `managed` (Cabbity pays, the
+  // WABA lives in Cabbity's portfolio) shows the option-A checklist and
+  // opens the manual form by default; `null` = not known yet, nothing
+  // extra. Read straight from the account's own subscription row under
+  // RLS — no route of its own, nothing else on the page depends on it.
+  const [metaBilling, setMetaBilling] = useState<ManagedSetupBilling | null>(
+    null
+  );
+  useEffect(() => {
+    if (!accountId) return;
+    let alive = true;
+    void fetchMetaBilling(supabase, accountId).then((value) => {
+      if (alive) setMetaBilling(value);
+    });
+    return () => {
+      alive = false;
+    };
+    // Keyed by account: a support session or a workspace switch re-reads.
+  }, [supabase, accountId]);
 
   const [verifyingRegistration, setVerifyingRegistration] = useState(false);
   type RegistrationProbe = {
@@ -832,7 +860,7 @@ export function WhatsAppConfig() {
                           <PaymentStatusBadge
                             status={row.meta_payment_status}
                             checkedAt={row.meta_payment_checked_at}
-                            metaBilling={metaBilling}
+                            metaBilling={statusMetaBilling}
                             canRecheck={canEditSettings}
                             busy={busyRowId === row.id}
                             onRecheck={() => handleRecheckPayment(row)}
@@ -882,6 +910,21 @@ export function WhatsAppConfig() {
               )}
             </CardContent>
           </Card>
+
+          {/* s10.6: option A for managed accounts — the paperwork in
+            Meta that has to happen before the manual form can be filled.
+            Renders nothing unless Cabbity pays Meta for this account. */}
+          <ManagedSetupChecklist
+            metaBilling={metaBilling}
+            fieldLabels={{
+              addNumber: t('addNumber'),
+              manualSetup: t('manualSetup'),
+              phoneNumberId: t('phoneNumberId'),
+              wabaId: t('wabaId'),
+              accessToken: t('accessToken'),
+              testConnection: t('testConnection'),
+            }}
+          />
 
           {/* Corrupted-token reset banner */}
           {showResetBanner && (
@@ -1065,8 +1108,14 @@ export function WhatsAppConfig() {
                 </CardHeader>
                 {platformMode ? (
                   <CardContent>
-                    <Accordion>
-                      <AccordionItem className="border-border">
+                    {/* A managed number can only be connected by hand
+                      (s10.6), so for those accounts the fold starts open. */}
+                    <Accordion
+                      defaultValue={
+                        metaBilling === 'managed' ? ['manual'] : undefined
+                      }
+                    >
+                      <AccordionItem value="manual" className="border-border">
                         <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
                           {t('manualSetup')}
                         </AccordionTrigger>
