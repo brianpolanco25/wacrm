@@ -77,6 +77,13 @@ and polish.
 - Giving the managed plan again to a company that already had it keeps its billing day: what it used since its last statement is still billed.
 - No e-mail is sent: the repository has no mail provider, so the banner is the notice.
 
+### Meta usage, live: subscription panel and broadcast estimate
+
+- Settings → Subscription has a new block. Accounts on managed Meta billing see «Usage this cycle»: messages used of the package's included ones (bar, notice at 80 % and at 100 %), overage by category with its price, and the estimated amount due at the cut-off (fee + overage), worked out like the statement of the cut-off over the cycle in progress. When a Meta rate is missing the block still counts the package and says the estimate is pending a rate, instead of failing.
+- Accounts that pay Meta themselves see Meta's 1,000 free service messages per number and month (bar per number, notice at 80 % and 100 %, same count as the inbox notice) and the estimated cost Meta will charge them this month: only the messages Meta marked as charged, at Meta's rate.
+- The broadcast scheduling step shows what the send will cost: «{n} recipients × {category} rate = US$ {x}», or for managed accounts how many fit in the package and how many go to overage at what price. When the send generates overage, the confirmation asks for an explicit tick before sending. With no Meta rate loaded it says so and the send goes on as before.
+- New read-only endpoints `GET /api/billing/meta-usage` (admin and above) and `GET /api/billing/broadcast-estimate` (agent and above). No migration, no new variables.
+
 ### Platform console: tag filter during a support session
 
 - Filtering contacts by tag works during a support session: the browser now runs the read-only `filter_contacts_by_tags` while the session is open. Every other database function called from the browser (`touch_presence` included) stays refused.

@@ -17,6 +17,14 @@ import {
 } from '@/components/ui/dialog';
 import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import type { BroadcastEstimate } from '@/lib/billing/meta-usage';
+import {
+  BroadcastCostEstimate,
+  OverageConsentText,
+  fetchBroadcastEstimate,
+  needsOverageConsent,
+  templateCategory,
+} from './broadcast-cost-estimate';
 
 interface AudienceConfig {
   type: string;
@@ -75,6 +83,14 @@ export function Step4ScheduleSend({
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
+  // s10.5: what this send will cost, and the explicit tick the dialog
+  // asks for when it generates overage. Information only: a failed or
+  // pending estimate never blocks the send.
+  const [costEstimate, setCostEstimate] = useState<BroadcastEstimate | null>(
+    null
+  );
+  const [overageConsent, setOverageConsent] = useState(false);
+  const category = templateCategory(template.category);
 
   // Sender numbers. Loaded here rather than passed down because this is
   // the only step that needs them, and a one-number account (the common
@@ -144,6 +160,23 @@ export function Step4ScheduleSend({
 
     calculateReach();
   }, [audience, accountId]);
+
+  useEffect(() => {
+    if (loadingReach) return;
+    let cancelled = false;
+    void fetchBroadcastEstimate({
+      recipients: estimatedReach,
+      whatsAppConfigId,
+      category,
+    }).then((value) => {
+      if (!cancelled) setCostEstimate(value);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadingReach, estimatedReach, whatsAppConfigId, category]);
+
+  const consentNeeded = needsOverageConsent(costEstimate);
 
   const audienceLabel =
     audience.type === 'all'
@@ -243,6 +276,14 @@ export function Step4ScheduleSend({
             <p className="text-foreground">{template.language ?? 'en_US'}</p>
           </div>
         </div>
+        {costEstimate && !loadingReach ? (
+          <div className="border-border border-t pt-3">
+            <p className="text-muted-foreground mb-1 text-xs">
+              {t('scheduleSend.cost.label')}
+            </p>
+            <BroadcastCostEstimate estimate={costEstimate} />
+          </div>
+        ) : null}
       </div>
 
       {/* Processing overlay */}
@@ -292,7 +333,14 @@ export function Step4ScheduleSend({
             </Button>
           )}
 
-          <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
+          <Dialog
+            open={showConfirm}
+            onOpenChange={(open) => {
+              setShowConfirm(open);
+              // Every opening asks again: the figures may have moved.
+              if (open) setOverageConsent(false);
+            }}
+          >
             <DialogTrigger
               render={
                 <Button
@@ -321,6 +369,22 @@ export function Step4ScheduleSend({
                   template. This action cannot be undone.
                 </DialogDescription>
               </DialogHeader>
+              {consentNeeded && costEstimate ? (
+                <label
+                  className="border-border flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+                  data-overage-consent
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={overageConsent}
+                    onChange={(e) => setOverageConsent(e.target.checked)}
+                  />
+                  <span className="text-popover-foreground">
+                    <OverageConsentText estimate={costEstimate} />
+                  </span>
+                </label>
+              ) : null}
               <DialogFooter>
                 <Button
                   variant="outline"
@@ -330,6 +394,7 @@ export function Step4ScheduleSend({
                   {t('cancel')}
                 </Button>
                 <Button
+                  disabled={consentNeeded && !overageConsent}
                   onClick={() => {
                     setShowConfirm(false);
                     onSend();

@@ -362,6 +362,8 @@ import * as v1TemplatesSync from '@/app/api/v1/templates/sync/route';
 import * as billingStatements from '@/app/api/billing/statements/route';
 import * as billingStatementClaim from '@/app/api/billing/statements/[sid]/claim-paid/route';
 import * as billingCron from '@/app/api/billing/cron/route';
+import * as billingMetaUsage from '@/app/api/billing/meta-usage/route';
+import * as billingBroadcastEstimate from '@/app/api/billing/broadcast-estimate/route';
 import * as platformStatements from '@/app/api/platform/accounts/[id]/statements/route';
 import * as platformStatementConfirm from '@/app/api/platform/accounts/[id]/statements/[sid]/confirm/route';
 
@@ -4777,6 +4779,139 @@ describe('statements (s10.4, service role)', () => {
     expect(issued).toHaveLength(1);
     expect(issued[0]).toMatchObject({ account_id: A, messages_total: 1 });
     expect(subA).toMatchObject({ status: 'past_due' });
+    expectBUnchanged(beforeB);
+  });
+});
+
+describe('Meta usage (s10.5, service role)', () => {
+  const PRICING = {
+    included_messages: 7000,
+    fee_usd: 1036,
+    overage: {
+      service: { multiplier: 2.5 },
+      utility: { multiplier: 2.5 },
+      marketing: { multiplier: 2.5 },
+      authentication: { multiplier: 2.5 },
+      authentication_international: { multiplier: 2.5 },
+    },
+  };
+  const RATE_WAIVERS: ScopeWaiver[] = [
+    {
+      table: 'meta_rates',
+      op: 'select',
+      by: [],
+      reason: "Meta's rate card is global (076): no account_id column.",
+    },
+    {
+      table: 'meta_market_countries',
+      op: 'select',
+      by: [],
+      reason: 'The country → market table is global (076).',
+    },
+  ];
+
+  function charge(id: string, accountId: string, cfg: string, n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `${id}-${i}`,
+      account_id: accountId,
+      wamid: `wamid.${id}.${i}`,
+      whatsapp_config_id: cfg,
+      recipient_phone: '18095550000',
+      pricing_category: 'marketing',
+      pricing_billable: true,
+      status: 'delivered',
+      delivered_at: new Date(Date.now() - 60_000 - i * 1000).toISOString(),
+    }));
+  }
+
+  beforeEach(() => {
+    extraWaivers = [...RATE_WAIVERS];
+    h.db.rows('meta_rates').push({
+      market: 'rest_of_latam',
+      category: 'marketing',
+      usd_per_message: '0.07400',
+      effective_from: '2025-01-01',
+    });
+    h.db.rows('meta_market_countries').push({
+      country_code: 'DO',
+      market: 'rest_of_latam',
+    });
+    h.db.rows('statements');
+    // B is busy: its deliveries and its quota must never reach A.
+    h.db.rows('message_charges').push(...charge('mc-b', B, 'cfg-b', 50));
+    h.db.rpcHandlers.service_quota_usage = (args) =>
+      args.p_account_id === B
+        ? [{ whatsapp_config_id: 'cfg-b', used: 990, billable: 5 }]
+        : [];
+  });
+
+  it("direct: A sees its own number and cost, never B's quota or charges", async () => {
+    h.db.rows('message_charges').push(...charge('mc-a', A, 'cfg-a', 2));
+    const beforeB = h.db.snapshot(B);
+    const res = await billingMetaUsage.GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expectNoBIds(body);
+    expect(body.numbers).toEqual([
+      expect.objectContaining({ id: 'cfg-a', used: 0, alert: null }),
+    ]);
+    expect(body.metaCost).toMatchObject({ totalUsd: 0.15 });
+    const calls = h.db.log.filter((e) => e.table === 'rpc:service_quota_usage');
+    expect(calls.map((c) => c.args?.p_account_id)).toEqual([A]);
+    expectBUnchanged(beforeB);
+  });
+
+  it("managed: A's cycle counts A's deliveries only", async () => {
+    Object.assign(
+      h.db.rows('subscriptions').find((r) => r.account_id === A)!,
+      {
+        plan_id: 'gestionado',
+        provider: 'manual',
+        payment_method: 'manual',
+        meta_billing: 'managed',
+        meta_pricing: PRICING,
+        statement_period_end: new Date(Date.now() + 86_400_000).toISOString(),
+      }
+    );
+    h.db.rows('message_charges').push(...charge('mc-a', A, 'cfg-a', 3));
+    const beforeB = h.db.snapshot(B);
+    const res = await billingMetaUsage.GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expectNoBIds(body);
+    expect(body).toMatchObject({ metaBilling: 'managed', packageUsed: 3 });
+    expectBUnchanged(beforeB);
+  });
+
+  it("broadcast estimate: B's number as A is a 404; A's package ignores B", async () => {
+    const beforeB = h.db.snapshot(B);
+    const foreign = await billingBroadcastEstimate.GET(
+      req(
+        'GET',
+        '/api/billing/broadcast-estimate?recipients=5&whatsappConfigId=cfg-b'
+      )
+    );
+    expect(foreign.status).toBe(404);
+    expectNoBIds(await foreign.json());
+
+    Object.assign(
+      h.db.rows('subscriptions').find((r) => r.account_id === A)!,
+      {
+        meta_billing: 'managed',
+        meta_pricing: { ...PRICING, included_messages: 10 },
+        payment_method: 'manual',
+        provider: 'manual',
+        statement_period_end: new Date(Date.now() + 86_400_000).toISOString(),
+      }
+    );
+    const own = await billingBroadcastEstimate.GET(
+      req('GET', '/api/billing/broadcast-estimate?recipients=5')
+    );
+    expect(own.status).toBe(200);
+    const body = await own.json();
+    expectNoBIds(body);
+    // B's 50 deliveries would have spent A's 10 included.
+    expect(body).toMatchObject({ remaining: 10, inPackage: 5, overage: 0 });
     expectBUnchanged(beforeB);
   });
 });
