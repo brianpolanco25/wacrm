@@ -9,6 +9,19 @@ const h = vi.hoisted(() => ({
   db: null as unknown as import('@/lib/security/fake-supabase').FakeDatabase,
 }));
 
+// p11.7: both sweeps pass through to the real code; the email tests
+// below make one of them throw with `mockImplementationOnce`.
+vi.mock('@/lib/billing/statement-cron', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/billing/statement-cron')>();
+  return { ...actual, sweepStatements: vi.fn(actual.sweepStatements) };
+});
+vi.mock('@/lib/billing/billing-emails', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/billing/billing-emails')>();
+  return { ...actual, sweepBillingEmails: vi.fn(actual.sweepBillingEmails) };
+});
+
 vi.mock('@/lib/flows/admin-client', async () => {
   const mod = await import('@/lib/security/fake-supabase');
   const forward = mod.forwardingClient(() => h.db.admin);
@@ -23,6 +36,8 @@ vi.setConfig({ testTimeout: 30_000 });
 const { FakeDatabase, FakeClient } =
   await import('@/lib/security/fake-supabase');
 const { GET } = await import('./route');
+const { sweepStatements } = await import('@/lib/billing/statement-cron');
+const { sweepBillingEmails } = await import('@/lib/billing/billing-emails');
 
 const SECRET = 'billing-cron-secret';
 const A = 'acct-a'; // managed, manual
@@ -175,6 +190,11 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(NOW));
   process.env.BILLING_CRON_SECRET = SECRET;
+  // No email provider unless a test sets one (p11.7).
+  vi.stubEnv('EMAIL_API_URL', '');
+  vi.stubEnv('EMAIL_API_KEY', '');
+  vi.stubEnv('EMAIL_FROM', '');
+  vi.stubEnv('EMAIL_PROVIDER', '');
   h.db = new FakeDatabase(seed());
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -182,6 +202,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   delete process.env.BILLING_CRON_SECRET;
 });
 
@@ -456,5 +477,127 @@ describe('the cut-off', () => {
     await GET(req(SECRET));
     const issued = statementsOf(A).find((s) => s.period_end === PERIOD_END)!;
     expect(issued.period_start).toBe('2026-10-03T00:00:00.000Z');
+  });
+});
+
+describe('billing emails in the same run (p11.7, R14)', () => {
+  it('200 with the statements block untouched and an emails block; no provider → enabled false and no email query', async () => {
+    const res = await GET(req(SECRET));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.statements).toMatchObject({
+      issued: 2,
+      extended: 1,
+      failed: 1,
+    });
+    expect(body.emails).toEqual({
+      enabled: false,
+      reason: 'not_configured',
+      accounts: 0,
+      truncated: false,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      errors: 0,
+    });
+    expect(h.db.log.some((e) => e.table === 'notification_emails')).toBe(false);
+  });
+
+  it('with a provider, the statement issued by this run is emailed to its owner in the same call, with the link', async () => {
+    vi.stubEnv('EMAIL_PROVIDER', 'console');
+    vi.stubEnv('NEXT_PUBLIC_APP_LOCALE', 'es');
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://crm.example.com/');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    h.db.rows('profiles').push(
+      {
+        id: 'p-a',
+        user_id: 'u-a',
+        account_id: A,
+        account_role: 'owner',
+        email: 'owner-a@a.test',
+      },
+      {
+        id: 'p-c',
+        user_id: 'u-c',
+        account_id: C,
+        account_role: 'owner',
+        email: 'owner-c@c.test',
+      }
+    );
+    const res = await GET(req(SECRET));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.statements).toMatchObject({ issued: 2 });
+    expect(body.emails).toMatchObject({ enabled: true, sent: 2, errors: 0 });
+    const rows = h.db.rows('notification_emails');
+    expect(rows.map((r) => [r.account_id, r.kind, r.status]).sort()).toEqual([
+      [A, 'statement_issued', 'sent'],
+      [C, 'statement_issued', 'sent'],
+    ]);
+    expect(info).toHaveBeenCalledTimes(2);
+    expect(String(info.mock.calls[0][0])).toContain('estado de cuenta');
+
+    // A second call the same hour: no second email.
+    const again = await (await GET(req(SECRET))).json();
+    expect(again.emails).toMatchObject({ sent: 0 });
+    expect(info).toHaveBeenCalledTimes(2);
+  });
+
+  it('the email sweep throwing → still 200, statements intact, emails.enabled false', async () => {
+    vi.mocked(sweepBillingEmails).mockImplementationOnce(async () => {
+      throw new Error('boom');
+    });
+    const res = await GET(req(SECRET));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.statements).toMatchObject({
+      issued: 2,
+      extended: 1,
+      failed: 1,
+    });
+    expect(body.emails).toMatchObject({ enabled: false, errors: 1 });
+    expect(statementsOf(A)).toHaveLength(1);
+  });
+
+  it('the statement sweep throwing → the email sweep still runs and the answer stays 500', async () => {
+    vi.mocked(sweepStatements).mockImplementationOnce(async () => {
+      throw new Error('listing failed');
+    });
+    vi.mocked(sweepBillingEmails).mockClear();
+    const res = await GET(req(SECRET));
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe('The statement sweep failed');
+    expect(body.emails).toMatchObject({ enabled: false });
+    expect(sweepBillingEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it('the email sweep runs AFTER the statements', async () => {
+    const order: string[] = [];
+    vi.mocked(sweepStatements).mockImplementationOnce(async () => {
+      order.push('statements');
+      return {
+        scanned: 0,
+        issued: 0,
+        existing: 0,
+        extended: 0,
+        failed: 0,
+        errors: [],
+      } as unknown as Awaited<ReturnType<typeof sweepStatements>>;
+    });
+    vi.mocked(sweepBillingEmails).mockImplementationOnce(async () => {
+      order.push('emails');
+      return {
+        enabled: false,
+        accounts: 0,
+        truncated: false,
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        errors: 0,
+      };
+    });
+    await GET(req(SECRET));
+    expect(order).toEqual(['statements', 'emails']);
   });
 });
