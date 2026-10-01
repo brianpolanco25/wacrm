@@ -332,6 +332,7 @@ import * as platformPlans from '@/app/api/platform/plans/route';
 import * as platformPlanById from '@/app/api/platform/plans/[id]/route';
 import * as platformPlanSync from '@/app/api/platform/plans/[id]/sync/route';
 import * as platformAccountPlan from '@/app/api/platform/accounts/[id]/plan/route';
+import * as platformAccountMetaPricing from '@/app/api/platform/accounts/[id]/meta-pricing/route';
 import * as platformAccountMembers from '@/app/api/platform/accounts/[id]/members/route';
 import * as platformOperators from '@/app/api/platform/operators/route';
 import * as platformOperatorById from '@/app/api/platform/operators/[userId]/route';
@@ -3623,6 +3624,147 @@ describe('/api/platform provisioning (s9.4, service role)', () => {
     expect(res.status).toBe(409);
     expect(h.db.snapshot(TARGET)).toEqual(beforeT);
     expect(h.db.rows('impersonation_log')).toEqual([]);
+  });
+
+  // s10.3: the managed plan by hand, and its later price edit. The PayPal
+  // branch (plan sync + subscription) is covered A↔B in
+  // `accounts/[id]/plan/managed.test.ts` with PayPal's fetch mocked.
+  const MANAGED_PRICING = {
+    included_messages: 7000,
+    fee_usd: 1036,
+    overage: {
+      service: { multiplier: 2.5 },
+      utility: { multiplier: 2.5 },
+      marketing: { multiplier: 2.5 },
+      authentication: { multiplier: 2.5 },
+      authentication_international: { multiplier: 2.5 },
+    },
+  };
+
+  function seedManagedPlan() {
+    h.db.rows('plans').push({
+      id: 'gestionado',
+      name: 'Gestionado',
+      limits: {},
+      features: [],
+      is_public: false,
+      sort_order: 90,
+      price_usd_month: 1036,
+      provider_plan_id_month: null,
+      meta_pricing: MANAGED_PRICING,
+    });
+  }
+
+  function metaPricingReq(accountId: string, body: unknown) {
+    return platformAccountMetaPricing.PATCH(
+      req('PATCH', `/api/platform/accounts/${accountId}/meta-pricing`, body),
+      { params: Promise.resolve({ id: accountId }) }
+    );
+  }
+
+  it('s10.3: 403s the owner of A on the managed plan and its price, and moves nothing', async () => {
+    seedTarget({ meta_billing: 'managed', meta_pricing: MANAGED_PRICING });
+    seedManagedPlan();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+    const beforeT = h.db.snapshot(TARGET);
+
+    const responses = [
+      await planReq(A, {
+        planId: 'gestionado',
+        reason: REASON_S94,
+        paymentMethod: 'manual',
+      }),
+      await planReq(TARGET, {
+        planId: 'gestionado',
+        reason: REASON_S94,
+        paymentMethod: 'paypal',
+      }),
+      await metaPricingReq(A, {
+        reason: REASON_S94,
+        metaPricing: { ...MANAGED_PRICING, fee_usd: 1 },
+      }),
+      await metaPricingReq(TARGET, {
+        reason: REASON_S94,
+        paymentMethod: 'manual',
+      }),
+    ];
+    for (const res of responses) {
+      expect(res.status).toBe(403);
+      expectNoBIds(await res.json());
+    }
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    expect(h.db.snapshot(TARGET)).toEqual(beforeT);
+    expect(h.db.rows('impersonation_log')).toEqual([]);
+  });
+
+  it('s10.3: gives ONE company the managed plan by hand — price and method on its row only', async () => {
+    makePlatformAdmin(USER_A);
+    seedTarget();
+    seedManagedPlan();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+
+    const res = await planReq(TARGET, {
+      planId: 'gestionado',
+      reason: REASON_S94,
+      paymentMethod: 'manual',
+    });
+    expect(res.status).toBe(200);
+    expectNoBIds(await res.json());
+
+    expect(
+      h.db.rows('subscriptions').find((r) => r.account_id === TARGET)
+    ).toMatchObject({
+      plan_id: 'gestionado',
+      provider: 'manual',
+      status: 'active',
+      cycle: 'month',
+      payment_method: 'manual',
+      meta_billing: 'managed',
+      meta_pricing: MANAGED_PRICING,
+    });
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    expect(h.db.rows('impersonation_log')).toHaveLength(1);
+    expect(h.db.rows('impersonation_log')[0]).toMatchObject({
+      action: 'plan_override',
+      account_id: TARGET,
+      details: { payment_method: 'manual', meta_billing: 'managed' },
+    });
+  });
+
+  it('s10.3: changes the Meta price of ONE managed company — A and B untouched', async () => {
+    makePlatformAdmin(USER_A);
+    seedTarget({
+      plan_id: 'gestionado',
+      provider: 'manual',
+      status: 'active',
+      meta_billing: 'managed',
+      meta_pricing: MANAGED_PRICING,
+      payment_method: 'manual',
+    });
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+    const next = { ...MANAGED_PRICING, fee_usd: 900 };
+
+    const res = await metaPricingReq(TARGET, {
+      reason: REASON_S94,
+      metaPricing: next,
+    });
+    expect(res.status).toBe(200);
+    expectNoBIds(await res.json());
+    expect(
+      h.db.rows('subscriptions').find((r) => r.account_id === TARGET)
+        ?.meta_pricing
+    ).toEqual(next);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    expect(h.db.rows('impersonation_log')[0]).toMatchObject({
+      account_id: TARGET,
+      details: { kind: 'meta_pricing' },
+    });
   });
 
   it('invites a member to ONE company: the invitation is its, A and B untouched', async () => {

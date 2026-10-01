@@ -279,6 +279,47 @@ describe('getEntitlements', () => {
       ).toHaveLength(1);
     });
   });
+
+  describe('Meta billing (s10.3, migrations 076/077)', () => {
+    it('exposes metaBilling and paymentMethod of a managed account', async () => {
+      subscribed({
+        plan_id: 'negocio',
+        meta_billing: 'managed',
+        payment_method: 'manual',
+      });
+      const e = await getEntitlements(ACCOUNT);
+      expect(e.metaBilling).toBe('managed');
+      expect(e.paymentMethod).toBe('manual');
+      const subQuery = h.state.queries.find((q) => q.table === 'subscriptions');
+      expect(subQuery?.columns).toContain('meta_billing');
+      expect(subQuery?.columns).toContain('payment_method');
+      expect(subQuery?.filters).toContainEqual(['account_id', ACCOUNT]);
+    });
+
+    it('reads paypal as the payment method', async () => {
+      subscribed({ meta_billing: 'managed', payment_method: 'paypal' });
+      const e = await getEntitlements(ACCOUNT);
+      expect(e.paymentMethod).toBe('paypal');
+    });
+
+    it('a row from before 076/077 (or no row) is direct, with no payment method', async () => {
+      subscribed();
+      let e = await getEntitlements(ACCOUNT);
+      expect(e.metaBilling).toBe('direct');
+      expect(e.paymentMethod).toBeNull();
+      h.state.subscription = null;
+      e = await getEntitlements(ACCOUNT);
+      expect(e.metaBilling).toBe('direct');
+      expect(e.paymentMethod).toBeNull();
+    });
+
+    it('an unknown stored value never reads as managed', async () => {
+      subscribed({ meta_billing: 'bogus', payment_method: 'cash' });
+      const e = await getEntitlements(ACCOUNT);
+      expect(e.metaBilling).toBe('direct');
+      expect(e.paymentMethod).toBeNull();
+    });
+  });
 });
 
 describe('isReadOnly (pure)', () => {
@@ -307,6 +348,8 @@ describe('hasFeature / assertFeature', () => {
     readOnlyReason: null,
     manualHold: false,
     trialEndsAt: null,
+    metaBilling: 'direct',
+    paymentMethod: null,
   };
   it('is a plain membership check', () => {
     expect(hasFeature(e, 'ai_autoreply')).toBe(true);

@@ -430,6 +430,26 @@ export async function createSubscription(
   return { id, status, approvalUrl };
 }
 
+/**
+ * Read one subscription back: its status and, while it still waits for
+ * the buyer (`APPROVAL_PENDING`), its approval link. Used to hand out the
+ * SAME pending checkout again instead of opening a second one (s10.3).
+ */
+export async function getSubscription(
+  subscriptionId: string
+): Promise<{ id: string; status: string; approvalUrl: string | null }> {
+  const { data } = await paypalFetch<{
+    id?: unknown;
+    status?: unknown;
+    links?: Array<{ rel?: unknown; href?: unknown }>;
+  }>(`/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}`);
+  return {
+    id: providerId(data, 'subscription'),
+    status: typeof data.status === 'string' ? data.status : 'UNKNOWN',
+    approvalUrl: approvalLink(data.links),
+  };
+}
+
 /** Pick the `approve` link out of a PayPal HATEOAS `links` array. */
 export function approvalLink(
   links: Array<{ rel?: unknown; href?: unknown }> | undefined

@@ -1821,9 +1821,10 @@ BEGIN
     RAISE EXCEPTION 'plan ilimitado is missing (migration 074)';
   END IF;
 
-  -- Catálogo de una base limpia: los tres de la 041 y el de la 074.
-  IF (SELECT count(*) FROM plans) <> 4 THEN
-    RAISE EXCEPTION 'expected exactly 4 rows in plans (inicio/pro/negocio/ilimitado), found % (migration 074)',
+  -- Catálogo de una base limpia: los tres de la 041, el de la 074 y
+  -- el `gestionado` de la 077.
+  IF (SELECT count(*) FROM plans) <> 5 THEN
+    RAISE EXCEPTION 'expected exactly 5 rows in plans (inicio/pro/negocio/ilimitado/gestionado), found % (migrations 074, 077)',
       (SELECT count(*) FROM plans);
   END IF;
 
@@ -2079,6 +2080,63 @@ BEGIN
     RAISE EXCEPTION 'DO must map to rest_of_latam (migration 076)';
   END IF;
   -- /076 -----------------------------------------------------------
+
+  -- 077 ------------------------------------------------------------
+  -- s10.3: plan oculto `gestionado`, su política de precio por defecto
+  -- en `plans.meta_pricing` y `subscriptions.payment_method`.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'plans'
+      AND column_name = 'meta_pricing' AND data_type = 'jsonb'
+      AND is_nullable = 'NO'
+      AND column_default LIKE '''{}''::jsonb%'
+  ) THEN
+    RAISE EXCEPTION 'plans.meta_pricing is missing, nullable or not DEFAULT {} (migration 077)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'plans_meta_pricing_object_check'
+                   AND conrelid = 'public.plans'::regclass) THEN
+    RAISE EXCEPTION 'plans_meta_pricing_object_check is missing (migration 077)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM plans
+    WHERE id = 'gestionado'
+      AND is_public = false
+      AND price_usd_month = 1036
+      AND price_usd_year IS NULL
+      AND limits = '{"operators": 30, "contacts": 50000, "messages_out": null, "ai_replies": 15000, "broadcast_recipients": null, "knowledge_documents": 200, "numbers": 3, "retention_months": null}'::jsonb
+      AND features @> ARRAY['ai_autoreply', 'ai_knowledge', 'auto_assign', 'api',
+                            'webhooks', 'multi_number', 'priority_support']::text[]
+      AND description IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'plan gestionado is missing or not hidden/1036/monthly-only/unlimited sends (migration 077)';
+  END IF;
+  IF (SELECT meta_pricing FROM plans WHERE id = 'gestionado') IS DISTINCT FROM
+     '{"included_messages": 7000, "fee_usd": 1036, "overage": {"service": {"multiplier": 2.5}, "utility": {"multiplier": 2.5}, "marketing": {"multiplier": 2.5}, "authentication": {"multiplier": 2.5}, "authentication_international": {"multiplier": 2.5}}}'::jsonb THEN
+    RAISE EXCEPTION 'plan gestionado must carry the default meta_pricing (migration 077)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions'
+      AND column_name = 'payment_method' AND data_type = 'text'
+      AND is_nullable = 'YES' AND column_default IS NULL
+  ) THEN
+    RAISE EXCEPTION 'subscriptions.payment_method is missing or not a nullable text (migration 077)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'subscriptions_payment_method_check'
+                   AND conrelid = 'public.subscriptions'::regclass
+                   AND pg_get_constraintdef(oid) LIKE '%paypal%'
+                   AND pg_get_constraintdef(oid) LIKE '%manual%') THEN
+    RAISE EXCEPTION 'subscriptions_payment_method_check is missing (migration 077)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public'
+               AND tablename IN ('plans', 'subscriptions')
+               AND cmd IN ('INSERT', 'UPDATE', 'DELETE', 'ALL')) THEN
+    RAISE EXCEPTION 'plans / subscriptions must have no client write policy (migrations 041, 077)';
+  END IF;
+  -- /077 -----------------------------------------------------------
 
   RAISE NOTICE 'schema verification passed';
 END

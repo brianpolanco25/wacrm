@@ -2216,7 +2216,8 @@
         "price": "Precio que se publica: {price}.",
         "newPlanRule": "PayPal no permite cambiar el precio de un plan con suscriptores. Si el precio cambió, se crea un plan NUEVO en PayPal y los clientes nuevos pagan el precio nuevo; los clientes actuales siguen en el plan anterior al precio anterior. No se puede deshacer.",
         "verifyRule": "No consta con qué precio se creó este plan de PayPal: primero se lee de PayPal y solo se crea un plan nuevo si no coincide o si ya no está activo en PayPal.",
-        "action": "Sincronizar"
+        "action": "Sincronizar",
+        "hiddenBox": "Este plan es oculto. Publicarlo en PayPal no lo pone a la venta (sigue fuera de /billing y del onboarding), pero crea un plan en PayPal. Publicar igualmente."
       },
       "history": {
         "toggle": "Historial",
@@ -2458,6 +2459,64 @@
         "save": "Guardar países",
         "saved": "Países guardados.",
         "invalid": "País de dos letras y mercado en minúsculas (a-z, 0-9, _)."
+      }
+    },
+    "managed": {
+      "termsTitle": "Facturación gestionada de Meta",
+      "termsHelp": "Este plan lo cobra Cabbity CRM al corte del mes: cuota fija con un paquete de mensajes entregados y excedente por categoría. El precio sale del plan y se puede cambiar para esta empresa.",
+      "paymentMethod": "Método de pago",
+      "methods": {
+        "manual": "Manual: estado de cuenta confirmado a mano",
+        "paypal": "PayPal: la cuota por suscripción, el excedente por estado de cuenta"
+      },
+      "methodShort": {
+        "manual": "Pago manual",
+        "paypal": "PayPal"
+      },
+      "manualHelp": "Queda activa ya, con ciclo mensual: el primer corte es dentro de un mes.",
+      "paypalHelp": "Se crea el plan en PayPal si falta y una suscripción para esta empresa. La cuenta queda pendiente de pago (solo lectura) hasta que PayPal confirme.",
+      "metaManaged": "Meta lo paga Cabbity CRM",
+      "metaManagedHelp": "Los mensajes de esta empresa se cobran con el precio de abajo y Cabbity CRM paga a Meta.",
+      "metaDirectHelp": "Sin marcar, Meta le cobra a la empresa directamente y no se guarda precio.",
+      "included": "Mensajes incluidos",
+      "fee": "Cuota mensual (USD)",
+      "overageTitle": "Precio por mensaje del excedente",
+      "overageHelp": "Del mensaje siguiente al paquete en adelante: un multiplicador de la tarifa de Meta de su categoría o un importe fijo en USD.",
+      "modeLabel": "Cómo se calcula",
+      "mode": {
+        "multiplier": "× tarifa de Meta",
+        "usd": "USD fijo por mensaje"
+      },
+      "category": {
+        "service": "Servicio",
+        "utility": "Utilidad",
+        "marketing": "Marketing",
+        "authentication": "Autenticación",
+        "authentication_international": "Autenticación internacional"
+      },
+      "invalidPricing": "Revisa el precio: {error}",
+      "assignConfirmManual": "¿Asignar el plan {plan} a {account} con pago manual? Quedará activo, con corte mensual desde hoy.",
+      "assignConfirmPayPal": "¿Asignar el plan {plan} a {account} con PayPal? Quedará pendiente de pago hasta que el propietario pague en PayPal.",
+      "assignedPayPal": "Plan asignado. Falta que el propietario pague en PayPal: envíale el enlace.",
+      "checkoutTitle": "Enlace de pago de PayPal",
+      "checkoutHelp": "Envíaselo al propietario: no se manda por correo. La cuenta queda pendiente de pago hasta que PayPal confirme el cobro.",
+      "pricingTitle": "Precio de Meta gestionado",
+      "managedBadge": "Meta lo paga Cabbity CRM",
+      "pricingHelp": "Los cambios rigen desde el próximo estado de cuenta; los ya emitidos no cambian.",
+      "methodChangeHelp": "Pasar a manual exige cancelar antes la suscripción de PayPal; pasar a PayPal se hace asignando el plan con PayPal.",
+      "reasonLabel": "Motivo",
+      "reasonHelp": "Obligatorio, al menos {min} caracteres. Queda en la bitácora de la plataforma con el precio anterior y el nuevo.",
+      "save": "Guardar precio",
+      "saved": "Precio actualizado.",
+      "unchanged": "No había nada que cambiar.",
+      "errors": {
+        "notManaged": "Cabbity CRM no paga a Meta por esta empresa: asígnale primero el plan gestionado.",
+        "paypalActive": "PayPal sigue cobrando la cuota de esta empresa. Cancélala en PayPal primero.",
+        "needsCheckout": "No hay suscripción de PayPal que cobre la cuota. Asigna el plan con PayPal desde la ficha.",
+        "paypalNotConfigured": "PayPal no está configurado en este servidor. No se cambió nada.",
+        "paypalFailed": "PayPal rechazó la operación. No se cambió nada.",
+        "failed": "No se pudo guardar el precio. No se cambió nada.",
+        "checkoutInProgress": "El propietario ya aprobó el pago en PayPal: espera a que PayPal lo confirme. No se cambió nada."
       }
     }
   },

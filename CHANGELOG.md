@@ -23,6 +23,14 @@ and polish.
 - New **Meta rates** section in the operator console (`/platform/rates`): rates by market and category with their effective date and state (in force, scheduled, past), "New rate" (a rate in force is never edited: a change is a new row with a later date), a CSV importer with a preview before saving, and the editable country → market table.
 - A message to a market without a rate is never priced at 0: the rate lookup fails with an error that names the missing market and category.
 
+### Platform console: managed plan with Meta billed by Cabbity CRM (migration required: 077)
+
+- **Migration required:** apply `supabase/migrations/077_plan_gestionado.sql`. It adds the hidden plan `gestionado` (1,036 USD a month, monthly only, the limits of Negocio with no cap on outbound messages or broadcast recipients, 3 numbers, every feature), `plans.meta_pricing` with its default price (7,000 delivered messages included, 1,036 USD fee, overage at 2.5 × Meta's rate per category) and `subscriptions.payment_method` (`paypal` | `manual`, empty for existing rows). Neither column is writable by a tenant.
+- «Assign plan by hand» on a company's file: choosing a plan with a Meta price shows the payment method (manual or PayPal), «Cabbity CRM pays Meta» (ticked by default) and the price (included messages, fee, and per category a multiplier of Meta's rate or a fixed USD amount), preloaded from the plan and editable. Manual: active at once on a monthly cycle, first cut-off one month later. PayPal: the plan is created at PayPal if missing, a subscription is created for that company and the file shows the PayPal link to send to the owner; the company stays pending payment until PayPal confirms. Both are logged with the payment method and the price.
+- New «Managed Meta price» block on the file of a managed company to change its price and payment method, with a reason and the before/after in the log. Changes apply from the next statement.
+- Giving a company any plan without a Meta price takes it out of managed billing. The managed plan cannot be given without terms (also from «New company»: the plan step then fails and is finished from the file).
+- Publishing a hidden plan to PayPal from `/platform/plans` now needs an explicit «publish anyway» tick; the CLI bootstrap only publishes public plans. Hidden plans still never appear in `/billing`, onboarding or the public checkout.
+
 ### Platform console: tag filter during a support session
 
 - Filtering contacts by tag works during a support session: the browser now runs the read-only `filter_contacts_by_tags` while the session is open. Every other database function called from the browser (`touch_presence` included) stays refused.

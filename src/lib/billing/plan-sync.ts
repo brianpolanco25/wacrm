@@ -327,7 +327,8 @@ export type PlanSyncErrorCode =
   | 'paypal_id_in_use'
   | 'paypal_failed'
   | 'not_published'
-  | 'unverified';
+  | 'unverified'
+  | 'hidden_plan';
 
 export class PlanSyncError extends Error {
   readonly status: number;
@@ -371,6 +372,14 @@ export interface SyncPlanCycleArgs {
   cycle: BillingCycle;
   actorUserId: string;
   paypal?: SyncPayPal;
+  /**
+   * Publish a plan with `is_public = false` (s10.3). Off by default: a
+   * hidden plan (`ilimitado`, `gestionado`) is never sold through the
+   * public checkout, so creating its PayPal plan has to be something the
+   * operator asked for — the «publish anyway» box of /platform/plans, or
+   * assigning `gestionado` with PayPal from the file.
+   */
+  allowHidden?: boolean;
 }
 
 function requirePayPal(): void {
@@ -534,6 +543,7 @@ export async function syncPlanCycle({
   cycle,
   actorUserId,
   paypal = DEFAULT_PAYPAL,
+  allowHidden = false,
 }: SyncPlanCycleArgs): Promise<PlanSyncResult> {
   const db = supabaseAdmin();
   const env = currentPayPalEnv();
@@ -554,6 +564,15 @@ export async function syncPlanCycle({
       400,
       'no_price',
       `The ${cycle === 'year' ? 'yearly' : 'monthly'} price of this plan is empty or 0; a free plan is not published to PayPal`
+    );
+  }
+
+  // Hidden plans are not for sale: publishing one is an explicit act.
+  if (!plan.is_public && !allowHidden) {
+    throw new PlanSyncError(
+      409,
+      'hidden_plan',
+      'This plan is hidden (is_public = false). Confirm that you want it published to PayPal anyway (confirmHidden).'
     );
   }
 

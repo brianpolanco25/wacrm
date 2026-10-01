@@ -83,6 +83,33 @@ export interface Entitlements {
   manualHold: boolean;
   /** ISO timestamp, or null when the account is not on a dated trial. */
   trialEndsAt: string | null;
+  /**
+   * Who pays Meta for this account's messages (076, fase 10): `direct`
+   * (the customer, with their own card at Meta — every account before
+   * fase 10) or `managed` (Cabbity pays Meta and bills the account at the
+   * cut-off, s10.3/s10.4). The «add a payment method at Meta» notice is
+   * for `direct` accounts only.
+   */
+  metaBilling: MetaBilling;
+  /**
+   * How a managed account pays (077): `paypal` (the fee through the
+   * PayPal subscription) or `manual` (a statement confirmed by hand).
+   * Null = whatever `provider` says — every row written before 077.
+   */
+  paymentMethod: PaymentMethod | null;
+}
+
+export type MetaBilling = 'direct' | 'managed';
+export type PaymentMethod = 'paypal' | 'manual';
+
+/** Narrow a stored `meta_billing`; anything unknown reads as `direct`. */
+export function asMetaBilling(value: unknown): MetaBilling {
+  return value === 'managed' ? 'managed' : 'direct';
+}
+
+/** Narrow a stored `payment_method`; anything unknown reads as null. */
+export function asPaymentMethod(value: unknown): PaymentMethod | null {
+  return value === 'paypal' || value === 'manual' ? value : null;
 }
 
 // ------------------------------------------------------------
@@ -197,6 +224,8 @@ interface SubscriptionRow {
   trial_ends_at: string | null;
   grace_until: string | null;
   manual_hold_at: string | null;
+  meta_billing?: string | null;
+  payment_method?: string | null;
 }
 
 interface PlanRow {
@@ -222,7 +251,9 @@ export async function getEntitlements(
 
   const { data: sub, error: subErr } = await db
     .from('subscriptions')
-    .select('plan_id, status, trial_ends_at, grace_until, manual_hold_at')
+    .select(
+      'plan_id, status, trial_ends_at, grace_until, manual_hold_at, meta_billing, payment_method'
+    )
     .eq('account_id', accountId)
     .maybeSingle();
   if (subErr) throw subErr;
@@ -252,7 +283,10 @@ export async function getEntitlements(
   // The manual hold of migration 058. Read off the row we were already
   // fetching, so honouring it costs nothing on the write path.
   const manualHold = Boolean(subscription?.manual_hold_at);
-  const subscriptionLock = isReadOnly(status, subscription?.grace_until ?? null);
+  const subscriptionLock = isReadOnly(
+    status,
+    subscription?.grace_until ?? null
+  );
 
   return {
     planId,
@@ -270,6 +304,8 @@ export async function getEntitlements(
         : null,
     manualHold,
     trialEndsAt: subscription?.trial_ends_at ?? null,
+    metaBilling: asMetaBilling(subscription?.meta_billing),
+    paymentMethod: asPaymentMethod(subscription?.payment_method),
   };
 }
 

@@ -26,10 +26,22 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { MIN_REASON_LENGTH } from '@/lib/auth/support-cookie';
 
+import {
+  termsBody,
+  termsFromPlan,
+  type ManagedTermsForm,
+} from './managed-form';
+import { ManagedTermsFields } from './platform-managed';
+
 export interface PlanOption {
   id: string;
   name: string;
   isPublic: boolean;
+  /**
+   * The plan's default Meta price policy (077), or null. A plan with one
+   * (`gestionado`) is assigned with a payment method and a price (s10.3).
+   */
+  metaPricing?: unknown;
 }
 
 const SELECT_CLASS =
@@ -321,6 +333,8 @@ export function PlanAssignment({
   subscriptionStatus,
   plans,
   onChanged,
+  onCheckoutLink,
+  initialChoice = '',
 }: {
   accountId: string;
   accountName: string;
@@ -330,47 +344,117 @@ export function PlanAssignment({
   subscriptionStatus: string;
   plans: PlanOption[] | null;
   onChanged: () => void;
+  /**
+   * s10.3: the PayPal approval link of a managed plan paid through
+   * PayPal (or null after any other assignment). The file keeps it.
+   */
+  onCheckoutLink?: (url: string | null) => void;
+  /** Pre-selected plan (tests). */
+  initialChoice?: string;
 }) {
   const t = useTranslations('Platform.provisioning');
-  const [choice, setChoice] = useState('');
+  const tm = useTranslations('Platform.managed');
+  const termsFor = useCallback(
+    (id: string): ManagedTermsForm | null => {
+      const pricing = plans?.find((p) => p.id === id)?.metaPricing;
+      return pricing ? termsFromPlan(pricing) : null;
+    },
+    [plans]
+  );
+  const [choice, setChoiceState] = useState(initialChoice);
+  const [terms, setTerms] = useState<ManagedTermsForm | null>(() =>
+    initialChoice ? termsFor(initialChoice) : null
+  );
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const setChoice = useCallback(
+    (id: string) => {
+      setChoiceState(id);
+      setTerms(termsFor(id));
+    },
+    [termsFor]
+  );
 
   const manual = provider === 'manual';
   const ready = Boolean(choice) && reason.trim().length >= MIN_REASON_LENGTH;
 
   const assign = useCallback(async () => {
     if (!ready) return;
-    const target = plans?.find((p) => p.id === choice)?.name ?? choice;
-    if (
-      !window.confirm(
-        t('assignConfirm', { plan: target, account: accountName || accountId })
-      )
-    ) {
-      return;
+    let extra: Record<string, unknown> = {};
+    if (terms) {
+      const built = termsBody(terms);
+      if (!built.ok) {
+        toast.error(tm('invalidPricing', { error: built.error }));
+        return;
+      }
+      extra = built.body;
     }
+    const target = plans?.find((p) => p.id === choice)?.name ?? choice;
+    const account = accountName || accountId;
+    const question = terms
+      ? tm(
+          terms.paymentMethod === 'paypal'
+            ? 'assignConfirmPayPal'
+            : 'assignConfirmManual',
+          { plan: target, account }
+        )
+      : t('assignConfirm', { plan: target, account });
+    if (!window.confirm(question)) return;
     setBusy(true);
     try {
       const { res, json } = await postJson(
         `/api/platform/accounts/${accountId}/plan`,
-        { planId: choice, reason: reason.trim() }
+        { planId: choice, reason: reason.trim(), ...extra }
       );
       if (res.status === 409 && json?.code === 'paypal_active') {
         toast.error(t('paypalActive'));
+        return;
+      }
+      if (res.status === 409 && json?.code === 'checkout_in_progress') {
+        toast.error(tm('errors.checkoutInProgress'));
+        return;
+      }
+      if (res.status === 503) {
+        toast.error(tm('errors.paypalNotConfigured'));
+        return;
+      }
+      if (res.status === 502) {
+        toast.error(tm('errors.paypalFailed'));
+        return;
+      }
+      if (res.status === 400 && terms && typeof json?.error === 'string') {
+        toast.error(tm('invalidPricing', { error: json.error }));
         return;
       }
       if (!res.ok) {
         toast.error(t('assignFailed'));
         return;
       }
-      toast.success(t('assigned'));
+      const approvalUrl =
+        typeof json?.approvalUrl === 'string' ? json.approvalUrl : null;
+      onCheckoutLink?.(approvalUrl);
+      toast.success(approvalUrl ? tm('assignedPayPal') : t('assigned'));
       setChoice('');
       setReason('');
       onChanged();
     } finally {
       setBusy(false);
     }
-  }, [accountId, accountName, choice, onChanged, plans, ready, reason, t]);
+  }, [
+    accountId,
+    accountName,
+    choice,
+    onChanged,
+    onCheckoutLink,
+    plans,
+    ready,
+    reason,
+    setChoice,
+    t,
+    terms,
+    tm,
+  ]);
 
   return (
     <Card>
@@ -411,6 +495,9 @@ export function PlanAssignment({
             />
           </div>
         </div>
+        {terms ? (
+          <ManagedTermsFields value={terms} onChange={setTerms} />
+        ) : null}
         <p className="text-muted-foreground text-xs">
           {t('reasonHelp', { min: MIN_REASON_LENGTH })}
         </p>
