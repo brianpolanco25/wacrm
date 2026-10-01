@@ -95,6 +95,39 @@ describe('PlatformRates', () => {
     );
   });
 
+  it('lists the categories missing inside markets that have some rate (seed: rest_of_latam without authentication)', () => {
+    const seed: RatesData = {
+      ...DATA,
+      rates: ['service', 'utility', 'marketing'].map((category) => ({
+        market: 'rest_of_latam',
+        category,
+        usdPerMessage: category === 'marketing' ? 0.074 : 0.0113,
+        effectiveFrom: '2026-10-01',
+        inForce: true,
+        scheduled: false,
+      })),
+    };
+    const html = render('es', seed);
+    expect(html).toContain(
+      'data-missing-pairs="rest_of_latam:authentication+authentication_international"'
+    );
+    expect(html).toContain(
+      'rest_of_latam: Autenticación, Autenticación internacional'
+    );
+    // A scheduled or past row does not count as priced today.
+    expect(render('es')).toContain(
+      'data-missing-pairs="rest_of_latam:utility+authentication+authentication_international"'
+    );
+    expect(render('en', seed)).toContain(
+      'rest_of_latam: Authentication, International authentication'
+    );
+  });
+
+  it('says the seeded country → market mapping is to be verified by a human', () => {
+    expect(render('es')).toContain('A VERIFICAR POR EL HUMANO');
+    expect(render('en')).toContain('TO BE VERIFIED BY A HUMAN');
+  });
+
   it('has the CSV importer with preview before saving', () => {
     const html = render('es');
     expect(html).toContain('data-section="import"');

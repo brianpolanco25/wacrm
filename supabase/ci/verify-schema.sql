@@ -1951,8 +1951,9 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'subscriptions'
       AND column_name = 'meta_pricing' AND data_type = 'jsonb'
       AND is_nullable = 'NO'
+      AND column_default LIKE '''{}''::jsonb%'
   ) THEN
-    RAISE EXCEPTION 'subscriptions.meta_pricing is missing or nullable (migration 076)';
+    RAISE EXCEPTION 'subscriptions.meta_pricing is missing, nullable or not DEFAULT {} (migration 076)';
   END IF;
   -- Semilla: la tarjeta del 2026-10-01 para Resto de Latinoamérica y RD.
   IF (SELECT usd_per_message FROM meta_rates

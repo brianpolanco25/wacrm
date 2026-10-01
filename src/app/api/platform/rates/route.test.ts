@@ -167,6 +167,18 @@ describe('POST', () => {
     expect((await res.json()).reason).toBe('retroactive');
   });
 
+  it('409s today for a pair already priced: a change must be dated after today', async () => {
+    const res = await post({ ...NEW_RATE, effective_from: '2026-11-15' });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.reason).toBe('retroactive');
+    expect(body.error).toMatch(/after today/);
+    expect(h.db.rows('meta_rates')).toHaveLength(3);
+    expect(
+      (await post({ ...NEW_RATE, effective_from: '2026-11-16' })).status
+    ).toBe(201);
+  });
+
   it('accepts a past date for a market that had no rate (Mexico, loaded late)', async () => {
     const res = await post({
       ...NEW_RATE,

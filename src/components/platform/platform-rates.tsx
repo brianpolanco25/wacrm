@@ -224,6 +224,23 @@ export function PlatformRates({
     return knownMarkets.filter((m) => !priced.has(m));
   }, [data, knownMarkets]);
 
+  // Pairs missing INSIDE markets that have some rate in force (e.g.
+  // rest_of_latam without authentication): a message of that pair
+  // cannot be billed either, and `unpriced` alone would hide it.
+  const missingPairs = useMemo(() => {
+    if (!data) return [];
+    const inForce = data.rates.filter((r) => r.inForce);
+    const markets = [...new Set(inForce.map((r) => r.market))].sort();
+    return markets
+      .map((market) => ({
+        market,
+        categories: META_CATEGORIES.filter(
+          (c) => !inForce.some((r) => r.market === market && r.category === c)
+        ),
+      }))
+      .filter((m) => m.categories.length > 0);
+  }, [data]);
+
   async function saveRate() {
     if (!editor) return;
     setSaving(true);
@@ -405,6 +422,25 @@ export function PlatformRates({
                 data-unpriced-markets={unpriced.join(',')}
               >
                 {t('unpriced', { markets: unpriced.join(', ') })}
+              </div>
+            ) : null}
+            {missingPairs.length > 0 ? (
+              <div
+                className="border-border bg-muted/40 text-muted-foreground rounded-lg border p-3 text-sm"
+                data-missing-pairs={missingPairs
+                  .map((m) => `${m.market}:${m.categories.join('+')}`)
+                  .join(',')}
+              >
+                {t('missingPairs', {
+                  pairs: missingPairs
+                    .map(
+                      (m) =>
+                        `${m.market}: ${m.categories
+                          .map((c) => t(`categories.${c}`))
+                          .join(', ')}`
+                    )
+                    .join('; '),
+                })}
               </div>
             ) : null}
             {data.rates.length === 0 ? (

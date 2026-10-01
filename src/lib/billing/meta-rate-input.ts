@@ -11,11 +11,21 @@
 //   exists/conflict  the same (market, category, effective_from) already
 //                    exists. Same price → `exists` (an import that is
 //                    pasted twice is a no-op); another price → `conflict`.
-//   retroactive      a date before today (UTC) for a market and category
-//                    that already had a rate on that day: it would
-//                    re-price messages already delivered. A past date
-//                    with no earlier rate (filling a market the seed did
-//                    not have) is allowed.
+//   retroactive      a date of today or earlier (UTC) for a market and
+//                    category that already had a rate on that day: rates
+//                    apply per UTC day, so even «today» would re-price
+//                    messages delivered (and maybe billed) earlier today.
+//                    A change to a priced pair must be dated AFTER today.
+//
+// Filling a gap: a date of today or earlier for a market and category
+// with NO earlier row (a market the seed did not have, or
+// `rest_of_latam/authentication`) is allowed. It is safe only under this
+// CONTRACT FOR s10.4: `buildStatement` fails as a whole on
+// `MetaRateMissingError` — it never issues a partial statement that
+// skips messages without a rate. So no statement can exist with a
+// message of an unpriced pair, and a backdated fill only prices messages
+// that were never charged; it never re-prices a charge whose rate was
+// already resolved.
 // ============================================================
 
 import { MARKET_RE, META_CATEGORIES, type MetaCategory } from './meta-rates';
@@ -145,7 +155,7 @@ export function classifyRate(
       : 'conflict';
   }
   if (
-    rate.effective_from < today &&
+    rate.effective_from <= today &&
     same.some(
       (r) => String(r.effective_from).slice(0, 10) < rate.effective_from
     )

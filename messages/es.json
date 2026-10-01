@@ -2391,6 +2391,7 @@
       "empty": "Todavía no hay tarifas.",
       "neverEdit": "Una tarifa vigente nunca se edita: un cambio de precio es una fila nueva con su fecha de vigencia.",
       "unpriced": "Mercados sin tarifa vigente: {markets}. Un mensaje de esos mercados no se puede facturar hasta que la cargues.",
+      "missingPairs": "Categorías sin tarifa vigente en mercados que sí tienen alguna: {pairs}. Esos mensajes no se pueden facturar hasta que las cargues.",
       "columns": {
         "market": "Mercado",
         "category": "Categoría",
@@ -2413,7 +2414,7 @@
       "refused": {
         "exists": "Esa tarifa ya existe.",
         "conflict": "Ya hay una tarifa con ese mercado, categoría y fecha. No se edita: añade una con fecha posterior.",
-        "retroactive": "Esa fecha ya tenía una tarifa vigente: cambiarla repreciaría mensajes ya entregados. Usa hoy o una fecha posterior."
+        "retroactive": "Ese mercado y categoría ya tienen una tarifa vigente ese día: las tarifas aplican por día UTC, así que un cambio debe tener fecha posterior a hoy."
       },
       "saved": "Tarifa añadida.",
       "saveFailed": "No se pudo guardar.",
@@ -2421,7 +2422,7 @@
       "cancel": "Cancelar",
       "editor": {
         "title": "Nueva tarifa",
-        "dateHelp": "Desde ese día (UTC) los mensajes entregados se cobran a esta tarifa.",
+        "dateHelp": "Desde ese día (UTC) los mensajes entregados se cobran a esta tarifa. Si el mercado y la categoría ya tienen tarifa, usa una fecha posterior a hoy.",
         "save": "Añadir tarifa"
       },
       "import": {
@@ -2446,7 +2447,7 @@
       },
       "markets": {
         "title": "País → mercado",
-        "help": "País del destinatario (ISO-3166) y mercado de la tarjeta de Meta en que se cobra. Un país sin fila se cobra como {fallback}.",
+        "help": "País del destinatario (ISO-3166) y mercado de la tarjeta de Meta en que se cobra. Un país sin fila se cobra como {fallback}. A VERIFICAR POR EL HUMANO: la asignación sembrada no tiene fuente en el repo; compárala con la tarjeta oficial de Meta.",
         "columns": {
           "country": "País",
           "market": "Mercado",

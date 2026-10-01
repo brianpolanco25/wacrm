@@ -55,7 +55,7 @@ export class RateRefusedError extends Error {
   constructor(status: Exclude<RateStatus, 'new'>) {
     super(
       status === 'retroactive'
-        ? 'A rate already in force on that date cannot be replaced retroactively: use today or a later date'
+        ? 'That market and category already have a rate in force on that date: a change must be dated after today (UTC)'
         : status === 'exists'
           ? 'That rate already exists'
           : 'A rate with that market, category and date already exists: a rate in force is never edited, add one with a later date'

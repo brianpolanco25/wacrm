@@ -155,10 +155,35 @@ describe('classifyRate', () => {
     expect(classifyRate(rate({}), EXISTING, TODAY)).toBe('new');
   });
 
-  it('today is allowed: it supersedes from today on, not the past', () => {
+  it('today is retroactive when the pair already has a rate: rates apply per UTC day', () => {
     expect(classifyRate(rate({ effective_from: TODAY }), EXISTING, TODAY)).toBe(
-      'new'
+      'retroactive'
     );
+    // Tomorrow is the first date a priced pair can change.
+    expect(
+      classifyRate(rate({ effective_from: '2026-11-16' }), EXISTING, TODAY)
+    ).toBe('new');
+  });
+
+  it('today or a past date fills a pair with no earlier rate (contract for s10.4)', () => {
+    expect(
+      classifyRate(
+        { ...rate({}), category: 'authentication', effective_from: TODAY },
+        EXISTING,
+        TODAY
+      )
+    ).toBe('new');
+    expect(
+      classifyRate(
+        {
+          ...rate({}),
+          category: 'authentication',
+          effective_from: '2026-10-01',
+        },
+        EXISTING,
+        TODAY
+      )
+    ).toBe('new');
   });
 
   it('the same key with the same price is `exists`, with another price `conflict`', () => {

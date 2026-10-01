@@ -2391,6 +2391,7 @@
       "empty": "No rates yet.",
       "neverEdit": "A rate in force is never edited: a price change is a new row with its effective date.",
       "unpriced": "Markets with no rate in force: {markets}. Messages to those markets cannot be billed until you load one.",
+      "missingPairs": "Categories with no rate in force in markets that do have some: {pairs}. Those messages cannot be billed until you load them.",
       "columns": {
         "market": "Market",
         "category": "Category",
@@ -2413,7 +2414,7 @@
       "refused": {
         "exists": "That rate already exists.",
         "conflict": "There is already a rate for that market, category and date. It is not edited: add one with a later date.",
-        "retroactive": "That date already had a rate in force: changing it would re-price messages already delivered. Use today or a later date."
+        "retroactive": "That market and category already have a rate in force on that day: rates apply per UTC day, so a change must be dated after today."
       },
       "saved": "Rate added.",
       "saveFailed": "Could not save.",
@@ -2421,7 +2422,7 @@
       "cancel": "Cancel",
       "editor": {
         "title": "New rate",
-        "dateHelp": "From that day (UTC) on, delivered messages are charged at this rate.",
+        "dateHelp": "From that day (UTC) on, delivered messages are charged at this rate. If the market and category already have a rate, use a date after today.",
         "save": "Add rate"
       },
       "import": {
@@ -2446,7 +2447,7 @@
       },
       "markets": {
         "title": "Country → market",
-        "help": "Recipient country (ISO-3166) and the Meta rate-card market it is billed in. A country without a row is billed as {fallback}.",
+        "help": "Recipient country (ISO-3166) and the Meta rate-card market it is billed in. A country without a row is billed as {fallback}. TO BE VERIFIED BY A HUMAN: the seeded mapping has no source in the repo; check it against Meta's official rate card.",
         "columns": {
           "country": "Country",
           "market": "Market",

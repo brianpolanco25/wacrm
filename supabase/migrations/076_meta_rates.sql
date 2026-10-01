@@ -130,6 +130,8 @@ VALUES
   ('rest_of_latam', 'marketing', 0.07400, DATE '2026-10-01')
 ON CONFLICT (market, category, effective_from) DO NOTHING;
 
+-- A VERIFICAR POR EL HUMANO contra la tarjeta oficial de Meta: asignación
+-- sembrada sin fuente en el repo; editable en /platform/rates.
 -- RD y sus vecinos del Caribe, Centroamérica y Sudamérica que Meta agrupa
 -- en «Resto de Latinoamérica» (Argentina, Chile, Perú, Colombia, México y
 -- Brasil son mercados propios en la tarjeta de Meta y quedan fuera).
@@ -152,7 +154,9 @@ VALUES
   ('UY', 'rest_of_latam')
 ON CONFLICT (country_code) DO NOTHING;
 
--- Países que Meta factura en un mercado PROPIO. Van con su mercado aunque
+-- A VERIFICAR POR EL HUMANO contra la tarjeta oficial de Meta: asignación
+-- sembrada sin fuente en el repo; editable en /platform/rates.
+-- Países que Meta factura en un mercado PROPIO (también AR, CL y PE). Van con su mercado aunque
 -- todavía no haya tarifa: así un destinatario de México falla con
 -- «falta la tarifa de mexico» en vez de caer en `rest_of_world` y
 -- cobrarse a un precio que no es el suyo. Sus tarifas las carga el
