@@ -51,6 +51,18 @@ const h = vi.hoisted(() => ({
     /** `usage_counters.value` after the increment, per account+metric —
      *  the RPC returns the new total. */
     usage: new Map<string, number>(),
+    /** p11.3: `accounts.service_cap_action` of the dispatching account. */
+    serviceCapAction: 'warn' as string,
+    /** p11.3: `subscriptions.meta_billing`. */
+    metaBilling: 'direct' as string,
+    /** p11.3: numbers of the account (id → is_default). */
+    numbers: [] as { id: string; is_default: boolean }[],
+    /** p11.3: rows `service_quota_usage` returns. */
+    quotaRows: [] as Record<string, unknown>[],
+    /** p11.3: error the quota RPC resolves with. */
+    quotaError: null as { message: string } | null,
+    /** p11.3: filters each service-cap read used, per table. */
+    capFilters: [] as [string, string, unknown][],
   },
 }));
 
@@ -122,6 +134,59 @@ vi.mock('./admin-client', () => ({
           }),
         };
       }
+      // p11.3 — the service-cap gate's reads. Each one records its
+      // filters so a test can prove they are scoped to the account.
+      if (
+        table === 'accounts' ||
+        table === 'subscriptions' ||
+        table === 'whatsapp_config'
+      ) {
+        const filters: [string, unknown][] = [];
+        const capChain = {
+          select: () => capChain,
+          eq: (column: string, value: unknown) => {
+            h.state.capFilters.push([table, column, value]);
+            filters.push([column, value]);
+            return capChain;
+          },
+          order: () => capChain,
+          limit: () =>
+            Promise.resolve({ data: h.state.numbers.slice(0, 1), error: null }),
+          maybeSingle: () => {
+            const accountId = filters.find(
+              ([c]) => c === 'id' || c === 'account_id'
+            )?.[1];
+            if (accountId === undefined) {
+              return Promise.resolve({ data: null, error: null });
+            }
+            if (table === 'accounts') {
+              return Promise.resolve({
+                data: { service_cap_action: h.state.serviceCapAction },
+                error: null,
+              });
+            }
+            if (table === 'subscriptions') {
+              return Promise.resolve({
+                data: { meta_billing: h.state.metaBilling },
+                error: null,
+              });
+            }
+            const byId = filters.find(([c]) => c === 'id')?.[1];
+            const wantDefault = filters.some(
+              ([c, v]) => c === 'is_default' && v === true
+            );
+            const row = h.state.numbers.find((n) =>
+              byId !== undefined
+                ? n.id === byId
+                : wantDefault
+                  ? n.is_default
+                  : true
+            );
+            return Promise.resolve({ data: row ?? null, error: null });
+          },
+        };
+        return capChain;
+      }
       // conversations
       const selectChain = {
         eq: (column: string, value: unknown) => {
@@ -180,6 +245,12 @@ vi.mock('./admin-client', () => ({
       h.state.rpcCalls.push({ name, args });
       if (name === 'pick_available_agent') {
         return Promise.resolve({ data: h.state.pick, error: null });
+      }
+      if (name === 'service_quota_usage') {
+        if (h.state.quotaError) {
+          return Promise.resolve({ data: null, error: h.state.quotaError });
+        }
+        return Promise.resolve({ data: h.state.quotaRows, error: null });
       }
       if (name === 'increment_usage') {
         // Migration 041: upsert keyed by (account_id, metric, period)
@@ -263,6 +334,12 @@ beforeEach(() => {
   h.state.usageError = null;
   h.state.usageThrows = false;
   h.state.usage = new Map();
+  h.state.serviceCapAction = 'warn';
+  h.state.metaBilling = 'direct';
+  h.state.numbers = [{ id: 'cfg-1', is_default: true }];
+  h.state.quotaRows = [];
+  h.state.quotaError = null;
+  h.state.capFilters = [];
   h.loadAiConfig.mockResolvedValue(aiConfig());
   h.buildConversationContext.mockResolvedValue([
     { role: 'user', content: 'hi' },
