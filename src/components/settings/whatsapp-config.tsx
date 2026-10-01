@@ -33,6 +33,8 @@ import { Switch } from '@/components/ui/switch';
 import { SettingsPanelHead } from './settings-panel-head';
 import { PaymentStatusBadge } from './payment-status-badge';
 import { useBillingStatus } from '@/hooks/use-billing-status';
+import { useServiceCap } from '@/hooks/use-service-cap';
+import { ServiceCapCard, ServiceUsageLine } from './service-cap-settings';
 import {
   Accordion,
   AccordionItem,
@@ -64,6 +66,7 @@ export function WhatsAppConfig() {
     loading: authLoading,
     profileLoading,
     canEditSettings,
+    supportSession,
   } = useAuth();
 
   // Fase 4 §1. ONE flag, answered by the server, governs every
@@ -76,6 +79,8 @@ export function WhatsAppConfig() {
   // p11.1: who pays Meta. Rides on the shared `/api/billing/status`
   // read (no request of its own); `managed` hides the payment badge.
   const metaBilling = useBillingStatus()?.metaBilling;
+  // p11.3: free service quota per number and the account's setting.
+  const { status: serviceCap, refresh: refreshServiceCap } = useServiceCap();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -833,6 +838,13 @@ export function WhatsAppConfig() {
                             onRecheck={() => handleRecheckPayment(row)}
                           />
                         )}
+                        <ServiceUsageLine
+                          number={serviceCap?.numbers.find(
+                            (n) => n.id === row.id
+                          )}
+                          freeTier={serviceCap?.freeTier ?? 0}
+                          metaBilling={serviceCap?.metaBilling}
+                        />
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         {!row.is_default && (
@@ -1114,6 +1126,15 @@ export function WhatsAppConfig() {
                   </CardContent>
                 </Card>
               )}
+
+              <ServiceCapCard
+                status={serviceCap}
+                // A support session is admin by role, but `accounts`
+                // stays out of what it may write (072): the PATCH
+                // answers 403, so the radios must not look editable.
+                canEdit={canEditSettings && !supportSession}
+                onSaved={refreshServiceCap}
+              />
 
               {/* Attachment retention. Only meaningful once a number is
             connected, since it governs what the webhook does with

@@ -2105,6 +2105,35 @@ BEGIN
   END IF;
   -- /079 -----------------------------------------------------------
 
+  -- 080 — cuota gratis de servicio por número (p11.3) -----------------
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'accounts'
+                   AND column_name = 'service_cap_action'
+                   AND is_nullable = 'NO'
+                   AND column_default LIKE '''warn''%') THEN
+    RAISE EXCEPTION 'accounts.service_cap_action is missing, nullable or without default warn (migration 080)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'accounts_service_cap_action_check'
+                   AND conrelid = 'public.accounts'::regclass) THEN
+    RAISE EXCEPTION 'accounts_service_cap_action_check is missing (migration 080)';
+  END IF;
+  IF to_regprocedure('public.service_quota_usage(uuid, timestamptz)') IS NULL THEN
+    RAISE EXCEPTION 'service_quota_usage(uuid, timestamptz) is missing (migration 080)';
+  END IF;
+  IF has_function_privilege('authenticated',
+       'public.service_quota_usage(uuid, timestamptz)', 'EXECUTE')
+     OR has_function_privilege('anon',
+       'public.service_quota_usage(uuid, timestamptz)', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'service_quota_usage() is executable by a client role (migration 080)';
+  END IF;
+  IF NOT has_function_privilege('service_role',
+       'public.service_quota_usage(uuid, timestamptz)', 'EXECUTE') THEN
+    RAISE EXCEPTION
+      'service_quota_usage() is not executable by service_role (migration 080)';
+  END IF;
+  -- /080 -----------------------------------------------------------
   -- 082 — punto de entrada CTWA y ventana gratis (p11.6) ------------
   IF (SELECT count(*) FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'conversations'

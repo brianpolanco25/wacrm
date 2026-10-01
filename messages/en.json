@@ -364,6 +364,12 @@
     "freeWindow": {
       "badge": "Free window until {until}",
       "tooltip": "This customer came from a Click to WhatsApp ad. If you reply within 24 hours of their first message, Meta does not charge for the messages in this conversation until {until}."
+    },
+    "serviceCap": {
+      "title": "Free Meta quota used up",
+      "numbers": "{numbers}: the {freeTier, number} free service messages of this month are used up. From now on Meta charges every reply from {count, plural, one {this number} other {these numbers}}.",
+      "paused": "The AI will not reply on its own from {count, plural, one {this number} other {these numbers}} until {date}. Your team can keep writing.",
+      "warnOnly": "The AI keeps replying. You can pause it in Settings → WhatsApp."
     }
   },
   "Contacts": {
@@ -1647,7 +1653,19 @@
       "paymentPending": "Not checked yet",
       "paymentCheckedAt": "Checked on {date}",
       "paymentRecheck": "Check again",
-      "paymentRecheckFailed": "Could not check the payment method. Try again in a moment."
+      "paymentRecheckFailed": "Could not check the payment method. Try again in a moment.",
+      "serviceCap": {
+        "usage": "Service messages this month: {used, number} of {freeTier, number} free",
+        "exhausted": "Free quota used up",
+        "cardTitle": "Free Meta quota",
+        "cardDesc": "Meta gives {freeTier, number} free service messages per number every month. Choose what the AI does when they run out.",
+        "warn": "Only warn",
+        "warnDesc": "The AI keeps replying and Meta charges each extra service message. You will see a notice in the inbox.",
+        "pauseAi": "Pause the number's AI",
+        "pauseAiDesc": "The AI stops replying on its own from that number until next month. Your team and automations keep sending.",
+        "saveFailed": "Could not save the free quota setting.",
+        "saved": "Free quota setting saved."
+      }
     },
     "sections": {
       "overview": "Overview",

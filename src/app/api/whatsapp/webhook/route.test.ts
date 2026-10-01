@@ -2074,3 +2074,68 @@ describe('punto de entrada Click to WhatsApp (p11.6)', () => {
     expect(entryPointUpdates()).toHaveLength(0);
   });
 });
+
+// p11.3 R14 (CP11): a number that spent its free service quota, on an
+// account that chose `pause_ai`, still stores every inbound exactly as
+// before and still hands it to the AI dispatch — the pause lives INSIDE
+// `dispatchInboundToAiReply` (it decides not to reply), never in the
+// webhook. The dispatch stand-in runs the real `isAiPausedByServiceCap`
+// against an exhausted, paused account and only "sends" if it says no.
+describe('inbound webhook: free service quota spent with pause_ai (p11.3)', () => {
+  it('persists the inbound, calls the AI dispatch, and nothing is sent', async () => {
+    const { isAiPausedByServiceCap } = await vi.importActual<
+      typeof import('@/lib/billing/service-cap')
+    >('@/lib/billing/service-cap');
+    const aiSend = vi.fn();
+    const pausedDb = {
+      from: (table: string) => {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          limit: () => Promise.resolve({ data: [], error: null }),
+          maybeSingle: () =>
+            Promise.resolve({
+              data:
+                table === 'accounts'
+                  ? { service_cap_action: 'pause_ai' }
+                  : table === 'subscriptions'
+                    ? { meta_billing: 'direct' }
+                    : { id: 'cfg-pn-1' },
+              error: null,
+            }),
+        };
+        return chain;
+      },
+      rpc: () =>
+        Promise.resolve({
+          data: [{ whatsapp_config_id: 'cfg-pn-1', used: 1000, billable: 1 }],
+          error: null,
+        }),
+    };
+    const pausedDecisions: boolean[] = [];
+    h.dispatchInboundToAiReply.mockImplementation(
+      async (args: { accountId: string; conversationId: string }) => {
+        const paused = await isAiPausedByServiceCap(
+          pausedDb as unknown as Parameters<typeof isAiPausedByServiceCap>[0],
+          {
+            accountId: args.accountId,
+            conversationId: args.conversationId,
+            sealedConfigId: 'cfg-pn-1',
+          }
+        );
+        pausedDecisions.push(paused);
+        if (!paused) aiSend();
+      }
+    );
+
+    await runWebhook();
+
+    // Stored exactly once, as always.
+    expect(h.state.upsertCalls).toHaveLength(1);
+    // Handed to the AI dispatch, which decided to stay quiet.
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalledTimes(1);
+    expect(pausedDecisions).toEqual([true]);
+    expect(aiSend).not.toHaveBeenCalled();
+  });
+});

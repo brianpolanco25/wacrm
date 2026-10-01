@@ -17,6 +17,7 @@ import {
   assertQuota,
   recordUsage,
 } from '@/lib/billing/enforce';
+import { isAiPausedByServiceCap } from '@/lib/billing/service-cap';
 import type { AiConfig } from './types';
 
 interface DispatchArgs {
@@ -48,6 +49,9 @@ interface DispatchArgs {
  *   - a human agent is assigned (they own the thread)
  *   - auto-reply was disabled for this conversation (prior handoff)
  *   - the per-conversation reply cap is reached
+ *   - the conversation's number spent its free service quota this
+ *     month and the account chose `pause_ai` (p11.3; never blocks the
+ *     inbound or a human's send, and fails open on a read error)
  *   - an automation already answered THIS inbound message
  *   - there's nothing to reply to
  *
@@ -104,7 +108,7 @@ export async function dispatchInboundToAiReply(
     const { data: conv, error: convErr } = await db
       .from('conversations')
       .select(
-        'status, assigned_agent_id, ai_autoreply_disabled, ai_reply_count'
+        'status, assigned_agent_id, ai_autoreply_disabled, ai_reply_count, whatsapp_config_id'
       )
       .eq('id', conversationId)
       .eq('account_id', accountId)
@@ -126,6 +130,31 @@ export async function dispatchInboundToAiReply(
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
     if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return;
+
+    // p11.3. Meta gives 1,000 delivered service messages per number and
+    // month; past that it bills each one. An account on `pause_ai` asked
+    // the bot to stop answering from a spent number until the 1st of next
+    // month (UTC) — the pause lifts on its own, so `ai_autoreply_disabled`
+    // is NOT touched and no handoff notice goes out. Humans keep writing
+    // from the inbox; only this automatic reply stops (CP11).
+    //
+    // Before the reservation for the same reason as the billing gates
+    // above: a reply we will not send must not lock the inbound, so an
+    // automation can still answer it. Fails open: a read error returns
+    // false inside `isAiPausedByServiceCap` and the AI replies as usual.
+    if (
+      await isAiPausedByServiceCap(db, {
+        accountId,
+        conversationId,
+        sealedConfigId:
+          (conv.whatsapp_config_id as string | null | undefined) ?? null,
+      })
+    ) {
+      console.info(
+        `[ai auto-reply] account ${accountId}: the free service quota of number ${conv.whatsapp_config_id ?? '(default)'} is spent and the account chose pause_ai — not replying.`
+      );
+      return;
+    }
 
     // Deterministic, user-configured responders win over the LLM. The
     // caller already excludes messages a Flow consumed; message-level

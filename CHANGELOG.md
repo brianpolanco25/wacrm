@@ -27,6 +27,11 @@ and polish.
 - When a customer writes from a Click to WhatsApp ad, the inbound webhook stores where they came from and when the free window ends (72 hours after their message). Organic posts and unknown origins are stored without a window. A malformed `referral`, an invalid or future timestamp, or a failed write never makes the webhook fail, and a Meta retry never writes twice.
 - The inbox list and the conversation header show «Free window until {time}» while that window is open, with a tooltip explaining it; it disappears on its own within a minute of expiring. It is hidden for accounts whose Meta bill Cabbity pays (`managed`) and while the account's billing mode is unknown.
 - The shape of Meta's `referral` and the window rules are unverified assumptions (S-E1…S-E5 in `specs/free-entry-point-badge/design.md`); in doubt, no badge is shown.
+### WhatsApp: free service quota per number
+
+- **Migration required: `080_service_cap.sql`.** Adds `accounts.service_cap_action` (`warn` by default, or `pause_ai`) and the `service_quota_usage()` function, executable only by the service role, that counts each number's delivered service messages of the month from `message_charges`. It goes after 075–079; on the hosted project, if it lands before 077/078, apply it with `supabase db push --include-all`.
+- Since 2026-10-01 Meta gives 1,000 free service messages per number and month and charges the rest. The inbox now shows an amber notice naming each number that used them up; Settings → WhatsApp shows each number's usage this month and a «Free Meta quota» card where admins choose between only warning or pausing the AI on that number.
+- With «Pause the number's AI», the AI stops replying on its own from a spent number until the 1st of next month (UTC) and resumes by itself. Inbound messages, agents' replies, the API, broadcasts, flows and automations are never blocked; if the count cannot be read, the AI replies as usual. Nothing changes for accounts whose Meta bill Cabbity pays (`managed`).
 
 ### WhatsApp: payment method in Meta
 
