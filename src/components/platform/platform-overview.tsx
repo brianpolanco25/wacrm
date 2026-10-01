@@ -264,7 +264,9 @@ function Ready({ metrics }: { metrics: PlatformMetrics }) {
               {t('weeklyTitle')}
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          {/* relative: containing block for the sr-only data table, so it
+              does not escape to the document and make the page scroll. */}
+          <CardContent className="relative">
             <WeeklyBars weeks={metrics.signups.weekly} locale={locale} />
           </CardContent>
         </Card>

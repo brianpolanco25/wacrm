@@ -110,6 +110,12 @@ describe('PlatformFrame — the operator nav', () => {
     expect(frame()).toContain('<p>contenido</p>');
   });
 
+  it('positions the scrolling <main>, so sr-only boxes stay inside it (s9.11)', () => {
+    expect(frame()).toMatch(
+      /<main class="[^"]*\brelative\b[^"]*overflow-y-auto[^"]*"><p>contenido<\/p><\/main>/
+    );
+  });
+
   it('marks the current section and titles the header with it', () => {
     const html = frame('/platform/plans');
     const current = [...html.matchAll(/<a[^>]*aria-current="page"[^>]*>/g)];
