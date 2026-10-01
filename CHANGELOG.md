@@ -11,6 +11,12 @@ and polish.
 
 ## [Unreleased]
 
+### Meta pricing captured per message
+
+- **Migration required: `075_message_charges.sql`.** The delivery-status webhook now records what Meta says it charges for every outbound message, conversation sends and broadcast recipients alike: category, billable flag, pricing type and model, plus when it was sent and delivered, the number that sent it and the recipient's phone. The data lands in a new `message_charges` table that account owners and admins can read, and is the basis for usage billing. Messages sent before the migration have no pricing and are not reconstructed.
+- Categories Meta adds later (for example `marketing_lite`) are stored as received, with a single warning in the log per value. Recording a charge never makes the webhook fail, and inbound messages are stored as before, read-only accounts included.
+- Deploy the migration before the code: until the table exists, every status event logs a `record_message_charge` error (harmless: statuses are still mirrored).
+
 ### Platform console: tag filter during a support session
 
 - Filtering contacts by tag works during a support session: the browser now runs the read-only `filter_contacts_by_tags` while the session is open. Every other database function called from the browser (`touch_presence` included) stays refused.

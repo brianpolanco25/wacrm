@@ -24,6 +24,8 @@ const h = vi.hoisted(() => ({
     conversationUpdates: [] as Record<string, unknown>[],
     upsertCalls: [] as { row: Record<string, unknown>; options: unknown }[],
     rpcCalls: [] as { name: string; args: Record<string, unknown> }[],
+    /** Error con el que responde `record_message_charge` (075), si alguno. */
+    chargeRpcError: null as { message: string } | null,
     afterCallbacks: [] as (() => Promise<void> | void)[],
     automationStarted: 0,
     automationCompleted: 0,
@@ -329,6 +331,9 @@ vi.mock('@supabase/supabase-js', () => ({
     },
     rpc: (name: string, args: Record<string, unknown>) => {
       h.state.rpcCalls.push({ name, args });
+      if (name === 'record_message_charge' && h.state.chargeRpcError) {
+        return Promise.resolve({ data: null, error: h.state.chargeRpcError });
+      }
       return Promise.resolve({ data: null, error: null });
     },
     // Service-role Storage, used by the inbound-media mirror (#466).
@@ -393,6 +398,7 @@ import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api';
 // The real error class: `vi.mock` above keeps everything it does not
 // name, so this is the very object the enforcement layer throws.
 import { AccountLockedError } from '@/lib/billing/enforce';
+import { resetPricingWarningsForTests } from '@/lib/whatsapp/message-charges';
 
 const mockGetMediaUrl = vi.mocked(getMediaUrl);
 const mockDownloadMedia = vi.mocked(downloadMedia);
@@ -455,6 +461,7 @@ beforeEach(() => {
   h.state.conversationUpdates = [];
   h.state.upsertCalls = [];
   h.state.rpcCalls = [];
+  h.state.chargeRpcError = null;
   h.state.afterCallbacks = [];
   h.state.automationStarted = 0;
   h.state.automationCompleted = 0;
@@ -1462,5 +1469,308 @@ describe('estados de entrega: casados por recipient_user_id (fase 6 §5)', () =>
       'message.status_updated',
       expect.objectContaining({ whatsapp_message_id: 'wamid.OUT3' })
     );
+  });
+});
+
+// ============================================================
+// s10.1 — lo que Meta cobra por cada mensaje (migración 075).
+// La semántica de «nunca pisa con NULL / nunca retrocede» vive en la RPC
+// `record_message_charge` y se prueba contra Postgres real
+// (progress/checks_meta-pricing-capture.sql). Aquí: qué le manda el
+// webhook, y que nada de esto lo tumba.
+// ============================================================
+describe('cobro de Meta por mensaje (s10.1)', () => {
+  // El `pricing` tal como lo manda Meta en `sent` y `delivered`.
+  const META_PRICING = {
+    billable: true,
+    pricing_model: 'PMP',
+    category: 'marketing',
+    type: 'regular',
+  };
+
+  function webhookRequest(value: Record<string, unknown>) {
+    const body = {
+      entry: [
+        {
+          changes: [
+            {
+              field: 'messages',
+              value: { metadata: { phone_number_id: 'pn-1' }, ...value },
+            },
+          ],
+        },
+      ],
+    };
+    return {
+      text: async () => JSON.stringify(body),
+      headers: { get: () => 'sha256=stub' },
+    } as unknown as Request;
+  }
+
+  async function runStatuses(...statuses: Record<string, unknown>[]) {
+    const res = await POST(webhookRequest({ statuses }));
+    for (const cb of h.state.afterCallbacks) await cb();
+    return res;
+  }
+
+  function chargeCalls() {
+    return h.state.rpcCalls.filter((c) => c.name === 'record_message_charge');
+  }
+
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    resetPricingWarningsForTests();
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('un estado con pricing de un mensaje de conversación se registra con el mensaje y el número que envió', async () => {
+    h.state.statusMessageRows = [
+      {
+        id: 'msg-9',
+        conversation_id: 'conv-1',
+        conversations: { account_id: 'acc-1', contact_id: 'contact-1' },
+      },
+    ];
+
+    await runStatuses({
+      id: 'wamid.OUT1',
+      status: 'sent',
+      timestamp: '1700000000',
+      recipient_id: '18095550101',
+      recipient_user_id: 'US.1349700000000001',
+      pricing: META_PRICING,
+    });
+
+    expect(chargeCalls()).toHaveLength(1);
+    expect(chargeCalls()[0].args).toEqual({
+      p_account_id: 'acc-1',
+      p_wamid: 'wamid.OUT1',
+      p_status: 'sent',
+      p_event_at: new Date(1700000000 * 1000).toISOString(),
+      // El número del webhook (pn-1 → cfg-pn-1), no el de la conversación.
+      p_whatsapp_config_id: 'cfg-pn-1',
+      p_message_id: 'msg-9',
+      p_broadcast_recipient_id: null,
+      p_recipient_phone: '18095550101',
+      p_pricing_category: 'marketing',
+      p_pricing_billable: true,
+      p_pricing_type: 'regular',
+      p_pricing_model: 'PMP',
+    });
+    // El espejo de estado de siempre no cambió.
+    expect(h.state.messageStatusUpdates[0].values).toEqual({ status: 'sent' });
+  });
+
+  it('un destinatario de difusión (que no pasa por `messages`) se registra con su fila', async () => {
+    // El BSUID del evento resuelve al contacto, que tiene teléfono.
+    h.state.contactByWaUserId = { id: 'contact-1', phone: '15551230000' };
+    h.state.statusRecipientRows = [
+      { id: 'rcpt-1', status: 'sent', contact_id: 'contact-1' },
+    ];
+
+    await runStatuses({
+      id: 'wamid.BC1',
+      status: 'delivered',
+      timestamp: '1700000060',
+      recipient_user_id: 'US.1349700000000001',
+      pricing: META_PRICING,
+    });
+
+    expect(chargeCalls()).toHaveLength(1);
+    expect(chargeCalls()[0].args).toMatchObject({
+      p_account_id: 'acc-1',
+      p_wamid: 'wamid.BC1',
+      p_status: 'delivered',
+      p_message_id: null,
+      p_broadcast_recipient_id: 'rcpt-1',
+      // Sin `recipient_id`, el teléfono sale del contacto resuelto.
+      p_recipient_phone: '15551230000',
+      p_pricing_category: 'marketing',
+    });
+    // Y la fila de difusión avanzó como siempre.
+    expect(h.state.recipientUpdates[0].values).toMatchObject({
+      status: 'delivered',
+    });
+  });
+
+  it('un estado sin pricing no manda categoría: la RPC solo puede avanzar una fila existente', async () => {
+    h.state.statusMessageRows = [
+      {
+        id: 'msg-9',
+        conversation_id: 'conv-1',
+        conversations: { account_id: 'acc-1', contact_id: 'contact-1' },
+      },
+    ];
+
+    await runStatuses({
+      id: 'wamid.OUT1',
+      status: 'read',
+      timestamp: '1700000100',
+      recipient_user_id: 'US.1349700000000001',
+    });
+
+    expect(chargeCalls()).toHaveLength(1);
+    expect(chargeCalls()[0].args).toMatchObject({
+      p_status: 'read',
+      p_pricing_category: null,
+      p_pricing_billable: null,
+      p_pricing_type: null,
+      p_pricing_model: null,
+    });
+  });
+
+  it('el estado repetido (sent y luego delivered con pricing) llega a la RPC las dos veces, sin NULL de relleno', async () => {
+    await runStatuses(
+      {
+        id: 'wamid.OUT2',
+        status: 'sent',
+        timestamp: '1700000000',
+        recipient_id: '18095550101',
+        pricing: META_PRICING,
+      },
+      {
+        id: 'wamid.OUT2',
+        status: 'delivered',
+        timestamp: '1700000005',
+        recipient_id: '18095550101',
+        pricing: { ...META_PRICING, billable: 'yes' },
+      }
+    );
+
+    const calls = chargeCalls();
+    expect(calls.map((c) => c.args.p_status)).toEqual(['sent', 'delivered']);
+    // Un `billable` que no es booleano viaja como NULL, y la RPC hace
+    // COALESCE con lo ya guardado: no pisa el `true` del primer estado.
+    expect(calls[1].args.p_pricing_billable).toBeNull();
+    expect(calls[1].args.p_pricing_category).toBe('marketing');
+  });
+
+  it('un delivered tardío tras read se manda tal cual: el no-retroceso es de la RPC', async () => {
+    await runStatuses(
+      { id: 'wamid.OUT3', status: 'read', timestamp: '1700000100' },
+      {
+        id: 'wamid.OUT3',
+        status: 'delivered',
+        timestamp: '1700000005',
+        pricing: META_PRICING,
+      }
+    );
+
+    const calls = chargeCalls();
+    expect(calls.map((c) => c.args.p_status)).toEqual(['read', 'delivered']);
+    expect(calls[1].args.p_event_at).toBe(
+      new Date(1700000005 * 1000).toISOString()
+    );
+  });
+
+  it('una categoría desconocida (marketing_lite) se guarda tal cual y avisa una sola vez', async () => {
+    const lite = { ...META_PRICING, category: 'marketing_lite' };
+    await runStatuses(
+      { id: 'wamid.L1', status: 'sent', timestamp: '1', pricing: lite },
+      { id: 'wamid.L2', status: 'sent', timestamp: '2', pricing: lite }
+    );
+
+    expect(chargeCalls().map((c) => c.args.p_pricing_category)).toEqual([
+      'marketing_lite',
+      'marketing_lite',
+    ]);
+    const liteWarnings = warn.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).includes('marketing_lite')
+    );
+    expect(liteWarnings).toHaveLength(1);
+  });
+
+  it('si la RPC falla, el webhook responde 200 y el fan-out del estado sale igual', async () => {
+    h.state.chargeRpcError = {
+      message: 'relation "message_charges" does not exist',
+    };
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    h.state.statusMessageRows = [
+      {
+        id: 'msg-9',
+        conversation_id: 'conv-1',
+        conversations: { account_id: 'acc-1', contact_id: 'contact-1' },
+      },
+    ];
+
+    const res = (await runStatuses({
+      id: 'wamid.OUT4',
+      status: 'delivered',
+      timestamp: '1700000000',
+      pricing: META_PRICING,
+    })) as unknown as { init?: { status?: number } };
+
+    expect(res.init?.status ?? 200).toBe(200);
+    expect(h.state.messageStatusUpdates).toHaveLength(1);
+    expect(h.dispatchWebhookEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      'acc-1',
+      'message.status_updated',
+      expect.objectContaining({ whatsapp_message_id: 'wamid.OUT4' })
+    );
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('CP11: con la cuenta incomplete y en solo lectura, el entrante y el estado con pricing se guardan', async () => {
+    billingGates.assertWritable.mockRejectedValue(
+      new AccountLockedError('incomplete')
+    );
+    billingGates.assertQuota.mockRejectedValue(
+      new Error('billing said no — and it must not be asked')
+    );
+    billingGates.getEntitlements.mockResolvedValue({
+      planId: 'inicio',
+      status: 'incomplete',
+      limits: {},
+      features: [],
+      readOnly: true,
+      readOnlyReason: 'subscription',
+      manualHold: false,
+      trialEndsAt: null,
+    } as never);
+    h.state.statusMessageRows = [
+      {
+        id: 'msg-9',
+        conversation_id: 'conv-1',
+        conversations: { account_id: 'acc-1', contact_id: 'contact-1' },
+      },
+    ];
+
+    await POST(
+      webhookRequest({
+        contacts: [{ wa_id: '15551230000', profile: { name: 'Ada' } }],
+        messages: [TEXT_MESSAGE],
+        statuses: [
+          {
+            id: 'wamid.OUT5',
+            status: 'delivered',
+            timestamp: '1700000000',
+            recipient_id: '15551230000',
+            pricing: META_PRICING,
+          },
+        ],
+      })
+    );
+    for (const cb of h.state.afterCallbacks) await cb();
+
+    // El entrante, guardado…
+    expect(h.state.upsertCalls).toHaveLength(1);
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      conversation_id: 'conv-1',
+      sender_type: 'customer',
+    });
+    // …el estado, reflejado…
+    expect(h.state.messageStatusUpdates[0].values).toEqual({
+      status: 'delivered',
+    });
+    // …y el cobro, registrado: es justo lo que el corte va a facturar.
+    expect(chargeCalls()).toHaveLength(1);
+    expect(chargeCalls()[0].args).toMatchObject({
+      p_wamid: 'wamid.OUT5',
+      p_pricing_category: 'marketing',
+    });
+    expect(billingGates.assertWritable).not.toHaveBeenCalled();
+    expect(billingGates.getEntitlements).not.toHaveBeenCalled();
   });
 });
