@@ -48,8 +48,17 @@
 --
 -- CP11: no se toca ninguna tabla del entrante.
 --
+-- Locks: el ADD COLUMN y el backfill toman `subscriptions` (que lee
+--   `getEntitlements` en cada escritura) y el ADD CONSTRAINT valida
+--   `impersonation_log` entera. Con `lock_timeout`, si hay una transacción
+--   larga, la migración falla en 5 s en vez de encolar detrás de ella todas
+--   las lecturas de `subscriptions` (mismo criterio que la 075). Reintentar
+--   el `db push` es seguro.
+--
 -- Idempotente — se puede re-ejecutar.
 -- ============================================================
+
+SET lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS statements (
   id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -163,3 +172,5 @@ UPDATE subscriptions
    SET statement_period_end = COALESCE(current_period_end, now() + interval '1 month')
  WHERE meta_billing = 'managed'
    AND statement_period_end IS NULL;
+
+RESET lock_timeout;

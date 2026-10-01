@@ -20,7 +20,8 @@ vi.mock('@/lib/flows/admin-client', async () => {
 // loaded one. A roomier limit than the 5 s default keeps it from flaking.
 vi.setConfig({ testTimeout: 30_000 });
 
-const { FakeDatabase } = await import('@/lib/security/fake-supabase');
+const { FakeDatabase, FakeClient } =
+  await import('@/lib/security/fake-supabase');
 const { GET } = await import('./route');
 
 const SECRET = 'billing-cron-secret';
@@ -383,6 +384,45 @@ describe('the cut-off', () => {
     expect(subOf(A)).toMatchObject({
       status: 'past_due',
       grace_until: '2026-11-04T00:00:00.000Z',
+    });
+  });
+
+  it('a payment confirmed between the listing and the lock leaves the account active', async () => {
+    h.db.rows('statements').push({
+      id: 'st-a',
+      account_id: A,
+      period_start: PERIOD_START,
+      period_end: PERIOD_END,
+      status: 'issued',
+      due_at: '2026-11-04T00:00:00.000Z',
+      total_usd: 1036,
+    });
+    // The operator confirms while the sweep runs: settleStatement writes
+    // the subscription first (active, anchor a month on) and the
+    // statement after, so the sweep still reads it `issued`.
+    const original = FakeClient.prototype.from;
+    let settled = false;
+    vi.spyOn(FakeClient.prototype, 'from').mockImplementation(function (
+      this: InstanceType<typeof FakeClient>,
+      table: string
+    ) {
+      if (table === 'statements' && !settled) {
+        settled = true;
+        Object.assign(subOf(A), {
+          status: 'active',
+          grace_until: null,
+          statement_period_end: '2026-12-01T00:00:00.000Z',
+          current_period_end: '2026-12-01T00:00:00.000Z',
+        });
+      }
+      return original.call(this, table);
+    });
+    await GET(req(SECRET));
+    expect(settled).toBe(true);
+    expect(subOf(A)).toMatchObject({
+      status: 'active',
+      grace_until: null,
+      statement_period_end: '2026-12-01T00:00:00.000Z',
     });
   });
 

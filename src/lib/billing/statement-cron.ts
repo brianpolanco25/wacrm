@@ -115,6 +115,14 @@ export function lockPatch(
   return null;
 }
 
+/**
+ * Filtered by the anchor we read: the patch comes from the snapshot taken
+ * when listing, and confirming a payment (`settleStatement`) writes the
+ * subscription — `active`, anchor a month later — before it closes the
+ * statement. A sweep that read `issued` in between must not lock a paid
+ * account with a grace that already expired: with the anchor moved, its
+ * late write matches no row.
+ */
 async function applyLock(
   client: SupabaseClient,
   sub: DueSubscription,
@@ -125,7 +133,8 @@ async function applyLock(
   const { error } = await client
     .from('subscriptions')
     .update(patch)
-    .eq('account_id', sub.account_id);
+    .eq('account_id', sub.account_id)
+    .eq('statement_period_end', sub.statement_period_end);
   if (error) throw error;
 }
 
