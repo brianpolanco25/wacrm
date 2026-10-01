@@ -19,6 +19,10 @@ const h = vi.hoisted(() => ({
     /** Set by the flow_runs INSERT; what its .maybeSingle() returns. */
     insertedRun: null as Record<string, unknown> | null,
     rpcCalls: [] as string[],
+    /** p11.4: `flow_run_events` event_type whose INSERT throws. */
+    throwOnEvent: null as string | null,
+    /** p11.4: the active-run lookup throws. */
+    throwOnLoad: false,
   },
 }));
 
@@ -37,9 +41,20 @@ vi.mock('./admin-client', () => {
       in: () => b,
       filter: () => b,
       order: () => b,
-      limit: () => b,
+      limit: () => {
+        if (table === 'flow_runs' && h.state.throwOnLoad) {
+          throw new Error('load exploded');
+        }
+        return b;
+      },
       update: () => b,
       insert: (row: Record<string, unknown>) => {
+        if (
+          table === 'flow_run_events' &&
+          row.event_type === h.state.throwOnEvent
+        ) {
+          throw new Error('simulated failure after send');
+        }
         h.state.inserted.push({ table, row });
         if (table === 'flow_runs') {
           h.state.insertedRun = {
@@ -156,6 +171,8 @@ beforeEach(() => {
   h.state.inserted = [];
   h.state.insertedRun = null;
   h.state.rpcCalls = [];
+  h.state.throwOnEvent = null;
+  h.state.throwOnLoad = false;
   engineSendText.mockClear();
 });
 
@@ -342,5 +359,47 @@ describe('dispatchInboundToFlows — a read-only account (fase 3 §5)', () => {
     expect(result).toBeDefined();
     // It was the send that refused, and nothing got past it.
     expect(engineSendText).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ============================================================
+// p11.4 (R9) — once the runner started handling a run, something may
+// already have gone out. A throw from then on must keep the inbound
+// consumed, or the webhook lets content automations and the AI answer
+// it as well (Meta bills each message).
+// ============================================================
+describe('dispatchInboundToFlows — consumed once engaged (p11.4)', () => {
+  it('a throw after the send keeps the inbound consumed', async () => {
+    h.state.flows = [KEYWORD_FLOW];
+    // The `end` node's `completed` event is logged outside any per-node
+    // try: the throw reaches the dispatch's catch, after `greet` was sent.
+    h.state.throwOnEvent = 'completed';
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await dispatch({
+      kind: 'text',
+      text: 'order status',
+      meta_message_id: 'm1',
+    });
+
+    expect(engineSendText).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ consumed: true, outcome: 'completed' });
+    err.mockRestore();
+  });
+
+  it('a throw while looking the run up leaves it unconsumed (as before)', async () => {
+    h.state.flows = [KEYWORD_FLOW];
+    h.state.throwOnLoad = true;
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await dispatch({
+      kind: 'text',
+      text: 'order status',
+      meta_message_id: 'm1',
+    });
+
+    expect(engineSendText).not.toHaveBeenCalled();
+    expect(result).toEqual({ consumed: false, outcome: 'no_match' });
+    err.mockRestore();
   });
 });

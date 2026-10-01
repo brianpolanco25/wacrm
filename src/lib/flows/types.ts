@@ -355,6 +355,8 @@ export interface DispatchInboundResult {
     | 'handed_off'
     | 'fallback_fired'
     | 'duplicate_inbound_ignored'
+    /** p11.4: another inbound claimed the same step first; nothing sent. */
+    | 'lost_race'
     | 'no_match';
 }
 

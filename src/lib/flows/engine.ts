@@ -24,9 +24,15 @@
  *   - Idempotency on `meta_message_id`: the runner refuses to advance
  *     an active run twice for the same Meta message — protects against
  *     Meta's retries.
- *   - Optimistic UPDATE with `current_node_key` precondition: two
- *     simultaneous taps for the same run collide at the DB layer; the
- *     second is a no-op.
+ *   - Claim before send (p11.4): a reply that matches the current step
+ *     first moves the run with an UPDATE conditioned on the
+ *     `current_node_key` AND `last_advanced_at` it read, and only the
+ *     winner sends the next nodes. Two simultaneous replies to the same
+ *     step therefore send the branch once (Meta bills per message); the
+ *     loser returns `lost_race` and sends nothing. Same for reprompts,
+ *     conditioned on `reprompt_count`.
+ *   - Optimistic UPDATE with `current_node_key` precondition when a
+ *     suspending node persists its key.
  *   - Partial unique index `idx_one_active_run_per_contact`: two
  *     simultaneous starts for the same contact collide; the second
  *     INSERT raises 23505 and the runner catches & exits.
@@ -784,7 +790,20 @@ async function advanceFromNodeKey(
       continue;
     }
     if (node.node_type === 'send_buttons') {
-      await sendButtonsAndSuspend(db, run, node);
+      // p11.4 (R8): same contract as send_message. A throw here may come
+      // AFTER Meta accepted the message («sent to Meta but DB insert
+      // failed»); bubbling it up used to make the dispatch report
+      // `consumed: false`, so automations and the AI answered too.
+      try {
+        await sendButtonsAndSuspend(db, run, node);
+      } catch (err) {
+        await logEvent(db, run.id, 'error', node.node_key, {
+          reason: 'send_buttons_failed',
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        await endRun(db, run.id, 'failed', 'send_buttons_failed');
+        return { outcome: 'completed' };
+      }
       // Persist the new current_node_key via optimistic UPDATE.
       const advanced = await advanceCurrentNodeKey(
         db,
@@ -800,7 +819,16 @@ async function advanceFromNodeKey(
       return { outcome: 'advanced' };
     }
     if (node.node_type === 'send_list') {
-      await sendListAndSuspend(db, run, node);
+      try {
+        await sendListAndSuspend(db, run, node);
+      } catch (err) {
+        await logEvent(db, run.id, 'error', node.node_key, {
+          reason: 'send_list_failed',
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        await endRun(db, run.id, 'failed', 'send_list_failed');
+        return { outcome: 'completed' };
+      }
       const advanced = await advanceCurrentNodeKey(
         db,
         run.id,
@@ -848,15 +876,27 @@ async function advanceCurrentNodeKey(
   db: AdminClient,
   runId: string,
   expectedOldKey: string | null,
-  newKey: string
+  newKey: string,
+  claim?: {
+    /** `last_advanced_at` as read; the precondition that tells two
+     *  replies to the same step apart even when old and new key match
+     *  (a button pointing at its own node). */
+    expectedLastAdvancedAt: string;
+    /** Value written to `last_advanced_at`. */
+    advancedAt: string;
+    /** Extra columns written in the same UPDATE (captured `vars`,
+     *  `reprompt_count: 0`), so a loser never writes them. */
+    extra?: Record<string, unknown>;
+  }
 ): Promise<boolean> {
   // PostgREST: when expectedOldKey is null we can't `.eq` (would match
   // any row); use `.is('current_node_key', null)` instead.
   let q = db
     .from('flow_runs')
     .update({
+      ...(claim?.extra ?? {}),
       current_node_key: newKey,
-      last_advanced_at: new Date().toISOString(),
+      last_advanced_at: claim?.advancedAt ?? new Date().toISOString(),
     })
     .eq('id', runId)
     .eq('status', 'active');
@@ -864,6 +904,9 @@ async function advanceCurrentNodeKey(
     q = q.is('current_node_key', null);
   } else {
     q = q.eq('current_node_key', expectedOldKey);
+  }
+  if (claim) {
+    q = q.eq('last_advanced_at', claim.expectedLastAdvancedAt);
   }
   const { data, error } = await q.select('id');
   if (error) {
@@ -881,6 +924,11 @@ export async function dispatchInboundToFlows(
   input: DispatchInboundInput & { isFirstInboundMessage: boolean }
 ): Promise<DispatchInboundResult> {
   const db = supabaseAdmin();
+  // p11.4 (R9): once a run is being handled something may already have
+  // gone out to the customer. From then on a throw still means the flow
+  // owns this inbound — neither content automations nor the AI may
+  // answer it too. Before that point (lookups) it stays unconsumed.
+  let engaged = false;
   try {
     const activeRun = await loadActiveRunForContact(
       db,
@@ -908,7 +956,8 @@ export async function dispatchInboundToFlows(
       // One SELECT for the whole flow's nodes — advance loop is now
       // in-memory. See loadAllNodes.
       const nodes = await loadAllNodes(db, activeRun.flow_id);
-      return handleReplyForActiveRun(db, activeRun, input.message, nodes);
+      engaged = true;
+      return await handleReplyForActiveRun(db, activeRun, input.message, nodes);
     }
 
     // No active run → look for a flow whose entry trigger matches.
@@ -922,13 +971,16 @@ export async function dispatchInboundToFlows(
       return { consumed: false, outcome: 'no_match' };
     }
     const nodes = await loadAllNodes(db, flow.id);
-    return startNewRun(db, flow, input, nodes);
+    engaged = true;
+    return await startNewRun(db, flow, input, nodes);
   } catch (err) {
     console.error(
       '[flows] dispatchInboundToFlows threw:',
       err instanceof Error ? err.message : err
     );
-    return { consumed: false, outcome: 'no_match' };
+    return engaged
+      ? { consumed: true, outcome: 'completed' }
+      : { consumed: false, outcome: 'no_match' };
   }
 }
 
@@ -975,6 +1027,12 @@ async function handleReplyForActiveRun(
   //
   // Everything else falls through to the fallback policy below.
   let matched: string | null = null;
+  // Columns written together with the claim below (collect_input).
+  let capture: {
+    vars: Record<string, unknown>;
+    key: string;
+    length: number;
+  } | null = null;
   if (
     message.kind === 'interactive_reply' &&
     (currentNode.node_type === 'send_buttons' ||
@@ -988,44 +1046,62 @@ async function handleReplyForActiveRun(
     const cfg = currentNode.config as unknown as CollectInputNodeConfig;
     const captured = message.text.trim();
     if (captured.length > 0 && cfg.var_key) {
-      // Persist captured value + reset reprompt count atomically.
-      const newVars = { ...run.vars, [cfg.var_key]: captured };
-      const { error: capErr } = await db
-        .from('flow_runs')
-        .update({
-          vars: newVars,
-          reprompt_count: 0,
-        })
-        .eq('id', run.id);
-      if (!capErr) {
-        // Mirror the UPDATE in-memory so downstream interpolation in
-        // the advance loop sees the captured var without us having to
-        // re-SELECT the whole row.
-        run.vars = newVars;
-        run.reprompt_count = 0;
-        await logEvent(db, run.id, 'node_entered', currentNode.node_key, {
-          captured_key: cfg.var_key,
-          captured_length: captured.length,
-        });
-        matched = cfg.next_node_key;
-      }
+      // Computed in memory only: the value is written in the same
+      // UPDATE that claims the transition (p11.4), so a reply that
+      // loses the race never overwrites the winner's variable.
+      capture = {
+        vars: { ...run.vars, [cfg.var_key]: captured },
+        key: cfg.var_key,
+        length: captured.length,
+      };
+      matched = cfg.next_node_key;
     }
   }
 
   if (matched) {
-    // Reset reprompt count on a successful match. Skip the write when
-    // already 0 — the collect_input capture branch above already
-    // zeroed it, and interactive-reply matches against a fresh run
-    // (post-prior-reset) are also already 0. The previous re-read of
-    // the whole row was needed only because we weren't mirroring the
-    // capture UPDATE into the in-memory `run`; now that we do, the
-    // local copy is the source of truth.
-    if (run.reprompt_count !== 0) {
-      const { error } = await db
-        .from('flow_runs')
-        .update({ reprompt_count: 0 })
-        .eq('id', run.id);
-      if (!error) run.reprompt_count = 0;
+    // p11.4 (R6). Claim the transition BEFORE sending anything: move the
+    // pointer to `matched` with an UPDATE conditioned on the key and the
+    // `last_advanced_at` we read. A concurrent reply to the same step
+    // read the same pair, so only one UPDATE matches; the other sends
+    // nothing. `reprompt_count` is reset (and captured vars stored) in
+    // the same write.
+    //
+    // If the process dies between this claim and the sends, the run sits
+    // on `matched` without having sent it; the next inbound falls into
+    // the fallback policy or the cron times it out. Not sending beats
+    // sending twice (same criterion as `claimInboundAutoReply`).
+    const advancedAt = new Date().toISOString();
+    const extra: Record<string, unknown> = { reprompt_count: 0 };
+    if (capture) extra.vars = capture.vars;
+    const claimed = await advanceCurrentNodeKey(
+      db,
+      run.id,
+      run.current_node_key,
+      matched,
+      {
+        expectedLastAdvancedAt: run.last_advanced_at,
+        advancedAt,
+        extra,
+      }
+    );
+    if (!claimed) {
+      await logEvent(db, run.id, 'error', run.current_node_key, {
+        reason: 'lost_race_before_advance',
+      });
+      return { consumed: true, flow_run_id: run.id, outcome: 'lost_race' };
+    }
+    // Mirror the UPDATE in memory: the suspending nodes downstream use
+    // `run.current_node_key` as their precondition, and interpolation
+    // must see the captured var.
+    run.current_node_key = matched;
+    run.last_advanced_at = advancedAt;
+    run.reprompt_count = 0;
+    if (capture) {
+      run.vars = capture.vars;
+      await logEvent(db, run.id, 'node_entered', currentNode.node_key, {
+        captured_key: capture.key,
+        captured_length: capture.length,
+      });
     }
     const outcome = await advanceFromNodeKey(db, run, matched, nodes);
     return {
@@ -1040,10 +1116,23 @@ async function handleReplyForActiveRun(
     (await loadFlow(db, run.flow_id, run.account_id))?.fallback_policy
   );
   const newReprompts = run.reprompt_count + 1;
-  await db
+  // p11.4 (R7): conditioned on the count we read, so two non-matching
+  // replies at once re-send the prompt (or apply the policy) only once.
+  const { data: bumped, error: bumpErr } = await db
     .from('flow_runs')
     .update({ reprompt_count: newReprompts })
-    .eq('id', run.id);
+    .eq('id', run.id)
+    .eq('reprompt_count', run.reprompt_count)
+    .select('id');
+  if (bumpErr || !Array.isArray(bumped) || bumped.length === 0) {
+    if (bumpErr) {
+      console.error('[flows] reprompt_count update error:', bumpErr.message);
+    }
+    await logEvent(db, run.id, 'error', run.current_node_key, {
+      reason: 'lost_race_before_reprompt',
+    });
+    return { consumed: true, flow_run_id: run.id, outcome: 'lost_race' };
+  }
 
   const action = decideFallback({ policy, reprompt_count: newReprompts });
   await logEvent(db, run.id, 'fallback_fired', run.current_node_key, {
@@ -1056,15 +1145,17 @@ async function handleReplyForActiveRun(
   }
   if (action.type === 'reprompt') {
     // Re-send the same prompt. Same node, no current_node_key change.
-    if (currentNode.node_type === 'send_buttons') {
-      await sendButtonsAndSuspend(db, run, currentNode);
-    } else if (currentNode.node_type === 'send_list') {
-      await sendListAndSuspend(db, run, currentNode);
-    } else if (currentNode.node_type === 'collect_input') {
-      // Customer typed something we couldn't accept (empty after trim,
-      // or var_key missing — rare). Re-send the prompt so they try again.
-      const cfg = currentNode.config as unknown as CollectInputNodeConfig;
-      try {
+    // One `try` for the three variants (p11.4, R8): a throw may follow a
+    // send Meta accepted, and the inbound stays consumed either way.
+    try {
+      if (currentNode.node_type === 'send_buttons') {
+        await sendButtonsAndSuspend(db, run, currentNode);
+      } else if (currentNode.node_type === 'send_list') {
+        await sendListAndSuspend(db, run, currentNode);
+      } else if (currentNode.node_type === 'collect_input') {
+        // Customer typed something we couldn't accept (empty after trim,
+        // or var_key missing — rare). Re-send the prompt so they try again.
+        const cfg = currentNode.config as unknown as CollectInputNodeConfig;
         await engineSendText({
           accountId: run.account_id,
           userId: run.user_id,
@@ -1072,12 +1163,12 @@ async function handleReplyForActiveRun(
           contactId: run.contact_id!,
           text: interpolateVars(cfg.prompt_text, run.vars),
         });
-      } catch (err) {
-        await logEvent(db, run.id, 'error', currentNode.node_key, {
-          reason: 'reprompt_send_failed',
-          detail: err instanceof Error ? err.message : String(err),
-        });
       }
+    } catch (err) {
+      await logEvent(db, run.id, 'error', currentNode.node_key, {
+        reason: 'reprompt_send_failed',
+        detail: err instanceof Error ? err.message : String(err),
+      });
     }
     return { consumed: true, flow_run_id: run.id, outcome: 'fallback_fired' };
   }

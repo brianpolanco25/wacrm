@@ -1,5 +1,157 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// ============================================================
+// p11.4 — stateful double of the service-role client, so the runner's
+// conditional UPDATEs race against one shared `flow_runs` row the way
+// they would in Postgres. The pure-helper suites below do not touch it.
+// ============================================================
+type Filter = [col: string, op: 'eq' | 'is' | 'in' | 'filter', val: unknown];
+
+const db = vi.hoisted(() => ({
+  state: {
+    run: null as Record<string, unknown> | null,
+    /** When set, `loadActiveRunForContact` returns copies of THIS row —
+     *  a read taken before a concurrent dispatch moved the run. */
+    staleRead: null as Record<string, unknown> | null,
+    nodes: [] as Record<string, unknown>[],
+    flow: null as Record<string, unknown> | null,
+    events: [] as Record<string, unknown>[],
+    /** Every UPDATE on flow_runs: payload, and whether it matched. */
+    runUpdates: [] as { payload: Record<string, unknown>; matched: boolean }[],
+    /** Make the Nth (0-based) flow_runs UPDATE throw, to simulate an
+     *  exception after a send. */
+    throwOnRunUpdate: null as number | null,
+    /** Make `loadActiveRunForContact`'s read throw. */
+    throwOnLoad: false,
+  },
+}));
+
+function matches(row: Record<string, unknown>, filters: Filter[]): boolean {
+  return filters.every(([col, op, val]) => {
+    if (op === 'eq') return row[col] === val;
+    if (op === 'is') return row[col] === val;
+    return true;
+  });
+}
+
+vi.mock('./admin-client', () => {
+  function builder(table: string) {
+    const filters: Filter[] = [];
+    let op: 'select' | 'update' | 'insert' = 'select';
+    let payload: Record<string, unknown> = {};
+
+    function exec(): { data: unknown; error: null; count?: number } {
+      const st = db.state;
+      if (table === 'flow_runs') {
+        if (op === 'update') {
+          const n = st.runUpdates.length;
+          if (st.throwOnRunUpdate === n) {
+            st.runUpdates.push({ payload, matched: false });
+            throw new Error('simulated failure after send');
+          }
+          const ok = !!st.run && matches(st.run, filters);
+          st.runUpdates.push({ payload, matched: ok });
+          if (ok) st.run = { ...st.run!, ...payload };
+          return { data: ok ? [{ id: st.run!.id }] : [], error: null };
+        }
+        if (st.throwOnLoad) throw new Error('load exploded');
+        // select: active-run lookup ('*') or the dupe check's id list.
+        const source = st.staleRead ?? st.run;
+        if (!source) return { data: [], error: null };
+        const wantsActive = filters.some(([c]) => c === 'status');
+        if (wantsActive && source.status !== 'active') {
+          return { data: [], error: null };
+        }
+        return {
+          data: [JSON.parse(JSON.stringify(source))],
+          error: null,
+        };
+      }
+      if (table === 'flow_run_events') {
+        if (op === 'insert') {
+          st.events.push(payload);
+          return { data: null, error: null };
+        }
+        // dupe check: count reply_received with this meta_message_id
+        const wanted = filters.find(([c]) => c === 'payload->>meta_message_id');
+        const count = st.events.filter(
+          (e) =>
+            e.event_type === 'reply_received' &&
+            (e.payload as Record<string, unknown>)?.meta_message_id ===
+              wanted?.[2]
+        ).length;
+        return { data: null, error: null, count };
+      }
+      if (table === 'flow_nodes') return { data: st.nodes, error: null };
+      if (table === 'flows') return { data: st.flow, error: null };
+      if (table === 'messages') return { data: { id: 'msg-x' }, error: null };
+      return { data: null, error: null };
+    }
+
+    const b: Record<string, unknown> = {
+      select: () => b,
+      update: (p: Record<string, unknown>) => {
+        op = 'update';
+        payload = p;
+        return b;
+      },
+      insert: (p: Record<string, unknown>) => {
+        op = 'insert';
+        payload = p;
+        return b;
+      },
+      eq: (c: string, v: unknown) => (filters.push([c, 'eq', v]), b),
+      is: (c: string, v: unknown) => (filters.push([c, 'is', v]), b),
+      in: (c: string, v: unknown) => (filters.push([c, 'in', v]), b),
+      filter: (c: string, _o: string, v: unknown) => (
+        filters.push([c, 'filter', v]),
+        b
+      ),
+      order: () => b,
+      limit: () => b,
+      maybeSingle: async () => exec(),
+      then: (
+        resolve: (r: unknown) => unknown,
+        reject: (e: unknown) => unknown
+      ) => {
+        try {
+          return Promise.resolve(exec()).then(resolve, reject);
+        } catch (err) {
+          return Promise.reject(err).then(resolve, reject);
+        }
+      },
+    };
+    return b;
+  }
+  return {
+    supabaseAdmin: () => ({
+      from: (t: string) => builder(t),
+      rpc: () => Promise.resolve({ data: null, error: null }),
+    }),
+  };
+});
+
+const send = vi.hoisted(() => ({
+  text: vi.fn(async () => ({ whatsapp_message_id: 'wamid.t' })),
+  media: vi.fn(async () => ({ whatsapp_message_id: 'wamid.m' })),
+  buttons: vi.fn(async () => ({ whatsapp_message_id: 'wamid.b' })),
+  list: vi.fn(async () => ({ whatsapp_message_id: 'wamid.l' })),
+}));
+vi.mock('./meta-send', () => ({
+  engineSendText: send.text,
+  engineSendMedia: send.media,
+  engineSendInteractiveButtons: send.buttons,
+  engineSendInteractiveList: send.list,
+}));
+vi.mock('@/lib/contacts/tag-events', () => ({
+  addContactTagAndDispatch: vi.fn(async () => ({})),
+}));
+vi.mock('@/lib/contacts/tag-write', () => ({
+  removeContactTag: vi.fn(async () => ({})),
+}));
+
 import {
+  dispatchInboundToFlows,
   matchReplyId,
   matchesKeywordTrigger,
   isAutoAdvancing,
@@ -295,5 +447,358 @@ describe('evaluateConditionPredicate', () => {
         configValue: 'anything',
       })
     ).toBe(false);
+  });
+});
+
+// ============================================================
+// p11.4 — one send per step, also under concurrency.
+// ============================================================
+
+/** Literal PostgREST format (microseconds), as `select('*')` returns it. */
+const READ_AT = '2026-10-01T10:00:00.123456+00:00';
+
+const BUTTONS_NODE = {
+  node_key: 'menu',
+  node_type: 'send_buttons',
+  config: {
+    text: '¿Qué necesitas?',
+    buttons: [
+      { reply_id: 'precio', title: 'Precio', next_node_key: 'info' },
+      { reply_id: 'otra', title: 'Otra vez', next_node_key: 'menu' },
+    ],
+  },
+};
+
+/** menu → (precio) info: send_message → ask: send_buttons */
+const RACE_NODES = [
+  BUTTONS_NODE,
+  {
+    node_key: 'info',
+    node_type: 'send_message',
+    config: { text: 'Cuesta 10.', next_node_key: 'ask' },
+  },
+  {
+    node_key: 'ask',
+    node_type: 'send_buttons',
+    config: {
+      text: '¿Algo más?',
+      buttons: [{ reply_id: 'no', title: 'No', next_node_key: 'bye' }],
+    },
+  },
+  { node_key: 'bye', node_type: 'end', config: {} },
+];
+
+function activeRun(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'run-1',
+    flow_id: 'flow-1',
+    account_id: 'acct-1',
+    user_id: 'u-1',
+    contact_id: 'ct-1',
+    conversation_id: 'cv-1',
+    status: 'active',
+    current_node_key: 'menu',
+    last_prompt_message_id: null,
+    vars: {},
+    reprompt_count: 0,
+    started_at: '2026-10-01T09:00:00.000000+00:00',
+    last_advanced_at: READ_AT,
+    ended_at: null,
+    end_reason: null,
+    ...overrides,
+  };
+}
+
+function tap(replyId: string, metaId: string) {
+  return dispatchInboundToFlows({
+    accountId: 'acct-1',
+    userId: 'u-1',
+    contactId: 'ct-1',
+    conversationId: 'cv-1',
+    message: {
+      kind: 'interactive_reply',
+      reply_id: replyId,
+      reply_title: replyId,
+      meta_message_id: metaId,
+    },
+    isFirstInboundMessage: false,
+  });
+}
+
+function typed(text: string, metaId: string) {
+  return dispatchInboundToFlows({
+    accountId: 'acct-1',
+    userId: 'u-1',
+    contactId: 'ct-1',
+    conversationId: 'cv-1',
+    message: { kind: 'text', text, meta_message_id: metaId },
+    isFirstInboundMessage: false,
+  });
+}
+
+/** Run `first`, then `second` with the run as it was BEFORE `first`
+ *  (both read the row before either wrote) — the race of R6/R7. */
+async function race<T>(first: () => Promise<T>, second: () => Promise<T>) {
+  const before = JSON.parse(JSON.stringify(db.state.run));
+  const a = await first();
+  db.state.staleRead = before;
+  const b = await second();
+  db.state.staleRead = null;
+  return [a, b] as const;
+}
+
+function sendCount() {
+  return (
+    send.text.mock.calls.length +
+    send.media.mock.calls.length +
+    send.buttons.mock.calls.length +
+    send.list.mock.calls.length
+  );
+}
+
+function errorReasons() {
+  return db.state.events
+    .filter((e) => e.event_type === 'error')
+    .map((e) => (e.payload as { reason: string }).reason);
+}
+
+describe('flows — un solo envío por paso (p11.4)', () => {
+  beforeEach(() => {
+    db.state.run = activeRun();
+    db.state.staleRead = null;
+    db.state.nodes = RACE_NODES;
+    db.state.flow = {
+      id: 'flow-1',
+      account_id: 'acct-1',
+      fallback_policy: {
+        on_unknown_reply: 'reprompt',
+        max_reprompts: 3,
+        on_exhaust: 'handoff',
+      },
+    };
+    db.state.events = [];
+    db.state.runUpdates = [];
+    db.state.throwOnRunUpdate = null;
+    db.state.throwOnLoad = false;
+    send.text.mockResolvedValue({ whatsapp_message_id: 'wamid.t' });
+    send.buttons.mockResolvedValue({ whatsapp_message_id: 'wamid.b' });
+    send.list.mockResolvedValue({ whatsapp_message_id: 'wamid.l' });
+  });
+
+  it('R6 two taps on the same step at once: the branch is sent once', async () => {
+    const [a, b] = await race(
+      () => tap('precio', 'wamid.in1'),
+      () => tap('precio', 'wamid.in2')
+    );
+    expect(a).toMatchObject({ consumed: true, outcome: 'advanced' });
+    expect(b).toEqual({
+      consumed: true,
+      flow_run_id: 'run-1',
+      outcome: 'lost_race',
+    });
+    expect(send.text).toHaveBeenCalledTimes(1); // info
+    expect(send.buttons).toHaveBeenCalledTimes(1); // ask
+    expect(errorReasons()).toContain('lost_race_before_advance');
+    expect(db.state.run!.current_node_key).toBe('ask');
+  });
+
+  it('R6 the claim moves the pointer and resets reprompt_count in one write', async () => {
+    await tap('precio', 'wamid.in1');
+    const claim = db.state.runUpdates[0];
+    expect(claim.matched).toBe(true);
+    expect(claim.payload).toMatchObject({
+      current_node_key: 'info',
+      reprompt_count: 0,
+    });
+    expect(db.state.runUpdates.length).toBeGreaterThan(0);
+  });
+
+  it('R6 the claim lands before any send of the branch', async () => {
+    const pointerAtSend: unknown[] = [];
+    send.text.mockImplementation(async () => {
+      pointerAtSend.push(db.state.run!.current_node_key);
+      return { whatsapp_message_id: 'wamid.t' };
+    });
+    await tap('precio', 'wamid.in1');
+    expect(pointerAtSend).toEqual(['info']);
+  });
+
+  it('R6 a button pointing at its own node: old and new key equal, still one send', async () => {
+    const [a, b] = await race(
+      () => tap('otra', 'wamid.in1'),
+      () => tap('otra', 'wamid.in2')
+    );
+    expect(a.consumed).toBe(true);
+    expect(b.outcome).toBe('lost_race');
+    expect(send.buttons).toHaveBeenCalledTimes(1);
+  });
+
+  it('R6 two texts to a collect_input: the stored var is the winner’s', async () => {
+    db.state.nodes = [
+      {
+        node_key: 'ask_email',
+        node_type: 'collect_input',
+        config: {
+          prompt_text: '¿Tu correo?',
+          var_key: 'email',
+          next_node_key: 'thanks',
+        },
+      },
+      {
+        node_key: 'thanks',
+        node_type: 'send_message',
+        config: { text: 'Gracias {{vars.email}}', next_node_key: 'bye' },
+      },
+      { node_key: 'bye', node_type: 'end', config: {} },
+    ];
+    db.state.run = activeRun({ current_node_key: 'ask_email' });
+    const [, b] = await race(
+      () => typed('a@x.com', 'wamid.in1'),
+      () => typed('b@y.com', 'wamid.in2')
+    );
+    expect(b.outcome).toBe('lost_race');
+    expect(db.state.run!.vars).toEqual({ email: 'a@x.com' });
+    expect(send.text).toHaveBeenCalledOnce();
+    expect((send.text.mock.calls[0] as unknown[])[0]).toMatchObject({
+      text: 'Gracias a@x.com',
+    });
+    // The loser never wrote `vars`.
+    const varWrites = db.state.runUpdates.filter(
+      (u) => u.matched && 'vars' in u.payload
+    );
+    expect(varWrites).toHaveLength(1);
+  });
+
+  it('R7 two non-matching replies at once: the prompt is re-sent once', async () => {
+    const [a, b] = await race(
+      () => typed('hola', 'wamid.in1'),
+      () => typed('hola?', 'wamid.in2')
+    );
+    expect(a).toMatchObject({ consumed: true, outcome: 'fallback_fired' });
+    expect(b).toEqual({
+      consumed: true,
+      flow_run_id: 'run-1',
+      outcome: 'lost_race',
+    });
+    expect(send.buttons).toHaveBeenCalledTimes(1);
+    expect(errorReasons()).toContain('lost_race_before_reprompt');
+    expect(db.state.run!.reprompt_count).toBe(1);
+  });
+
+  it('R8 send_buttons throwing after Meta accepted, on advance: consumed, one call, run failed', async () => {
+    send.buttons.mockRejectedValue(
+      new Error('sent to Meta but DB insert failed')
+    );
+    const r = await tap('precio', 'wamid.in1');
+    expect(r.consumed).toBe(true);
+    expect(send.buttons).toHaveBeenCalledTimes(1);
+    expect(errorReasons()).toContain('send_buttons_failed');
+    expect(db.state.run!.status).toBe('failed');
+    expect(db.state.run!.end_reason).toBe('send_buttons_failed');
+  });
+
+  it('R8 send_list throwing on advance: consumed, one call, run failed', async () => {
+    db.state.nodes = [
+      BUTTONS_NODE,
+      {
+        node_key: 'info',
+        node_type: 'send_list',
+        config: {
+          text: 'Elige',
+          button_label: 'Ver',
+          sections: [
+            {
+              title: 'A',
+              rows: [{ reply_id: 'r1', title: 'Uno', next_node_key: 'bye' }],
+            },
+          ],
+        },
+      },
+      { node_key: 'bye', node_type: 'end', config: {} },
+    ];
+    send.list.mockRejectedValue(new Error('sent to Meta but DB insert failed'));
+    const r = await tap('precio', 'wamid.in1');
+    expect(r.consumed).toBe(true);
+    expect(send.list).toHaveBeenCalledTimes(1);
+    expect(errorReasons()).toContain('send_list_failed');
+    expect(db.state.run!.end_reason).toBe('send_list_failed');
+  });
+
+  it('R8 send_buttons throwing on reprompt: consumed, one call, reprompt_send_failed', async () => {
+    send.buttons.mockRejectedValue(
+      new Error('sent to Meta but DB insert failed')
+    );
+    const r = await typed('hola', 'wamid.in1');
+    expect(r).toMatchObject({ consumed: true, outcome: 'fallback_fired' });
+    expect(send.buttons).toHaveBeenCalledTimes(1);
+    expect(errorReasons()).toContain('reprompt_send_failed');
+  });
+
+  it('R10 a chain sends exactly once per sending node', async () => {
+    db.state.nodes = [
+      {
+        node_key: 'menu',
+        node_type: 'send_buttons',
+        config: {
+          text: '¿Seguimos?',
+          buttons: [{ reply_id: 'si', title: 'Sí', next_node_key: 'start' }],
+        },
+      },
+      {
+        node_key: 'start',
+        node_type: 'start',
+        config: { next_node_key: 'm1' },
+      },
+      {
+        node_key: 'm1',
+        node_type: 'send_message',
+        config: { text: 'Uno', next_node_key: 'tag' },
+      },
+      {
+        node_key: 'tag',
+        node_type: 'set_tag',
+        config: { mode: 'add', tag_id: 'tag-1', next_node_key: 'm2' },
+      },
+      {
+        node_key: 'm2',
+        node_type: 'send_message',
+        config: { text: 'Dos', next_node_key: 'bye' },
+      },
+      { node_key: 'bye', node_type: 'end', config: {} },
+    ];
+    const r = await tap('si', 'wamid.in1');
+    expect(r).toMatchObject({ consumed: true, outcome: 'completed' });
+    expect(send.text).toHaveBeenCalledTimes(2);
+    expect(sendCount()).toBe(2);
+  });
+
+  it('R10 the same meta_message_id twice: the second sends nothing', async () => {
+    await tap('otra', 'wamid.same');
+    const before = sendCount();
+    const r = await tap('otra', 'wamid.same');
+    expect(r.outcome).toBe('duplicate_inbound_ignored');
+    expect(sendCount()).toBe(before);
+  });
+
+  it('R9 a throw after the run was engaged keeps the inbound consumed', async () => {
+    // Update #0 is the claim, #1 the last_prompt_message_id write after
+    // the send_buttons of `ask`, #2 the pointer move to `ask` — outside
+    // any per-node try, so it reaches the dispatch's catch.
+    db.state.throwOnRunUpdate = 2;
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const r = await tap('precio', 'wamid.in1');
+    expect(r).toEqual({ consumed: true, outcome: 'completed' });
+    expect(send.text).toHaveBeenCalledTimes(1);
+    expect(send.buttons).toHaveBeenCalledTimes(1);
+    err.mockRestore();
+  });
+
+  it('R9 a throw while looking the run up leaves the inbound unconsumed', async () => {
+    db.state.throwOnLoad = true;
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const r = await tap('precio', 'wamid.in1');
+    expect(r).toEqual({ consumed: false, outcome: 'no_match' });
+    expect(sendCount()).toBe(0);
+    err.mockRestore();
   });
 });
