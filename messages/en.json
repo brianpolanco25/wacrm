@@ -2086,6 +2086,7 @@
         "overview": "Overview",
         "accounts": "Accounts",
         "plans": "Plans",
+        "rates": "Meta rates",
         "operators": "Operators"
       },
       "openMenu": "Open menu",
@@ -2380,6 +2381,83 @@
       "truncated": "Showing the {count} most recent actions.",
       "olderActionsHidden": "Its changes, if any, fall outside the list (too many recent actions).",
       "statusUnknown": "outcome unknown"
+    },
+    "rates": {
+      "title": "Meta rates",
+      "subtitle": "What Meta charges per delivered message, by market and category. Managed accounts' overage is priced from this.",
+      "newRate": "New rate",
+      "loading": "Loading rates…",
+      "loadFailed": "The rates could not be loaded. Reload the page.",
+      "empty": "No rates yet.",
+      "neverEdit": "A rate in force is never edited: a price change is a new row with its effective date.",
+      "unpriced": "Markets with no rate in force: {markets}. Messages to those markets cannot be billed until you load one.",
+      "columns": {
+        "market": "Market",
+        "category": "Category",
+        "rate": "USD per message",
+        "effectiveFrom": "Effective from",
+        "state": "Status"
+      },
+      "categories": {
+        "service": "Service",
+        "utility": "Utility",
+        "marketing": "Marketing",
+        "authentication": "Authentication",
+        "authentication_international": "International authentication"
+      },
+      "state": {
+        "inForce": "In force",
+        "scheduled": "Scheduled",
+        "past": "Past"
+      },
+      "refused": {
+        "exists": "That rate already exists.",
+        "conflict": "There is already a rate for that market, category and date. It is not edited: add one with a later date.",
+        "retroactive": "That date already had a rate in force: changing it would re-price messages already delivered. Use today or a later date."
+      },
+      "saved": "Rate added.",
+      "saveFailed": "Could not save.",
+      "saveFailedWith": "Could not save: {error}",
+      "cancel": "Cancel",
+      "editor": {
+        "title": "New rate",
+        "dateHelp": "From that day (UTC) on, delivered messages are charged at this rate.",
+        "save": "Add rate"
+      },
+      "import": {
+        "title": "Import CSV",
+        "help": "Paste one rate per line: market,category,usd_per_message,effective_from. The header is optional. You see a preview first; nothing is saved until you import.",
+        "placeholder": "market,category,usd_per_message,effective_from\nrest_of_latam,marketing,0.0740,2026-10-01",
+        "preview": "Preview",
+        "action": "{count, plural, =0 {Nothing to import} one {Import # rate} other {Import # rates}}",
+        "blocked": "Some lines block the import: fix them and preview again.",
+        "done": "{count, plural, one {# rate imported} other {# rates imported}}.",
+        "columns": {
+          "line": "Line"
+        },
+        "status": {
+          "new": "New",
+          "exists": "Already there",
+          "conflict": "Conflict",
+          "retroactive": "Retroactive",
+          "invalid": "Invalid",
+          "duplicate": "Repeated"
+        }
+      },
+      "markets": {
+        "title": "Country → market",
+        "help": "Recipient country (ISO-3166) and the Meta rate-card market it is billed in. A country without a row is billed as {fallback}.",
+        "columns": {
+          "country": "Country",
+          "market": "Market",
+          "actions": "Actions"
+        },
+        "add": "Add",
+        "remove": "Remove {country}",
+        "save": "Save countries",
+        "saved": "Countries saved.",
+        "invalid": "Two-letter country and a lowercase market (a-z, 0-9, _)."
+      }
     }
   },
   "Developers": {

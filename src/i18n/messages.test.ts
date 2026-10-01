@@ -49,6 +49,9 @@ const IDENTICAL_TO_SOURCE_OK: Record<string, string> = {
   'Settings.webhooks.title': 'technical term, same word in Spanish',
   'Billing.subscription.noNextCharge': 'em dash placeholder',
   'Platform.columns.plan': 'same word in Spanish',
+  'Platform.rates.categories.marketing':
+    "Meta's category name, same word in Spanish",
+  'Platform.rates.import.placeholder': 'literal CSV sample',
 };
 
 function load(locale: string): Record<string, unknown> {

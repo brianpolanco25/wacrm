@@ -2086,6 +2086,7 @@
         "overview": "Resumen",
         "accounts": "Cuentas",
         "plans": "Planes",
+        "rates": "Tarifas de Meta",
         "operators": "Operadores"
       },
       "openMenu": "Abrir menú",
@@ -2380,6 +2381,83 @@
       "truncated": "Se muestran las {count} acciones más recientes.",
       "olderActionsHidden": "Sus cambios, si los hubo, quedan fuera del listado (demasiadas acciones recientes).",
       "statusUnknown": "resultado desconocido"
+    },
+    "rates": {
+      "title": "Tarifas de Meta",
+      "subtitle": "Lo que Meta cobra por mensaje entregado, por mercado y categoría. Con esto se calcula el excedente de las cuentas gestionadas.",
+      "newRate": "Nueva tarifa",
+      "loading": "Cargando tarifas…",
+      "loadFailed": "No se pudieron cargar las tarifas. Recarga la página.",
+      "empty": "Todavía no hay tarifas.",
+      "neverEdit": "Una tarifa vigente nunca se edita: un cambio de precio es una fila nueva con su fecha de vigencia.",
+      "unpriced": "Mercados sin tarifa vigente: {markets}. Un mensaje de esos mercados no se puede facturar hasta que la cargues.",
+      "columns": {
+        "market": "Mercado",
+        "category": "Categoría",
+        "rate": "USD por mensaje",
+        "effectiveFrom": "Vigente desde",
+        "state": "Estado"
+      },
+      "categories": {
+        "service": "Servicio",
+        "utility": "Utilidad",
+        "marketing": "Marketing",
+        "authentication": "Autenticación",
+        "authentication_international": "Autenticación internacional"
+      },
+      "state": {
+        "inForce": "Vigente",
+        "scheduled": "Programada",
+        "past": "Histórica"
+      },
+      "refused": {
+        "exists": "Esa tarifa ya existe.",
+        "conflict": "Ya hay una tarifa con ese mercado, categoría y fecha. No se edita: añade una con fecha posterior.",
+        "retroactive": "Esa fecha ya tenía una tarifa vigente: cambiarla repreciaría mensajes ya entregados. Usa hoy o una fecha posterior."
+      },
+      "saved": "Tarifa añadida.",
+      "saveFailed": "No se pudo guardar.",
+      "saveFailedWith": "No se pudo guardar: {error}",
+      "cancel": "Cancelar",
+      "editor": {
+        "title": "Nueva tarifa",
+        "dateHelp": "Desde ese día (UTC) los mensajes entregados se cobran a esta tarifa.",
+        "save": "Añadir tarifa"
+      },
+      "import": {
+        "title": "Importar CSV",
+        "help": "Pega una tarifa por línea: market,category,usd_per_message,effective_from. La cabecera es opcional. Primero se muestra la vista previa; no se guarda nada hasta importar.",
+        "placeholder": "market,category,usd_per_message,effective_from\nrest_of_latam,marketing,0.0740,2026-10-01",
+        "preview": "Vista previa",
+        "action": "{count, plural, =0 {Nada que importar} one {Importar # tarifa} other {Importar # tarifas}}",
+        "blocked": "Hay líneas que bloquean la importación: corrígelas y vuelve a previsualizar.",
+        "done": "{count, plural, one {# tarifa importada} other {# tarifas importadas}}.",
+        "columns": {
+          "line": "Línea"
+        },
+        "status": {
+          "new": "Nueva",
+          "exists": "Ya existe",
+          "conflict": "Conflicto",
+          "retroactive": "Retroactiva",
+          "invalid": "Inválida",
+          "duplicate": "Repetida"
+        }
+      },
+      "markets": {
+        "title": "País → mercado",
+        "help": "País del destinatario (ISO-3166) y mercado de la tarjeta de Meta en que se cobra. Un país sin fila se cobra como {fallback}.",
+        "columns": {
+          "country": "País",
+          "market": "Mercado",
+          "actions": "Acciones"
+        },
+        "add": "Añadir",
+        "remove": "Quitar {country}",
+        "save": "Guardar países",
+        "saved": "Países guardados.",
+        "invalid": "País de dos letras y mercado en minúsculas (a-z, 0-9, _)."
+      }
     }
   },
   "Developers": {
