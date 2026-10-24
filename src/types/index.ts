@@ -295,6 +295,11 @@ export interface WhatsAppConfig {
   waba_id?: string;
   access_token: string;
   verify_token?: string;
+  /** Secret of the tenant's own Meta app, encrypted (migration 086).
+   *  NULL = the number goes through the platform's app. */
+  app_secret?: string | null;
+  /** API-only: whether `app_secret` is set (the value never leaves the server). */
+  has_app_secret?: boolean;
   status: 'connected' | 'disconnected';
   connected_at?: string;
   /**

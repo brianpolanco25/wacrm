@@ -127,6 +127,17 @@ BEGIN
 
   -- Who paid for each AI call (047). Without this column platform-funded
   -- spend is indistinguishable from BYO spend and fase 3 cannot bill it.
+  -- 086: secreto de app de Meta por número (nullable).
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'whatsapp_config'
+      AND column_name = 'app_secret'
+      AND is_nullable = 'YES'
+  ) THEN
+    RAISE EXCEPTION 'whatsapp_config.app_secret is missing or NOT NULL (migration 086)';
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public'

@@ -11,9 +11,14 @@ and polish.
 
 ## [Unreleased]
 
+### WhatsApp: numbers connected through the business's own Meta app
+
+- **Migration required**: `supabase/migrations/086_whatsapp_config_app_secret.sql`.
+- A number can now be connected through the business's **own** Meta app (its own WhatsApp Business Account and system-user token) instead of the platform's app, which is what the WhatsApp Business app _coexistence_ onboarding needs while the platform app awaits Meta's review for third-party businesses. Settings → WhatsApp → the number gets a new field, **Meta app secret**: Meta signs that app's webhook deliveries with it, and the webhook now verifies against it when the platform secret does not match. The secret is stored encrypted like the access token, is tried only for the numbers a delivery names (one tenant's secret can never vouch for another tenant's number), and never leaves the server.
+
 ### Automations: «minutes without a customer message» condition
 
-- New condition subject for the `Condition` step: **Minutes without a customer message** (`conversation_idle`). It is true when the conversation's last customer message is at least the given number of minutes old, or the customer never wrote. Meant right after a `Wait` step, which cannot tell on its own whether the customer wrote again while the run was parked: «wait 24 h → if 1440 minutes without a customer message → add tag *No reply*» now tags only threads that really went quiet. Activation rejects an operand that is not a positive whole number.
+- New condition subject for the `Condition` step: **Minutes without a customer message** (`conversation_idle`). It is true when the conversation's last customer message is at least the given number of minutes old, or the customer never wrote. Meant right after a `Wait` step, which cannot tell on its own whether the customer wrote again while the run was parked: «wait 24 h → if 1440 minutes without a customer message → add tag _No reply_» now tags only threads that really went quiet. Activation rejects an operand that is not a positive whole number.
 
 ### The AI agent resumes a thread instead of handing it off again
 

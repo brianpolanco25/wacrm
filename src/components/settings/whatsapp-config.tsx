@@ -119,6 +119,7 @@ export function WhatsAppConfig() {
   const [wabaId, setWabaId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [verifyToken, setVerifyToken] = useState('');
+  const [appSecret, setAppSecret] = useState('');
   const [pin, setPin] = useState('');
   const [label, setLabel] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
@@ -183,6 +184,7 @@ export function WhatsAppConfig() {
     setWabaId(row?.waba_id || '');
     setAccessToken(row ? MASKED_TOKEN : '');
     setVerifyToken('');
+    setAppSecret('');
     setPin('');
     setLabel(row?.label || '');
     setTokenEdited(false);
@@ -418,6 +420,8 @@ export function WhatsAppConfig() {
         waba_id: wabaId.trim() || null,
         verify_token: verifyToken.trim() || null,
         label: label.trim() || null,
+        // Only when typed: blank means "keep whatever is stored".
+        ...(appSecret.trim() ? { app_secret: appSecret.trim() } : {}),
         // Which row this save edits (fase 4 §1). Absent = add a number.
         config_id: selectedId,
         // Optional — only sent when the user filled it in. The server
@@ -685,6 +689,27 @@ export function WhatsAppConfig() {
         {config && !tokenEdited && (
           <p className="text-muted-foreground text-xs">{t('tokenHidden')}</p>
         )}
+      </div>
+
+      {/* Secret of the business's OWN Meta app (migration 086). Only for
+          a number connected through an app that is not the platform's:
+          Meta signs that app's webhook deliveries with this secret, and
+          without it every one of them is rejected. Blank = unchanged. */}
+      <div className="space-y-2">
+        <Label className="text-muted-foreground">{t('appSecret')}</Label>
+        <Input
+          type="password"
+          autoComplete="off"
+          placeholder={t('appSecretPlaceholder')}
+          value={appSecret}
+          onChange={(e) => setAppSecret(e.target.value)}
+          className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+        />
+        <p className="text-muted-foreground text-xs">
+          {config?.has_app_secret && !appSecret
+            ? t('appSecretConfigured')
+            : t('appSecretHint')}
+        </p>
       </div>
 
       {/* The per-tenant webhook verify token only exists in the

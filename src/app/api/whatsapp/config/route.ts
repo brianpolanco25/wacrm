@@ -64,6 +64,9 @@ function publicNumber(row: Record<string, unknown>) {
     phone_number_id: row.phone_number_id,
     display_phone_number: row.display_phone_number ?? null,
     verified_name: row.verified_name ?? null,
+    // Whether the number signs its webhooks with its own Meta app
+    // (migration 086). The secret itself never leaves the server.
+    has_app_secret: Boolean(row.app_secret),
     label: row.label ?? null,
     waba_id: row.waba_id ?? null,
     is_default: row.is_default === true,
@@ -292,6 +295,10 @@ export async function POST(request: Request) {
       waba_id,
       access_token,
       verify_token,
+      // Migration 086: the secret of the tenant's OWN Meta app, when the
+      // number is connected through one. `undefined` = leave as is;
+      // '' / null = clear it; a string = replace it.
+      app_secret,
       pin,
       // Fase 4 §1: which of the account's numbers this save edits.
       // Absent = add a new one (or overwrite the row that already holds
@@ -457,9 +464,17 @@ export async function POST(request: Request) {
     // Encrypt sensitive tokens before storing
     let encryptedAccessToken: string;
     let encryptedVerifyToken: string | null;
+    let encryptedAppSecret: string | null | undefined;
     try {
       encryptedAccessToken = encrypt(access_token);
       encryptedVerifyToken = verify_token ? encrypt(verify_token) : null;
+      if (app_secret === undefined) {
+        encryptedAppSecret = undefined;
+      } else if (typeof app_secret === 'string' && app_secret.trim()) {
+        encryptedAppSecret = encrypt(app_secret.trim());
+      } else {
+        encryptedAppSecret = null;
+      }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Unknown encryption error';
@@ -571,6 +586,8 @@ export async function POST(request: Request) {
       verified_name: phoneInfo?.verified_name ?? null,
     };
     if (typeof label === 'string') baseRow.label = label.trim() || null;
+    if (encryptedAppSecret !== undefined)
+      baseRow.app_secret = encryptedAppSecret;
 
     // First number of the account becomes the default. Later ones do
     // NOT steal it silently — that is what "Make default" is for.

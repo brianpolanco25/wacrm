@@ -18,6 +18,7 @@ import {
   recordEntryPoint,
 } from '@/lib/whatsapp/entry-point';
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature';
+import { verifyTenantAppSignature } from '@/lib/whatsapp/tenant-app-secret';
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import { dispatchInboundToFlows } from '@/lib/flows/engine';
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply';
@@ -317,7 +318,14 @@ export async function POST(request: Request) {
   const rawBody = await request.text();
   const signature = request.headers.get('x-hub-signature-256');
 
-  if (!verifyMetaWebhookSignature(rawBody, signature)) {
+  // The platform's own app secret first; then, for a number a tenant
+  // connected through ITS OWN Meta app (migration 086), that app's secret
+  // — tried only against the numbers the delivery names, so one tenant's
+  // secret can never vouch for another tenant's number.
+  if (
+    !verifyMetaWebhookSignature(rawBody, signature) &&
+    !(await verifyTenantAppSignature(supabaseAdmin(), rawBody, signature))
+  ) {
     // 401 (not 200) — we want Meta's delivery dashboard to show failures
     // loudly if a misconfiguration causes signatures to stop matching,
     // rather than silently eating events.
