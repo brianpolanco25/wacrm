@@ -1086,12 +1086,14 @@
           "tag_presence": "Tag presence",
           "contact_field": "Contact field",
           "message_content": "Message content",
-          "time_of_day": "Time of day"
+          "time_of_day": "Time of day",
+          "conversation_idle": "Minutes without a customer message"
         },
         "operandLabel": "Operand",
         "placeholderTime": "HH:mm-HH:mm",
         "placeholderContact": "name / email / company",
         "placeholderTag": "tag id",
+        "placeholderIdle": "minutes, e.g. 1440 (24 h)",
         "urlLabel": "URL",
         "headersLabel": "Headers",
         "placeholderHeaders": "{\"Authorization\": \"Bearer ...\"}",

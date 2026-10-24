@@ -1086,12 +1086,14 @@
           "tag_presence": "Presencia de una etiqueta",
           "contact_field": "Campo del contacto",
           "message_content": "Contenido del mensaje",
-          "time_of_day": "Hora del día"
+          "time_of_day": "Hora del día",
+          "conversation_idle": "Minutos sin mensaje del cliente"
         },
         "operandLabel": "Operando",
         "placeholderTime": "HH:mm-HH:mm",
         "placeholderContact": "nombre / correo / empresa",
         "placeholderTag": "id de la etiqueta",
+        "placeholderIdle": "minutos, p. ej. 1440 (24 h)",
         "urlLabel": "URL",
         "headersLabel": "Cabeceras",
         "placeholderHeaders": "{\"Authorization\": \"Bearer ...\"}",

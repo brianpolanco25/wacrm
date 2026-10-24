@@ -616,11 +616,20 @@ export interface WaitStepConfig {
 }
 
 export type ConditionSubject =
-  'contact_field' | 'tag_presence' | 'message_content' | 'time_of_day';
+  | 'contact_field'
+  | 'tag_presence'
+  | 'message_content'
+  | 'time_of_day'
+  /** «Sin mensaje del cliente desde N minutos»: true when the
+   *  conversation's last customer message is at least `operand`
+   *  minutes old (or there is none). Meant for the step after a
+   *  `wait`, which otherwise cannot tell whether the customer wrote
+   *  again while the run was parked. */
+  | 'conversation_idle';
 
 export interface ConditionStepConfig {
   subject: ConditionSubject;
-  /** e.g. field name, tag id, substring, or "HH:mm-HH:mm" depending on subject */
+  /** e.g. field name, tag id, substring, "HH:mm-HH:mm" or idle minutes depending on subject */
   operand?: string;
   /** For contact_field equals / message_content contains — comparison value */
   value?: string;

@@ -1654,6 +1654,9 @@ function StepEditor({
               <option value="time_of_day">
                 {t('config.subjects.time_of_day')}
               </option>
+              <option value="conversation_idle">
+                {t('config.subjects.conversation_idle')}
+              </option>
             </select>
           </FieldBlock>
           <FieldBlock label={t('config.operandLabel')}>
@@ -1665,7 +1668,9 @@ function StepEditor({
                     ? t('config.placeholderContact')
                     : cfg.subject === 'tag_presence'
                       ? t('config.placeholderTag')
-                      : ''
+                      : cfg.subject === 'conversation_idle'
+                        ? t('config.placeholderIdle')
+                        : ''
               }
               value={(cfg.operand as string) ?? ''}
               onChange={(e) => set({ operand: e.target.value })}

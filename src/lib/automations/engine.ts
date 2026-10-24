@@ -32,6 +32,7 @@ import {
 } from './meta-send';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
 import { claimInboundAutoReplyForAutomation } from './reply-marker';
+import { parseIdleMinutes, isIdleSince } from './idle';
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 import { emitWebhookEvent } from '@/lib/webhooks/emit';
 import { applyConversationChangeByContact } from '@/lib/conversations/status-events';
@@ -924,6 +925,32 @@ async function evaluateCondition(
       const f = parse(from);
       const t = parse(to);
       return f <= t ? mins >= f && mins < t : mins >= f || mins < t;
+    }
+    case 'conversation_idle': {
+      // Operand = minutes of customer silence. Only meaningful for a run
+      // that knows its conversation (message triggers, and the runs the
+      // cron resumes from them — `context` travels with the pending
+      // execution). Without one there is nothing to measure: false.
+      const minutes = parseIdleMinutes(cfg.operand);
+      const conversationId = args.context.conversation_id;
+      if (minutes === null || !conversationId) return false;
+      // `messages` has no account_id column; tenancy comes from the
+      // conversation, which the ownership guard in
+      // runAutomationsForTrigger already tied to this account.
+      const { data, error } = await db
+        .from('messages')
+        .select('created_at')
+        .eq('conversation_id', conversationId)
+        .eq('sender_type', 'customer')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error)
+        throw new Error(`conversation_idle read failed: ${error.message}`);
+      return isIdleSince(
+        (data as { created_at?: string } | null)?.created_at ?? null,
+        minutes
+      );
     }
     default:
       return false;
