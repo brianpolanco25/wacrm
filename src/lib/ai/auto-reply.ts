@@ -6,6 +6,7 @@ import { retrieveKnowledge } from './knowledge';
 import { generateReply } from './generate';
 import { buildSystemPrompt } from './defaults';
 import { buildHandoffSummary } from './handoff';
+import { stripHandoffNotices } from './resume';
 import { logAiUsage } from './usage';
 import { latestUserMessage } from './query';
 import { engineSendText } from '@/lib/flows/meta-send';
@@ -192,7 +193,16 @@ export async function dispatchInboundToAiReply(
     });
     if (!won) return;
 
-    const messages = await buildConversationContext(db, conversationId);
+    // The bot's own hand-off notices are stored as bot messages, so they
+    // would come back as `assistant` turns. Once a human hands the thread
+    // back, a transcript in which "we" promised a person would follow up
+    // makes the model repeat the promise — i.e. hand off again on every
+    // «hola». Strip them, and remember that we did: the prompt below
+    // tells the model to resume instead.
+    const { messages, resumedAfterHandoff } = stripHandoffNotices(
+      await buildConversationContext(db, conversationId),
+      config.handoffMessage
+    );
     if (messages.length === 0) return;
 
     // Account-wide throttle on the shared BYO key. The per-conversation
@@ -223,6 +233,7 @@ export async function dispatchInboundToAiReply(
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
+      resumedAfterHandoff,
     });
 
     const { text, handoff, usage } = await generateReply({

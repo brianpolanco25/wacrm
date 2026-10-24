@@ -11,6 +11,11 @@ and polish.
 
 ## [Unreleased]
 
+### The AI agent resumes a thread instead of handing it off again
+
+- After an agent pressed «Resume AI» on a handed-off conversation, the bot answered every new customer message with the hand-off notice again («a member of our team will contact you…») and handed off once more, so the customer never got past that message. The bot's own earlier notices are no longer part of the transcript the model reads, and the model is told the thread was returned to it: it picks the conversation back up, and if an earlier question is still unanswered it says the team will get back on that point and carries on.
+- The hand-off protocol is now explicit about what is NOT a reason to hand off: a greeting, a thank-you, a yes/no or confirmation, or a request to continue a process described in the business instructions (collecting the details for a booking, for example).
+
 ### One outbound message per automatic turn
 
 - An AI reply longer than WhatsApp's 4,096-character limit is now sent truncated, ending in «…», instead of being rejected by Meta and lost. Paragraphs still go out in one single message; the AI never splits a reply.

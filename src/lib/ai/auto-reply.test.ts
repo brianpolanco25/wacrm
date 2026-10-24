@@ -1308,3 +1308,65 @@ describe('dispatchInboundToAiReply — un solo envío por turno (p11.4)', () => 
     });
   }
 });
+
+describe('dispatchInboundToAiReply — resuming after a hand-off', () => {
+  const NOTICE =
+    'Gracias por escribirnos. Un miembro de nuestro equipo le estara contactando lo mas pronto posible.';
+
+  it('hides its own earlier hand-off notice from the model and tells it to resume', async () => {
+    // The production loop: the bot handed off, an agent pressed "Resume
+    // AI" (flag cleared, count reset), and the customer wrote «Hola».
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: NOTICE }));
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Si, me gustaría agendar' },
+      { role: 'assistant', content: NOTICE },
+      { role: 'user', content: 'Hola' },
+    ]);
+
+    await dispatchInboundToAiReply(ARGS);
+
+    const call = h.generateReply.mock.calls[0][0] as {
+      systemPrompt: string;
+      messages: { role: string; content: string }[];
+    };
+    expect(call.messages).toEqual([
+      { role: 'user', content: 'Si, me gustaría agendar' },
+      { role: 'user', content: 'Hola' },
+    ]);
+    expect(call.systemPrompt).toMatch(/returned the thread to you/);
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not claim a resume on a thread that was never handed off', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: NOTICE }));
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Hola' },
+      { role: 'assistant', content: '¡Hola! ¿En qué podemos ayudarle?' },
+      { role: 'user', content: 'Qué seguros aceptan?' },
+    ]);
+
+    await dispatchInboundToAiReply(ARGS);
+
+    const call = h.generateReply.mock.calls[0][0] as {
+      systemPrompt: string;
+      messages: unknown[];
+    };
+    expect(call.messages).toHaveLength(3);
+    expect(call.systemPrompt).not.toMatch(/returned the thread to you/);
+  });
+
+  it('the hand-off summary quotes the customer, never the stripped notice', async () => {
+    h.loadAiConfig.mockResolvedValue(aiConfig({ handoffMessage: NOTICE }));
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'assistant', content: NOTICE },
+      { role: 'user', content: 'Cuales doctores me pueden ayudar?' },
+    ]);
+    h.generateReply.mockResolvedValue({ text: '', handoff: true });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      'Cuales doctores me pueden ayudar?'
+    );
+  });
+});
