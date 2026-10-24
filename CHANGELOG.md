@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Automations: «minutes without a customer message» condition
+
+- New condition subject for the `Condition` step: **Minutes without a customer message** (`conversation_idle`). It is true when the conversation's last customer message is at least the given number of minutes old, or the customer never wrote. Meant right after a `Wait` step, which cannot tell on its own whether the customer wrote again while the run was parked: «wait 24 h → if 1440 minutes without a customer message → add tag *No reply*» now tags only threads that really went quiet. Activation rejects an operand that is not a positive whole number.
+
 ### The AI agent resumes a thread instead of handing it off again
 
 - After an agent pressed «Resume AI» on a handed-off conversation, the bot answered every new customer message with the hand-off notice again («a member of our team will contact you…») and handed off once more, so the customer never got past that message. The bot's own earlier notices are no longer part of the transcript the model reads, and the model is told the thread was returned to it: it picks the conversation back up, and if an earlier question is still unanswered it says the team will get back on that point and carries on.
