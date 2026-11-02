@@ -21,7 +21,10 @@ import { useTranslations } from 'next-intl';
 import { AlertTriangle, Loader2, RefreshCw, Smartphone } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { isWithinSmbSyncWindow } from '@/lib/whatsapp/coexistence-window';
+import {
+  hasUnsavedSmbSync,
+  isWithinSmbSyncWindow,
+} from '@/lib/whatsapp/coexistence-window';
 import type { WhatsAppConfig } from '@/types';
 
 export type NumberDeliveryState = 'coexistence' | 'registered' | 'unregistered';
@@ -32,6 +35,18 @@ export function numberDeliveryState(
 ): NumberDeliveryState {
   if (row.coexistence_onboarded_at) return 'coexistence';
   return row.registered_at ? 'registered' : 'unregistered';
+}
+
+/**
+ * The date the «Registered» banner shows: the coexistence onboarding
+ * for a coexistence number (it never has `registered_at`), otherwise
+ * the last successful /register. `null` = unknown.
+ */
+export function deliverySinceDate(
+  row: Pick<WhatsAppConfig, 'registered_at' | 'coexistence_onboarded_at'>
+): string | null {
+  if (row.coexistence_onboarded_at) return row.coexistence_onboarded_at;
+  return row.registered_at ?? null;
 }
 
 export type SmbSyncDisplay = 'done' | 'pending' | 'failed';
@@ -102,6 +117,9 @@ export function CoexistenceStatus({
   if (!row.coexistence_onboarded_at) return warning;
 
   const sync = smbSyncDisplay(row);
+  // Meta accepted a sync whose id could not be saved: retrying would
+  // spend the only call Meta allows. Support has to step in.
+  const needsSupport = sync !== 'done' && hasUnsavedSmbSync(row.smb_sync_error);
   const inWindow = isWithinSmbSyncWindow(row.coexistence_onboarded_at, at);
   const tone =
     sync === 'done'
@@ -124,7 +142,13 @@ export function CoexistenceStatus({
         data-smb-sync={sync}
       >
         <span className={tone}>{label}</span>
+        {needsSupport && (
+          <span className="text-muted-foreground" data-smb-sync-needs-support>
+            {t('coexistenceSyncNeedsSupport')}
+          </span>
+        )}
         {sync !== 'done' &&
+          !needsSupport &&
           (inWindow ? (
             canRetry && (
               <Button

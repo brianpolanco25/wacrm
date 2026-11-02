@@ -258,7 +258,16 @@ export interface SyncSmbAppDataArgs {
   phoneNumberId: string;
   accessToken: string;
   syncType: SmbAppDataSyncType;
+  /** Defaults to a `SMB_SYNC_TIMEOUT_MS` timeout. */
+  signal?: AbortSignal;
 }
+
+/**
+ * Hard cap on one `smb_app_data` call. Well below the 5-minute claim
+ * TTL of `coexistence.ts`: a hung request must fail (and release its
+ * claim) long before another pass may take the claim and call again.
+ */
+export const SMB_SYNC_TIMEOUT_MS = 30_000;
 
 /**
  * Coexistence (#1650): ask Meta to sync the WhatsApp Business app's
@@ -274,9 +283,11 @@ export async function syncSmbAppData(
   args: SyncSmbAppDataArgs
 ): Promise<{ requestId: string }> {
   const { phoneNumberId, accessToken, syncType } = args;
+  const signal = args.signal ?? AbortSignal.timeout(SMB_SYNC_TIMEOUT_MS);
   const url = `${META_API_BASE}/${phoneNumberId}/smb_app_data`;
   const response = await fetch(url, {
     method: 'POST',
+    signal,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,

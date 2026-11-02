@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   INTERACTIVE_LIMITS,
+  SMB_SYNC_TIMEOUT_MS,
   MetaApiError,
   getWabaFundingInfo,
   listWabaPhoneNumbers,
@@ -602,5 +603,59 @@ describe('listWabaPhoneNumbers', () => {
       accessToken: 'tok',
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(MetaApiError);
+  });
+});
+
+// #1650 review #3 — syncSmbAppData never hangs past the claim TTL.
+describe('syncSmbAppData — timeout', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function okFetch() {
+    return vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ request_id: 'r' }),
+        }) as unknown as Response
+    );
+  }
+
+  it('sends a default AbortSignal.timeout well below the 5-minute claim TTL', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const fetchMock = okFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    await syncSmbAppData({
+      phoneNumberId: 'pn-1',
+      accessToken: 'tok',
+      syncType: 'history',
+    });
+    expect(SMB_SYNC_TIMEOUT_MS).toBeLessThan((5 * 60 * 1000) / 2);
+    expect(timeoutSpy).toHaveBeenCalledWith(SMB_SYNC_TIMEOUT_MS);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('uses the caller signal when given', async () => {
+    const fetchMock = okFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    const signal = new AbortController().signal;
+    await syncSmbAppData({
+      phoneNumberId: 'pn-1',
+      accessToken: 'tok',
+      syncType: 'history',
+      signal,
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(init.signal).toBe(signal);
   });
 });

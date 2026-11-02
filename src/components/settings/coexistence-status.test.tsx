@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from 'next-intl';
 import {
   CoexistenceBadge,
   CoexistenceStatus,
+  deliverySinceDate,
   numberDeliveryState,
   smbSyncDisplay,
 } from './coexistence-status';
@@ -31,6 +32,7 @@ const KEYS = [
   'coexistenceSyncRetried',
   'coexistenceSyncRetryFailed',
   'coexistenceSyncExpired',
+  'coexistenceSyncNeedsSupport',
   'bizAppWithoutCoexistence',
   'signupCoexistenceSuccess',
   'signupCoexistenceSyncFailed',
@@ -227,5 +229,48 @@ describe('R22: i18n', () => {
       expect(html).not.toContain('Settings.whatsapp');
     }
     expect(status(row(), {}, 'es')).toContain(esW.coexistenceSyncPending);
+  });
+});
+
+// #1650 review #2 — an accepted-but-unsaved sync is never offered for retry.
+describe('CoexistenceStatus — accepted sync not saved', () => {
+  it('shows the support text and no retry button, even inside 24 h', () => {
+    const html = status(
+      row({
+        smb_history_sync_request_id: 'b',
+        smb_sync_error: 'smb_app_state_sync: request_id_unsaved req-1: db down',
+      })
+    );
+    expect(html).toContain('data-smb-sync-needs-support');
+    expect(html).toContain(enW.coexistenceSyncNeedsSupport);
+    expect(html).not.toContain('<button');
+    expect(html).not.toContain(enW.coexistenceSyncRetry);
+  });
+});
+
+// #1650 review #4 — the «Registered» banner date of a coexistence number.
+describe('deliverySinceDate', () => {
+  it('uses coexistence_onboarded_at for a coexistence number', () => {
+    expect(
+      deliverySinceDate({
+        registered_at: undefined,
+        coexistence_onboarded_at: '2026-11-02T10:00:00.000Z',
+      })
+    ).toBe('2026-11-02T10:00:00.000Z');
+  });
+
+  it('uses registered_at otherwise, and null when neither is known', () => {
+    expect(
+      deliverySinceDate({
+        registered_at: '2026-10-01T00:00:00.000Z',
+        coexistence_onboarded_at: null,
+      })
+    ).toBe('2026-10-01T00:00:00.000Z');
+    expect(
+      deliverySinceDate({
+        registered_at: undefined,
+        coexistence_onboarded_at: null,
+      })
+    ).toBeNull();
   });
 });

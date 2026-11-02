@@ -28,7 +28,13 @@ type Write = {
 const TOKEN = 'EAAB-coexistence-secret-token';
 const NOW = new Date('2026-11-02T12:00:00.000Z');
 
-function makeAdmin(row: Row, opts: { failUpdates?: boolean } = {}) {
+function makeAdmin(
+  row: Row,
+  opts: {
+    failUpdates?: boolean;
+    failUpdate?: (payload: Record<string, unknown>) => boolean;
+  } = {}
+) {
   const writes: Write[] = [];
   const admin = {
     from(table: string) {
@@ -50,7 +56,7 @@ function makeAdmin(row: Row, opts: { failUpdates?: boolean } = {}) {
       const run = () => {
         if (w.op === 'update') {
           writes.push(w);
-          if (opts.failUpdates) {
+          if (opts.failUpdates || opts.failUpdate?.(w.payload ?? {})) {
             return { data: null, error: { message: 'db down' } };
           }
           if (!matches()) return { data: [], error: null };
@@ -329,5 +335,44 @@ describe('pickCoexistencePhoneNumber (ajuste del leader 2026-11-02)', () => {
         { id: 'b', is_on_biz_app: true },
       ])
     ).toEqual({ ok: false, reason: 'ambiguous' });
+  });
+});
+
+describe('runSmbAppDataSync — Meta accepted but the request id was not saved (review #2)', () => {
+  it('logs the request id (never the token), keeps the claim, marks the error, and never calls Meta again for that type', async () => {
+    const row = freshRow();
+    const { admin } = makeAdmin(row, {
+      failUpdate: (p) => 'smb_state_sync_request_id' in p,
+    });
+    const sync = vi.fn(async ({ syncType }: { syncType: string }) => ({
+      requestId: `req-${syncType}`,
+    }));
+    const first = await runSmbAppDataSync(admin, ARGS, {
+      sync,
+      now: () => NOW,
+    });
+    expect(first).toEqual({ state_sync: 'failed', history: 'requested' });
+    // Claim kept (not released) and request id absent.
+    expect(row.smb_state_sync_requested_at).toBe(NOW.toISOString());
+    expect(row.smb_state_sync_request_id).toBeNull();
+    expect(row.smb_sync_error).toContain(
+      'smb_app_state_sync: request_id_unsaved req-smb_app_state_sync'
+    );
+    expect(consoleOutput()).toContain('req-smb_app_state_sync');
+    expect(consoleOutput()).not.toContain(TOKEN);
+
+    // Long after the claim TTL, a new pass (manual retry or repeated
+    // signup) still does not ask Meta again for that type.
+    sync.mockClear();
+    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
+    const second = await runSmbAppDataSync(admin, ARGS, {
+      sync,
+      now: () => later,
+    });
+    expect(sync).not.toHaveBeenCalled();
+    expect(second).toEqual({ state_sync: 'failed', history: 'already_done' });
+    expect(row.smb_sync_error).toContain(
+      'smb_app_state_sync: request_id_unsaved req-smb_app_state_sync'
+    );
   });
 });
