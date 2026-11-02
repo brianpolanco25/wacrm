@@ -387,6 +387,20 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const value = change.value;
 
+      // One line per accepted change, so the next «no llega» can be told
+      // apart from «llegó y se descartó». Names and counts only.
+      console.log(
+        '[webhook] accepted change:',
+        JSON.stringify({
+          field: change.field,
+          entryId: entry.id,
+          phoneNumberId: value?.metadata?.phone_number_id ?? null,
+          messages: value?.messages?.length ?? 0,
+          statuses: value?.statuses?.length ?? 0,
+          event: (value as { event?: unknown } | undefined)?.event ?? null,
+        })
+      );
+
       // La configuración se resuelve UNA vez por `change`, antes de
       // separar estados de mensajes, porque las dos ramas necesitan
       // saber de qué cuenta es este número. Los estados se apoyaban

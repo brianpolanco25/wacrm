@@ -55,6 +55,41 @@ export function extractPhoneNumberIds(rawBody: string): string[] {
 }
 
 /**
+ * The WhatsApp account ids (`entry.id`) of the changes that carry NO
+ * `metadata.phone_number_id`. Account-level events (`account_update`:
+ * coexistence, partner and number changes) name the account, never a
+ * number, so the per-number lookup above cannot place them.
+ */
+export function extractAccountOnlyWabaIds(rawBody: string): string[] {
+  let body: {
+    entry?: { id?: unknown; changes?: { value?: { metadata?: unknown } }[] }[];
+  };
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return [];
+  }
+  const ids: string[] = [];
+  for (const entry of body?.entry ?? []) {
+    if (typeof entry?.id !== 'string' || !entry.id || ids.includes(entry.id)) {
+      continue;
+    }
+    const changes = entry.changes ?? [];
+    const names = (c: { value?: { metadata?: unknown } }) =>
+      (c?.value?.metadata as { phone_number_id?: unknown } | undefined)
+        ?.phone_number_id;
+    if (
+      changes.length > 0 &&
+      changes.every((c) => typeof names(c) !== 'string')
+    ) {
+      ids.push(entry.id);
+    }
+    if (ids.length >= MAX_NUMBERS_PER_DELIVERY) break;
+  }
+  return ids;
+}
+
+/**
  * Pure decision: given the secrets stored for the numbers the delivery
  * claims (null = that number has no tenant app secret), is the
  * signature valid for all of them?
@@ -116,9 +151,58 @@ export async function loadTenantSecrets(
 }
 
 /**
+ * Pure decision for account-level events: every account the delivery
+ * names must have at least one stored secret that signs it. Rows of one
+ * account belong to one Meta app, so any of its secrets vouches for it.
+ */
+export function wabaSignatureDecision(
+  rawBody: string,
+  signatureHeader: string | null,
+  secretsByWaba: ReadonlyMap<string, readonly string[]>,
+  claimedWabas: readonly string[]
+): boolean {
+  if (claimedWabas.length === 0) return false;
+  return claimedWabas.every((waba) =>
+    (secretsByWaba.get(waba) ?? []).some((secret) =>
+      signatureMatchesAnyVariant(rawBody, signatureHeader, secret)
+    )
+  );
+}
+
+async function loadWabaSecrets(
+  db: SupabaseClient,
+  wabaIds: readonly string[]
+): Promise<ReadonlyMap<string, readonly string[]> | null> {
+  const { data, error } = await db
+    .from('whatsapp_config')
+    .select('waba_id, app_secret')
+    .in('waba_id', wabaIds);
+  if (error) {
+    console.error('[webhook] account app secret lookup failed:', error.message);
+    return null;
+  }
+  const map = new Map<string, string[]>();
+  for (const row of (data ?? []) as {
+    waba_id: string;
+    app_secret: string | null;
+  }[]) {
+    if (!row.app_secret) continue;
+    try {
+      const plain = decrypt(row.app_secret);
+      if (plain) map.set(row.waba_id, [...(map.get(row.waba_id) ?? []), plain]);
+    } catch {
+      // Cannot be decrypted: counts as no secret.
+    }
+  }
+  return map;
+}
+
+/**
  * Second chance for a delivery the platform secret rejected: verify it
- * against the app secrets of the tenant numbers it names. Reads only
- * those rows.
+ * against the app secrets of the tenant it names. Per-number events are
+ * checked against the numbers they claim; account-level events
+ * (`account_update`, no number) against the account's own rows. Reads
+ * only those rows.
  */
 export async function verifyTenantAppSignature(
   db: SupabaseClient,
@@ -127,9 +211,22 @@ export async function verifyTenantAppSignature(
 ): Promise<boolean> {
   if (!signatureHeader?.startsWith('sha256=')) return false;
   const claimed = extractPhoneNumberIds(rawBody);
-  if (claimed.length === 0) return false;
+  const wabas = extractAccountOnlyWabaIds(rawBody);
+  if (claimed.length === 0 && wabas.length === 0) return false;
 
-  const secrets = await loadTenantSecrets(db, claimed);
-  if (!secrets) return false;
-  return tenantSignatureDecision(rawBody, signatureHeader, secrets, claimed);
+  if (claimed.length > 0) {
+    const secrets = await loadTenantSecrets(db, claimed);
+    if (!secrets) return false;
+    if (!tenantSignatureDecision(rawBody, signatureHeader, secrets, claimed)) {
+      return false;
+    }
+  }
+  if (wabas.length > 0) {
+    const secrets = await loadWabaSecrets(db, wabas);
+    if (!secrets) return false;
+    if (!wabaSignatureDecision(rawBody, signatureHeader, secrets, wabas)) {
+      return false;
+    }
+  }
+  return true;
 }

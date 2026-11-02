@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import {
+  extractAccountOnlyWabaIds,
   extractPhoneNumberIds,
   tenantSignatureDecision,
+  wabaSignatureDecision,
 } from './tenant-app-secret';
 
 const sign = (body: string, secret: string) =>
@@ -112,5 +114,45 @@ describe('tenantSignatureDecision', () => {
         ['111']
       )
     ).toBe(false);
+  });
+});
+
+describe('account-level events (account_update, no phone number)', () => {
+  const accountEvent = JSON.stringify({
+    object: 'whatsapp_business_account',
+    entry: [
+      {
+        id: 'waba-9',
+        changes: [{ field: 'account_update', value: { event: 'X' } }],
+      },
+    ],
+  });
+
+  it('extracts the account only when no change names a number', () => {
+    expect(extractAccountOnlyWabaIds(accountEvent)).toEqual(['waba-9']);
+    expect(extractAccountOnlyWabaIds(delivery('111'))).toEqual([]);
+    expect(extractAccountOnlyWabaIds('{')).toEqual([]);
+  });
+
+  it("accepts it when one of the account's stored secrets signs it", () => {
+    const secrets = new Map([['waba-9', ['nope', 's']]]);
+    expect(
+      wabaSignatureDecision(accountEvent, sign(accountEvent, 's'), secrets, [
+        'waba-9',
+      ])
+    ).toBe(true);
+  });
+
+  it('rejects an account with no secret, a wrong secret or no claim', () => {
+    const sig = sign(accountEvent, 's');
+    expect(
+      wabaSignatureDecision(accountEvent, sig, new Map(), ['waba-9'])
+    ).toBe(false);
+    expect(
+      wabaSignatureDecision(accountEvent, sig, new Map([['waba-9', ['x']]]), [
+        'waba-9',
+      ])
+    ).toBe(false);
+    expect(wabaSignatureDecision(accountEvent, sig, new Map(), [])).toBe(false);
   });
 });
