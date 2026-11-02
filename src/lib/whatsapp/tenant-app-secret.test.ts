@@ -105,7 +105,12 @@ describe('tenantSignatureDecision', () => {
       false
     );
     expect(
-      tenantSignatureDecision(body + ' ', sign(body, 's'), secrets, ['111'])
+      tenantSignatureDecision(
+        body.replace('waba-111', 'waba-999'),
+        sign(body, 's'),
+        secrets,
+        ['111']
+      )
     ).toBe(false);
   });
 });

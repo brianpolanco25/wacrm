@@ -19,6 +19,7 @@ import {
 } from '@/lib/whatsapp/entry-point';
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature';
 import { verifyTenantAppSignature } from '@/lib/whatsapp/tenant-app-secret';
+import { logRejectedDelivery } from '@/lib/whatsapp/webhook-diagnostics';
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import { dispatchInboundToFlows } from '@/lib/flows/engine';
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply';
@@ -330,6 +331,7 @@ export async function POST(request: Request) {
     // loudly if a misconfiguration causes signatures to stop matching,
     // rather than silently eating events.
     console.warn('[webhook] rejected request with invalid signature');
+    await logRejectedDelivery(supabaseAdmin(), rawBody, signature);
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 

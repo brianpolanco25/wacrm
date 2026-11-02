@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { verifyMetaWebhookSignature } from './webhook-signature';
+import {
+  signatureMatchesAnyVariant,
+  verifyMetaWebhookSignature,
+} from './webhook-signature';
 
 const SECRET = process.env.META_APP_SECRET!;
 
@@ -122,5 +125,37 @@ describe('verifyMetaWebhookSignature', () => {
       const header = signedHeader(body, originalSecret!);
       expect(verifyMetaWebhookSignature(body, header)).toBe(false);
     });
+  });
+});
+
+describe('signatureMatchesAnyVariant', () => {
+  const secret = 'app-secret';
+  const sign = (body: string) =>
+    'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex');
+
+  it('accepts the body exactly as received', () => {
+    const body = '{"a":"b"}';
+    expect(signatureMatchesAnyVariant(body, sign(body), secret)).toBe('raw');
+  });
+
+  it('accepts a body whose non-ASCII characters were decoded on the way', () => {
+    const signed = '{"name":"Mar\\u00eda"}';
+    expect(
+      signatureMatchesAnyVariant('{"name":"María"}', sign(signed), secret)
+    ).toBe('unicode-escaped');
+  });
+
+  it('accepts a body with trailing whitespace added on the way', () => {
+    const signed = '{"a":"b"}';
+    expect(
+      signatureMatchesAnyVariant(signed + '\n', sign(signed), secret)
+    ).toBe('trimmed');
+  });
+
+  it('still rejects a body signed with another secret', () => {
+    const body = '{"a":"María"}';
+    const other =
+      'sha256=' + crypto.createHmac('sha256', 'x').update(body).digest('hex');
+    expect(signatureMatchesAnyVariant(body, other, secret)).toBeNull();
   });
 });

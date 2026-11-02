@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { decrypt } from './encryption';
-import { signatureMatches } from './webhook-signature';
+import { signatureMatchesAnyVariant } from './webhook-signature';
 
 /**
  * Webhooks signed by a TENANT's own Meta app.
@@ -69,32 +69,29 @@ export function tenantSignatureDecision(
   for (const id of claimedNumbers) {
     const secret = secretsByNumber.get(id);
     if (!secret) return false;
-    if (!signatureMatches(rawBody, signatureHeader, secret)) return false;
+    if (!signatureMatchesAnyVariant(rawBody, signatureHeader, secret)) {
+      return false;
+    }
   }
   return true;
 }
 
 /**
- * Second chance for a delivery the platform secret rejected: verify it
- * against the app secrets of the tenant numbers it names. Reads only
- * those rows. Any failure to read or decrypt counts as "no secret".
+ * The stored app secret (decrypted) of each number a delivery names;
+ * null = the number has no row, no secret, or the secret cannot be
+ * decrypted. Any failure to read or decrypt counts as "no secret".
  */
-export async function verifyTenantAppSignature(
+export async function loadTenantSecrets(
   db: SupabaseClient,
-  rawBody: string,
-  signatureHeader: string | null
-): Promise<boolean> {
-  if (!signatureHeader?.startsWith('sha256=')) return false;
-  const claimed = extractPhoneNumberIds(rawBody);
-  if (claimed.length === 0) return false;
-
+  claimed: readonly string[]
+): Promise<ReadonlyMap<string, string | null> | null> {
   const { data, error } = await db
     .from('whatsapp_config')
     .select('phone_number_id, app_secret')
     .in('phone_number_id', claimed);
   if (error) {
     console.error('[webhook] tenant app secret lookup failed:', error.message);
-    return false;
+    return null;
   }
 
   const secrets = new Map<string, string | null>();
@@ -115,5 +112,24 @@ export async function verifyTenantAppSignature(
     }
     secrets.set(row.phone_number_id, plain);
   }
+  return secrets;
+}
+
+/**
+ * Second chance for a delivery the platform secret rejected: verify it
+ * against the app secrets of the tenant numbers it names. Reads only
+ * those rows.
+ */
+export async function verifyTenantAppSignature(
+  db: SupabaseClient,
+  rawBody: string,
+  signatureHeader: string | null
+): Promise<boolean> {
+  if (!signatureHeader?.startsWith('sha256=')) return false;
+  const claimed = extractPhoneNumberIds(rawBody);
+  if (claimed.length === 0) return false;
+
+  const secrets = await loadTenantSecrets(db, claimed);
+  if (!secrets) return false;
   return tenantSignatureDecision(rawBody, signatureHeader, secrets, claimed);
 }
