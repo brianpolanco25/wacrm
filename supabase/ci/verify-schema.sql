@@ -2464,6 +2464,10 @@ BEGIN
           WHERE indexrelid = 'public.idx_wcb_history_chunk'::regclass) THEN
     RAISE EXCEPTION 'idx_wcb_history_chunk must be unique NULLS NOT DISTINCT (migration 089)';
   END IF;
+  IF pg_get_indexdef('public.idx_wcb_history_chunk'::regclass)
+     NOT LIKE '%(whatsapp_config_id, sync_epoch, phase, chunk_order)%' THEN
+    RAISE EXCEPTION 'idx_wcb_history_chunk must key on (whatsapp_config_id, sync_epoch, phase, chunk_order) (migration 089)';
+  END IF;
   IF NOT (SELECT relrowsecurity FROM pg_class
           WHERE oid = 'public.whatsapp_coexistence_batches'::regclass) THEN
     RAISE EXCEPTION 'whatsapp_coexistence_batches must have RLS enabled (migration 089)';
