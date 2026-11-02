@@ -1670,6 +1670,7 @@
       "coexistenceSyncRetrying": "Sincronizando…",
       "coexistenceSyncRetried": "Sincronización solicitada a Meta",
       "coexistenceSyncRetryFailed": "No se pudo reintentar la sincronización",
+      "coexistenceSyncNeedsSupport": "Meta aceptó la sincronización, pero no se pudo guardar su confirmación. No la reintentes (Meta solo admite una): contacta con soporte.",
       "coexistenceSyncExpired": "Pasaron más de 24 h desde la conexión: Meta ya no acepta la sincronización. Desconecta el número desde la app del teléfono y vuelve a conectarlo con «Conectar WhatsApp».",
       "bizAppWithoutCoexistence": "Este número está en la app de WhatsApp Business del teléfono sin coexistencia: Meta no entrega sus mensajes al CRM. Conéctalo con «Conectar WhatsApp» (Embedded Signup) eligiendo tu cuenta existente de la app.",
       "signupCoexistenceSuccess": "Conectado en coexistencia: sigues usando la app del teléfono y el CRM recibe los mensajes",

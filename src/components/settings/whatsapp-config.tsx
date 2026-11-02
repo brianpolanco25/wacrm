@@ -35,6 +35,7 @@ import { PaymentStatusBadge } from './payment-status-badge';
 import {
   CoexistenceBadge,
   CoexistenceStatus,
+  deliverySinceDate,
   numberDeliveryState,
 } from './coexistence-status';
 import { useBillingStatus } from '@/hooks/use-billing-status';
@@ -1125,8 +1126,10 @@ export function WhatsAppConfig() {
                   <span
                     dangerouslySetInnerHTML={{
                       __html: t('subscribedSince', {
-                        date: config.registered_at
-                          ? new Date(config.registered_at).toLocaleString()
+                        date: deliverySinceDate(config)
+                          ? new Date(
+                              deliverySinceDate(config) as string
+                            ).toLocaleString()
                           : t('unknownDate'),
                       }),
                     }}

@@ -33,8 +33,12 @@ export interface SmbSyncOutcome {
   history: SmbSyncState;
 }
 
+import { SMB_SYNC_UNSAVED_MARKER } from '@/lib/whatsapp/coexistence-window';
+
 export {
+  SMB_SYNC_UNSAVED_MARKER,
   SMB_SYNC_WINDOW_MS,
+  hasUnsavedSmbSync,
   isWithinSmbSyncWindow,
 } from '@/lib/whatsapp/coexistence-window';
 /** A claim older than this is considered abandoned and can be retaken. */
@@ -149,6 +153,24 @@ export async function runSmbAppDataSync(
   const outcome: SmbSyncOutcome = { state_sync: 'failed', history: 'failed' };
   const failures: string[] = [];
 
+  // A type whose accepted sync could not be saved earlier (see step 3)
+  // is never retried: Meta would refuse the second request and the row
+  // would be stuck in `failed` with the real request id lost. Its
+  // segment of the error is carried over so the next write keeps it.
+  const { data: current } = await admin
+    .from('whatsapp_config')
+    .select('smb_sync_error')
+    .eq('id', configId)
+    .eq('account_id', accountId)
+    .maybeSingle();
+  const previousError =
+    ((current as { smb_sync_error?: unknown } | null)?.smb_sync_error as
+      string | null | undefined) ?? '';
+  const unsavedSegment = (syncType: SmbSyncType): string | undefined =>
+    previousError
+      .split(' | ')
+      .find((seg) => seg.startsWith(`${syncType}: ${SMB_SYNC_UNSAVED_MARKER}`));
+
   for (const syncType of SMB_SYNC_TYPES) {
     const cols = COLUMNS[syncType];
     const state = await runOne(syncType as SmbAppDataSyncType, cols);
@@ -159,6 +181,12 @@ export async function runSmbAppDataSync(
     syncType: SmbAppDataSyncType,
     cols: (typeof COLUMNS)[SmbSyncType]
   ): Promise<SmbSyncState> {
+    const unsaved = unsavedSegment(syncType);
+    if (unsaved) {
+      failures.push(unsaved);
+      return 'failed';
+    }
+
     const at = now();
     const cutoff = new Date(at.getTime() - SMB_SYNC_CLAIM_TTL_MS).toISOString();
 
@@ -220,9 +248,18 @@ export async function runSmbAppDataSync(
       .eq('id', configId)
       .eq('account_id', accountId);
     if (saveError) {
+      // Meta accepted: the claim is NOT released and the type is marked
+      // so no later pass (signup or manual retry) asks Meta again. The
+      // request id goes to the log (never the token) so it can be
+      // restored by hand.
       const message = messageOf(saveError);
-      console.warn(`[coexistence] ${syncType} request_id not saved:`, message);
-      failures.push(`${syncType}: ${message}`);
+      console.error(
+        `[coexistence] ${syncType} accepted by Meta (request_id ${requestId}) but not saved:`,
+        message
+      );
+      failures.push(
+        `${syncType}: ${SMB_SYNC_UNSAVED_MARKER} ${requestId}: ${message}`
+      );
       return 'failed';
     }
     return 'requested';

@@ -1670,6 +1670,7 @@
       "coexistenceSyncRetrying": "Syncing…",
       "coexistenceSyncRetried": "Sync requested from Meta",
       "coexistenceSyncRetryFailed": "Could not retry the sync",
+      "coexistenceSyncNeedsSupport": "Meta accepted the sync, but its confirmation could not be saved. Do not retry it (Meta allows only one): contact support.",
       "coexistenceSyncExpired": "More than 24 h have passed since connecting: Meta no longer accepts the sync. Disconnect the number from the phone app and connect it again with “Connect WhatsApp”.",
       "bizAppWithoutCoexistence": "This number is on the WhatsApp Business phone app without coexistence: Meta does not deliver its messages to the CRM. Connect it with “Connect WhatsApp” (Embedded Signup) choosing your existing app account.",
       "signupCoexistenceSuccess": "Connected in coexistence: you keep using the phone app and the CRM receives the messages",
