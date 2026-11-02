@@ -252,6 +252,89 @@ export async function subscribeWabaToApp(
   }
 }
 
+export type SmbAppDataSyncType = 'smb_app_state_sync' | 'history';
+
+export interface SyncSmbAppDataArgs {
+  phoneNumberId: string;
+  accessToken: string;
+  syncType: SmbAppDataSyncType;
+}
+
+/**
+ * Coexistence (#1650): ask Meta to sync the WhatsApp Business app's
+ * contacts (`smb_app_state_sync`) or chat history (`history`) for a
+ * number that was just onboarded in coexistence mode.
+ *
+ * Meta accepts each `sync_type` ONCE, within 24 h of the onboarding —
+ * the once-only bookkeeping lives in `coexistence.ts`, not here. The
+ * data itself arrives later through the webhook (#1651); this call
+ * only returns the `request_id`.
+ */
+export async function syncSmbAppData(
+  args: SyncSmbAppDataArgs
+): Promise<{ requestId: string }> {
+  const { phoneNumberId, accessToken, syncType } = args;
+  const url = `${META_API_BASE}/${phoneNumberId}/smb_app_data`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      sync_type: syncType,
+    }),
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  let data: { request_id?: unknown } = {};
+  try {
+    data = (await response.json()) as { request_id?: unknown };
+  } catch {
+    /* keep empty */
+  }
+  if (typeof data.request_id !== 'string' || !data.request_id) {
+    throw new Error('Meta did not return a request_id for smb_app_data');
+  }
+  return { requestId: data.request_id };
+}
+
+export interface WabaPhoneNumber {
+  id: string;
+  display_phone_number?: string;
+  platform_type?: string;
+  is_on_biz_app?: boolean;
+}
+
+/**
+ * Coexistence (#1650): the phone numbers of a WABA, with the two fields
+ * that tell a coexistence number apart. Needed because Meta's
+ * `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` session event carries only
+ * the `waba_id`, not the `phone_number_id`.
+ */
+export async function listWabaPhoneNumbers(args: {
+  wabaId: string;
+  accessToken: string;
+}): Promise<WabaPhoneNumber[]> {
+  const { wabaId, accessToken } = args;
+  const url = `${META_API_BASE}/${wabaId}/phone_numbers?fields=id,display_phone_number,platform_type,is_on_biz_app`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`);
+  }
+  const body = (await response.json()) as { data?: unknown };
+  if (!Array.isArray(body.data)) return [];
+  return body.data.filter(
+    (n): n is WabaPhoneNumber =>
+      !!n && typeof (n as { id?: unknown }).id === 'string'
+  );
+}
+
 export interface GetSubscribedAppsArgs {
   wabaId: string;
   accessToken: string;

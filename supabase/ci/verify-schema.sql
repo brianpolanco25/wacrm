@@ -2433,6 +2433,25 @@ BEGIN
     RAISE EXCEPTION 'meta_spend_snapshots is readable or writable by a client role (migration 084)';
   END IF;
   -- /084 -----------------------------------------------------------
+  -- 088 — coexistencia: app de WhatsApp Business + Cloud API (#1650) -
+  IF (SELECT count(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'whatsapp_config'
+        AND is_nullable = 'YES'
+        AND column_name IN ('coexistence_onboarded_at',
+                            'smb_state_sync_requested_at',
+                            'smb_state_sync_request_id',
+                            'smb_history_sync_requested_at',
+                            'smb_history_sync_request_id',
+                            'smb_sync_error')) <> 6 THEN
+    RAISE EXCEPTION 'whatsapp_config coexistence/smb_* columns are missing or NOT NULL (migration 088)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                 WHERE tgname = 'whatsapp_config_guard_smb_sync'
+                   AND tgrelid = 'public.whatsapp_config'::regclass
+                   AND NOT tgisinternal) THEN
+    RAISE EXCEPTION 'trigger whatsapp_config_guard_smb_sync is missing (migration 088)';
+  END IF;
+  -- /088 -----------------------------------------------------------
 
   RAISE NOTICE 'schema verification passed';
 END

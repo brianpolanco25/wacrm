@@ -6,7 +6,10 @@ import { NextIntlClientProvider } from 'next-intl';
 import {
   EmbeddedSignupButton,
   buildFbLoginOptions,
+  buildSignupRequestBody,
   isMetaSignupOrigin,
+  parseSignupSessionMessage,
+  signupResultMessageKey,
 } from './embedded-signup-button';
 import en from '../../../messages/en.json';
 
@@ -78,12 +81,15 @@ describe('EmbeddedSignupButton', () => {
  * `progress/meta_embedded-signup-verificacion.md`.
  */
 describe('buildFbLoginOptions', () => {
-  it('passes only `setup` in extras, as Embedded Signup v4 documents', () => {
+  it('passes `setup` and the coexistence featureType in extras (R1)', () => {
     const options = buildFbLoginOptions('cfgid-456');
-    // `sessionInfoVersion` and `featureType` are from earlier versions
-    // of the flow and no longer exist: sending them is at best noise.
-    expect(options.extras).toEqual({ setup: {} });
-    expect(Object.keys(options.extras as object)).toEqual(['setup']);
+    // Meta's coexistence guide requires `featureType` in v4 for the
+    // dialog to offer "connect your WhatsApp Business app"; a dialog
+    // without coexistence ignores it.
+    expect(options.extras).toEqual({
+      setup: {},
+      featureType: 'whatsapp_business_app_onboarding',
+    });
   });
 
   it('asks for a code, overriding the SDK default', () => {
@@ -117,5 +123,142 @@ describe('isMetaSignupOrigin', () => {
     // `postMessage` from a sandboxed frame reports the string "null".
     expect(isMetaSignupOrigin('null')).toBe(false);
     expect(isMetaSignupOrigin('')).toBe(false);
+  });
+});
+
+/** #1650 R2 — what each session message from the dialog means. */
+describe('parseSignupSessionMessage', () => {
+  const msg = (event: string, data: Record<string, string> = {}) =>
+    JSON.stringify({ type: 'WA_EMBEDDED_SIGNUP', event, data });
+
+  it('reads FINISH as an ordinary (non-coexistence) finish', () => {
+    expect(
+      parseSignupSessionMessage(
+        msg('FINISH', { phone_number_id: 'pn-1', waba_id: 'waba-1' })
+      )
+    ).toEqual({
+      kind: 'finish',
+      phoneNumberId: 'pn-1',
+      wabaId: 'waba-1',
+      coexistence: false,
+    });
+  });
+
+  it('reads FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING as coexistence', () => {
+    expect(
+      parseSignupSessionMessage(
+        msg('FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING', {
+          phone_number_id: 'pn-2',
+          waba_id: 'waba-2',
+        })
+      )
+    ).toEqual({
+      kind: 'finish',
+      phoneNumberId: 'pn-2',
+      wabaId: 'waba-2',
+      coexistence: true,
+    });
+  });
+
+  it('accepts a coexistence finish that carries only waba_id', () => {
+    // Meta's FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING sends no
+    // phone_number_id: the server resolves it from the WABA.
+    expect(
+      parseSignupSessionMessage(
+        msg('FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING', { waba_id: 'waba-3' })
+      )
+    ).toEqual({
+      kind: 'finish',
+      phoneNumberId: undefined,
+      wabaId: 'waba-3',
+      coexistence: true,
+    });
+  });
+
+  it('reads CANCEL and ERROR as before', () => {
+    expect(
+      parseSignupSessionMessage(msg('CANCEL', { current_step: 'PHONE' }))
+    ).toEqual({ kind: 'cancel', step: 'PHONE' });
+    expect(parseSignupSessionMessage(msg('CANCEL'))).toEqual({
+      kind: 'cancel',
+      step: 'unknown',
+    });
+    expect(
+      parseSignupSessionMessage(msg('ERROR', { error_message: 'boom' }))
+    ).toEqual({ kind: 'error', message: 'boom' });
+  });
+
+  it('ignores non-JSON housekeeping and other message types', () => {
+    expect(parseSignupSessionMessage('not json {')).toBeNull();
+    expect(parseSignupSessionMessage(undefined)).toBeNull();
+    expect(
+      parseSignupSessionMessage(
+        JSON.stringify({ type: 'SOMETHING_ELSE', event: 'FINISH' })
+      )
+    ).toBeNull();
+    expect(parseSignupSessionMessage(msg('UNKNOWN_EVENT'))).toBeNull();
+  });
+});
+
+/** #1650 R3 — the body the route receives. */
+describe('buildSignupRequestBody', () => {
+  it('sends the ids and a boolean coexistence flag', () => {
+    expect(
+      buildSignupRequestBody('code-1', {
+        phoneNumberId: 'pn-1',
+        wabaId: 'waba-1',
+        coexistence: true,
+      })
+    ).toEqual({
+      code: 'code-1',
+      phone_number_id: 'pn-1',
+      waba_id: 'waba-1',
+      coexistence: true,
+    });
+    // Coexistence without phone_number_id: the field is omitted.
+    expect(
+      buildSignupRequestBody('code-3', {
+        wabaId: 'waba-3',
+        coexistence: true,
+      })
+    ).toEqual({ code: 'code-3', waba_id: 'waba-3', coexistence: true });
+    expect(
+      buildSignupRequestBody('code-2', {
+        phoneNumberId: 'pn-2',
+        wabaId: 'waba-2',
+        coexistence: false,
+      }).coexistence
+    ).toBe(false);
+  });
+});
+
+/** #1650 R4 — which toast a 200 deserves. */
+describe('signupResultMessageKey', () => {
+  it('coexistence without sync failures → signupCoexistenceSuccess', () => {
+    expect(
+      signupResultMessageKey({
+        coexistence: true,
+        registration_error: null,
+        smb_sync: { state_sync: 'requested', history: 'already_done' },
+      })
+    ).toBe('signupCoexistenceSuccess');
+  });
+
+  it('coexistence with a failed sync → signupCoexistenceSyncFailed', () => {
+    expect(
+      signupResultMessageKey({
+        coexistence: true,
+        smb_sync: { state_sync: 'requested', history: 'failed' },
+      })
+    ).toBe('signupCoexistenceSyncFailed');
+  });
+
+  it('ordinary flow keeps the current logic', () => {
+    expect(signupResultMessageKey({ registration_error: 'pin' })).toBe(
+      'signupRegistrationFailed'
+    );
+    expect(
+      signupResultMessageKey({ coexistence: false, registration_error: null })
+    ).toBe('signupSuccess');
   });
 });

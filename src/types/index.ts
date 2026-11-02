@@ -341,6 +341,19 @@ export interface WhatsAppConfig {
   meta_payment_checked_at?: string | null;
   /** Meta's message when the last check came back `unknown`. */
   meta_payment_error?: string | null;
+  /**
+   * Coexistence (#1650, migration 088): when the number was connected
+   * through Embedded Signup keeping the WhatsApp Business phone app.
+   * NULL = not coexistence. Starts Meta's 24 h window for the syncs.
+   */
+  coexistence_onboarded_at?: string | null;
+  /** One-shot SMB syncs (contacts / history). Written only by the server. */
+  smb_state_sync_requested_at?: string | null;
+  smb_state_sync_request_id?: string | null;
+  smb_history_sync_requested_at?: string | null;
+  smb_history_sync_request_id?: string | null;
+  /** Last SMB sync failure, truncated; NULL when all went well. */
+  smb_sync_error?: string | null;
   created_at?: string;
   updated_at?: string;
 }

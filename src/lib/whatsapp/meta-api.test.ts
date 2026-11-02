@@ -3,12 +3,14 @@ import {
   INTERACTIVE_LIMITS,
   MetaApiError,
   getWabaFundingInfo,
+  listWabaPhoneNumbers,
   sendInteractiveButtons,
   sendInteractiveList,
   sendMediaMessage,
   sendReactionMessage,
   sendTemplateMessage,
   sendTextMessage,
+  syncSmbAppData,
 } from './meta-api';
 
 // All assertions in this file run BEFORE the network call. We stub fetch
@@ -446,5 +448,159 @@ describe('getWabaFundingInfo', () => {
     expect((err as MetaApiError).code).toBe(200);
     expect((err as MetaApiError).status).toBe(403);
     expect((err as MetaApiError).message).toBe('(#200) Permissions error');
+  });
+});
+
+// #1650 R12 — sincronización SMB de coexistencia. Sin red: fetch mockeado.
+describe('syncSmbAppData', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function okResponse(body: unknown) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => body,
+    } as unknown as Response;
+  }
+
+  it('hace POST a /{phone}/smb_app_data con sync_type y Bearer, y devuelve requestId', async () => {
+    const fetchMock = vi.fn(async () => okResponse({ request_id: 'req-1' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await syncSmbAppData({
+      phoneNumberId: 'pn-1',
+      accessToken: 'tok',
+      syncType: 'smb_app_state_sync',
+    });
+    expect(result).toEqual({ requestId: 'req-1' });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe('https://graph.facebook.com/v21.0/pn-1/smb_app_data');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      'Bearer tok'
+    );
+    expect(JSON.parse(init.body as string)).toEqual({
+      messaging_product: 'whatsapp',
+      sync_type: 'smb_app_state_sync',
+    });
+  });
+
+  it('envía history como sync_type cuando se pide historial', async () => {
+    const fetchMock = vi.fn(async () => okResponse({ request_id: 'req-2' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await syncSmbAppData({
+      phoneNumberId: 'pn-1',
+      accessToken: 'tok',
+      syncType: 'history',
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(init.body as string).sync_type).toBe('history');
+  });
+
+  it('un no-OK de Meta sale como MetaApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 400,
+            json: async () => ({
+              error: { message: 'Sync already requested', code: 100 },
+            }),
+          }) as unknown as Response
+      )
+    );
+    const err = await syncSmbAppData({
+      phoneNumberId: 'pn-1',
+      accessToken: 'tok',
+      syncType: 'history',
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MetaApiError);
+    expect((err as MetaApiError).code).toBe(100);
+    expect((err as MetaApiError).message).toBe('Sync already requested');
+  });
+
+  it('un OK sin request_id lanza Error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => okResponse({ success: true }))
+    );
+    const err = await syncSmbAppData({
+      phoneNumberId: 'pn-1',
+      accessToken: 'tok',
+      syncType: 'smb_app_state_sync',
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(MetaApiError);
+    expect((err as Error).message).toMatch(/request_id/);
+  });
+});
+
+// #1650 ajuste del leader — en coexistencia el evento de sesión trae solo
+// waba_id; el servidor lista los números del WABA.
+describe('listWabaPhoneNumbers', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('pide /{waba}/phone_numbers con platform_type e is_on_biz_app', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              { id: 'pn-1', is_on_biz_app: true, platform_type: 'CLOUD_API' },
+              { nope: true },
+            ],
+          }),
+        }) as unknown as Response
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const list = await listWabaPhoneNumbers({
+      wabaId: 'waba-1',
+      accessToken: 'tok',
+    });
+    expect(list).toEqual([
+      { id: 'pn-1', is_on_biz_app: true, platform_type: 'CLOUD_API' },
+    ]);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(
+      'https://graph.facebook.com/v21.0/waba-1/phone_numbers?fields=id,display_phone_number,platform_type,is_on_biz_app'
+    );
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      'Bearer tok'
+    );
+  });
+
+  it('un no-OK sale como MetaApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 403,
+            json: async () => ({ error: { message: 'denied', code: 200 } }),
+          }) as unknown as Response
+      )
+    );
+    const err = await listWabaPhoneNumbers({
+      wabaId: 'waba-1',
+      accessToken: 'tok',
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MetaApiError);
   });
 });
