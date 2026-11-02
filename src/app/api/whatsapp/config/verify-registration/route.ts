@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { resolveEffectiveAccountId } from '@/lib/auth/account';
 import { createClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/whatsapp/encryption';
-import { getSubscribedApps, verifyPhoneNumber } from '@/lib/whatsapp/meta-api';
+import {
+  getSubscribedApps,
+  getSubscribedAppsRaw,
+  probeGraphField,
+  verifyPhoneNumber,
+} from '@/lib/whatsapp/meta-api';
 
 /**
  * GET /api/whatsapp/config/verify-registration
@@ -143,6 +148,39 @@ export async function GET(request: Request) {
     );
   }
 
+  // `?detail=1` — what Meta itself says about delivery for this number:
+  // its own webhook override (which would divert messages away from the
+  // app's URL), its platform, and the raw subscription rows. Read-only.
+  let detail: Record<string, unknown> | undefined;
+  if (new URL(request.url).searchParams.get('detail') === '1') {
+    const fields = [
+      'webhook_configuration',
+      'platform_type',
+      'is_on_biz_app',
+      'account_mode',
+      'status',
+      'code_verification_status',
+    ];
+    const phone: Record<string, unknown> = {};
+    for (const field of fields) {
+      const probed = await probeGraphField({
+        nodeId: config.phone_number_id,
+        field,
+        accessToken,
+      });
+      phone[field] = probed.ok ? probed.value : { error: probed.error };
+    }
+    detail = {
+      phone,
+      subscribed_apps: config.waba_id
+        ? await getSubscribedAppsRaw({
+            wabaId: config.waba_id,
+            accessToken,
+          })
+        : null,
+    };
+  }
+
   const live =
     checks.phone_metadata_ok &&
     (checks.waba_subscribed_to_app ?? false) &&
@@ -155,5 +193,6 @@ export async function GET(request: Request) {
     last_registration_error: config.last_registration_error ?? null,
     registered_at: config.registered_at ?? null,
     subscribed_apps_at: config.subscribed_apps_at ?? null,
+    ...(detail ? { detail } : {}),
   });
 }

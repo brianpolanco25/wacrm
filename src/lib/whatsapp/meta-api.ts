@@ -285,6 +285,75 @@ export async function getSubscribedApps(
   return data.data ?? [];
 }
 
+/**
+ * Diagnostic — ask Meta for ONE field of a node and report what came
+ * back, never throwing. One field per call on purpose: Graph fails the
+ * whole request when any single field is unknown to the node, and the
+ * point of a diagnostic is to learn which ones exist. The token is
+ * never part of the result.
+ */
+export async function probeGraphField(args: {
+  nodeId: string;
+  field: string;
+  accessToken: string;
+}): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
+  const { nodeId, field, accessToken } = args;
+  try {
+    const response = await fetch(
+      `${META_API_BASE}/${nodeId}?fields=${encodeURIComponent(field)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const body = (await response.json().catch(() => null)) as
+      (Record<string, unknown> & { error?: { message?: string } }) | null;
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: body?.error?.message ?? `Meta API error: ${response.status}`,
+      };
+    }
+    return { ok: true, value: body?.[field] ?? null };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Diagnostic — the raw `subscribed_apps` rows of a WABA, including the
+ * per-app `override_callback_uri` and `subscribed_fields` that
+ * `getSubscribedApps` drops. A subscription with its own callback URI
+ * sends that account's events there instead of to the app's webhook.
+ */
+export async function getSubscribedAppsRaw(args: {
+  wabaId: string;
+  accessToken: string;
+}): Promise<{ ok: true; rows: unknown[] } | { ok: false; error: string }> {
+  try {
+    const response = await fetch(
+      `${META_API_BASE}/${args.wabaId}/subscribed_apps`,
+      { headers: { Authorization: `Bearer ${args.accessToken}` } }
+    );
+    const body = (await response.json().catch(() => null)) as {
+      data?: unknown[];
+      error?: { message?: string };
+    } | null;
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: body?.error?.message ?? `Meta API error: ${response.status}`,
+      };
+    }
+    return { ok: true, rows: body?.data ?? [] };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export interface GetWabaFundingInfoArgs {
   wabaId: string;
   accessToken: string;
