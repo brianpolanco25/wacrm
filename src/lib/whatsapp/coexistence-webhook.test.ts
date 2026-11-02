@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { FakeDatabase, type Row } from '@/lib/security/fake-supabase';
 import { encrypt } from './encryption';
+import { describeDbError } from './inbound-thread';
 
 // Forbidden side effects (requirements glossary): mocked so any call is
 // visible. The code under test must not even import them.
@@ -976,5 +977,22 @@ describe('account_update', () => {
           l.includes('WEBHOOK_CONFIG_UPDATED')
       )
     ).toBe(true);
+  });
+});
+
+describe('describeDbError (review finding 3, R31)', () => {
+  it('keeps code and message and drops details/hint, which quote the phone', () => {
+    const out = describeDbError({
+      code: '23505',
+      message: 'duplicate key value violates unique constraint',
+      details: `Key (account_id, phone)=(${A}, ${CUSTOMER}) already exists.`,
+      hint: CUSTOMER,
+    });
+    expect(out).toEqual({
+      code: '23505',
+      message: 'duplicate key value violates unique constraint',
+    });
+    expect(JSON.stringify(out)).not.toContain(CUSTOMER);
+    expect(describeDbError('boom')).toEqual({ code: null, message: 'boom' });
   });
 });

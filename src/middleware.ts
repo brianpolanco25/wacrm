@@ -187,9 +187,12 @@ export async function middleware(request: NextRequest) {
     )
   }
 
-  // API routes that need auth (not webhooks)
+  // API routes that need auth (not webhooks, not the cron sweeps listed
+  // in WHATSAPP_CRON_PATHS: those authenticate with x-cron-secret in the
+  // handler and are called by a scheduler that has no session).
   if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/') &&
-      !request.nextUrl.pathname.includes('/webhook')) {
+      !request.nextUrl.pathname.includes('/webhook') &&
+      !WHATSAPP_CRON_PATHS.has(request.nextUrl.pathname)) {
     return withRefreshedCookies(
       NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     )
@@ -197,6 +200,17 @@ export async function middleware(request: NextRequest) {
 
   return withRefreshedCookies(supabaseResponse)
 }
+
+/**
+ * Cron sweeps under /api/whatsapp/ that a scheduler (Dokploy) calls with
+ * no session. Each one checks `x-cron-secret` against
+ * AUTOMATION_CRON_SECRET in constant time and answers 503/401 itself.
+ * An explicit list on purpose: a new /api/whatsapp/ route stays behind
+ * the session check unless it is added here (#1651).
+ */
+const WHATSAPP_CRON_PATHS: ReadonlySet<string> = new Set([
+  '/api/whatsapp/coexistence/cron',
+])
 
 export const config = {
   matcher: [

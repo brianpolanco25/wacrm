@@ -59,9 +59,13 @@ CREATE TABLE IF NOT EXISTS whatsapp_coexistence_batches (
 
 RESET lock_timeout;
 
--- R37: un chunk de historial por número, fase y orden.
+-- R37: un chunk de historial por número, fase y orden. NULLS NOT
+-- DISTINCT (Postgres 15+, como la 084): un chunk que llegue sin `phase`
+-- o sin `chunk_order` también se encola una sola vez, incluso si dos
+-- entregas compiten (la segunda recibe 23505 y se trata como repetición).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_wcb_history_chunk
   ON whatsapp_coexistence_batches (whatsapp_config_id, phase, chunk_order)
+  NULLS NOT DISTINCT
   WHERE field = 'history';
 
 -- El barrido del cron: pendientes por antigüedad.

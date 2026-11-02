@@ -2460,9 +2460,9 @@ BEGIN
      OR to_regclass('public.idx_wcb_pending') IS NULL THEN
     RAISE EXCEPTION 'whatsapp_coexistence_batches indexes missing (migration 089)';
   END IF;
-  IF NOT (SELECT indisunique FROM pg_index
+  IF NOT (SELECT indisunique AND indnullsnotdistinct FROM pg_index
           WHERE indexrelid = 'public.idx_wcb_history_chunk'::regclass) THEN
-    RAISE EXCEPTION 'idx_wcb_history_chunk must be unique (migration 089)';
+    RAISE EXCEPTION 'idx_wcb_history_chunk must be unique NULLS NOT DISTINCT (migration 089)';
   END IF;
   IF NOT (SELECT relrowsecurity FROM pg_class
           WHERE oid = 'public.whatsapp_coexistence_batches'::regclass) THEN
