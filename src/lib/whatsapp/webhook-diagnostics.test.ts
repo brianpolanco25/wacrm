@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { describeRejectedDelivery } from './webhook-diagnostics';
+import {
+  describeRejectedDelivery,
+  describeTestDelivery,
+  isMetaPanelTestDelivery,
+} from './webhook-diagnostics';
 
 const sign = (body: string, secret: string) =>
   'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex');
@@ -58,5 +62,89 @@ describe('describeRejectedDelivery', () => {
       new Map([['111', 'super-secret-value']])
     );
     expect(JSON.stringify(r)).not.toContain('super-secret-value');
+  });
+});
+
+describe('isMetaPanelTestDelivery (R26)', () => {
+  const panel = {
+    object: 'whatsapp_business_account',
+    entry: [
+      {
+        id: '0',
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              metadata: {
+                display_phone_number: '16505551111',
+                phone_number_id: '123456123',
+              },
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  it('recognises the dashboard sample as a string and as an object', () => {
+    expect(isMetaPanelTestDelivery(JSON.stringify(panel))).toBe(true);
+    expect(isMetaPanelTestDelivery(panel)).toBe(true);
+  });
+
+  it('recognises an account_update sample (entry "0", no metadata)', () => {
+    expect(
+      isMetaPanelTestDelivery({
+        entry: [
+          {
+            id: '0',
+            changes: [
+              { field: 'account_update', value: { event: 'VERIFIED_ACCOUNT' } },
+            ],
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it('is false when any entry has another id or any number differs', () => {
+    expect(
+      isMetaPanelTestDelivery({
+        entry: [...panel.entry, { id: 'waba-1', changes: [] }],
+      })
+    ).toBe(false);
+    expect(
+      isMetaPanelTestDelivery({
+        entry: [
+          {
+            id: '0',
+            changes: [
+              {
+                field: 'messages',
+                value: { metadata: { phone_number_id: '111' } },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it('is false for an empty entry list, invalid JSON or non-objects', () => {
+    expect(isMetaPanelTestDelivery({ entry: [] })).toBe(false);
+    expect(isMetaPanelTestDelivery('{')).toBe(false);
+    expect(isMetaPanelTestDelivery(null)).toBe(false);
+    expect(isMetaPanelTestDelivery(42)).toBe(false);
+    expect(isMetaPanelTestDelivery({ entry: 'x' })).toBe(false);
+  });
+
+  it('describes the delivery with its field names and the verification flag', () => {
+    expect(describeTestDelivery(JSON.stringify(panel), false)).toEqual({
+      verified: false,
+      fields: ['messages'],
+    });
+    expect(describeTestDelivery(panel, true)).toEqual({
+      verified: true,
+      fields: ['messages'],
+    });
   });
 });

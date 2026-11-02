@@ -11,6 +11,16 @@ and polish.
 
 ## [Unreleased]
 
+### WhatsApp coexistence: messages sent from the phone app, edits and deletions, chat history, phone contacts and disconnection
+
+- **Migration required**: `supabase/migrations/089_whatsapp_coexistence_batches.sql` (new table `whatsapp_coexistence_batches`, service role only).
+- **New cron** (operator step): schedule `GET /api/whatsapp/coexistence/cron` every 5 minutes with the `x-cron-secret: $AUTOMATION_CRON_SECRET` header, like the automations and flows crons. It finishes the chat-history and contact imports the webhook could not complete within its own time budget. No new environment variable.
+- Messages the business sends from the WhatsApp Business phone app on a coexistence number now appear in the conversation as outgoing messages (media as a `[image]`/`[video]`/`[document]` marker with its caption). Deleting or editing one on the phone updates it in the CRM (`[deleted]` or the new text). They never trigger automations, flows, the AI agent, outbound webhooks or message charges.
+- The chat history Meta shares after connecting a coexistence number is imported into each contact's conversation with its original dates, without duplicates and without marking anything unread. If the customer declined to share the history, the log says so.
+- The phone's address book creates the missing contacts and updates the name of existing ones (matched by phone, never duplicated). Removing a contact on the phone does not delete it from the CRM.
+- When the business disconnects the platform from the phone app (`PARTNER_REMOVED`), the number is marked disconnected and its coexistence sync state is reset, so connecting it again requests the contacts and history once more.
+- The sample deliveries of the «Test» button in the Meta app dashboard are no longer logged as signature failures: they get a 200 and a single «meta panel test delivery» log line, and are never processed.
+
 ### WhatsApp: coexistence with the WhatsApp Business app
 
 - **Migration required**: `supabase/migrations/088_whatsapp_coexistence.sql`.

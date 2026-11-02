@@ -68,6 +68,8 @@ const h = vi.hoisted(() => ({
     sends: [] as { fn: string; args: Record<string, unknown> }[],
   },
   webhookEvents: [] as { accountId: string; event: string }[],
+  /** Result of the platform signature check (#1651 signs as a tenant). */
+  platformSignatureOk: true,
   ingestedDocuments: [] as string[],
   validatedAiKeys: [] as string[],
   /** Browser cookie jar, for the support-session routes. */
@@ -243,8 +245,11 @@ vi.mock('@/lib/platform/provisioning', async (importOriginal) => ({
   },
 }));
 
-vi.mock('@/lib/whatsapp/webhook-signature', () => ({
-  verifyMetaWebhookSignature: () => true,
+vi.mock('@/lib/whatsapp/webhook-signature', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@/lib/whatsapp/webhook-signature')
+  >()),
+  verifyMetaWebhookSignature: () => h.platformSignatureOk,
 }));
 
 vi.mock('@/lib/webhooks/deliver', () => ({
@@ -305,6 +310,7 @@ import * as waSend from '@/app/api/whatsapp/send/route';
 import * as waBroadcast from '@/app/api/whatsapp/broadcast/route';
 import * as waBroadcastResume from '@/app/api/whatsapp/broadcast/[id]/resume/route';
 import * as waWebhook from '@/app/api/whatsapp/webhook/route';
+import * as waCoexistenceCron from '@/app/api/whatsapp/coexistence/cron/route';
 import * as waConfig from '@/app/api/whatsapp/config/route';
 import * as waConfigById from '@/app/api/whatsapp/config/[id]/route';
 import * as waEmbeddedSignup from '@/app/api/whatsapp/embedded-signup/route';
@@ -703,6 +709,8 @@ function seed(): FakeDatabase {
       contacts: both('contact'),
       conversations: both('conversation'),
       messages: both('message'),
+      // #1651 (migración 089): lotes de coexistencia, vacíos de salida.
+      whatsapp_coexistence_batches: [],
       api_keys: both('apiKey'),
       automations: both('automation'),
       automation_steps: [],
@@ -1288,6 +1296,7 @@ beforeEach(() => {
   h.after = [];
   h.meta.sends = [];
   h.webhookEvents = [];
+  h.platformSignatureOk = true;
   h.ingestedDocuments = [];
   h.validatedAiKeys = [];
   h.cookies = new Map();
@@ -2131,6 +2140,303 @@ describe('/api/whatsapp/webhook (service role, tenant from phone_number_id)', ()
     await drainAfter();
     expect(h.db.snapshot(A)).toEqual(beforeA);
     expect(h.db.snapshot(B)).toEqual(beforeB);
+  });
+});
+
+// ============================================================
+// #1651 — coexistence: echoes, history, address book, cron drain and
+// PARTNER_REMOVED. Same phone, same wamid and same WABA in both
+// accounts; everything arrives on A's number and B must not move.
+// ============================================================
+
+describe('/api/whatsapp/webhook coexistence (#1651, R18/R20/R25/R44)', () => {
+  const COEX_WAIVERS: ScopeWaiver[] = [
+    {
+      table: 'whatsapp_coexistence_batches',
+      op: 'select',
+      by: ['id'],
+      reason:
+        'The webhook drains the batch ids its own inserts returned in the ' +
+        'same after(); those inserts carried the account of the config the ' +
+        'phone_number_id resolved to. The read only yields id/account_id/' +
+        'attempts, and every write after it filters by that account_id.',
+    },
+    {
+      table: 'whatsapp_coexistence_batches',
+      op: 'select',
+      by: ['status'],
+      reason:
+        'Cron sweep across accounts (/api/whatsapp/coexistence/cron), like ' +
+        'the automations and flows sweeps: it reads id/account_id/attempts ' +
+        'and each claim and write is scoped by the batch account_id.',
+    },
+    {
+      table: 'whatsapp_config',
+      op: 'select',
+      by: ['waba_id'],
+      reason:
+        'Account-level events (PARTNER_REMOVED) name the WABA, never an ' +
+        'account: this lookup resolves which rows the signer of the delivery ' +
+        'owns (its own app secret, or no secret for the platform), same as ' +
+        'loadWabaSecrets. The UPDATE that follows filters by id + account_id.',
+    },
+  ];
+  beforeEach(() => {
+    extraWaivers = [...COEX_WAIVERS];
+  });
+
+  const PHONE_DIGITS = SHARED_PHONE.replace(/\D/g, '');
+  const coexBody = (field: string, value: Record<string, unknown>) => ({
+    entry: [
+      {
+        id: 'waba-a',
+        changes: [
+          {
+            field,
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: {
+                display_phone_number: '18290000000',
+                phone_number_id: 'pn-a',
+              },
+              ...value,
+            },
+          },
+        ],
+      },
+    ],
+  });
+  async function post(body: unknown, headers: Record<string, string> = {}) {
+    const res = await waWebhook.POST(
+      req('POST', '/api/whatsapp/webhook', body, {
+        'x-hub-signature-256': 'sha256=stub',
+        ...headers,
+      })
+    );
+    await drainAfter();
+    return res;
+  }
+  const newMessagesOfA = () =>
+    h.db.rows('messages').filter((m) => m.conversation_id === 'conv-a');
+
+  it('echoes (message, revoke and edit of a wamid that exists in B) land only in A', async () => {
+    for (const row of h.db.rows('messages')) row.message_id = 'wamid.SHARED';
+    const before = h.db.snapshot(B);
+    await post(
+      coexBody('smb_message_echoes', {
+        message_echoes: [
+          {
+            from: '18290000000',
+            to: PHONE_DIGITS,
+            id: 'wamid.ECHO-A',
+            timestamp: '1762100000',
+            type: 'text',
+            text: { body: 'eco' },
+          },
+          {
+            to: PHONE_DIGITS,
+            id: 'wamid.EDIT',
+            type: 'edit',
+            edit: {
+              original_message_id: 'wamid.SHARED',
+              message: { type: 'text', text: { body: 'editado' } },
+            },
+          },
+          {
+            to: PHONE_DIGITS,
+            id: 'wamid.REV',
+            type: 'revoke',
+            revoke: { original_message_id: 'wamid.in-b' },
+          },
+        ],
+      })
+    );
+    expect(h.db.rows('contacts')).toHaveLength(2);
+    expect(h.db.rows('conversations')).toHaveLength(2);
+    const a = newMessagesOfA();
+    expect(a.map((m) => m.message_id).sort()).toEqual([
+      'wamid.ECHO-A',
+      'wamid.SHARED',
+    ]);
+    expect(a.find((m) => m.message_id === 'wamid.SHARED')?.content_text).toBe(
+      'editado'
+    );
+    expect(h.webhookEvents).toEqual([]);
+    expectBUnchanged(before);
+  });
+
+  it('history with the same phone and a wamid of B is queued and drained into A only', async () => {
+    const before = h.db.snapshot(B);
+    await post(
+      coexBody('history', {
+        history: [
+          {
+            metadata: { phase: 0, chunk_order: 1, progress: 100 },
+            threads: [
+              {
+                id: PHONE_DIGITS,
+                messages: [
+                  {
+                    from: PHONE_DIGITS,
+                    id: 'wamid.in-b',
+                    timestamp: '1760000000',
+                    type: 'text',
+                    text: { body: 'viejo' },
+                  },
+                  {
+                    from: '18290000000',
+                    to: PHONE_DIGITS,
+                    id: 'wamid.H2',
+                    timestamp: '1760000100',
+                    type: 'text',
+                    text: { body: 'resp' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      })
+    );
+    const batches = h.db.rows('whatsapp_coexistence_batches');
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({
+      account_id: A,
+      whatsapp_config_id: 'cfg-a',
+      status: 'done',
+    });
+    expect(
+      newMessagesOfA()
+        .map((m) => m.message_id)
+        .sort()
+    ).toEqual(['wamid.H2', 'wamid.in-a', 'wamid.in-b']);
+    expect(h.db.rows('contacts')).toHaveLength(2);
+    expectBUnchanged(before);
+  });
+
+  it("the address book renames A's contact with B's phone, never B's", async () => {
+    const before = h.db.snapshot(B);
+    await post(
+      coexBody('smb_app_state_sync', {
+        state_sync: [
+          {
+            type: 'contact',
+            action: 'add',
+            contact: { full_name: 'Libreta A', phone_number: PHONE_DIGITS },
+          },
+          {
+            type: 'contact',
+            action: 'remove',
+            contact: { phone_number: PHONE_DIGITS },
+          },
+        ],
+      })
+    );
+    expect(h.db.rows('contacts')).toHaveLength(2);
+    expect(h.db.rows('contacts').find((c) => c.id === 'contact-a')?.name).toBe(
+      'Libreta A'
+    );
+    expectBUnchanged(before);
+  });
+
+  it("the cron draining A's batch does not touch B", async () => {
+    h.db.rows('whatsapp_coexistence_batches').push({
+      id: 'batch-a',
+      account_id: A,
+      whatsapp_config_id: 'cfg-a',
+      field: 'smb_app_state_sync',
+      payload: {
+        state_sync: [
+          {
+            type: 'contact',
+            action: 'add',
+            contact: { full_name: 'Cron A', phone_number: PHONE_DIGITS },
+          },
+          {
+            type: 'contact',
+            action: 'add',
+            contact: { full_name: 'Nuevo', phone_number: '18095550000' },
+          },
+        ],
+      },
+      item_count: 2,
+      cursor: 0,
+      status: 'pending',
+      attempts: 0,
+      locked_until: null,
+      created_at: PAST,
+    });
+    const before = h.db.snapshot(B);
+    const res = await waCoexistenceCron.GET(
+      req('GET', '/api/whatsapp/coexistence/cron', undefined, {
+        'x-cron-secret': 'cron-secret',
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ processed: 1, completed: 1 });
+    expect(h.db.rows('contacts').find((c) => c.id === 'contact-a')?.name).toBe(
+      'Cron A'
+    );
+    const created = h.db
+      .rows('contacts')
+      .filter((c) => c.phone === '18095550000');
+    expect(created.map((c) => c.account_id)).toEqual([A]);
+    expectBUnchanged(before);
+  });
+
+  it("PARTNER_REMOVED signed with A's app secret disconnects only A's row and resets its coexistence columns", async () => {
+    const smb = {
+      coexistence_onboarded_at: PAST,
+      smb_state_sync_requested_at: PAST,
+      smb_state_sync_request_id: 'req-s',
+      smb_history_sync_requested_at: PAST,
+      smb_history_sync_request_id: 'req-h',
+      smb_sync_error: null,
+    };
+    for (const cfg of h.db.rows('whatsapp_config')) {
+      Object.assign(cfg, smb, {
+        waba_id: 'waba-shared',
+        app_secret: encrypt(cfg.account_id === A ? 'secret-a' : 'secret-b'),
+      });
+    }
+    const before = h.db.snapshot(B);
+    const body = {
+      entry: [
+        {
+          id: 'waba-shared',
+          changes: [
+            {
+              field: 'account_update',
+              value: {
+                event: 'PARTNER_REMOVED',
+                waba_id: 'waba-shared',
+                reason: 'PRIMARY_INACTIVITY',
+                initiated_by: 'SYSTEM',
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const raw = JSON.stringify(body);
+    const signature =
+      'sha256=' +
+      (await import('node:crypto'))
+        .createHmac('sha256', 'secret-a')
+        .update(raw)
+        .digest('hex');
+    h.platformSignatureOk = false;
+    const res = await post(body, { 'x-hub-signature-256': signature });
+    expect(res.status).toBe(200);
+    const cfgA = h.db.rows('whatsapp_config').find((c) => c.id === 'cfg-a')!;
+    expect(cfgA.status).toBe('disconnected');
+    for (const col of Object.keys(smb)) expect(cfgA[col]).toBeNull();
+    const cfgB = h.db.rows('whatsapp_config').find((c) => c.id === 'cfg-b')!;
+    expect(cfgB.status).toBe('connected');
+    expect(cfgB.coexistence_onboarded_at).toBe(PAST);
+    expect(cfgB.smb_state_sync_request_id).toBe('req-s');
+    expect(cfgB.smb_history_sync_request_id).toBe('req-h');
+    expectBUnchanged(before);
   });
 });
 

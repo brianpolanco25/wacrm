@@ -230,3 +230,61 @@ export async function verifyTenantAppSignature(
   }
   return true;
 }
+
+/**
+ * The `whatsapp_config` rows of one WABA whose own decrypted app secret
+ * signs this delivery (any of the accepted body variants). Used to
+ * decide which rows an account-level event signed by a tenant app
+ * (`PARTNER_REMOVED`) may touch: two accounts can share a `waba_id`
+ * with different apps, and one app's event must never move the other's
+ * row (feature 1651, R21/R25). [] when none signs it, when the secret is
+ * missing or cannot be decrypted, or when the lookup fails. Never throws.
+ */
+export async function wabaConfigsSignedBy(
+  db: SupabaseClient,
+  wabaId: string,
+  rawBody: string,
+  signatureHeader: string | null
+): Promise<{ id: string; account_id: string }[]> {
+  if (!wabaId || !signatureHeader?.startsWith('sha256=')) return [];
+  try {
+    const { data, error } = await db
+      .from('whatsapp_config')
+      .select('id, account_id, app_secret')
+      .eq('waba_id', wabaId);
+    if (error) {
+      console.error(
+        '[webhook] account app secret lookup failed:',
+        error.message
+      );
+      return [];
+    }
+    const out: { id: string; account_id: string }[] = [];
+    for (const row of (data ?? []) as {
+      id: string;
+      account_id: string;
+      app_secret: string | null;
+    }[]) {
+      if (!row.app_secret) continue;
+      let plain: string | null = null;
+      try {
+        plain = decrypt(row.app_secret) || null;
+      } catch {
+        // Cannot be decrypted: counts as no secret.
+      }
+      if (
+        plain &&
+        signatureMatchesAnyVariant(rawBody, signatureHeader, plain)
+      ) {
+        out.push({ id: row.id, account_id: row.account_id });
+      }
+    }
+    return out;
+  } catch (err) {
+    console.error(
+      '[webhook] account app secret lookup failed:',
+      err instanceof Error ? err.message : err
+    );
+    return [];
+  }
+}
