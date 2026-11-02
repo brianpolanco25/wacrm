@@ -42,6 +42,7 @@ import {
   type MemberInviteOutcome,
 } from './platform-provisioning';
 import { ImpersonationActions } from './impersonation-actions';
+import { MemberPassword } from './member-password';
 import { CheckoutLinkNotice, ManagedPricingCard } from './platform-managed';
 import { PlatformStatements } from './platform-statements';
 import { useSubscriptionStatusLabel } from './subscription-status';
@@ -489,6 +490,11 @@ export function PlatformAccountDetail({
                 <span>{member.fullName ?? member.email ?? member.userId}</span>
                 <span className="text-muted-foreground">{member.email}</span>
                 <Badge variant="outline">{member.role ?? '—'}</Badge>
+                <MemberPassword
+                  accountId={accountId}
+                  userId={member.userId}
+                  name={member.fullName ?? member.email ?? member.userId}
+                />
               </li>
             ))}
           </ul>

@@ -2764,7 +2764,23 @@
         "wabaNoData": "WABA {waba}: no Meta data",
         "partialMissing": "Incomplete Meta data: some WABA could not be read yet."
       }
-    }
+    },
+    "passwordButton": "Change password",
+    "passwordTitle": "{name}'s password",
+    "passwordHelp": "Applied instantly; no email is sent. Give it to the person through a secure channel and ask them to change it after signing in.",
+    "passwordLabel": "New password",
+    "passwordGenerate": "Generate",
+    "passwordCopy": "Copy",
+    "passwordCopied": "Password copied",
+    "passwordReasonLabel": "Reason (kept in the audit log)",
+    "passwordReasonPlaceholder": "E.g. the customer cannot sign in and the reset email is rate-limited",
+    "passwordSubmit": "Set password",
+    "passwordCancel": "Close",
+    "passwordDone": "Password changed. Copy it now: it is not shown again.",
+    "passwordInvalid": "The password must be {min} to {max} characters.",
+    "passwordReasonShort": "The reason must be at least {min} characters.",
+    "passwordIsOperator": "Another operator's password cannot be changed from here.",
+    "passwordFailed": "Could not change the password."
   },
   "Developers": {
     "ui": {

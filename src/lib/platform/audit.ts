@@ -19,7 +19,7 @@
 
 import { supabaseAdmin } from '@/lib/auth/admin-client';
 
-/** Acts recorded here. Mirrors the CHECK of migrations 058, 071 and 078. */
+/** Acts recorded here. Mirrors the CHECK of migrations 058, 071, 078 and 087. */
 export type PlatformAction =
   | 'impersonation'
   | 'suspend'
@@ -32,7 +32,9 @@ export type PlatformAction =
   | 'operator_revoke'
   // s10.4 (migration 078): an open statement settled from the file.
   | 'payment_confirmed'
-  | 'statement_void';
+  | 'statement_void'
+  // 087: the operator set a member's password by hand.
+  | 'password_set';
 
 /**
  * Acts that may be recorded with no account (migration 071,

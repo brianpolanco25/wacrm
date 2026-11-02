@@ -2764,7 +2764,23 @@
         "wabaNoData": "WABA {waba}: sin dato de Meta",
         "partialMissing": "Dato de Meta incompleto: algún WABA todavía no se ha podido leer."
       }
-    }
+    },
+    "passwordButton": "Cambiar contraseña",
+    "passwordTitle": "Contraseña de {name}",
+    "passwordHelp": "Se aplica al instante y no se envía ningún correo. Pásasela a la persona por un canal seguro y pídele que la cambie al entrar.",
+    "passwordLabel": "Nueva contraseña",
+    "passwordGenerate": "Generar",
+    "passwordCopy": "Copiar",
+    "passwordCopied": "Contraseña copiada",
+    "passwordReasonLabel": "Motivo (queda en la bitácora)",
+    "passwordReasonPlaceholder": "Ej.: el cliente no puede entrar y el correo de reset está limitado",
+    "passwordSubmit": "Aplicar contraseña",
+    "passwordCancel": "Cerrar",
+    "passwordDone": "Contraseña cambiada. Cópiala ahora: no se vuelve a mostrar.",
+    "passwordInvalid": "La contraseña debe tener entre {min} y {max} caracteres.",
+    "passwordReasonShort": "El motivo debe tener al menos {min} caracteres.",
+    "passwordIsOperator": "No se puede cambiar la contraseña de otro operador desde aquí.",
+    "passwordFailed": "No se pudo cambiar la contraseña."
   },
   "Developers": {
     "ui": {

@@ -20,7 +20,12 @@ import { supabaseAdmin } from '@/lib/auth/admin-client';
 import type { MetaBilling } from '@/lib/billing/entitlements';
 import { parseMetaPricing, type MetaPricing } from '@/lib/billing/meta-pricing';
 import { addCycle } from '@/lib/billing/webhook-events';
+import { isPlatformAdmin } from '@/lib/auth/platform-admins';
 import { recordPlatformAction } from './audit';
+export {
+  OPERATOR_MAX_PASSWORD_LENGTH,
+  OPERATOR_MIN_PASSWORD_LENGTH,
+} from './password-rules';
 
 // ------------------------------------------------------------
 // Input
@@ -118,6 +123,61 @@ export async function inviteAuthUser(params: {
   const userId = data?.user?.id;
   if (!userId) return { ok: false, reason: 'failed' };
   return { ok: true, userId };
+}
+
+/**
+ * The member of THIS company whose password the operator wants to set,
+ * or null. The account filter is the point: a user id that belongs to
+ * another company (or to nobody) resolves to nothing, so the route
+ * cannot be used to reach a person through the wrong company's file.
+ */
+export async function findMemberForPasswordChange(
+  accountId: string,
+  userId: string
+): Promise<{ userId: string; email: string | null } | null> {
+  const { data, error } = await supabaseAdmin()
+    .from('profiles')
+    .select('user_id, email')
+    .eq('account_id', accountId)
+    .eq('user_id', userId)
+    .limit(1);
+  if (error) {
+    console.error('[platform/provisioning] member lookup failed:', error);
+    throw error;
+  }
+  const row = ((data as Record<string, unknown>[]) ?? [])[0];
+  if (!row) return null;
+  return {
+    userId: row.user_id as string,
+    email: (row.email as string | null) ?? null,
+  };
+}
+
+export type PasswordChangeOutcome =
+  { ok: true } | { ok: false; reason: 'operator' | 'failed' };
+
+/**
+ * Set a user's password directly through the Auth admin API: no email,
+ * so it works when Supabase's email rate limit is spent. Refuses another
+ * operator's account — an operator who can rewrite a peer's password can
+ * take over the panel; they reset their own from their profile.
+ */
+export async function setMemberPassword(params: {
+  userId: string;
+  password: string;
+}): Promise<PasswordChangeOutcome> {
+  if (await isPlatformAdmin(params.userId)) {
+    return { ok: false, reason: 'operator' };
+  }
+  const { error } = await supabaseAdmin().auth.admin.updateUserById(
+    params.userId,
+    { password: params.password }
+  );
+  if (error) {
+    console.error('[platform/provisioning] password change failed:', error);
+    return { ok: false, reason: 'failed' };
+  }
+  return { ok: true };
 }
 
 /**
