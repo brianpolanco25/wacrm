@@ -1,9 +1,12 @@
 import crypto from 'node:crypto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { encrypt } from './encryption';
 import {
   extractAccountOnlyWabaIds,
   extractPhoneNumberIds,
   tenantSignatureDecision,
+  wabaConfigsSignedBy,
   wabaSignatureDecision,
 } from './tenant-app-secret';
 
@@ -154,5 +157,78 @@ describe('account-level events (account_update, no phone number)', () => {
       ])
     ).toBe(false);
     expect(wabaSignatureDecision(accountEvent, sig, new Map(), [])).toBe(false);
+  });
+});
+
+describe('wabaConfigsSignedBy (R21, R25)', () => {
+  const body = JSON.stringify({
+    entry: [
+      {
+        id: 'waba-1',
+        changes: [
+          {
+            field: 'account_update',
+            value: { event: 'PARTNER_REMOVED', waba_id: 'waba-1' },
+          },
+        ],
+      },
+    ],
+  });
+
+  function fakeDb(result: { data: unknown; error: unknown }) {
+    const eq = vi.fn(async () => result);
+    const select = vi.fn(() => ({ eq }));
+    const from = vi.fn(() => ({ select }));
+    return { db: { from } as unknown as SupabaseClient, from, select, eq };
+  }
+
+  const rows = [
+    { id: 'cfg-a', account_id: 'acct-a', app_secret: encrypt('secret-a') },
+    { id: 'cfg-b', account_id: 'acct-b', app_secret: encrypt('secret-b') },
+  ];
+
+  it('returns only the row whose own secret signs the delivery', async () => {
+    const { db, eq } = fakeDb({ data: rows, error: null });
+    expect(
+      await wabaConfigsSignedBy(db, 'waba-1', body, sign(body, 'secret-a'))
+    ).toEqual([{ id: 'cfg-a', account_id: 'acct-a' }]);
+    expect(eq).toHaveBeenCalledWith('waba_id', 'waba-1');
+  });
+
+  it('returns [] when no stored secret signs it', async () => {
+    const { db } = fakeDb({ data: rows, error: null });
+    expect(
+      await wabaConfigsSignedBy(db, 'waba-1', body, sign(body, 'other'))
+    ).toEqual([]);
+  });
+
+  it('skips rows with a null or undecryptable secret', async () => {
+    const { db } = fakeDb({
+      data: [
+        { id: 'cfg-n', account_id: 'acct-a', app_secret: null },
+        { id: 'cfg-x', account_id: 'acct-a', app_secret: 'not-encrypted' },
+      ],
+      error: null,
+    });
+    expect(
+      await wabaConfigsSignedBy(db, 'waba-1', body, sign(body, 'secret-a'))
+    ).toEqual([]);
+  });
+
+  it('returns [] when the lookup errors or there is no signature', async () => {
+    const errored = fakeDb({ data: null, error: { message: 'boom' } });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(
+      await wabaConfigsSignedBy(
+        errored.db,
+        'waba-1',
+        body,
+        sign(body, 'secret-a')
+      )
+    ).toEqual([]);
+    spy.mockRestore();
+    const { db, from } = fakeDb({ data: rows, error: null });
+    expect(await wabaConfigsSignedBy(db, 'waba-1', body, null)).toEqual([]);
+    expect(from).not.toHaveBeenCalled();
   });
 });

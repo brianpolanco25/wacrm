@@ -2452,6 +2452,34 @@ BEGIN
     RAISE EXCEPTION 'trigger whatsapp_config_guard_smb_sync is missing (migration 088)';
   END IF;
   -- /088 -----------------------------------------------------------
+  -- 089 — lotes de coexistencia: historial y libreta (#1651) -------
+  IF to_regclass('public.whatsapp_coexistence_batches') IS NULL THEN
+    RAISE EXCEPTION 'table whatsapp_coexistence_batches is missing (migration 089)';
+  END IF;
+  IF to_regclass('public.idx_wcb_history_chunk') IS NULL
+     OR to_regclass('public.idx_wcb_pending') IS NULL THEN
+    RAISE EXCEPTION 'whatsapp_coexistence_batches indexes missing (migration 089)';
+  END IF;
+  IF NOT (SELECT indisunique FROM pg_index
+          WHERE indexrelid = 'public.idx_wcb_history_chunk'::regclass) THEN
+    RAISE EXCEPTION 'idx_wcb_history_chunk must be unique (migration 089)';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.whatsapp_coexistence_batches'::regclass) THEN
+    RAISE EXCEPTION 'whatsapp_coexistence_batches must have RLS enabled (migration 089)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public'
+               AND tablename = 'whatsapp_coexistence_batches') THEN
+    RAISE EXCEPTION 'whatsapp_coexistence_batches must have no policies (migration 089)';
+  END IF;
+  IF has_table_privilege('authenticated', 'public.whatsapp_coexistence_batches', 'SELECT')
+     OR has_table_privilege('anon', 'public.whatsapp_coexistence_batches', 'SELECT')
+     OR has_table_privilege('authenticated', 'public.whatsapp_coexistence_batches', 'INSERT')
+     OR has_table_privilege('anon', 'public.whatsapp_coexistence_batches', 'INSERT') THEN
+    RAISE EXCEPTION 'whatsapp_coexistence_batches is readable or writable by a client role (migration 089)';
+  END IF;
+  -- /089 -----------------------------------------------------------
 
   RAISE NOTICE 'schema verification passed';
 END

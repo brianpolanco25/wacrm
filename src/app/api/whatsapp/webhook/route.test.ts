@@ -93,6 +93,47 @@ const h = vi.hoisted(() => ({
   },
 }));
 
+// #1651: the coexistence handlers, the platform signature result and the
+// rejected-delivery diagnostic, so the routing can be asserted alone.
+const coex = vi.hoisted(() => ({
+  platformSignatureOk: { value: true },
+  verifyTenantAppSignature: vi.fn(async () => false),
+  logRejectedDelivery: vi.fn(async () => {}),
+  handleCoexistenceChange: vi.fn(async () => ({ batchIds: [] as string[] })),
+  handleAccountUpdate: vi.fn(async () => {}),
+  drainCoexistenceBatches: vi.fn(async () => ({
+    processed: 0,
+    completed: 0,
+    pending: 0,
+    failed: 0,
+  })),
+}));
+vi.mock('@/lib/whatsapp/tenant-app-secret', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@/lib/whatsapp/tenant-app-secret')
+  >()),
+  verifyTenantAppSignature: coex.verifyTenantAppSignature,
+}));
+vi.mock('@/lib/whatsapp/webhook-diagnostics', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@/lib/whatsapp/webhook-diagnostics')
+  >()),
+  logRejectedDelivery: coex.logRejectedDelivery,
+}));
+vi.mock('@/lib/whatsapp/coexistence-webhook', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@/lib/whatsapp/coexistence-webhook')
+  >()),
+  handleCoexistenceChange: coex.handleCoexistenceChange,
+  handleAccountUpdate: coex.handleAccountUpdate,
+}));
+vi.mock('@/lib/whatsapp/coexistence-batches', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@/lib/whatsapp/coexistence-batches')
+  >()),
+  drainCoexistenceBatches: coex.drainCoexistenceBatches,
+}));
+
 // CP11: every billing gate, wired so it explodes if the storing path
 // ever touches it. See the describe block at the end of this file.
 const billingGates = vi.hoisted(() => ({
@@ -135,17 +176,21 @@ vi.mock('@supabase/supabase-js', () => ({
           // numbers of the SAME account have to be told apart.
           const byPhone = (_col: string, phoneNumberId: string) =>
             Promise.resolve({
-              data: [
-                {
-                  id: `cfg-${phoneNumberId}`,
-                  account_id: 'acc-1',
-                  user_id: 'user-1',
-                  phone_number_id: phoneNumberId,
-                  access_token: 'enc',
-                  mirror_inbound_media: h.state.mirrorInboundMedia,
-                  meta_payment_status: h.state.metaPaymentStatus,
-                },
-              ],
+              // 'pn-none' is a number nobody owns (#1651, R19).
+              data:
+                phoneNumberId === 'pn-none'
+                  ? []
+                  : [
+                      {
+                        id: `cfg-${phoneNumberId}`,
+                        account_id: 'acc-1',
+                        user_id: 'user-1',
+                        phone_number_id: phoneNumberId,
+                        access_token: 'enc',
+                        mirror_inbound_media: h.state.mirrorInboundMedia,
+                        meta_payment_status: h.state.metaPaymentStatus,
+                      },
+                    ],
               error: null,
             });
           const all = Promise.resolve({
@@ -407,7 +452,7 @@ vi.mock('@/lib/contacts/dedupe', () => ({
   isUniqueViolation: () => false,
 }));
 vi.mock('@/lib/whatsapp/webhook-signature', () => ({
-  verifyMetaWebhookSignature: () => true,
+  verifyMetaWebhookSignature: () => coex.platformSignatureOk.value,
 }));
 vi.mock('@/lib/whatsapp/template-webhook', () => ({
   isTemplateWebhookField: () => false,
@@ -2178,5 +2223,288 @@ describe('inbound webhook: free service quota spent with pause_ai (p11.3)', () =
     expect(h.dispatchInboundToAiReply).toHaveBeenCalledTimes(1);
     expect(pausedDecisions).toEqual([true]);
     expect(aiSend).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// #1651 — coexistencia: ecos, historial, libreta, baja del socio y
+// la entrega de prueba del panel de Meta.
+// ============================================================
+
+describe('coexistencia (#1651)', () => {
+  const BUSINESS = '18295479000';
+  const meta = (phoneNumberId = 'pn-1') => ({
+    display_phone_number: BUSINESS,
+    phone_number_id: phoneNumberId,
+  });
+  const echoChange = (phoneNumberId = 'pn-1') => ({
+    field: 'smb_message_echoes',
+    value: {
+      messaging_product: 'whatsapp',
+      metadata: meta(phoneNumberId),
+      message_echoes: [
+        {
+          from: BUSINESS,
+          to: '15551230000',
+          id: 'wamid.ECHO',
+          timestamp: '1762100000',
+          type: 'text',
+          text: { body: 'desde el teléfono' },
+        },
+      ],
+    },
+  });
+  const historyChange = (phoneNumberId = 'pn-1') => ({
+    field: 'history',
+    value: {
+      messaging_product: 'whatsapp',
+      metadata: meta(phoneNumberId),
+      history: [
+        {
+          metadata: { phase: 0, chunk_order: 1, progress: 100 },
+          threads: [{ id: '15551230000', messages: [] }],
+        },
+      ],
+    },
+  });
+  const stateSyncChange = () => ({
+    field: 'smb_app_state_sync',
+    value: {
+      messaging_product: 'whatsapp',
+      metadata: meta(),
+      state_sync: [
+        {
+          type: 'contact',
+          action: 'add',
+          contact: { full_name: 'Ada', phone_number: '15551230000' },
+        },
+      ],
+    },
+  });
+  const messagesChange = () => ({
+    field: 'messages',
+    value: {
+      metadata: { phone_number_id: 'pn-1' },
+      contacts: [{ wa_id: '15551230000', profile: { name: 'Ada' } }],
+      messages: [TEXT_MESSAGE],
+    },
+  });
+  const partnerRemoved = {
+    field: 'account_update',
+    value: {
+      event: 'PARTNER_REMOVED',
+      waba_id: 'waba-1',
+      reason: 'PRIMARY_INACTIVITY',
+      initiated_by: 'SYSTEM',
+    },
+  };
+  const panelBody = {
+    object: 'whatsapp_business_account',
+    entry: [
+      {
+        id: '0',
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              metadata: {
+                display_phone_number: '16505551111',
+                phone_number_id: '123456123',
+              },
+              messages: [TEXT_MESSAGE],
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  function request(body: unknown) {
+    return {
+      text: async () => JSON.stringify(body),
+      headers: { get: () => 'sha256=stub' },
+    } as unknown as Request;
+  }
+  async function deliver(body: unknown) {
+    const res = (await POST(request(body))) as unknown as {
+      body: unknown;
+      init?: { status?: number };
+    };
+    for (const cb of h.state.afterCallbacks) await cb();
+    return res;
+  }
+  const wabaBody = (...changes: unknown[]) => ({
+    entry: [{ id: 'waba-1', changes }],
+  });
+
+  let logs: string[] = [];
+  beforeEach(() => {
+    coex.platformSignatureOk.value = true;
+    coex.verifyTenantAppSignature.mockResolvedValue(false);
+    coex.handleCoexistenceChange.mockResolvedValue({ batchIds: [] });
+    logs = [];
+    for (const level of ['log', 'info', 'warn', 'error'] as const) {
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        logs.push(args.map((a) => String(a)).join(' '));
+      });
+    }
+  });
+
+  function expectNoInboundFanOut() {
+    expect(h.state.upsertCalls).toEqual([]);
+    expect(h.runAutomationsForTrigger).not.toHaveBeenCalled();
+    expect(h.dispatchInboundToFlows).not.toHaveBeenCalled();
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled();
+    expect(h.dispatchWebhookEvent).not.toHaveBeenCalled();
+    expect(h.state.rpcCalls).toEqual([]);
+  }
+
+  it.each([
+    ['smb_message_echoes', echoChange],
+    ['history', historyChange],
+    ['smb_app_state_sync', stateSyncChange],
+  ])(
+    '%s reaches handleCoexistenceChange with the resolved config, never processMessage',
+    async (field, make) => {
+      const change = make();
+      await deliver(wabaBody(change));
+      expect(coex.handleCoexistenceChange).toHaveBeenCalledTimes(1);
+      const [, gotField, gotValue, gotConfig] = coex.handleCoexistenceChange
+        .mock.calls[0] as unknown as [
+        unknown,
+        string,
+        unknown,
+        Record<string, unknown>,
+      ];
+      expect(gotField).toBe(field);
+      expect(gotValue).toEqual(change.value);
+      expect(gotConfig).toMatchObject({
+        id: 'cfg-pn-1',
+        account_id: 'acc-1',
+        user_id: 'user-1',
+        phone_number_id: 'pn-1',
+        display_phone_number: BUSINESS,
+      });
+      expectNoInboundFanOut();
+      // Nothing queued → nothing to drain.
+      expect(coex.drainCoexistenceBatches).not.toHaveBeenCalled();
+    }
+  );
+
+  it('drains once, after the messages of the same delivery, with the batch ids and receivedAt + 45 s', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    coex.handleCoexistenceChange.mockResolvedValue({ batchIds: ['b-1'] });
+    let upsertsAtDrain = -1;
+    coex.drainCoexistenceBatches.mockImplementationOnce(async () => {
+      upsertsAtDrain = h.state.upsertCalls.length;
+      return { processed: 1, completed: 1, pending: 0, failed: 0 };
+    });
+    await deliver(wabaBody(historyChange(), messagesChange()));
+    expect(coex.drainCoexistenceBatches).toHaveBeenCalledTimes(1);
+    expect(
+      (coex.drainCoexistenceBatches.mock.calls[0] as unknown as unknown[])[1]
+    ).toEqual({
+      deadline: 1_045_000,
+      batchIds: ['b-1'],
+    });
+    // The ordinary inbound was stored before the drain started.
+    expect(upsertsAtDrain).toBe(1);
+  });
+
+  it('a phone_number_id without config neither writes nor queues', async () => {
+    await deliver(wabaBody(echoChange('pn-none'), historyChange('pn-none')));
+    expect(coex.handleCoexistenceChange).not.toHaveBeenCalled();
+    expect(coex.drainCoexistenceBatches).not.toHaveBeenCalled();
+    expect(logs.some((l) => l.includes('No config found'))).toBe(true);
+  });
+
+  it('account_update reaches handleAccountUpdate with entry.id and the signer, no phone_number_id error', async () => {
+    const body = wabaBody(partnerRemoved);
+    await deliver(body);
+    expect(coex.handleAccountUpdate).toHaveBeenCalledTimes(1);
+    const [, wabaId, value, auth] = coex.handleAccountUpdate.mock
+      .calls[0] as unknown as [
+      unknown,
+      string,
+      unknown,
+      Record<string, unknown>,
+    ];
+    expect(wabaId).toBe('waba-1');
+    expect(value).toEqual(partnerRemoved.value);
+    expect(auth).toEqual({
+      signer: 'platform',
+      rawBody: JSON.stringify(body),
+      signature: 'sha256=stub',
+    });
+    expect(logs.some((l) => l.includes('change without phone_number_id'))).toBe(
+      false
+    );
+  });
+
+  it('account_update signed by a tenant app carries signer tenant', async () => {
+    coex.platformSignatureOk.value = false;
+    coex.verifyTenantAppSignature.mockResolvedValue(true);
+    await deliver(wabaBody(partnerRemoved));
+    expect(
+      (coex.handleAccountUpdate.mock.calls[0] as unknown as unknown[])[3]
+    ).toMatchObject({ signer: 'tenant' });
+  });
+
+  it('panel test with an invalid signature → 200, logged as such, not a rejection, no after()', async () => {
+    coex.platformSignatureOk.value = false;
+    const res = await deliver(panelBody);
+    expect(res.init?.status).toBe(200);
+    expect(res.body).toEqual({ status: 'test' });
+    const line = logs.find((l) =>
+      l.includes('[webhook] meta panel test delivery')
+    );
+    expect(line).toContain('"verified":false');
+    expect(line).toContain('"fields":["messages"]');
+    expect(
+      logs.some((l) => l.includes('rejected request with invalid signature'))
+    ).toBe(false);
+    expect(coex.logRejectedDelivery).not.toHaveBeenCalled();
+    expect(h.state.afterCallbacks).toEqual([]);
+  });
+
+  it('panel test with a valid signature → verified:true and nothing processed', async () => {
+    await deliver(panelBody);
+    expect(
+      logs.find((l) => l.includes('[webhook] meta panel test delivery'))
+    ).toContain('"verified":true');
+    expect(logs.some((l) => l.includes('No config found'))).toBe(false);
+    expect(h.state.fromCalls).toEqual([]);
+    expectNoInboundFanOut();
+  });
+
+  it('a real delivery with an invalid signature is still a 401 with the diagnostic', async () => {
+    coex.platformSignatureOk.value = false;
+    const res = await deliver(wabaBody(echoChange()));
+    expect(res.init?.status).toBe(401);
+    expect(coex.logRejectedDelivery).toHaveBeenCalledTimes(1);
+    expect(
+      logs.some((l) => l.includes('rejected request with invalid signature'))
+    ).toBe(true);
+    expect(h.state.afterCallbacks).toEqual([]);
+  });
+
+  it('billing never blocks: an echo and a history chunk reach their handler with the account suspended', async () => {
+    billingGates.assertWritable.mockRejectedValue(
+      new AccountLockedError('active', true)
+    );
+    billingGates.assertQuota.mockRejectedValue(new Error('quota spent'));
+    billingGates.getEntitlements.mockRejectedValue(new Error('no plan'));
+    coex.handleCoexistenceChange.mockResolvedValueOnce({ batchIds: [] });
+    coex.handleCoexistenceChange.mockResolvedValueOnce({ batchIds: ['b-9'] });
+    await deliver(wabaBody(echoChange(), historyChange()));
+    expect(
+      coex.handleCoexistenceChange.mock.calls.map(
+        (c) => (c as unknown as unknown[])[1]
+      )
+    ).toEqual(['smb_message_echoes', 'history']);
+    expect(coex.drainCoexistenceBatches).toHaveBeenCalledTimes(1);
+    for (const gate of Object.values(billingGates)) {
+      expect(gate).not.toHaveBeenCalled();
+    }
   });
 });

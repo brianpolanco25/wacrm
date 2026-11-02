@@ -8,8 +8,11 @@ import { normalizePhone } from '@/lib/whatsapp/phone-utils';
 import {
   findContactByWaUserId,
   findExistingContact,
-  isUniqueViolation,
 } from '@/lib/contacts/dedupe';
+import {
+  findOrCreateContact,
+  findOrCreateConversation,
+} from '@/lib/whatsapp/inbound-thread';
 import { sanitizeBsuid, sanitizeWaUsername } from '@/lib/whatsapp/bsuid';
 import { reopenClosedConversation } from '@/lib/conversations/reopen';
 import {
@@ -19,7 +22,21 @@ import {
 } from '@/lib/whatsapp/entry-point';
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature';
 import { verifyTenantAppSignature } from '@/lib/whatsapp/tenant-app-secret';
-import { logRejectedDelivery } from '@/lib/whatsapp/webhook-diagnostics';
+import {
+  describeTestDelivery,
+  isMetaPanelTestDelivery,
+  logRejectedDelivery,
+} from '@/lib/whatsapp/webhook-diagnostics';
+import {
+  handleAccountUpdate,
+  handleCoexistenceChange,
+  isCoexistenceField,
+  type DeliveryAuth,
+} from '@/lib/whatsapp/coexistence-webhook';
+import {
+  DRAIN_BUDGET_MS,
+  drainCoexistenceBatches,
+} from '@/lib/whatsapp/coexistence-batches';
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import { dispatchInboundToFlows } from '@/lib/flows/engine';
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply';
@@ -162,6 +179,12 @@ interface WhatsAppWebhookEntry {
       contacts?: WhatsAppWebhookContact[];
       messages?: WhatsAppMessage[];
       statuses?: WhatsAppStatus[];
+      // Coexistence fields (#1651). `unknown` on purpose: the parsers in
+      // src/lib/whatsapp/coexistence-webhook.ts validate the shape.
+      message_echoes?: unknown;
+      history?: unknown;
+      state_sync?: unknown;
+      event?: unknown;
     };
     field: string;
   }>;
@@ -316,6 +339,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   // Read raw body first so we can HMAC-verify the exact bytes Meta
   // signed. request.json() would re-encode and break the signature.
+  const receivedAt = Date.now();
   const rawBody = await request.text();
   const signature = request.headers.get('x-hub-signature-256');
 
@@ -323,10 +347,21 @@ export async function POST(request: Request) {
   // connected through ITS OWN Meta app (migration 086), that app's secret
   // — tried only against the numbers the delivery names, so one tenant's
   // secret can never vouch for another tenant's number.
-  if (
-    !verifyMetaWebhookSignature(rawBody, signature) &&
-    !(await verifyTenantAppSignature(supabaseAdmin(), rawBody, signature))
-  ) {
+  const platformOk = verifyMetaWebhookSignature(rawBody, signature);
+  const tenantOk =
+    !platformOk &&
+    (await verifyTenantAppSignature(supabaseAdmin(), rawBody, signature));
+  if (!platformOk && !tenantOk) {
+    // The «Test» button of the Meta dashboard sends a sample (entry "0",
+    // number 123456123) signed with no secret we store. It is not a
+    // signature failure and nothing in it is processed (#1651, R27).
+    if (isMetaPanelTestDelivery(rawBody)) {
+      console.info(
+        '[webhook] meta panel test delivery:',
+        JSON.stringify(describeTestDelivery(rawBody, false))
+      );
+      return NextResponse.json({ status: 'test' }, { status: 200 });
+    }
     // 401 (not 200) — we want Meta's delivery dashboard to show failures
     // loudly if a misconfiguration causes signatures to stop matching,
     // rather than silently eating events.
@@ -356,9 +391,14 @@ export async function POST(request: Request) {
   // (see issue #301). `after()` hands the callback to the runtime, which
   // keeps the function alive until it resolves (within the route's
   // maxDuration).
+  const auth: DeliveryAuth = {
+    signer: platformOk ? 'platform' : 'tenant',
+    rawBody,
+    signature,
+  };
   after(async () => {
     try {
-      await processWebhook(body);
+      await processWebhook(body, auth, receivedAt);
     } catch (error) {
       console.error('Error processing webhook:', error);
     }
@@ -367,8 +407,26 @@ export async function POST(request: Request) {
   return NextResponse.json({ status: 'received' }, { status: 200 });
 }
 
-async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
+async function processWebhook(
+  body: { entry?: WhatsAppWebhookEntry[] },
+  auth: DeliveryAuth,
+  receivedAt: number
+) {
   if (!body.entry) return;
+
+  // A dashboard test that DID verify (R28): logged, never processed —
+  // its sample number belongs to nobody.
+  if (isMetaPanelTestDelivery(body)) {
+    console.info(
+      '[webhook] meta panel test delivery:',
+      JSON.stringify(describeTestDelivery(body, true))
+    );
+    return;
+  }
+
+  // Coexistence batches (history / address book) captured by this
+  // delivery, drained once every change has been handled (#1651, R40).
+  const queuedBatches: string[] = [];
 
   for (const entry of body.entry) {
     for (const change of entry.changes) {
@@ -398,8 +456,24 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           messages: value?.messages?.length ?? 0,
           statuses: value?.statuses?.length ?? 0,
           event: (value as { event?: unknown } | undefined)?.event ?? null,
+          echoes: Array.isArray(value?.message_echoes)
+            ? value.message_echoes.length
+            : 0,
+          historyItems: Array.isArray(value?.history)
+            ? value.history.length
+            : 0,
+          stateSync: Array.isArray(value?.state_sync)
+            ? value.state_sync.length
+            : 0,
         })
       );
+
+      // Account-level events name the WABA (`entry.id`), never a number:
+      // handled before the phone_number_id requirement below (#1651).
+      if (change.field === 'account_update') {
+        await handleAccountUpdate(supabaseAdmin(), entry.id, value, auth);
+        continue;
+      }
 
       // La configuración se resuelve UNA vez por `change`, antes de
       // separar estados de mensajes, porque las dos ramas necesitan
@@ -415,6 +489,27 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const config = await resolveInboundConfig(phoneNumberId);
       if (!config) continue;
+
+      // Coexistence (#1651): echoes of what the business sent from the
+      // phone, the chat history and the phone's address book. Never
+      // reaches processMessage — no automations, flows, AI, public
+      // webhooks or charges.
+      if (isCoexistenceField(change.field)) {
+        const { batchIds } = await handleCoexistenceChange(
+          supabaseAdmin(),
+          change.field,
+          value,
+          {
+            ...config,
+            display_phone_number:
+              value.metadata?.display_phone_number ??
+              config.display_phone_number ??
+              null,
+          }
+        );
+        queuedBatches.push(...batchIds);
+        continue;
+      }
 
       // Handle status updates
       if (value.statuses) {
@@ -457,6 +552,16 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         );
       }
     }
+  }
+
+  // After every change of the delivery — ordinary `messages` never wait
+  // for the history. What does not fit before receivedAt + 45 s stays
+  // `pending` for GET /api/whatsapp/coexistence/cron.
+  if (queuedBatches.length > 0) {
+    await drainCoexistenceBatches(supabaseAdmin(), {
+      deadline: receivedAt + DRAIN_BUDGET_MS,
+      batchIds: queuedBatches,
+    });
   }
 }
 
@@ -928,6 +1033,7 @@ async function processMessage(
 
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
+    supabaseAdmin(),
     accountId,
     configOwnerUserId,
     {
@@ -954,6 +1060,7 @@ async function processMessage(
 
   // Find or create conversation
   const convResult = await findOrCreateConversation(
+    supabaseAdmin(),
     accountId,
     configOwnerUserId,
     contactRecord.id,
@@ -1518,268 +1625,4 @@ async function parseMessageContent(
         contentText: `[Unsupported message type: ${message.type}]`,
       };
   }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ContactRow = any;
-
-interface ContactOutcome {
-  contact: ContactRow;
-  /** True when this call created the row; drives new_contact_created
-   *  automation dispatch in processMessage. */
-  wasCreated: boolean;
-}
-
-/** Lo que el webhook sabe del remitente de un mensaje entrante. */
-interface InboundSender {
-  /** Teléfono normalizado (solo dígitos). '' cuando Meta no lo manda. */
-  phone: string;
-  /** BSUID, o null. Al menos uno de los dos es no vacío. */
-  waUserId: string | null;
-  /** `profile.username`, sin arroba, o null. */
-  username: string | null;
-  /** `profile.name`, o null. */
-  name: string | null;
-}
-
-/**
- * Resolver el contacto de un entrante, con las DOS identidades.
- *
- * El orden importa y es el de la spec (§5):
- *
- *   1. **Por BSUID.** Es lo único que Meta manda siempre, así que es lo
- *      primero que se prueba. Si el contacto ya existe, se le completa
- *      el teléfono cuando por fin llega, y el nombre de usuario cuando
- *      cambia.
- *   2. **Por teléfono.** Cubre a todos los contactos anteriores a este
- *      cambio (y a los creados a mano o por CSV): la primera vez que
- *      uno de ellos escribe con BSUID, se le guarda el BSUID en SU fila
- *      en lugar de abrir una segunda.
- *   3. **Crear.** Con lo que haya: teléfono, BSUID, o ambos.
- *
- * Ninguna de las actualizaciones de los pasos 1 y 2 puede tumbar el
- * mensaje: si el teléfono o el BSUID que intentamos escribir ya son de
- * OTRO contacto de la cuenta, el índice único responde 23505, se
- * registra y se sigue con el contacto que ya teníamos. Un entrante no
- * se pierde por un conflicto de identidades (CP11).
- */
-async function findOrCreateContact(
-  accountId: string,
-  configOwnerUserId: string,
-  sender: InboundSender
-): Promise<ContactOutcome | null> {
-  const { phone, waUserId, username, name } = sender;
-
-  // ---- 1) por BSUID -------------------------------------------
-  if (waUserId) {
-    const byUserId = await findContactByWaUserId(
-      supabaseAdmin(),
-      accountId,
-      waUserId
-    );
-    if (byUserId) {
-      const patch: Record<string, unknown> = {};
-      // El teléfono llegó más tarde (el cliente lo compartió, o volvió
-      // a entrar en la ventana de 30 días): se completa, nunca se pisa
-      // uno distinto que ya estuviera guardado.
-      if (phone && !byUserId.phone) patch.phone = phone;
-      if (username && username !== byUserId.wa_username)
-        patch.wa_username = username;
-      if (name && name !== byUserId.name) patch.name = name;
-      await patchContact(accountId, byUserId.id, patch);
-      return {
-        contact: { ...byUserId, ...patch },
-        wasCreated: false,
-      };
-    }
-  }
-
-  // ---- 2) por teléfono ----------------------------------------
-  // El helper compartido pre-filtra en SQL por los últimos 8 dígitos
-  // (para no traerse la agenda entera en cada entrante) y aplica el
-  // `phonesMatch` estricto en JS sobre el puñado de candidatos. Lo
-  // usan también el alta manual y la importación CSV, así que las tres
-  // vías coinciden en qué es «el mismo número» (issue #212).
-  const existingContact = phone
-    ? await findExistingContact(supabaseAdmin(), accountId, phone)
-    : null;
-
-  if (existingContact) {
-    const patch: Record<string, unknown> = {};
-    // Primer webhook que trae el BSUID de un contacto de toda la vida:
-    // se le guarda en su fila. Esto es lo que impide el duplicado.
-    if (waUserId && !existingContact.wa_user_id) patch.wa_user_id = waUserId;
-    if (username && username !== existingContact.wa_username)
-      patch.wa_username = username;
-    if (name && name !== existingContact.name) patch.name = name;
-    await patchContact(accountId, existingContact.id, patch);
-    return {
-      contact: { ...existingContact, ...patch },
-      wasCreated: false,
-    };
-  }
-
-  // ---- 3) crear ------------------------------------------------
-  // account_id es la columna de tenencia; user_id es la columna de
-  // auditoría NOT NULL (ningún entrante tiene un «usuario que lo
-  // creó» — se atribuye al dueño de la configuración de WhatsApp).
-  // El nombre visible cae a lo que haya: nombre de perfil, teléfono,
-  // @usuario y, en último extremo, el BSUID.
-  const { data: newContact, error: createError } = await supabaseAdmin()
-    .from('contacts')
-    .insert({
-      account_id: accountId,
-      user_id: configOwnerUserId,
-      phone: phone || null,
-      wa_user_id: waUserId,
-      wa_username: username,
-      name: name || phone || (username ? `@${username}` : waUserId),
-    })
-    .select()
-    .single();
-
-  if (createError) {
-    // Lost a race: a concurrent inbound delivery (or another path)
-    // created this contact between our lookup and insert, and one of
-    // the unique indexes (022 por teléfono, 060 por BSUID) rejected the
-    // duplicate. Re-resolve the existing row instead of dropping the
-    // message.
-    if (isUniqueViolation(createError)) {
-      const raced = waUserId
-        ? await findContactByWaUserId(supabaseAdmin(), accountId, waUserId)
-        : null;
-      if (raced) return { contact: raced, wasCreated: false };
-      const racedByPhone = phone
-        ? await findExistingContact(supabaseAdmin(), accountId, phone)
-        : null;
-      if (racedByPhone) return { contact: racedByPhone, wasCreated: false };
-    }
-    console.error('Error creating contact:', createError);
-    return null;
-  }
-
-  return { contact: newContact, wasCreated: true };
-}
-
-/**
- * Escribir en un contacto lo que el último webhook nos ha enseñado de
- * él. Best-effort por diseño: el índice único de teléfono o el de BSUID
- * pueden rechazar el UPDATE si ese valor ya pertenece a otro contacto
- * de la cuenta (dos filas que resultan ser la misma persona — una
- * fusión que este webhook no va a decidir a las tres de la mañana). Se
- * registra y se sigue: el mensaje se guarda igual.
- *
- * Filtra por `account_id` además de por `id` porque el cliente de rol
- * de servicio no pasa por RLS (CP3).
- */
-async function patchContact(
-  accountId: string,
-  contactId: string,
-  patch: Record<string, unknown>
-): Promise<void> {
-  if (Object.keys(patch).length === 0) return;
-  const { error } = await supabaseAdmin()
-    .from('contacts')
-    .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq('id', contactId)
-    .eq('account_id', accountId);
-  if (error) {
-    console.error('[webhook] contact update skipped:', error.message ?? error);
-  }
-}
-
-async function findOrCreateConversation(
-  accountId: string,
-  configOwnerUserId: string,
-  contactId: string,
-  // The number this message came in on (migration 053). Sealed onto
-  // the thread so every reply goes back out through it.
-  whatsAppConfigId: string
-) {
-  // Look for an existing conversation in this account, oldest-first.
-  //
-  // We deliberately do NOT use `.single()` here. `.single()` errors on
-  // *both* 0 rows and ≥2 rows, and the old code treated any error as
-  // "none found" and inserted a new row. So once two conversations
-  // existed for a contact (from a race — Meta retries a delivery, or a
-  // batch fans out to concurrent runs), every subsequent inbound
-  // message errored on the lookup and created yet another conversation,
-  // snowballing into a wall of duplicate chats (issue #363).
-  //
-  // Ordering oldest-first and taking one row makes the lookup resolve to
-  // the same canonical survivor the dedup migration (036) keeps, so any
-  // pre-existing duplicates converge instead of compounding.
-  const { data: existingRows, error: findError } = await supabaseAdmin()
-    .from('conversations')
-    .select('*')
-    .eq('account_id', accountId)
-    .eq('contact_id', contactId)
-    .order('created_at', { ascending: true })
-    .limit(1);
-
-  if (findError) {
-    console.error('Error finding conversation:', findError);
-    return null;
-  }
-
-  if (existingRows && existingRows.length > 0) {
-    const existing = existingRows[0];
-    // Re-seal when the customer wrote to a DIFFERENT number of the same
-    // company. Deliberate: the reply has to come from the number they
-    // messaged, not from whichever one opened the thread months ago.
-    // The (account_id, contact_id) unique index of 036 stays — one
-    // contact still has ONE conversation, it just changes which of the
-    // company's numbers it runs on.
-    if (existing.whatsapp_config_id !== whatsAppConfigId) {
-      const { error: sealError } = await supabaseAdmin()
-        .from('conversations')
-        .update({ whatsapp_config_id: whatsAppConfigId })
-        .eq('id', existing.id)
-        .eq('account_id', accountId);
-      if (sealError) {
-        // Never drop an inbound message over this: the worst case is a
-        // reply that leaves through the account default.
-        console.error('Error sealing conversation number:', sealError);
-      } else {
-        existing.whatsapp_config_id = whatsAppConfigId;
-      }
-    }
-    return { conversation: existing, created: false };
-  }
-
-  // Create new conversation. Same tenancy + audit split as
-  // findOrCreateContact above.
-  const { data: newConv, error: createError } = await supabaseAdmin()
-    .from('conversations')
-    .insert({
-      account_id: accountId,
-      user_id: configOwnerUserId,
-      contact_id: contactId,
-      whatsapp_config_id: whatsAppConfigId,
-    })
-    .select()
-    .single();
-
-  if (createError) {
-    // Lost a race: a concurrent inbound delivery created the
-    // conversation between our lookup and insert, and the unique index
-    // (migration 036) rejected the duplicate. Re-resolve the winning
-    // row instead of dropping the message — mirrors findOrCreateContact.
-    if (isUniqueViolation(createError)) {
-      const { data: raced } = await supabaseAdmin()
-        .from('conversations')
-        .select('*')
-        .eq('account_id', accountId)
-        .eq('contact_id', contactId)
-        .order('created_at', { ascending: true })
-        .limit(1);
-      if (raced && raced.length > 0) {
-        return { conversation: raced[0], created: false };
-      }
-    }
-    console.error('Error creating conversation:', createError);
-    return null;
-  }
-
-  return { conversation: newConv, created: true };
 }

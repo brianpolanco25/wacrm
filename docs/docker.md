@@ -422,6 +422,14 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   deployment, sending the shared secret in the `x-cron-secret` header
   (`AUTOMATION_CRON_SECRET`, see `.env.local.example`). Both return
   503 until that variable is set.
+- **WhatsApp coexistence imports** (migration 089) use the same secret:
+  point the scheduler at `GET /api/whatsapp/coexistence/cron` every
+  5 minutes with `x-cron-secret: $AUTOMATION_CRON_SECRET`. It drains the
+  chat-history chunks and phone address-book deliveries that the webhook
+  queued but could not finish within its 45-second budget (oldest first,
+  20 batches per call). Same 503/401 contract as above. Health check:
+  `select field, status, count(*) from whatsapp_coexistence_batches group by 1, 2;`
+  should show no `pending` row older than ~15 minutes and no `failed`.
 - **Outbound webhooks need their own scheduler.** `GET /api/webhooks/cron`
   drains the delivery queue (`webhook_deliveries`, migration 062): it
   retries what failed on the S-A6 ladder — 1 min, 5 min, 30 min, 2 h,

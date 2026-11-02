@@ -107,3 +107,75 @@ export async function logRejectedDelivery(
     );
   }
 }
+
+// ------------------------------------------------------------------
+// The «Test» button of the Meta app dashboard (feature 1651, R26–R28)
+// ------------------------------------------------------------------
+
+/** `entry[].id` of the sample payloads the Meta dashboard sends. */
+export const META_TEST_ENTRY_ID = '0';
+/** `metadata.phone_number_id` of those same sample payloads. */
+export const META_TEST_PHONE_NUMBER_ID = '123456123';
+
+interface TestDeliveryShape {
+  entry?: {
+    id?: unknown;
+    changes?: {
+      field?: unknown;
+      value?: { metadata?: { phone_number_id?: unknown } };
+    }[];
+  }[];
+}
+
+function parseDeliveryBody(body: unknown): TestDeliveryShape | null {
+  if (typeof body === 'string') {
+    try {
+      const parsed = JSON.parse(body) as unknown;
+      return parsed && typeof parsed === 'object'
+        ? (parsed as TestDeliveryShape)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return body && typeof body === 'object' ? (body as TestDeliveryShape) : null;
+}
+
+/**
+ * True for the sample delivery of the Meta dashboard's «Test» button:
+ * at least one entry, every entry with id "0" (a real WABA id never is),
+ * and every `metadata.phone_number_id` present equal to "123456123".
+ * Those samples are signed with no secret this platform stores, so
+ * without this they read as signature failures in the log.
+ * Accepts the raw body or the already-parsed object; never throws.
+ */
+export function isMetaPanelTestDelivery(body: unknown): boolean {
+  const parsed = parseDeliveryBody(body);
+  const entries = parsed?.entry;
+  if (!Array.isArray(entries) || entries.length === 0) return false;
+  for (const entry of entries) {
+    if (!entry || entry.id !== META_TEST_ENTRY_ID) return false;
+    const changes = Array.isArray(entry.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const id = change?.value?.metadata?.phone_number_id;
+      if (id !== undefined && id !== META_TEST_PHONE_NUMBER_ID) return false;
+    }
+  }
+  return true;
+}
+
+/** What the log says about a dashboard test delivery: field names only. */
+export function describeTestDelivery(
+  body: unknown,
+  verified: boolean
+): { verified: boolean; fields: string[] } {
+  const fields: string[] = [];
+  for (const entry of parseDeliveryBody(body)?.entry ?? []) {
+    for (const change of entry?.changes ?? []) {
+      if (typeof change?.field === 'string' && !fields.includes(change.field)) {
+        fields.push(change.field);
+      }
+    }
+  }
+  return { verified, fields };
+}
