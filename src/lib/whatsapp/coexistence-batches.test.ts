@@ -298,11 +298,10 @@ describe('history batches', () => {
     expect(db.rows('messages')).toEqual([]);
   });
 
-  it('a thread whose insert fails does not stop the batch', async () => {
-    const db = seed();
+  function failMessagesCall(db: FakeDatabase, failAt: number) {
     let calls = 0;
-    const client = intercept(db, (table, next) => {
-      if (table === 'messages' && calls++ === 0) {
+    return intercept(db, (table, next) => {
+      if (table === 'messages' && calls++ === failAt) {
         const failing = {
           upsert: () => failing,
           select: async () => ({ data: null, error: { message: 'boom' } }),
@@ -311,16 +310,93 @@ describe('history batches', () => {
       }
       return next();
     });
-    const out = await drainCoexistenceBatches(client, {
+  }
+
+  it('a thread whose insert fails keeps the cursor on it: pending with last_error, retried by the next drain (finding 7)', async () => {
+    const db = seed();
+    const out = await drainCoexistenceBatches(failMessagesCall(db, 1), {
       deadline: FAR(),
       batchIds: ['batch-1'],
     });
-    expect(out.completed).toBe(1);
-    expect(db.rows('messages')).toHaveLength(4);
-    expect(row(db).status).toBe('done');
+    expect(out).toEqual({ processed: 1, completed: 0, pending: 1, failed: 0 });
+    expect(row(db)).toMatchObject({
+      status: 'pending',
+      cursor: 1,
+      locked_until: null,
+      // Progress was made before the failure: the count starts over.
+      attempts: 0,
+    });
+    expect(String(row(db).last_error)).toContain('thread_insert_failed');
+    expect(row(db).payload).not.toBeNull();
+    expect(db.rows('messages')).toHaveLength(2);
     expect(logs.find((l) => l.includes('history chunk:'))).toContain(
-      '"failedThreads":1'
+      '"failedThread":true'
     );
+
+    const retry = await drainCoexistenceBatches(asDb(db.admin), {
+      deadline: FAR(),
+      batchIds: ['batch-1'],
+    });
+    expect(retry.completed).toBe(1);
+    expect(db.rows('messages')).toHaveLength(6);
+    expect(row(db).status).toBe('done');
+  });
+
+  it('a failing first thread makes no progress and counts the attempt', async () => {
+    const db = seed();
+    await drainCoexistenceBatches(failMessagesCall(db, 0), {
+      deadline: FAR(),
+      batchIds: ['batch-1'],
+    });
+    expect(row(db)).toMatchObject({
+      status: 'pending',
+      cursor: 0,
+      attempts: 1,
+    });
+    expect(db.rows('messages')).toEqual([]);
+  });
+
+  it(`a batch whose lock expired after ${BATCH_MAX_ATTEMPTS} claims is marked failed, not claimed again (finding 8)`, async () => {
+    const db = seed([
+      batch({
+        status: 'processing',
+        attempts: BATCH_MAX_ATTEMPTS,
+        locked_until: '2020-01-01T00:00:00.000Z',
+      }),
+      batch({
+        id: 'batch-live',
+        chunk_order: 2,
+        status: 'processing',
+        attempts: BATCH_MAX_ATTEMPTS,
+        locked_until: '2999-01-01T00:00:00.000Z',
+      }),
+    ]);
+    expect(
+      await claimBatch(
+        asDb(db.admin),
+        { id: 'batch-1', account_id: A, attempts: BATCH_MAX_ATTEMPTS },
+        new Date()
+      )
+    ).toBeNull();
+    expect(row(db)).toMatchObject({
+      status: 'failed',
+      last_error: 'max_attempts',
+      attempts: BATCH_MAX_ATTEMPTS,
+      locked_until: null,
+    });
+    // A live lock is still someone else's: not touched.
+    await claimBatch(
+      asDb(db.admin),
+      { id: 'batch-live', account_id: A, attempts: BATCH_MAX_ATTEMPTS },
+      new Date()
+    );
+    expect(row(db, 'batch-live').status).toBe('processing');
+    // The cron sweep no longer picks the failed one up.
+    const sweep = await drainCoexistenceBatches(asDb(db.admin), {
+      deadline: FAR(),
+    });
+    expect(sweep.processed).toBe(0);
+    expect(db.rows('messages')).toEqual([]);
   });
 
   it('writes are scoped: batch updates by id + account, config re-read by id + account', async () => {

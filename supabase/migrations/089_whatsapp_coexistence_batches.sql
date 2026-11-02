@@ -14,6 +14,8 @@
 --
 -- Columnas
 --   field         'history' | 'smb_app_state_sync'.
+--   sync_epoch    `whatsapp_config.coexistence_onboarded_at` al encolar
+--                 (NULL si no lo hay): separa una reconexión de la anterior.
 --   phase, chunk_order, progress   metadatos del chunk de historial
 --                 (NULL en la libreta).
 --   payload       los hilos o los contactos tal como llegaron; NULL al
@@ -22,8 +24,8 @@
 --   status        pending → processing (reclamado, locked_until) → done |
 --                 failed (tras 5 intentos, last_error sin contenido).
 --
--- Unicidad: un chunk de historial (whatsapp_config_id, phase,
---   chunk_order) se encola una sola vez; la libreta no lleva índice único
+-- Unicidad: un chunk de historial (whatsapp_config_id, sync_epoch,
+--   phase, chunk_order) se encola una sola vez; la libreta no lleva índice único
 --   (repetirla es inocuo: `add` es idempotente por teléfono).
 --
 -- RLS: activada y sin políticas; ni `anon` ni `authenticated` la leen ni
@@ -41,6 +43,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_coexistence_batches (
   whatsapp_config_id uuid NOT NULL REFERENCES whatsapp_config(id) ON DELETE CASCADE,
   field              text NOT NULL
     CHECK (field IN ('history', 'smb_app_state_sync')),
+  sync_epoch         timestamptz,
   phase              smallint,
   chunk_order        integer,
   progress           smallint,
@@ -57,14 +60,23 @@ CREATE TABLE IF NOT EXISTS whatsapp_coexistence_batches (
   processed_at       timestamptz
 );
 
+-- Por si una base de desarrollo aplicó una versión anterior de este
+-- archivo sin la columna.
+ALTER TABLE whatsapp_coexistence_batches ADD COLUMN IF NOT EXISTS sync_epoch timestamptz;
+
 RESET lock_timeout;
 
--- R37: un chunk de historial por número, fase y orden. NULLS NOT
--- DISTINCT (Postgres 15+, como la 084): un chunk que llegue sin `phase`
--- o sin `chunk_order` también se encola una sola vez, incluso si dos
--- entregas compiten (la segunda recibe 23505 y se trata como repetición).
+-- R37: un chunk de historial por número, época de sincronización, fase
+-- y orden. `sync_epoch` es el `coexistence_onboarded_at` (088) vigente al
+-- encolar: tras un PARTNER_REMOVED y un nuevo signup sobre la misma fila,
+-- la sincronización nueva es otra época y sus chunks no chocan con los
+-- lotes `done` de la anterior; las reentregas de Meta de la misma
+-- sincronización siguen deduplicando. NULLS NOT DISTINCT (Postgres 15+,
+-- como la 084): un chunk sin época, `phase` o `chunk_order` también se
+-- encola una sola vez, incluso si dos entregas compiten (la segunda
+-- recibe 23505 y se trata como repetición).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_wcb_history_chunk
-  ON whatsapp_coexistence_batches (whatsapp_config_id, phase, chunk_order)
+  ON whatsapp_coexistence_batches (whatsapp_config_id, sync_epoch, phase, chunk_order)
   NULLS NOT DISTINCT
   WHERE field = 'history';
 

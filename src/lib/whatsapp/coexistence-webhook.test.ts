@@ -754,6 +754,45 @@ describe('captura', () => {
     );
   });
 
+  it('the same phase/chunk in two sync epochs (reconnect after PARTNER_REMOVED) → two batches; a repeat within an epoch dedups (finding 6)', async () => {
+    const db = seed();
+    const epoch1 = {
+      ...config,
+      coexistence_onboarded_at: '2026-11-01T10:00:00.000Z',
+    };
+    const epoch2 = {
+      ...config,
+      coexistence_onboarded_at: '2026-11-05T09:00:00.000Z',
+    };
+    const first = await handleCoexistenceChange(
+      asDb(db),
+      'history',
+      historyValue([chunk(0, 1)]),
+      epoch1
+    );
+    const repeat = await handleCoexistenceChange(
+      asDb(db),
+      'history',
+      historyValue([chunk(0, 1)]),
+      epoch1
+    );
+    const second = await handleCoexistenceChange(
+      asDb(db),
+      'history',
+      historyValue([chunk(0, 1)]),
+      epoch2
+    );
+    expect(first.batchIds).toHaveLength(1);
+    expect(repeat.batchIds).toEqual([]);
+    expect(second.batchIds).toHaveLength(1);
+    const batches = db.rows('whatsapp_coexistence_batches');
+    expect(batches).toHaveLength(2);
+    expect(batches.map((b) => [b.sync_epoch, b.phase, b.chunk_order])).toEqual([
+      ['2026-11-01T10:00:00.000Z', 0, 1],
+      ['2026-11-05T09:00:00.000Z', 0, 1],
+    ]);
+  });
+
   it('2593109 → declined log, no batch; the other element of the same change is queued', async () => {
     const db = seed();
     const { batchIds } = await handleCoexistenceChange(

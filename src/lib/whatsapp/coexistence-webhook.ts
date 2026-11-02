@@ -69,6 +69,13 @@ export interface CoexistenceConfig {
   user_id: string;
   phone_number_id: string;
   display_phone_number?: string | null;
+  /**
+   * `whatsapp_config.coexistence_onboarded_at` (088): the start of the
+   * current coexistence connection. Copied onto each batch as its
+   * `sync_epoch`, so a reconnect after PARTNER_REMOVED is a new history
+   * sync whose chunks never collide with the old ones (review finding 6).
+   */
+  coexistence_onboarded_at?: string | null;
 }
 
 export type CoexistenceMessageStatus =
@@ -559,6 +566,7 @@ async function queueHistoryItem(
         chunkOrder: item.chunkOrder,
       })
     );
+  const syncEpoch = config.coexistence_onboarded_at ?? null;
 
   let existing = db
     .from('whatsapp_coexistence_batches')
@@ -566,6 +574,10 @@ async function queueHistoryItem(
     .eq('account_id', config.account_id)
     .eq('whatsapp_config_id', config.id)
     .eq('field', 'history');
+  existing =
+    syncEpoch === null
+      ? existing.is('sync_epoch', null)
+      : existing.eq('sync_epoch', syncEpoch);
   existing =
     item.phase === null
       ? existing.is('phase', null)
@@ -587,6 +599,7 @@ async function queueHistoryItem(
       account_id: config.account_id,
       whatsapp_config_id: config.id,
       field: 'history',
+      sync_epoch: syncEpoch,
       phase: item.phase,
       chunk_order: item.chunkOrder,
       progress: item.progress,
@@ -653,6 +666,7 @@ async function queueStateSync(
       account_id: config.account_id,
       whatsapp_config_id: config.id,
       field: 'smb_app_state_sync',
+      sync_epoch: config.coexistence_onboarded_at ?? null,
       payload: { state_sync: items },
       item_count: items.length,
       cursor: 0,

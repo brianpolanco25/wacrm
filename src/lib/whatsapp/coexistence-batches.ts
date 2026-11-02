@@ -89,6 +89,11 @@ function claimableFilter(now: Date): string {
  * (or `processing` with an expired lock) AND still carry the attempt
  * count the caller read, so two drains racing for it cannot both win.
  * Returns the full row, or null when another drain has it.
+ *
+ * A batch that already used BATCH_MAX_ATTEMPTS claims is not claimed
+ * again: it is marked `failed` (same conditional UPDATE), so a drain that
+ * dies without throwing — killed function, a thread beyond maxDuration —
+ * cannot keep it at the head of the sweep forever (R39).
  */
 export async function claimBatch(
   db: SupabaseClient,
@@ -96,6 +101,33 @@ export async function claimBatch(
   now: Date
 ): Promise<BatchRow | null> {
   const attempts = Number(ref.attempts ?? 0);
+  if (attempts >= BATCH_MAX_ATTEMPTS) {
+    const { data: exhausted, error: exhaustError } = await db
+      .from(TABLE)
+      .update({
+        status: 'failed',
+        last_error: 'max_attempts',
+        locked_until: null,
+        updated_at: now.toISOString(),
+      })
+      .eq('id', ref.id)
+      .eq('account_id', ref.account_id)
+      .eq('attempts', attempts)
+      .or(claimableFilter(now))
+      .select('id');
+    if (exhaustError) {
+      console.error(
+        '[coexistence] batch claim failed:',
+        JSON.stringify({ batchId: ref.id, error: errorMessage(exhaustError) })
+      );
+    } else if (Array.isArray(exhausted) && exhausted.length > 0) {
+      console.warn(
+        '[coexistence] batch failed:',
+        JSON.stringify({ batchId: ref.id, attempts, error: 'max_attempts' })
+      );
+    }
+    return null;
+  }
   const { data, error } = await db
     .from(TABLE)
     .update({
@@ -171,9 +203,9 @@ async function processHistory(
   let cursor = startCursor;
   let messages = 0;
   let inserted = 0;
-  let failedThreads = 0;
   let invalidThreads = 0;
   let paused = false;
+  let failedThread = false;
 
   while (cursor < threads.length) {
     if (Date.now() >= deadline) {
@@ -191,14 +223,22 @@ async function processHistory(
         parsed.phone,
         parsed.messages
       );
-      if (result) inserted += result.inserted;
-      else failedThreads += 1;
+      if (!result) {
+        // Keep the cursor ON this thread: the batch goes back to
+        // `pending` with last_error and the next drain retries it
+        // (messages are idempotent by wamid). Never `done` with a
+        // thread lost (review finding 7).
+        failedThread = true;
+        break;
+      }
+      inserted += result.inserted;
     }
     cursor += 1;
     await updateBatch(db, batch, {
       cursor,
       locked_until: new Date(Date.now() + BATCH_LOCK_MS).toISOString(),
     });
+    batch.cursor = cursor;
   }
   batch.cursor = cursor;
 
@@ -214,11 +254,14 @@ async function processHistory(
       threadsTotal: threads.length,
       messages,
       inserted,
-      failedThreads,
+      failedThread,
       invalidThreads,
       paused,
     })
   );
+  if (failedThread) {
+    throw new Error(`thread_insert_failed at cursor ${cursor}`);
+  }
   return paused ? { kind: 'paused' } : { kind: 'done' };
 }
 
@@ -270,6 +313,7 @@ async function processStateSync(
       cursor,
       locked_until: new Date(Date.now() + BATCH_LOCK_MS).toISOString(),
     });
+    batch.cursor = cursor;
   }
   batch.cursor = cursor;
 
@@ -339,7 +383,11 @@ export async function processBatch(
     return 'done';
   } catch (err) {
     const attempts = Number(batch.attempts ?? 0);
-    const status = attempts >= BATCH_MAX_ATTEMPTS ? 'failed' : 'pending';
+    // Progress before the error resets the count, like a pause does: only
+    // drains that fail without moving the cursor add up to the limit.
+    const progressed = batch.cursor > startCursor;
+    const status =
+      !progressed && attempts >= BATCH_MAX_ATTEMPTS ? 'failed' : 'pending';
     const lastError = errorMessage(err).slice(0, LAST_ERROR_MAX);
     console.error(
       '[coexistence] batch error:',
@@ -350,6 +398,7 @@ export async function processBatch(
         status,
         last_error: lastError,
         locked_until: null,
+        ...(progressed ? { attempts: 0 } : {}),
       });
     } catch {
       // The lock expires on its own; the cron will retry the batch.
