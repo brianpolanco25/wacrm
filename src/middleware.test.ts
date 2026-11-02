@@ -357,9 +357,41 @@ describe('middleware — support sessions write, and are recorded', () => {
       '/api/v1/messages',
       '/api/automations/cron',
       '/api/flows/cron',
+      '/api/whatsapp/coexistence/cron',
     ]) {
       const res = await middleware(request(`https://app.test${path}`));
       expect(res.status, path).not.toBe(403);
+      expect(res.status, path).not.toBe(401);
+    }
+  });
+
+  it('lets the coexistence cron through without a session: the handler, not the middleware, answers 401 without x-cron-secret (#1651)', async () => {
+    mockUser = null;
+    const url = 'https://app.test/api/whatsapp/coexistence/cron';
+    const res = await middleware(new NextRequest(url));
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+    expect(res.headers.get('location')).toBeNull();
+
+    vi.stubEnv('AUTOMATION_CRON_SECRET', 'cron-secret');
+    try {
+      const { GET } = await import('./app/api/whatsapp/coexistence/cron/route');
+      const handled = await GET(new Request(url));
+      expect(handled.status).toBe(401);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('still answers 401 to other /api/whatsapp/ routes without a session', async () => {
+    mockUser = null;
+    for (const path of [
+      '/api/whatsapp/coexistence/cron/extra',
+      '/api/whatsapp/coexistence',
+      '/api/whatsapp/send',
+    ]) {
+      const res = await middleware(new NextRequest(`https://app.test${path}`));
+      expect(res.status, path).toBe(401);
     }
   });
 

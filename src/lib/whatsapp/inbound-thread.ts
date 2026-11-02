@@ -6,6 +6,26 @@ import {
 } from '@/lib/contacts/dedupe';
 
 /**
+ * What a Supabase/PostgREST error may put in the log: its code and
+ * message only. `details` and `hint` of a unique violation quote the
+ * conflicting key — a phone number or a BSUID — and these paths now also
+ * run for the phone's echoes and address book (#1651, R31).
+ */
+export function describeDbError(error: unknown): {
+  code: string | null;
+  message: string;
+} {
+  if (error && typeof error === 'object') {
+    const e = error as { code?: unknown; message?: unknown };
+    return {
+      code: typeof e.code === 'string' ? e.code : null,
+      message: typeof e.message === 'string' ? e.message : 'unknown error',
+    };
+  }
+  return { code: null, message: String(error) };
+}
+
+/**
  * Resolución del contacto y la conversación de un mensaje que llega por
  * el webhook de WhatsApp. Extraído de `src/app/api/whatsapp/webhook/route.ts`
  * (feature 1651) sin cambiar consultas ni logs, para que los ecos, el
@@ -146,7 +166,7 @@ export async function findOrCreateContact(
         : null;
       if (racedByPhone) return { contact: racedByPhone, wasCreated: false };
     }
-    console.error('Error creating contact:', createError);
+    console.error('Error creating contact:', describeDbError(createError));
     return null;
   }
 
@@ -212,7 +232,7 @@ export async function findOrCreateConversation(
     .limit(1);
 
   if (findError) {
-    console.error('Error finding conversation:', findError);
+    console.error('Error finding conversation:', describeDbError(findError));
     return null;
   }
 
@@ -233,7 +253,10 @@ export async function findOrCreateConversation(
       if (sealError) {
         // Never drop an inbound message over this: the worst case is a
         // reply that leaves through the account default.
-        console.error('Error sealing conversation number:', sealError);
+        console.error(
+          'Error sealing conversation number:',
+          describeDbError(sealError)
+        );
       } else {
         existing.whatsapp_config_id = whatsAppConfigId;
       }
@@ -271,7 +294,7 @@ export async function findOrCreateConversation(
         return { conversation: raced[0], created: false };
       }
     }
-    console.error('Error creating conversation:', createError);
+    console.error('Error creating conversation:', describeDbError(createError));
     return null;
   }
 
