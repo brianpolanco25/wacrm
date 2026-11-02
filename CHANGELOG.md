@@ -11,6 +11,14 @@ and polish.
 
 ## [Unreleased]
 
+### WhatsApp: coexistence with the WhatsApp Business app
+
+- **Migration required**: `supabase/migrations/088_whatsapp_coexistence.sql`.
+- **Operator step** (Meta app dashboard → WhatsApp → Configuration): subscribe the webhook fields `history`, `smb_app_state_sync`, `smb_message_echoes` and `account_update`, and make sure the Embedded Signup configuration offers onboarding of WhatsApp Business app users. Processing those webhook fields ships separately.
+- «Connect WhatsApp» now offers connecting a number that lives in the WhatsApp Business phone app (coexistence): the business keeps using the app and the CRM receives the messages. Such a number is not registered with a PIN (Meta does not allow it); it shows a **Coexistence** badge on its card instead of «Registered / Not registered».
+- Right after connecting, the CRM asks Meta once for the app's contacts and chat history. The number card shows whether that sync is done, pending or failed, with a **Retry sync** button during Meta's 24-hour window; after that the card explains that the number must be disconnected from the phone app and connected again.
+- «Verify with Meta» now reads where the number lives: a coexistence number counts as live without registration, and a number that is on the phone app **without** coexistence gets a warning explaining that Meta does not deliver its messages and how to fix it.
+
 ### WhatsApp: numbers connected through the business's own Meta app
 
 - **Migration required**: `supabase/migrations/086_whatsapp_config_app_secret.sql`.

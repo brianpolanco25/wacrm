@@ -180,6 +180,10 @@ export const RATE_LIMITS = {
    *  code exchange without ever getting in a real admin's way — the
    *  realistic worst case is three or four retries in a row. */
   embeddedSignup: { limit: 10, windowMs: 60_000 },
+  /** Manual retry of the coexistence SMB syncs (#1650), per user.
+   *  Meta accepts each sync once, so a real admin presses this once or
+   *  twice; 3/min bounds a stuck double-click loop. */
+  smbSync: { limit: 3, windowMs: 60_000 },
   /** AI auto-reply generation, per account. The per-conversation cap
    *  (`auto_reply_max_per_conversation`) bounds one thread; this bounds
    *  the whole account across threads, so a burst of inbound from many

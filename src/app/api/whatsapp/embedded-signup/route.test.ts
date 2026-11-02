@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   subscribeWabaToApp: vi.fn(),
   getWabaFundingInfo: vi.fn(),
   checkPayment: vi.fn(),
+  syncSmbAppData: vi.fn(),
+  listWabaPhoneNumbers: vi.fn(),
   order: [] as string[],
   state: {
     role: 'admin' as string,
@@ -43,6 +45,13 @@ const mocks = vi.hoisted(() => ({
     upserts: [] as { row: Record<string, unknown>; opts: unknown }[],
     /** Any other write. Must stay empty on the cancel / error paths. */
     otherWrites: [] as { table: string; op: string }[],
+    /** #1650 — the saved row as the service role sees it (SMB columns). */
+    smbRow: {} as Record<string, string | null>,
+    /** #1650 — every service-role update, with its filters. */
+    adminUpdates: [] as {
+      payload: Record<string, unknown>;
+      filters: [string, string, unknown][];
+    }[],
   },
 }));
 
@@ -61,6 +70,8 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
   registerPhoneNumber: mocks.registerPhoneNumber,
   subscribeWabaToApp: mocks.subscribeWabaToApp,
   getWabaFundingInfo: mocks.getWabaFundingInfo,
+  syncSmbAppData: mocks.syncSmbAppData,
+  listWabaPhoneNumbers: mocks.listWabaPhoneNumbers,
 }));
 
 // p11.1 step 10. The real `fetchWabaPaymentStatus` runs (against the
@@ -73,17 +84,61 @@ vi.mock('@/lib/whatsapp/payment-method', async (importOriginal) => ({
 
 // The service-role client exists for one query: "has another account
 // already claimed this phone_number_id?".
+// #1650 adds the SMB-sync writes of step 11: claim, request id, error.
+// They act on `state.smbRow`, evaluating the claim like PostgREST would.
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
     from: () => {
+      const filters: [string, string, unknown][] = [];
+      let payload: Record<string, unknown> | null = null;
+      const row = () => mocks.state.smbRow;
+      const matches = () =>
+        filters.every(([kind, col, val]) => {
+          if (kind === 'is') return (row()[col] ?? null) === val;
+          if (kind === 'or') {
+            const [a, b] = String(val).split(',');
+            const c = a.split('.')[0];
+            const v = row()[c] ?? null;
+            return v === null || Date.parse(v) < Date.parse(b.split('.lt.')[1]);
+          }
+          return true;
+        });
+      const run = () => {
+        if (!payload) return { data: null, error: null };
+        mocks.state.adminUpdates.push({ payload, filters: [...filters] });
+        if (!matches()) return { data: [], error: null };
+        Object.assign(mocks.state.smbRow, payload);
+        return { data: [{ id: 'cfg-saved' }], error: null };
+      };
       const chain: Record<string, unknown> = {
         select: () => chain,
-        eq: () => chain,
-        neq: () => chain,
-        maybeSingle: async () => ({
-          data: mocks.state.claimedByOther,
-          error: null,
-        }),
+        update: (p: Record<string, unknown>) => {
+          payload = p;
+          return chain;
+        },
+        eq: (col: string, val: unknown) => {
+          filters.push(['eq', col, val]);
+          return chain;
+        },
+        neq: (col: string, val: unknown) => {
+          filters.push(['neq', col, val]);
+          return chain;
+        },
+        is: (col: string, val: unknown) => {
+          filters.push(['is', col, val]);
+          return chain;
+        },
+        or: (expr: string) => {
+          filters.push(['or', '', expr]);
+          return chain;
+        },
+        maybeSingle: async () => {
+          if (filters.some(([k]) => k === 'neq')) {
+            return { data: mocks.state.claimedByOther, error: null };
+          }
+          return { data: { ...mocks.state.smbRow }, error: null };
+        },
+        then: (resolve: (v: unknown) => unknown) => resolve(run()),
       };
       return chain;
     },
@@ -240,6 +295,18 @@ beforeEach(() => {
   mocks.state.claimedByOther = null;
   mocks.state.upserts = [];
   mocks.state.otherWrites = [];
+  mocks.state.smbRow = {};
+  mocks.state.adminUpdates = [];
+  mocks.syncSmbAppData.mockReset();
+  mocks.syncSmbAppData.mockImplementation(
+    async ({ syncType }: { syncType: string }) => ({
+      requestId: `req-${syncType}`,
+    })
+  );
+  mocks.listWabaPhoneNumbers.mockReset();
+  mocks.listWabaPhoneNumbers.mockResolvedValue([
+    { id: 'pn-coex', is_on_biz_app: true, platform_type: 'CLOUD_API' },
+  ]);
   mocks.assertWritable.mockReset();
   mocks.assertWritable.mockResolvedValue(entitlements(5));
   mocks.verifyPhoneNumber.mockReset();
@@ -741,5 +808,181 @@ describe('POST /api/whatsapp/embedded-signup — payment method (p11.1)', () => 
     const res = await post();
     expect(res.status).toBe(400);
     expect(mocks.checkPayment).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1650 — coexistence (WhatsApp Business app + Cloud API)
+// ---------------------------------------------------------------------------
+
+describe('POST /api/whatsapp/embedded-signup — coexistence (#1650)', () => {
+  it('R5: no /register, no PIN, connected, coexistence_onboarded_at set', async () => {
+    const res = await post({ coexistence: true });
+    expect(res.status).toBe(200);
+    expect(mocks.registerPhoneNumber).not.toHaveBeenCalled();
+
+    const row = mocks.state.upserts[0].row;
+    expect(row.provisioned_via).toBe('embedded_signup');
+    expect(row.status).toBe('connected');
+    expect(row.registered_at).toBeNull();
+    expect(row.last_registration_error).toBeNull();
+    expect(row.registration_pin).toBeNull();
+    expect(typeof row.coexistence_onboarded_at).toBe('string');
+    expect(
+      Number.isNaN(Date.parse(row.coexistence_onboarded_at as string))
+    ).toBe(false);
+
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.coexistence).toBe(true);
+    expect(body.registered).toBe(false);
+    expect(body.registration_error).toBeNull();
+  });
+
+  it('R6: the ordinary flow writes coexistence_onboarded_at null and registers', async () => {
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(mocks.registerPhoneNumber).toHaveBeenCalledTimes(1);
+    expect(mocks.state.upserts[0].row.coexistence_onboarded_at).toBeNull();
+    expect(mocks.syncSmbAppData).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.coexistence).toBe(false);
+    expect(body.smb_sync).toBeUndefined();
+  });
+
+  it("R6: coexistence: 'yes' is not true — treated as the ordinary flow", async () => {
+    const res = await post({ coexistence: 'yes' });
+    expect(res.status).toBe(200);
+    expect(mocks.registerPhoneNumber).toHaveBeenCalledTimes(1);
+    expect(mocks.state.upserts[0].row.coexistence_onboarded_at).toBeNull();
+    expect(mocks.syncSmbAppData).not.toHaveBeenCalled();
+  });
+
+  it('R7/R11: requests both syncs with the fresh token, scoped to the row and account', async () => {
+    const res = await post({ coexistence: true });
+    const body = await res.json();
+    expect(body.smb_sync).toEqual({
+      state_sync: 'requested',
+      history: 'requested',
+    });
+    expect(mocks.syncSmbAppData.mock.calls.map((c) => c[0])).toEqual([
+      {
+        phoneNumberId: 'pn-new',
+        accessToken: TOKEN,
+        syncType: 'smb_app_state_sync',
+      },
+      { phoneNumberId: 'pn-new', accessToken: TOKEN, syncType: 'history' },
+    ]);
+    expect(mocks.state.smbRow.smb_state_sync_request_id).toBe(
+      'req-smb_app_state_sync'
+    );
+    expect(mocks.state.smbRow.smb_history_sync_request_id).toBe('req-history');
+    expect(typeof mocks.state.smbRow.smb_state_sync_requested_at).toBe(
+      'string'
+    );
+    expect(mocks.state.adminUpdates.length).toBeGreaterThan(0);
+    for (const u of mocks.state.adminUpdates) {
+      expect(u.filters).toContainEqual(['eq', 'id', 'cfg-saved']);
+      expect(u.filters).toContainEqual(['eq', 'account_id', 'acct-1']);
+    }
+  });
+
+  it('R8: a repeated signup on a row with both request ids makes zero sync calls', async () => {
+    mocks.state.smbRow = {
+      smb_state_sync_request_id: 'r1',
+      smb_state_sync_requested_at: '2026-11-02T00:00:00.000Z',
+      smb_history_sync_request_id: 'r2',
+      smb_history_sync_requested_at: '2026-11-02T00:00:00.000Z',
+    };
+    const res = await post({ coexistence: true });
+    expect(res.status).toBe(200);
+    expect(mocks.syncSmbAppData).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.smb_sync).toEqual({
+      state_sync: 'already_done',
+      history: 'already_done',
+    });
+    expect(mocks.state.smbRow.smb_state_sync_request_id).toBe('r1');
+  });
+
+  it('R9: a failed sync still answers 200 success and never logs the token', async () => {
+    mocks.syncSmbAppData.mockImplementation(async () => {
+      throw new Error('(#100) sync not allowed');
+    });
+    const res = await post({ coexistence: true });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.smb_sync).toEqual({ state_sync: 'failed', history: 'failed' });
+    expect(mocks.state.smbRow.smb_sync_error).toContain('sync not allowed');
+    expect(mocks.state.smbRow.smb_state_sync_requested_at).toBeNull();
+    expect(consoleOutput()).not.toContain(TOKEN);
+    expect(JSON.stringify(body)).not.toContain(TOKEN);
+  });
+});
+
+describe('POST /api/whatsapp/embedded-signup — coexistence with only waba_id (ajuste del leader)', () => {
+  function postWabaOnly(extra: Record<string, unknown> = {}) {
+    return POST(
+      new Request('https://crm.example.com/api/whatsapp/embedded-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: CODE,
+          waba_id: 'waba-new',
+          coexistence: true,
+          ...extra,
+        }),
+      })
+    );
+  }
+
+  it('resolves the number from the WABA with the fresh token', async () => {
+    const res = await postWabaOnly();
+    expect(res.status).toBe(200);
+    expect(mocks.listWabaPhoneNumbers).toHaveBeenCalledWith({
+      wabaId: 'waba-new',
+      accessToken: TOKEN,
+    });
+    expect(mocks.state.upserts[0].row.phone_number_id).toBe('pn-coex');
+    expect(mocks.verifyPhoneNumber).toHaveBeenCalledWith(
+      expect.objectContaining({ phoneNumberId: 'pn-coex' })
+    );
+    expect(mocks.syncSmbAppData.mock.calls[0][0].phoneNumberId).toBe('pn-coex');
+  });
+
+  it('400s with a clear code when more than one number is on the app', async () => {
+    mocks.listWabaPhoneNumbers.mockResolvedValue([
+      { id: 'a', is_on_biz_app: true },
+      { id: 'b', is_on_biz_app: true },
+    ]);
+    const res = await postWabaOnly();
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe('coexistence_number_ambiguous');
+    expect(mocks.state.upserts).toHaveLength(0);
+  });
+
+  it('400s when no number of the WABA is on the app', async () => {
+    mocks.listWabaPhoneNumbers.mockResolvedValue([
+      { id: 'a', is_on_biz_app: false },
+    ]);
+    const res = await postWabaOnly();
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe('coexistence_number_not_found');
+    expect(mocks.state.upserts).toHaveLength(0);
+  });
+
+  it("409s on another account's resolved number and writes nothing", async () => {
+    mocks.state.claimedByOther = { account_id: 'acct-other' };
+    const res = await postWabaOnly();
+    expect(res.status).toBe(409);
+    expect(mocks.state.upserts).toHaveLength(0);
+  });
+
+  it('still 400s incomplete without phone_number_id outside coexistence', async () => {
+    const res = await postWabaOnly({ coexistence: false });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe('incomplete_signup');
+    expect(mocks.listWabaPhoneNumbers).not.toHaveBeenCalled();
   });
 });

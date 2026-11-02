@@ -137,13 +137,19 @@ export function isMetaSignupOrigin(origin: string): boolean {
 }
 
 /**
- * The options `FB.login` is called with.
- *
- * `extras` carries **only** `setup`. Embedded Signup v4 documents no
- * other key: `sessionInfoVersion` and `featureType` belonged to earlier
- * versions of the flow and were dropped
- * (`progress/meta_embedded-signup-verificacion.md`). Exported so the
- * test can pin the shape without a browser.
+ * The `featureType` that makes the dialog offer "connect your existing
+ * WhatsApp Business app account" (coexistence). Meta's coexistence
+ * guide requires it in Embedded Signup v4 — this supersedes the older
+ * note in `progress/meta_embedded-signup-verificacion.md` that said
+ * `featureType` no longer existed. A dialog that does not offer
+ * coexistence simply ignores it, so the ordinary flow (`FINISH`) keeps
+ * working with the same button.
+ */
+export const COEXISTENCE_FEATURE_TYPE = 'whatsapp_business_app_onboarding';
+
+/**
+ * The options `FB.login` is called with. Exported so the test can pin
+ * the shape without a browser.
  */
 export function buildFbLoginOptions(configId: string): Record<string, unknown> {
   return {
@@ -152,8 +158,124 @@ export function buildFbLoginOptions(configId: string): Record<string, unknown> {
     // Without this Meta hands back a user access token instead of the
     // code, and there is nothing to exchange on the server.
     override_default_response_type: true,
-    extras: { setup: {} },
+    extras: { setup: {}, featureType: COEXISTENCE_FEATURE_TYPE },
   };
+}
+
+/** What a `WA_EMBEDDED_SIGNUP` session message means for us. */
+export type SignupSessionEvent =
+  | {
+      kind: 'finish';
+      phoneNumberId?: string;
+      wabaId?: string;
+      coexistence: boolean;
+    }
+  | { kind: 'cancel'; step: string }
+  | { kind: 'error'; message: string };
+
+/**
+ * Parse the raw `event.data` of a `message` event from Meta's dialog.
+ *
+ * `null` when it is not JSON (the SDK posts housekeeping strings through
+ * the same channel) or not a `WA_EMBEDDED_SIGNUP` message. The caller
+ * must check `isMetaSignupOrigin` first.
+ *
+ * `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` is the coexistence finish:
+ * the number stays on the phone app and is also on Cloud API.
+ */
+export function parseSignupSessionMessage(
+  data: unknown
+): SignupSessionEvent | null {
+  if (typeof data !== 'string') return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  if (!payload || typeof payload !== 'object') return null;
+  const message = payload as {
+    type?: unknown;
+    event?: unknown;
+    data?: Record<string, unknown> | null;
+  };
+  if (message.type !== 'WA_EMBEDDED_SIGNUP') return null;
+
+  const str = (value: unknown): string | undefined =>
+    typeof value === 'string' && value ? value : undefined;
+
+  switch (message.event) {
+    case 'FINISH':
+    case 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING':
+      return {
+        kind: 'finish',
+        phoneNumberId: str(message.data?.phone_number_id),
+        wabaId: str(message.data?.waba_id),
+        coexistence:
+          message.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+      };
+    case 'CANCEL':
+      return {
+        kind: 'cancel',
+        step: str(message.data?.current_step) ?? 'unknown',
+      };
+    case 'ERROR':
+      return {
+        kind: 'error',
+        message: str(message.data?.error_message) ?? 'unknown',
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * The body `POST /api/whatsapp/embedded-signup` receives.
+ *
+ * In coexistence Meta's `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` event
+ * carries only `waba_id` — no `phone_number_id` — so the field travels
+ * only when the dialog gave it; the server resolves it from the WABA
+ * otherwise.
+ */
+export function buildSignupRequestBody(
+  code: string,
+  session: { phoneNumberId?: string; wabaId: string; coexistence: boolean }
+): {
+  code: string;
+  phone_number_id?: string;
+  waba_id: string;
+  coexistence: boolean;
+} {
+  return {
+    code,
+    ...(session.phoneNumberId
+      ? { phone_number_id: session.phoneNumberId }
+      : {}),
+    waba_id: session.wabaId,
+    coexistence: session.coexistence === true,
+  };
+}
+
+export type SignupResultMessageKey =
+  | 'signupSuccess'
+  | 'signupRegistrationFailed'
+  | 'signupCoexistenceSuccess'
+  | 'signupCoexistenceSyncFailed';
+
+/** Which toast a 200 from the signup route deserves. */
+export function signupResultMessageKey(payload: {
+  coexistence?: boolean;
+  registration_error?: string | null;
+  smb_sync?: { state_sync?: string; history?: string };
+}): SignupResultMessageKey {
+  if (payload.coexistence === true) {
+    const sync = payload.smb_sync;
+    const failed = sync?.state_sync === 'failed' || sync?.history === 'failed';
+    return failed ? 'signupCoexistenceSyncFailed' : 'signupCoexistenceSuccess';
+  }
+  return payload.registration_error
+    ? 'signupRegistrationFailed'
+    : 'signupSuccess';
 }
 
 export function EmbeddedSignupButton({
@@ -170,39 +292,30 @@ export function EmbeddedSignupButton({
   // What the dialog told us, outside React state on purpose (see the
   // header comment): the FB.login callback reads these microseconds
   // after the message arrives.
-  const sessionRef = useRef<{ phoneNumberId?: string; wabaId?: string } | null>(
-    null
-  );
+  const sessionRef = useRef<{
+    phoneNumberId?: string;
+    wabaId?: string;
+    coexistence: boolean;
+  } | null>(null);
   const cancelRef = useRef<string | null>(null);
   const errorRef = useRef<string | null>(null);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       if (!isMetaSignupOrigin(event.origin)) return;
-      let payload: unknown;
-      try {
-        // The SDK also posts non-JSON housekeeping messages through the
-        // same channel; those are not ours and must not throw.
-        payload = JSON.parse(event.data as string);
-      } catch {
-        return;
-      }
-      const message = payload as {
-        type?: string;
-        event?: string;
-        data?: Record<string, string>;
-      };
-      if (message.type !== 'WA_EMBEDDED_SIGNUP') return;
+      const message = parseSignupSessionMessage(event.data);
+      if (!message) return;
 
-      if (message.event === 'FINISH') {
+      if (message.kind === 'finish') {
         sessionRef.current = {
-          phoneNumberId: message.data?.phone_number_id,
-          wabaId: message.data?.waba_id,
+          phoneNumberId: message.phoneNumberId,
+          wabaId: message.wabaId,
+          coexistence: message.coexistence,
         };
-      } else if (message.event === 'CANCEL') {
-        cancelRef.current = message.data?.current_step ?? 'unknown';
-      } else if (message.event === 'ERROR') {
-        errorRef.current = message.data?.error_message ?? 'unknown';
+      } else if (message.kind === 'cancel') {
+        cancelRef.current = message.step;
+      } else {
+        errorRef.current = message.message;
       }
     }
 
@@ -234,7 +347,13 @@ export function EmbeddedSignupButton({
       // The awkward case: the flow finished but the code never made it
       // back (the window closed at the last instant). We have the ids
       // but cannot mint a token, and half a row is worse than none.
-      if (!code || !session?.phoneNumberId || !session?.wabaId) {
+      // In coexistence Meta sends only the WABA id (the server resolves
+      // the number); otherwise both ids are required.
+      if (
+        !code ||
+        !session?.wabaId ||
+        (!session.phoneNumberId && !session.coexistence)
+      ) {
         toast.error(t('signupIncomplete'));
         return;
       }
@@ -244,18 +363,21 @@ export function EmbeddedSignupButton({
         const res = await fetch('/api/whatsapp/embedded-signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            code,
-            phone_number_id: session.phoneNumberId,
-            waba_id: session.wabaId,
-          }),
+          body: JSON.stringify(
+            buildSignupRequestBody(code, {
+              phoneNumberId: session.phoneNumberId,
+              wabaId: session.wabaId,
+              coexistence: session.coexistence,
+            })
+          ),
         });
         const payload = await res.json();
         if (!res.ok) {
           toast.error(payload.error || t('signupSaveFailed'));
           return;
         }
-        if (payload.registration_error) {
+        const key = signupResultMessageKey(payload);
+        if (key === 'signupRegistrationFailed') {
           // Saved and usable for sending, but Meta refused /register —
           // almost always because the business already had its own
           // two-step PIN. The manual PIN field is the retry path.
@@ -264,8 +386,12 @@ export function EmbeddedSignupButton({
               message: String(payload.registration_error),
             })
           );
+        } else if (key === 'signupCoexistenceSyncFailed') {
+          // Connected, but the one-shot contacts/history sync did not
+          // go through. The number card offers the retry (24 h window).
+          toast.warning(t('signupCoexistenceSyncFailed'));
         } else {
-          toast.success(t('signupSuccess'));
+          toast.success(t(key));
         }
         await onConnected();
       } catch (err) {

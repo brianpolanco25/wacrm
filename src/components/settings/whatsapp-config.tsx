@@ -32,6 +32,11 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { SettingsPanelHead } from './settings-panel-head';
 import { PaymentStatusBadge } from './payment-status-badge';
+import {
+  CoexistenceBadge,
+  CoexistenceStatus,
+  numberDeliveryState,
+} from './coexistence-status';
 import { useBillingStatus } from '@/hooks/use-billing-status';
 import { useServiceCap } from '@/hooks/use-service-cap';
 import { ServiceCapCard, ServiceUsageLine } from './service-cap-settings';
@@ -138,7 +143,11 @@ export function WhatsAppConfig() {
   // in the row). When false, the saved config is metadata-only and
   // Meta will silently drop every inbound event — that's the
   // multi-number bug that prompted this work.
-  const isRegistered = Boolean(config?.registered_at);
+  // A coexistence number (#1650) never goes through /register: Meta
+  // delivers its events all the same.
+  const isRegistered = Boolean(
+    config?.registered_at || config?.coexistence_onboarded_at
+  );
   const lastRegistrationError = config?.last_registration_error ?? null;
 
   // s10.6: who pays Meta for this account. `managed` (Cabbity pays, the
@@ -164,6 +173,14 @@ export function WhatsAppConfig() {
   const [verifyingRegistration, setVerifyingRegistration] = useState(false);
   type RegistrationProbe = {
     live: boolean;
+    /** The row this verification was about (#1650). */
+    config_id?: string;
+    /** `biz_app_without_coexistence` when applicable (#1650). */
+    code?: string;
+    coexistence?: {
+      is_on_biz_app: boolean | null;
+      platform_type: string | null;
+    };
     checks: Record<string, boolean | null>;
     errors?: string[];
     last_registration_error?: string | null;
@@ -317,6 +334,39 @@ export function WhatsAppConfig() {
       console.error('Payment method re-check failed:', err);
       toast.error(t('paymentRecheckFailed'));
     } finally {
+      setBusyRowId(null);
+    }
+  }
+
+  // #1650 (R20): retry the one-shot coexistence syncs of this number.
+  // The ref closes the double-click window that `busyRowId` (a state
+  // update, visible only on the next render) leaves open.
+  const smbSyncInFlight = useRef(false);
+  async function handleRetrySmbSync(row: WhatsAppConfigType) {
+    if (busyRowId || smbSyncInFlight.current) return;
+    smbSyncInFlight.current = true;
+    setBusyRowId(row.id);
+    try {
+      const res = await fetch('/api/whatsapp/config/smb-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config_id: row.id }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as {
+        smb_sync?: { state_sync?: string; history?: string };
+      };
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const failed =
+        payload.smb_sync?.state_sync === 'failed' ||
+        payload.smb_sync?.history === 'failed';
+      if (failed) toast.error(t('coexistenceSyncRetryFailed'));
+      else toast.success(t('coexistenceSyncRetried'));
+      if (accountId) await fetchConfig(accountId);
+    } catch (err) {
+      console.error('SMB sync retry failed:', err);
+      toast.error(t('coexistenceSyncRetryFailed'));
+    } finally {
+      smbSyncInFlight.current = false;
       setBusyRowId(null);
     }
   }
@@ -553,6 +603,8 @@ export function WhatsAppConfig() {
       setRegistrationProbe(data);
       if (data.live) {
         toast.success('Number is fully wired — Meta is delivering events.');
+      } else if (data.code === 'biz_app_without_coexistence') {
+        toast.error(t('bizAppWithoutCoexistence'), { duration: 10000 });
       } else {
         toast.error(
           'Number is not fully registered. See the checks below for which step failed.',
@@ -872,15 +924,30 @@ export function WhatsAppConfig() {
                             ? t('credentialsValid')
                             : t('notConnected')}
                           <span aria-hidden>·</span>
-                          {row.registered_at
-                            ? t('registered')
-                            : t('notRegistered')}
+                          {numberDeliveryState(row) === 'coexistence' ? (
+                            <CoexistenceBadge />
+                          ) : row.registered_at ? (
+                            t('registered')
+                          ) : (
+                            t('notRegistered')
+                          )}
                         </p>
                         {row.last_registration_error && (
                           <p className="mt-0.5 text-xs text-red-400">
                             {row.last_registration_error}
                           </p>
                         )}
+                        <CoexistenceStatus
+                          row={row}
+                          probeCode={
+                            registrationProbe?.config_id === row.id
+                              ? (registrationProbe.code ?? null)
+                              : null
+                          }
+                          canRetry={canEditSettings}
+                          busy={busyRowId === row.id}
+                          onRetry={() => handleRetrySmbSync(row)}
+                        />
                         {row.waba_id && (
                           <PaymentStatusBadge
                             status={row.meta_payment_status}

@@ -8,6 +8,7 @@ import {
   probeGraphField,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api';
+import { classifyBizAppStatus } from '@/lib/whatsapp/coexistence';
 
 /**
  * GET /api/whatsapp/config/verify-registration
@@ -26,6 +27,13 @@ import {
  *   3. registered_at — local timestamp set by POST /config when
  *                    /register last succeeded; NULL means the
  *                    number was saved but never actually subscribed
+ *
+ * Plus, always (#1650): Meta's `is_on_biz_app` + `platform_type` of
+ * the number. A coexistence number (`true` + `CLOUD_API`) never went
+ * through /register, so for it `live` does not require `registered_at`;
+ * a number on the WhatsApp Business app WITHOUT coexistence (`true` +
+ * anything else) gets `live: false` and `code:
+ * 'biz_app_without_coexistence'` — Meta does not deliver its messages.
  *
  * Returns 200 in every case so the UI can render diagnostic detail
  * rather than a generic error toast. The combined `live` flag is
@@ -98,12 +106,14 @@ export async function GET(request: Request) {
     phone_metadata_ok: boolean;
     waba_subscribed_to_app: boolean | null;
     locally_marked_registered: boolean;
+    coexistence_active: boolean;
   } = {
     config_exists: true,
     token_decryptable: true,
     phone_metadata_ok: false,
     waba_subscribed_to_app: null,
     locally_marked_registered: config.registered_at != null,
+    coexistence_active: false,
   };
   const errors: string[] = [];
 
@@ -119,6 +129,31 @@ export async function GET(request: Request) {
       `Phone metadata check failed: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+
+  // 1b. Coexistence (#1650): where does the number live? Always probed;
+  // a failed probe leaves its field null and falls back to the legacy
+  // rule below.
+  const [bizProbe, platformProbe] = await Promise.all([
+    probeGraphField({
+      nodeId: config.phone_number_id,
+      field: 'is_on_biz_app',
+      accessToken,
+    }),
+    probeGraphField({
+      nodeId: config.phone_number_id,
+      field: 'platform_type',
+      accessToken,
+    }),
+  ]);
+  const coexistence = {
+    is_on_biz_app: bizProbe.ok ? (bizProbe.value ?? null) : null,
+    platform_type: platformProbe.ok ? (platformProbe.value ?? null) : null,
+  };
+  const biz = classifyBizAppStatus(
+    coexistence.is_on_biz_app,
+    coexistence.platform_type
+  );
+  checks.coexistence_active = biz === 'coexistence';
 
   // 2. WABA subscription — only meaningful if we have a waba_id
   if (config.waba_id) {
@@ -181,14 +216,25 @@ export async function GET(request: Request) {
     };
   }
 
-  const live =
-    checks.phone_metadata_ok &&
-    (checks.waba_subscribed_to_app ?? false) &&
-    checks.locally_marked_registered;
+  const delivering =
+    checks.phone_metadata_ok && (checks.waba_subscribed_to_app ?? false);
+  let live: boolean;
+  let code: string | undefined;
+  if (biz === 'coexistence') {
+    live = delivering;
+  } else if (biz === 'biz_app_only') {
+    live = false;
+    code = 'biz_app_without_coexistence';
+  } else {
+    live = delivering && checks.locally_marked_registered;
+  }
 
   return NextResponse.json({
     live,
+    ...(code ? { code } : {}),
+    config_id: config.id,
     checks,
+    coexistence,
     errors,
     last_registration_error: config.last_registration_error ?? null,
     registered_at: config.registered_at ?? null,

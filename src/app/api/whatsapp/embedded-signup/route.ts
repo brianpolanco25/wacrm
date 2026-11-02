@@ -51,10 +51,16 @@ import {
   isMissingWebhookVerifyToken,
 } from '@/lib/whatsapp/platform-mode';
 import {
+  listWabaPhoneNumbers,
   registerPhoneNumber,
   subscribeWabaToApp,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api';
+import {
+  pickCoexistencePhoneNumber,
+  runSmbAppDataSync,
+  type SmbSyncOutcome,
+} from '@/lib/whatsapp/coexistence';
 import {
   checkAndRecordPaymentStatus,
   type MetaPaymentStatus,
@@ -122,6 +128,8 @@ interface SignupBody {
   code?: unknown;
   phone_number_id?: unknown;
   waba_id?: unknown;
+  /** #1650 — `true` only for FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING. */
+  coexistence?: unknown;
 }
 
 function asString(value: unknown): string | null {
@@ -131,7 +139,16 @@ function asString(value: unknown): string | null {
 /**
  * POST /api/whatsapp/embedded-signup
  *
- * Body: `{ code, phone_number_id, waba_id }`, all three required.
+ * Body: `{ code, phone_number_id, waba_id, coexistence? }`. `code` and
+ * `waba_id` are always required; `phone_number_id` too, except in
+ * coexistence (#1650), where Meta's session event carries only the
+ * WABA id and the number is resolved server-side after step 4.
+ *
+ * `coexistence === true` (anything else is the ordinary flow, no 400:
+ * older clients do not send the field) means the number stays on the
+ * WhatsApp Business phone app and is also on Cloud API. Then step 7 is
+ * skipped — Meta does not support /register on a number that lives on
+ * both platforms — and step 11 runs.
  *
  * The order of the steps is load-bearing and is the order of §1.3 of
  * the design note:
@@ -143,12 +160,20 @@ function asString(value: unknown): string | null {
  *   4. code → token. A failure here writes nothing.
  *   5. verifyPhoneNumber with the fresh token → display name / number
  *   6. subscribed_apps — logged, does NOT abort
- *   7. /register with a generated PIN — recorded, does NOT abort
- *   8. encrypt token + PIN
+ *   7. /register with a generated PIN — recorded, does NOT abort.
+ *      Skipped in coexistence.
+ *   8. encrypt token + PIN (PIN only when there is one)
  *   9. one upsert on (account_id, phone_number_id)
  *  10. does the WABA have a payment method in Meta? (p11.1) — recorded
  *      with the service role, does NOT abort and does NOT change the
  *      status code: a failed check is `unknown`
+ *  11. coexistence only: request the two one-shot SMB syncs (contacts,
+ *      history) with the fresh token — never aborts, never changes the
+ *      status code (see `coexistence.ts`)
+ *
+ * In coexistence without `phone_number_id`, steps 2 and 3 run right
+ * after the number is resolved (4b), i.e. after the code is spent: the
+ * number cannot be known earlier. A conflict there still writes nothing.
  *
  * Steps 2 and 3 are in that order on purpose: a number that belongs to
  * somebody else is not a number you can buy your way into, so answering
@@ -192,10 +217,11 @@ export async function POST(request: Request) {
   }
 
   const code = asString(body.code);
-  const phoneNumberId = asString(body.phone_number_id);
+  let phoneNumberId = asString(body.phone_number_id);
   const wabaId = asString(body.waba_id);
+  const coexistence = body.coexistence === true;
 
-  if (!code || !phoneNumberId || !wabaId) {
+  if (!code || !wabaId || (!phoneNumberId && !coexistence)) {
     // The dialog can finish without one of the three: the session event
     // carries the ids and the login callback carries the code, and a
     // window closed at the wrong instant delivers one but not the
@@ -212,12 +238,25 @@ export async function POST(request: Request) {
     );
   }
 
-  try {
+  /**
+   * Steps 2 and 3 for a given number: cross-account conflict (409) and
+   * the `numbers` stock limit (402). Returns the response to send, or
+   * the account's existing row for that number plus the count of the
+   * account's OTHER numbers.
+   */
+  async function preflight(pnId: string): Promise<
+    | { response: Response }
+    | {
+        response?: undefined;
+        existing: { id: string; is_default?: boolean } | null;
+        numberCount: number;
+      }
+  > {
     // ---- 2. is this number already somebody else's? -----------
     const { data: claimed, error: claimedError } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('account_id')
-      .eq('phone_number_id', phoneNumberId)
+      .eq('phone_number_id', pnId)
       .neq('account_id', accountId)
       .maybeSingle();
 
@@ -226,21 +265,25 @@ export async function POST(request: Request) {
         '[embedded-signup] ownership check failed:',
         claimedError.message
       );
-      return NextResponse.json(
-        { error: 'Failed to validate configuration' },
-        { status: 500 }
-      );
+      return {
+        response: NextResponse.json(
+          { error: 'Failed to validate configuration' },
+          { status: 500 }
+        ),
+      };
     }
     if (claimed) {
       // Byte-for-byte the message of POST /api/whatsapp/config: same
       // situation, same remedy, and the UI already translates it.
-      return NextResponse.json(
-        {
-          error:
-            'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one Cabbity CRM user.',
-        },
-        { status: 409 }
-      );
+      return {
+        response: NextResponse.json(
+          {
+            error:
+              'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one Cabbity CRM user.',
+          },
+          { status: 409 }
+        ),
+      };
     }
 
     // Which of the account's own rows, if any, this signup overwrites.
@@ -251,7 +294,7 @@ export async function POST(request: Request) {
       .from('whatsapp_config')
       .select('id, is_default')
       .eq('account_id', accountId)
-      .eq('phone_number_id', phoneNumberId);
+      .eq('phone_number_id', pnId);
     if (existingErr) {
       // Fail closed: not knowing whether the row exists is not knowing
       // whether this is a reconnection or a second number.
@@ -259,10 +302,12 @@ export async function POST(request: Request) {
         '[embedded-signup] existing row lookup failed:',
         existingErr.message
       );
-      return NextResponse.json(
-        { error: 'Failed to validate configuration' },
-        { status: 500 }
-      );
+      return {
+        response: NextResponse.json(
+          { error: 'Failed to validate configuration' },
+          { status: 500 }
+        ),
+      };
     }
     const existing = existingRows?.[0] ?? null;
 
@@ -283,17 +328,25 @@ export async function POST(request: Request) {
         '[embedded-signup] counting numbers failed:',
         countErr.message
       );
-      return NextResponse.json(
-        { error: 'Failed to validate configuration' },
-        { status: 500 }
-      );
+      return {
+        response: NextResponse.json(
+          { error: 'Failed to validate configuration' },
+          { status: 500 }
+        ),
+      };
     }
     try {
       const entitlements = await assertWritable(accountId);
       assertStockLimit(entitlements, 'numbers', numberCount ?? 0);
     } catch (err) {
-      return toErrorResponse(err);
+      return { response: toErrorResponse(err) };
     }
+    return { existing, numberCount: numberCount ?? 0 };
+  }
+
+  try {
+    let checked = phoneNumberId ? await preflight(phoneNumberId) : null;
+    if (checked?.response) return checked.response;
 
     // ---- 4. code → token --------------------------------------
     // Everything from here on spends something irreversible: the code
@@ -320,6 +373,55 @@ export async function POST(request: Request) {
       );
     }
     const accessToken = exchanged.accessToken;
+
+    // ---- 4b. coexistence without phone_number_id --------------
+    // Meta's FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING carries only the
+    // WABA id. The number is the WABA's one with `is_on_biz_app`; more
+    // than one (or none) is refused rather than guessed.
+    if (!phoneNumberId) {
+      let numbers;
+      try {
+        numbers = await listWabaPhoneNumbers({ wabaId, accessToken });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        console.error(
+          '[embedded-signup] listing WABA numbers failed:',
+          message
+        );
+        return NextResponse.json(
+          { error: `Meta API error: ${message}` },
+          { status: 400 }
+        );
+      }
+      const picked = pickCoexistencePhoneNumber(numbers);
+      if (!picked.ok) {
+        return NextResponse.json(
+          picked.reason === 'none'
+            ? {
+                error:
+                  'Meta did not report any number of this WhatsApp Business account as connected from the WhatsApp Business app. Press Connect WhatsApp again.',
+                code: 'coexistence_number_not_found',
+              }
+            : {
+                error:
+                  'This WhatsApp Business account has more than one number on the WhatsApp Business app, so the one just connected cannot be told apart. Contact support.',
+                code: 'coexistence_number_ambiguous',
+              },
+          { status: 400 }
+        );
+      }
+      phoneNumberId = picked.phoneNumberId;
+      checked = await preflight(phoneNumberId);
+      if (checked.response) return checked.response;
+    }
+    if (!checked || checked.response) {
+      // Unreachable: either preflight ran before step 4 or in 4b.
+      return NextResponse.json(
+        { error: 'Internal server error' },
+        { status: 500 }
+      );
+    }
+    const { existing, numberCount } = checked;
 
     // ---- 5. does the token actually open this number? ---------
     let phoneInfo;
@@ -357,23 +459,30 @@ export async function POST(request: Request) {
     // business already had 2FA with their own PIN, Meta rejects this
     // with a clear message: it is recorded and the manual PIN field in
     // settings is the retry path. Never retried automatically.
-    const pin = generateRegistrationPin();
+    // In coexistence there is no /register at all (#1650): Meta does not
+    // support it on a number that lives on the app and on Cloud API, and
+    // the number is already usable as is.
+    let pin: string | null = null;
     let registeredAt: string | null = null;
     let registrationError: string | null = null;
-    try {
-      await registerPhoneNumber({ phoneNumberId, accessToken, pin });
-      registeredAt = new Date().toISOString();
-    } catch (err) {
-      registrationError = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[embedded-signup] /register failed:', registrationError);
+    if (!coexistence) {
+      pin = generateRegistrationPin();
+      try {
+        await registerPhoneNumber({ phoneNumberId, accessToken, pin });
+        registeredAt = new Date().toISOString();
+      } catch (err) {
+        registrationError =
+          err instanceof Error ? err.message : 'Unknown error';
+        console.error('[embedded-signup] /register failed:', registrationError);
+      }
     }
 
     // ---- 8. encrypt the two secrets ---------------------------
     let encryptedToken: string;
-    let encryptedPin: string;
+    let encryptedPin: string | null;
     try {
       encryptedToken = encrypt(accessToken);
-      encryptedPin = encrypt(pin);
+      encryptedPin = pin ? encrypt(pin) : null;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       console.error('[embedded-signup] encryption failed:', message);
@@ -407,13 +516,16 @@ export async function POST(request: Request) {
       registered_at: registeredAt,
       subscribed_apps_at: subscribedAppsAt,
       last_registration_error: registrationError,
+      // #1650: NULL = not coexistence. Also the start of Meta's 24 h
+      // window for the SMB syncs.
+      coexistence_onboarded_at: coexistence ? new Date().toISOString() : null,
       updated_at: new Date().toISOString(),
     };
     // `is_default` is written only when the row is NEW and the account
     // has nothing else: on a repeat pass the column is omitted so the
     // upsert cannot demote (or steal) the account's current default,
     // and the partial unique index of 053 cannot be violated.
-    if (!existing && (numberCount ?? 0) === 0) row.is_default = true;
+    if (!existing && numberCount === 0) row.is_default = true;
 
     const { data: saved, error: upsertError } = await supabase
       .from('whatsapp_config')
@@ -454,8 +566,32 @@ export async function POST(request: Request) {
       );
     }
 
+    // ---- 11. coexistence: the one-shot SMB syncs ---------------
+    // After the upsert (the claim lives on the row). Never throws to
+    // here in practice; the catch is belt and braces so a sync problem
+    // can never turn a connected number into a 500.
+    let smbSync: SmbSyncOutcome | null = null;
+    if (coexistence) {
+      try {
+        smbSync = await runSmbAppDataSync(supabaseAdmin(), {
+          accountId,
+          configId: saved[0].id,
+          phoneNumberId,
+          accessToken,
+        });
+      } catch (err) {
+        smbSync = { state_sync: 'failed', history: 'failed' };
+        console.warn(
+          '[embedded-signup] SMB sync failed:',
+          err instanceof Error ? err.message : 'Unknown error'
+        );
+      }
+    }
+
     return NextResponse.json({
       success: registrationError == null,
+      coexistence,
+      ...(smbSync ? { smb_sync: smbSync } : {}),
       config_id: saved[0].id,
       payment_status: paymentStatus,
       registered: registeredAt != null,
