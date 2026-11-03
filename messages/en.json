@@ -1,8 +1,8 @@
 {
   "LoginPage": {
-    "titleAccept": "Sign in to accept",
+    "titleAccept": "Sign in to join your team",
     "titleWelcome": "Welcome back!",
-    "descAccept": "Sign in and we'll take you to the invitation.",
+    "descAccept": "Sign in and you'll go straight into your team.",
     "descWelcome": "Sign in to continue",
     "emailLabel": "Email",
     "emailPlaceholder": "you@example.com",
@@ -3020,5 +3020,62 @@
       },
       "link": "Details: {url}"
     }
+  },
+  "JoinPage": {
+    "loading": "Taking you to your team…",
+    "invitedTo": "You're invited to {account}",
+    "joinAs": "You'll join as {role}. Link valid until {date}.",
+    "roles": {
+      "admin": "Admin",
+      "agent": "Agent",
+      "viewer": "Viewer"
+    },
+    "createAndJoin": "Create account & join",
+    "haveAccount": "I already have an account",
+    "fail": {
+      "not_found": {
+        "title": "Invite not found",
+        "body": "This link doesn't match a valid invitation. Double-check the URL or ask the person who invited you to send a new one."
+      },
+      "used": {
+        "title": "Invite already used",
+        "body": "This invitation has already been used. If that wasn't you, ask the account admin to send a fresh link."
+      },
+      "expired": {
+        "title": "Invite expired",
+        "body": "This invitation has expired. Ask the account admin to send a new one — they take a few seconds to generate."
+      },
+      "no_seats": {
+        "title": "This team is full",
+        "body": "This team has no free seats on its plan. Ask an admin to free a seat or upgrade the plan, then open this link again."
+      },
+      "server_error": {
+        "title": "Something went wrong",
+        "body": "We couldn't verify this invitation right now. Try again in a moment."
+      }
+    },
+    "tryAgain": "Try again",
+    "createNewAccount": "Create a new account instead",
+    "signIn": "Sign in",
+    "conflict": {
+      "title": "Can't join {account} with this account",
+      "titleNoName": "Can't join this team with this account",
+      "fallback": "You are already in another account. Sign in with a different email to join this one.",
+      "hint": "To join, sign out and sign up again with a different email address. The invite link stays valid until it expires.",
+      "goToMyAccount": "Go to my account",
+      "signOut": "Sign out & use a different email",
+      "signingOut": "Signing out…"
+    },
+    "signOutError": "Could not sign out. Try refreshing the page."
+  },
+  "SignupInvite": {
+    "title": "Create your account at {account}",
+    "description": "You'll go straight into {account} as {role} once you confirm your email.",
+    "checking": "Checking your invitation…",
+    "checkEmailTitle": "Check your email",
+    "checkEmailBody": "We've sent a confirmation link to {email}. Open it and you'll land in {account}.",
+    "rejected": "This invitation is no longer valid. Ask for a new link.",
+    "backToSignIn": "Back to sign in",
+    "signupWithoutInvite": "Create an account without the invitation"
   }
 }

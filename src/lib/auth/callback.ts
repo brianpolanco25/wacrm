@@ -248,3 +248,19 @@ export async function completeAuthCallback(opts: {
     (await postLoginDestination(invite, opts.fetchImpl));
   return { ok: true, destination };
 }
+
+/**
+ * The two ways out of the failure screen of `/auth/callback/complete`
+ * (i12.1). They keep `?invite=`: a sign-up confirmation opened in
+ * another browser fails here (no PKCE verifier), and without the token
+ * the person would sign in and land on their dashboard instead of
+ * passing through /join/<token>.
+ */
+export function callbackExitLinks(search: string): {
+  login: string;
+  forgotPassword: string;
+} {
+  const invite = new URLSearchParams(search).get('invite');
+  const q = invite ? `?invite=${encodeURIComponent(invite)}` : '';
+  return { login: `/login${q}`, forgotPassword: `/forgot-password${q}` };
+}

@@ -8,18 +8,21 @@
 //
 // It REUSES the invitation of the Members tab rather than inventing a
 // second way in: the same `account_invitations` row, the same token hash,
-// the same `/join/<token>` page and the same `redeem_invitation()`
-// (019/049/052) — which is what moves the person into the company and
-// cleans up their empty personal one. What changes is who creates it
-// (the operator, through the service role, for the company of the file)
-// and how the link travels:
+// the same `/join/<token>` page and the same `redeem_invitation()`.
+// What changes is who creates it (the operator, through the service
+// role, for the company of the file) and how the link travels:
 //
 //   - nobody has that email yet → Supabase emails an invitation whose
 //     link goes through `/auth/callback` → `/reset-password` → `/join/<token>`
-//     (`inviteUserByEmail` + `redirectTo`, s9.8);
-//   - somebody does → no email from us (Supabase would refuse to invite
-//     an existing user); the link comes back for the operator to share,
-//     as the Members tab does;
+//     (`inviteUserByEmail` + `redirectTo`, s9.8). The token also rides
+//     in the user metadata (`invite_token`, i12.1): the signup trigger
+//     (090) creates the person INSIDE this company, so the redeem at
+//     /join is a no-op. The invitation row is written first for that;
+//   - somebody does → the same link moves them in when they open it
+//     (`redeem_invitation`, which refuses a personal account with data);
+//     no email from us (Supabase would refuse to invite an existing
+//     user); the link comes back for the operator to share, as the
+//     Members tab does;
 //   - they are already in THIS company → 409.
 //
 // The seat limit of the plan applies as in the Members tab (members plus
@@ -179,6 +182,7 @@ export async function POST(
       // on /join/<token>. `url` stays the link shown to the operator.
       const invited = await inviteAuthUser({
         email,
+        inviteToken: token,
         redirectTo: authCallbackUrl(baseUrl, {
           next: RESET_PASSWORD_PATH,
           invite: token,

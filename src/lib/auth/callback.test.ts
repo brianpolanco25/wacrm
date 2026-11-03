@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   callbackErrorReason,
+  callbackExitLinks,
   completeAuthCallback,
   parseAuthFragment,
   resolveCallback,
@@ -365,4 +366,36 @@ describe('resolveCallback — forwarding drops an unsafe next', () => {
       ).toBe('/auth/callback/complete?error_code=otp_expired');
     }
   );
+});
+
+describe('callbackExitLinks (i12.1, R18)', () => {
+  it('keeps ?invite= on both ways out', () => {
+    expect(
+      callbackExitLinks('?invite=tok-1&error_code=pkce_code_verifier_not_found')
+    ).toEqual({
+      login: '/login?invite=tok-1',
+      forgotPassword: '/forgot-password?invite=tok-1',
+    });
+  });
+
+  it('plain links without an invitation', () => {
+    expect(callbackExitLinks('?error_code=otp_expired')).toEqual({
+      login: '/login',
+      forgotPassword: '/forgot-password',
+    });
+    expect(callbackExitLinks('')).toEqual({
+      login: '/login',
+      forgotPassword: '/forgot-password',
+    });
+  });
+
+  it('escapes a token with characters that would break the query', () => {
+    const { login } = callbackExitLinks(
+      `?invite=${encodeURIComponent('a b&c=d/e#f')}`
+    );
+    expect(login).toBe('/login?invite=a%20b%26c%3Dd%2Fe%23f');
+    expect(new URL(login, 'http://x').searchParams.get('invite')).toBe(
+      'a b&c=d/e#f'
+    );
+  });
 });

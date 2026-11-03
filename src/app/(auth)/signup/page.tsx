@@ -1,15 +1,27 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AuthCard } from '@/components/auth/auth-card';
-import { authCallbackUrl } from '@/lib/auth/redirects';
+import {
+  isInviteSignupRejection,
+  signupInviteGate,
+  signupOptions,
+} from '@/lib/auth/signup-invite';
 import { CheckCircle, UsersRound } from 'lucide-react';
+
+import {
+  SignupInviteCheckEmail,
+  SignupInviteChecking,
+  SignupInviteFail,
+  useSignupInviteCopy,
+} from './signup-invite-view';
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -26,12 +38,44 @@ const FIELD_CLASS =
 
 function SignupPageInner() {
   const searchParams = useSearchParams();
-  // When the user lands here from `/join/<token>` we carry the
-  // invite token in the query so it survives the signup → email
-  // verification → redirect round-trip. `emailRedirectTo` below
-  // carries it through /auth/callback to /join/<token> so the user
-  // lands on the redeem step after verifying.
+  // When the user lands here from `/join/<token>` the invite token comes
+  // in the query (i12.1). It is checked before the form shows, and it
+  // goes to `signUp` as `invite_token`: the database trigger
+  // (migration 090) creates the person INSIDE the company. The
+  // confirmation link still carries it to /join/<token>, where the
+  // automatic redeem is a no-op for someone already in.
   const inviteToken = searchParams.get('invite');
+
+  // Raw peek answer; `undefined` = not answered yet.
+  const [peekBody, setPeekBody] = useState<unknown | undefined>(undefined);
+  const loadPeek = useCallback(async (): Promise<unknown> => {
+    if (!inviteToken) return undefined;
+    try {
+      const res = await fetch(
+        `/api/invitations/${encodeURIComponent(inviteToken)}/peek`,
+        { cache: 'no-store' }
+      );
+      return await res.json();
+    } catch {
+      return { ok: false, reason: 'server_error' };
+    }
+  }, [inviteToken]);
+
+  useEffect(() => {
+    if (!inviteToken) return;
+    let cancelled = false;
+    void loadPeek().then((body) => {
+      if (!cancelled) setPeekBody(body);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteToken, loadPeek]);
+
+  const gate = signupInviteGate(inviteToken, peekBody);
+  const invitePeek = gate.kind === 'ok' ? gate.peek : null;
+  const inviteCopy = useSignupInviteCopy(invitePeek);
+  const t = useTranslations('SignupInvite');
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -61,24 +105,32 @@ function SignupPageInner() {
     // The verification email comes back through /auth/callback (s9.8),
     // which exchanges the PKCE code for a session and then sends the
     // user to /join/<token> when there is an invite, or to the
-    // dashboard. Before, the link pointed straight at /join/<token>
-    // (or the Site URL) and arrived with a `?code=` nobody exchanged.
-    const emailRedirectTo = authCallbackUrl(window.location.origin, {
-      invite: inviteToken,
-    });
-
+    // dashboard. With an invite, `invite_token` also rides in the user
+    // metadata for the signup trigger (i12.1).
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: {
-          full_name: fullName,
-        },
-        emailRedirectTo,
-      },
+      options: signupOptions({
+        fullName,
+        inviteToken: invitePeek ? inviteToken : null,
+        origin: window.location.origin,
+      }),
     });
 
     if (error) {
+      if (invitePeek && isInviteSignupRejection(error)) {
+        // The trigger refused the invitation (used meanwhile, expired,
+        // the team filled up): say why, not GoTrue's database error.
+        const body = await loadPeek();
+        const again = signupInviteGate(inviteToken, body);
+        if (again.kind === 'fail') {
+          setPeekBody(body);
+        } else {
+          setError(t('rejected'));
+        }
+        setLoading(false);
+        return;
+      }
       setError(error.message);
       setLoading(false);
       return;
@@ -87,6 +139,29 @@ function SignupPageInner() {
     setSuccess(true);
     setLoading(false);
   };
+
+  if (gate.kind === 'loading') return <SignupInviteChecking />;
+  if (gate.kind === 'fail') {
+    return (
+      <SignupInviteFail
+        reason={gate.reason}
+        onRetry={() => {
+          setPeekBody(undefined);
+          void loadPeek().then(setPeekBody);
+        }}
+      />
+    );
+  }
+
+  if (success && invitePeek && inviteToken) {
+    return (
+      <SignupInviteCheckEmail
+        email={email}
+        accountName={invitePeek.account_name}
+        token={inviteToken}
+      />
+    );
+  }
 
   if (success) {
     return (
@@ -121,13 +196,11 @@ function SignupPageInner() {
 
   return (
     <AuthCard
-      title={inviteToken ? 'Create account & join' : 'Create account'}
+      title={inviteCopy ? inviteCopy.title : 'Create account'}
       description={
-        inviteToken
-          ? 'Verify your email, then accept the invitation to join your team.'
-          : 'Get started with Cabbity CRM'
+        inviteCopy ? inviteCopy.description : 'Get started with Cabbity CRM'
       }
-      icon={inviteToken ? <UsersRound className="size-6" /> : undefined}
+      icon={inviteCopy ? <UsersRound className="size-6" /> : undefined}
     >
       <form onSubmit={handleSignup} className="flex flex-col gap-5">
         {error && (

@@ -582,6 +582,43 @@ describe('inviteAuthUser', () => {
     });
   });
 
+  it('i12.1: passes invite_token so the trigger makes them a member (R22)', async () => {
+    await p.inviteAuthUser({
+      email: 'agent@acme.test',
+      fullName: 'Ana Agent',
+      redirectTo: 'https://app.example/auth/callback',
+      inviteToken: 'tok-1',
+    });
+    expect(h.invite.args).toEqual({
+      email: 'agent@acme.test',
+      options: {
+        data: { full_name: 'Ana Agent', invite_token: 'tok-1' },
+        redirectTo: 'https://app.example/auth/callback',
+      },
+    });
+
+    await p.inviteAuthUser({
+      email: 'agent@acme.test',
+      redirectTo: 'https://app.example/auth/callback',
+      inviteToken: 'tok-2',
+    });
+    expect(h.invite.args).toEqual({
+      email: 'agent@acme.test',
+      options: {
+        data: { invite_token: 'tok-2' },
+        redirectTo: 'https://app.example/auth/callback',
+      },
+    });
+  });
+
+  it('without a token nor a name, no data at all (a new company owner, R24)', async () => {
+    await p.inviteAuthUser({ email: 'o@x.test', redirectTo: 'https://a/b' });
+    expect(h.invite.args).toEqual({
+      email: 'o@x.test',
+      options: { redirectTo: 'https://a/b' },
+    });
+  });
+
   it('says "exists" when Supabase already has that user', async () => {
     h.invite.result = {
       data: { user: null },
@@ -624,6 +661,19 @@ describe('the scoped writes', () => {
     for (const call of h.calls) {
       expect(call.filters[0]).toEqual(['account_id', 'eq', A]);
     }
+  });
+
+  it('an expired or accepted invitation does not hold a seat (R29)', async () => {
+    const before = Date.now();
+    await p.countSeats(A);
+    const inv = h.calls.find((c) => c.table === 'account_invitations')!;
+    expect(inv.filters).toContainEqual(['accepted_at', 'is', null]);
+    const gt = inv.filters.find(([c, op]) => c === 'expires_at' && op === 'gt');
+    expect(gt).toBeDefined();
+    // "now", not some fixed date: an invitation past its expiry is free.
+    const at = Date.parse(gt![2] as string);
+    expect(at).toBeGreaterThanOrEqual(before - 1000);
+    expect(at).toBeLessThanOrEqual(Date.now() + 1000);
   });
 
   it('writes the invitation under the company of the file', async () => {

@@ -65,8 +65,14 @@ function supabaseMock() {
           entry.filters.push([col, val]);
           return chain;
         },
-        is: () => chain,
-        gt: () => chain,
+        is: (col: string, val: unknown) => {
+          entry.filters.push([`${col}:is`, val]);
+          return chain;
+        },
+        gt: (col: string, val: unknown) => {
+          entry.filters.push([`${col}:gt`, val]);
+          return chain;
+        },
         order: () => chain,
         insert: (row: Record<string, unknown>) => {
           mocks.state.inserted = row;
@@ -174,6 +180,37 @@ describe('POST /api/account/invitations — operators (fase 3 §4)', () => {
     expect(json.upgradeUrl).toBe('/billing');
     // Nothing was written: the link does not exist.
     expect(mocks.state.inserted).toBeNull();
+  });
+
+  it('i12.1 (R28): 3 members and no pending link on a 3-seat plan → 402, nothing written', async () => {
+    mocks.state.memberCount = 3;
+    mocks.state.pendingCount = 0;
+    const res = await post();
+    expect(res.status).toBe(402);
+    expect((await res.json()).used).toBe(3);
+    expect(mocks.state.inserted).toBeNull();
+  });
+
+  it('i12.1 (R28): 2 members + 1 pending link on a 3-seat plan → 402', async () => {
+    mocks.state.memberCount = 2;
+    mocks.state.pendingCount = 1;
+    const res = await post();
+    expect(res.status).toBe(402);
+    expect(mocks.state.inserted).toBeNull();
+  });
+
+  it('i12.1 (R29): only open, unexpired invitations take a seat', async () => {
+    const before = Date.now();
+    await post();
+    const pending = mocks.state.countedFilters.find(
+      (c) => c.counting && c.table === 'account_invitations'
+    )!;
+    expect(pending.filters).toContainEqual(['accepted_at:is', null]);
+    const gt = pending.filters.find(([c]) => c === 'expires_at:gt');
+    expect(gt).toBeDefined();
+    const at = Date.parse(gt![1] as string);
+    expect(at).toBeGreaterThanOrEqual(before - 1000);
+    expect(at).toBeLessThanOrEqual(Date.now() + 1000);
   });
 
   it('counts the seats of THIS account only (leak test)', async () => {

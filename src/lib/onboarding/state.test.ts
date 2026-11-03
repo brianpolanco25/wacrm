@@ -191,6 +191,23 @@ describe('loadOnboardingState — the step', () => {
     }
   );
 
+  it('i12.1 (R20): a member born inside a paying company (no account of their own) is done', async () => {
+    // What `handle_new_user()` (090) creates for an invitee: a profile in
+    // the company with the invitation's role, nothing else. The gate
+    // reads the COMPANY's subscription through ctx.accountId, never one
+    // of the user's — and the company's profile being incomplete is the
+    // owner's business, not theirs.
+    account(A, { name: 'Acme' });
+    subscription('active');
+    const s = await loadOnboardingState({ accountId: A, role: 'agent' });
+    expect(s.step).toBe('done');
+    expect(s.canEditCompany).toBe(false);
+    for (const q of h.queries) {
+      if (q.op === 'select')
+        expect(q.filters).toContainEqual(['eq', expect.any(String), A]);
+    }
+  });
+
   it('the stamp never overrides incomplete: a stamped but unpaid account is gated', async () => {
     account(A, { ...PROFILE, onboarding_completed_at: '2026-09-01T00:00:00Z' });
     subscription('incomplete');

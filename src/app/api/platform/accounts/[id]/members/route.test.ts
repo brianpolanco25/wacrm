@@ -174,6 +174,9 @@ describe('the request', () => {
     const res = await call(VALID);
     expect(res.status).toBe(402);
     expect(h.steps).toEqual([]);
+    // R28: no invitation, no email.
+    expect(h.invitations).toEqual([]);
+    expect(h.inviteArgs).toBeNull();
   });
 });
 
@@ -217,6 +220,9 @@ describe('inviting', () => {
     expect(redirect.pathname).toBe('/auth/callback');
     expect(redirect.searchParams.get('next')).toBe('/reset-password');
     expect(redirect.searchParams.get('invite')).toBe(token);
+    // i12.1 (R22): the same token rides in the metadata, so the signup
+    // trigger makes the person a member of THIS company.
+    expect(h.inviteArgs?.inviteToken).toBe(token);
     expect(body.emailed).toBe(true);
   });
 

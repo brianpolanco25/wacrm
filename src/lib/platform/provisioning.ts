@@ -91,22 +91,31 @@ export type InviteOutcome =
 
 /**
  * Ask Supabase to email an invitation. Supabase creates the auth user
- * right away (unconfirmed), which fires `handle_new_user()` (017): the
- * user has a profile and a company of their own by the time this
- * returns. Accepting the email only confirms the address.
+ * right away (unconfirmed), which fires `handle_new_user()`:
+ *
+ *   - without `inviteToken` (a new company's owner) the user has a
+ *     profile and a company of their own by the time this returns (017);
+ *   - with `inviteToken` (a member of an existing company, i12.1) the
+ *     trigger finds that invitation and the user is born INSIDE that
+ *     company with its role (090), no company of their own. The
+ *     invitation row must exist before this call.
+ *
+ * Accepting the email only confirms the address.
  */
 export async function inviteAuthUser(params: {
   email: string;
   fullName?: string | null;
   redirectTo: string;
+  inviteToken?: string | null;
 }): Promise<InviteOutcome> {
-  const { data, error } = await supabaseAdmin().auth.admin.inviteUserByEmail(
-    params.email,
-    {
-      ...(params.fullName ? { data: { full_name: params.fullName } } : {}),
+  const data: { full_name?: string; invite_token?: string } = {};
+  if (params.fullName) data.full_name = params.fullName;
+  if (params.inviteToken) data.invite_token = params.inviteToken;
+  const { data: result, error } =
+    await supabaseAdmin().auth.admin.inviteUserByEmail(params.email, {
+      ...(Object.keys(data).length > 0 ? { data } : {}),
       redirectTo: params.redirectTo,
-    }
-  );
+    });
 
   if (error) {
     const code = (error as { code?: string }).code;
@@ -120,7 +129,7 @@ export async function inviteAuthUser(params: {
     console.error('[platform/provisioning] invite failed:', error);
     return { ok: false, reason: 'failed' };
   }
-  const userId = data?.user?.id;
+  const userId = result?.user?.id;
   if (!userId) return { ok: false, reason: 'failed' };
   return { ok: true, userId };
 }

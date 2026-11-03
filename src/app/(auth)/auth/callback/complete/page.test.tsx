@@ -19,6 +19,7 @@ vi.mock('@/lib/supabase/client', () => ({
 }));
 
 import AuthCallbackCompletePage from './page';
+import { CallbackFailure } from './callback-failure';
 
 type Catalogue = typeof en;
 const CATALOGUES: Array<[string, Catalogue]> = [
@@ -62,4 +63,29 @@ describe('AuthCallbackCompletePage', () => {
     expect(t('requestNewLink').length).toBeGreaterThan(0);
     expect(errors).toEqual([]);
   });
+
+  it.each(CATALOGUES)(
+    '%s: the failure screen keeps ?invite= on its links (i12.1, R18)',
+    (locale, m) => {
+      const html = renderToStaticMarkup(
+        <NextIntlClientProvider locale={locale} timeZone="UTC" messages={m}>
+          <CallbackFailure
+            reason="otherBrowser"
+            search="?invite=tok-1&error_code=pkce_code_verifier_not_found"
+          />
+        </NextIntlClientProvider>
+      );
+      expect(html).toContain('href="/login?invite=tok-1"');
+      expect(html).toContain('href="/forgot-password?invite=tok-1"');
+      expect(html).toContain(m.AuthCallback.errorTitle);
+
+      const plain = renderToStaticMarkup(
+        <NextIntlClientProvider locale={locale} timeZone="UTC" messages={m}>
+          <CallbackFailure reason="expired" search="?error_code=otp_expired" />
+        </NextIntlClientProvider>
+      );
+      expect(plain).toContain('href="/login"');
+      expect(plain).toContain('href="/forgot-password"');
+    }
+  );
 });

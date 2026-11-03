@@ -1,8 +1,8 @@
 {
   "LoginPage": {
-    "titleAccept": "Inicia sesión para aceptar",
+    "titleAccept": "Inicia sesión para entrar a tu empresa",
     "titleWelcome": "¡Bienvenido de nuevo!",
-    "descAccept": "Inicia sesión y te llevamos a la invitación.",
+    "descAccept": "Inicia sesión y entrarás directamente a tu empresa.",
     "descWelcome": "Inicia sesión para continuar",
     "emailLabel": "Correo electrónico",
     "emailPlaceholder": "tu@ejemplo.com",
@@ -3020,5 +3020,62 @@
       },
       "link": "Detalles: {url}"
     }
+  },
+  "JoinPage": {
+    "loading": "Entrando a tu empresa…",
+    "invitedTo": "Te invitaron a {account}",
+    "joinAs": "Entrarás como {role}. El enlace vale hasta el {date}.",
+    "roles": {
+      "admin": "Administrador",
+      "agent": "Agente",
+      "viewer": "Observador"
+    },
+    "createAndJoin": "Crear cuenta y entrar",
+    "haveAccount": "Ya tengo cuenta",
+    "fail": {
+      "not_found": {
+        "title": "Invitación no encontrada",
+        "body": "Este enlace no corresponde a ninguna invitación válida. Revisa la URL o pide a quien te invitó que te envíe otro."
+      },
+      "used": {
+        "title": "Invitación ya usada",
+        "body": "Esta invitación ya se usó. Si no fuiste tú, pide al administrador de la cuenta un enlace nuevo."
+      },
+      "expired": {
+        "title": "Invitación caducada",
+        "body": "Esta invitación caducó. Pide al administrador de la cuenta que te envíe otra: se genera en segundos."
+      },
+      "no_seats": {
+        "title": "Este equipo está completo",
+        "body": "La empresa no tiene asientos libres en su plan. Pide a un administrador que libere uno o mejore el plan y vuelve a abrir este enlace."
+      },
+      "server_error": {
+        "title": "Algo salió mal",
+        "body": "No pudimos comprobar esta invitación ahora mismo. Vuelve a intentarlo en un momento."
+      }
+    },
+    "tryAgain": "Reintentar",
+    "createNewAccount": "Crear una cuenta nueva",
+    "signIn": "Iniciar sesión",
+    "conflict": {
+      "title": "No puedes entrar a {account} con esta cuenta",
+      "titleNoName": "No puedes entrar a este equipo con esta cuenta",
+      "fallback": "Ya perteneces a otra cuenta. Entra con otro correo para unirte a esta.",
+      "hint": "Para entrar, cierra sesión y regístrate con otro correo. El enlace sigue valiendo hasta que caduque.",
+      "goToMyAccount": "Ir a mi cuenta",
+      "signOut": "Cerrar sesión y usar otro correo",
+      "signingOut": "Cerrando sesión…"
+    },
+    "signOutError": "No se pudo cerrar la sesión. Recarga la página."
+  },
+  "SignupInvite": {
+    "title": "Crea tu cuenta en {account}",
+    "description": "Al confirmar tu correo entrarás directamente a {account} como {role}.",
+    "checking": "Comprobando tu invitación…",
+    "checkEmailTitle": "Revisa tu correo",
+    "checkEmailBody": "Te enviamos un enlace de confirmación a {email}. Ábrelo y entrarás a {account}.",
+    "rejected": "Esta invitación ya no es válida. Pide un enlace nuevo.",
+    "backToSignIn": "Volver a iniciar sesión",
+    "signupWithoutInvite": "Crear una cuenta sin la invitación"
   }
 }

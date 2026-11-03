@@ -11,6 +11,17 @@ and polish.
 
 ## [Unreleased]
 
+### Invitations: invitees go straight into the company that invited them
+
+- **Migration required**: `supabase/migrations/090_invite_direct_join.sql` (replaces `handle_new_user()`, `redeem_invitation()` and `peek_invitation()`; adds `account_seat_limit()` and `assert_seat_available()`, not callable by clients).
+- Signing up from an invitation link (`/signup?invite=`) creates the account directly inside the inviting company, with the invitation's role. No personal company is created in between, and there is no "Accept invitation" step any more.
+- The invitation is checked before the sign-up form shows. A link that is not found, already used, expired, or whose company has no free seats on its plan shows the reason instead of the form, and the sign-up is refused rather than creating an empty company.
+- Opening an invitation link while signed in joins automatically (only from an empty personal account, as before) and lands on the dashboard; an account with data still gets the "sign out and use another email" dialog, now with a "Go to my account" way out.
+- Members invited by email from the platform panel are created inside the company as well.
+- Seats follow the client's plan: a member is only added (by sign-up or by link) while the plan has room for one more, even if the plan was downgraded after the link was sent.
+- The failure screen of an email link opened in another browser keeps the invitation on its "Sign in" and "Request a new link" buttons.
+- The `/join` page and the invitation texts of `/signup` and `/login` are now translated (Spanish and English).
+
 ### WhatsApp coexistence: messages sent from the phone app, edits and deletions, chat history, phone contacts and disconnection
 
 - **Migration required**: `supabase/migrations/089_whatsapp_coexistence_batches.sql` (new table `whatsapp_coexistence_batches`, service role only).

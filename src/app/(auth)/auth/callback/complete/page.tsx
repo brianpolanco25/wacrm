@@ -13,12 +13,10 @@
 // ============================================================
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { Loader2, MailX } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 import { AuthCard } from '@/components/auth/auth-card';
-import { Button } from '@/components/ui/button';
 import {
   completeAuthCallback,
   type CallbackErrorReason,
@@ -26,9 +24,16 @@ import {
 import { isSameOriginPath } from '@/lib/auth/redirects';
 import { createClient } from '@/lib/supabase/client';
 
+import { CallbackFailure } from './callback-failure';
+
 export default function AuthCallbackCompletePage() {
   const t = useTranslations('AuthCallback');
-  const [reason, setReason] = useState<CallbackErrorReason | null>(null);
+  // The reason, and the query of this page for the failure screen's
+  // links (they keep `?invite=`, i12.1).
+  const [failure, setFailure] = useState<{
+    reason: CallbackErrorReason;
+    search: string;
+  } | null>(null);
 
   // Runs once per page load. React's StrictMode (on in dev) mounts,
   // unmounts and mounts again: a second pass would find the fragment
@@ -52,7 +57,7 @@ export default function AuthCallbackCompletePage() {
       auth: createClient().auth,
     }).then((result) => {
       if (!result.ok) {
-        setReason(result.reason);
+        setFailure({ reason: result.reason, search });
         return;
       }
       // Last line of defence: never leave the site, whatever was built.
@@ -62,7 +67,7 @@ export default function AuthCallbackCompletePage() {
     });
   }, []);
 
-  if (!reason) {
+  if (!failure) {
     return (
       <AuthCard
         title={t('title')}
@@ -76,23 +81,5 @@ export default function AuthCallbackCompletePage() {
     );
   }
 
-  return (
-    <AuthCard
-      title={t('errorTitle')}
-      description={t(`errors.${reason}`)}
-      icon={<MailX className="size-6" />}
-    >
-      <Link href="/forgot-password">
-        <Button className="bg-primary text-primary-foreground hover:bg-primary-hover h-12 w-full rounded-xl text-base font-semibold">
-          {t('requestNewLink')}
-        </Button>
-      </Link>
-      <Link
-        href="/login"
-        className="text-muted-foreground hover:text-foreground text-center text-sm transition-colors"
-      >
-        {t('backToSignIn')}
-      </Link>
-    </AuthCard>
-  );
+  return <CallbackFailure reason={failure.reason} search={failure.search} />;
 }
