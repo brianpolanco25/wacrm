@@ -66,7 +66,7 @@ export async function PUT(request: Request, { params }: Context) {
       return NextResponse.json(
         {
           error:
-            "'credential' must be 1–4096 characters, without control characters or surrounding spaces",
+            "'credential' must be 1–4096 printable ASCII characters, without surrounding spaces",
           field: 'credential',
         },
         { status: 400 }

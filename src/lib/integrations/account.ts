@@ -25,8 +25,9 @@ import type {
 export const CREDENTIAL_MAX = 4096;
 
 /**
- * R15: cadena de 1–4096 caracteres sin caracteres de control (ni saltos
- * de línea: acabaría partiendo la cabecera). Devuelve la credencial tal
+ * R15: cadena de 1–4096 caracteres ASCII imprimibles: ni caracteres de
+ * control ni saltos de línea (acabarían partiendo la cabecera), ni nada
+ * fuera de ASCII. Devuelve la credencial tal
  * cual o `null` si no vale. No se recorta: un espacio puede ser parte
  * del secreto, pero uno al principio o al final casi siempre es un
  * error de pegado, así que también se rechaza.
@@ -34,7 +35,10 @@ export const CREDENTIAL_MAX = 4096;
 export function validateCredential(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   if (raw.length < 1 || raw.length > CREDENTIAL_MAX) return null;
-  if (/[\u0000-\u001f\u007f]/.test(raw)) return null;
+  // Solo ASCII imprimible: va a una cabecera HTTP, y una comilla
+  // tipográfica pegada desde un documento haría que `fetch` rechazara la
+  // cabecera más tarde (`unreachable` en vez de un 400 aquí).
+  if (/[^\x20-\x7e]/.test(raw)) return null;
   if (raw !== raw.trim()) return null;
   return raw;
 }

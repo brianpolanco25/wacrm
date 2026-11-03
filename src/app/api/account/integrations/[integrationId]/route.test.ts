@@ -122,6 +122,9 @@ describe('PUT — activate / change the credential (R15)', () => {
     ['empty', ''],
     ['surrounding spaces', ' abc '],
     ['not a string', 123],
+    ['typographic quotes pasted from a document', '“sanctum-token-1234”'],
+    ['a non-ASCII letter', 'contraseña-1234567'],
+    ['a non-breaking space', 'abc\u00a0def'],
   ])('400 for %s', async (_label, credential) => {
     const res = await put(HEALTH_ID, { credential });
     expect(res.status).toBe(400);
