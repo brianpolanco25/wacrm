@@ -93,6 +93,20 @@
       "worktree": ".claude/worktrees/precios-meta-directo",
       "base": "feat/facturacion-gestionada @ 194e4e6 (fase 9 + s10.1 + s10.2: existe subscriptions.meta_billing)",
       "note": "Fase 11: ajustes para clientes que pagan a Meta directo tras el cambio de precios del 01-10-2026. Sin spec todavía (sdd). p11.1 es la única urgente. p11.1 aprobada por el humano el 2026-10-01 («aprueba p11.1 y lánzala»); worktree .claude/worktrees/precios-meta-directo; migración 079. p11.1 completa @ be8ca0f (sin merge). Resto de la fase sin spec (sdd). 2026-10-01: el humano pide completar TODA la fase («quiero que lo hagas todo»); ramas hijas pmd/* desde feat/precios-meta-directo @ be8ca0f. Integración 2026-10-01: p11.5 @ 470ff3e, p11.6 @ 5c4d2a0 sobre 4345c4c. p11.3 @ 24fdb08. FASE 11 COMPLETA el 2026-10-01: p11.4 @ b37e4ad, p11.7 @ 8d7ef9f; fase 10 fusionada @ 74a5daa. Rama final del conjunto: feat/precios-meta-directo @ 0ed0338 (compuerta final en curso). Migraciones 075–084 sin réplica (Docker apagado)."
+    },
+    "12": {
+      "doc": null,
+      "branch": "feat/invitacion-directa",
+      "worktree": ".claude/worktrees/invitacion-directa",
+      "base": "main @ 5f64211",
+      "note": "Fase 12 (2026-11-03): el invitado que entra por el enlace de invitación cae directamente en la empresa que lo invitó, sin pantalla de aceptar ni cuenta personal intermedia. Origen: un cliente invitó a un usuario y ese usuario acabó como empresa nueva. Sin spec todavía (sdd)."
+    },
+    "13": {
+      "doc": null,
+      "branch": "feat/integraciones",
+      "worktree": ".claude/worktrees/integraciones",
+      "base": "main @ 5f64211",
+      "note": "Fase 13 (2026-11-03): integraciones con aplicaciones Cabbity. El superadmin crea en el panel de plataforma integraciones (p. ej. Cabbity Health: crear citas, consultar doctores) que los clientes activan y usan desde el CRM. Sin spec todavía (sdd); diseño abierto, el spec debe fijar el modelo (catálogo declarativo de operaciones HTTP vs. conectores codificados) y dejar las decisiones al humano."
     }
   },
   "features": [
@@ -1234,6 +1248,97 @@
       ],
       "implementation": "progress/impl_support-readonly-rpcs.md",
       "review": "integrada por el líder el 2026-09-30 tras compuerta del implementer (3 518 tests, replay, checks SQL); permitida filter_contacts_by_tags, bloqueado touch_presence y todo lo no listado"
+    },
+    {
+      "id": "i12.1",
+      "name": "invite-direct-join",
+      "phase": "12",
+      "status": "done",
+      "spec": "specs/invite-direct-join/",
+      "sdd": true,
+      "branch": "feat/invitacion-directa",
+      "worktree": ".claude/worktrees/invitacion-directa",
+      "note": "Decisión del humano (2026-11-03): «los invitados que entran por el link de invitación no deben preguntar a qué empresa van a entrar, deben entrar directamente desde la empresa que fue invitado». Hoy todo registro crea empresa propia (handle_new_user, 017) y unirse es un segundo paso en /join/<token> (redeem_invitation, 073) que se pierde con facilidad: registro directo sin enlace, verificación PKCE en otro navegador (/auth/callback/complete pierde ?invite=), allowlist de redirects, o 409 tras onboarding. Objetivo: alta ligada a la invitación (perfil nacido en la cuenta del invitador con el rol del enlace), auto-canje para quien ya tiene sesión o inicia sesión desde el enlace, y /join sin botón de aceptar.",
+      "approval": "humano 2026-11-03 («dale»): aprobada con las decisiones recomendadas del spec (rechazar alta si el plan ya no tiene asientos; plan fuera de catálogo no bloquea; miembro nace en la empresa antes de confirmar correo; token en metadatos solo si consumido; auto-canje en /join con guardián de cuenta vacía)",
+      "implementation": "progress/impl_invite-direct-join.md",
+      "commits": [
+        "63a3ff9",
+        "d39bcd2",
+        "be9cae6"
+      ],
+      "review": "APPROVED 2026-11-03 → progress/review_invite-direct-join.md; cierre approved→done lo hace el humano tras S-M1..S-M3",
+      "merged": "main 2026-11-03 (i12.1 ff 63a3ff9; n13.1 merge 2f46f45); compuerta completa en main: lint 0 err, typecheck, 5173 tests, build, replay 001–091 + verify-schema OK"
+    },
+    {
+      "id": "n13.1",
+      "name": "integrations-catalog",
+      "phase": "13",
+      "status": "done",
+      "spec": "specs/integrations-catalog/",
+      "sdd": true,
+      "branch": "feat/integraciones",
+      "worktree": ".claude/worktrees/integraciones",
+      "note": "Pedido del humano (2026-11-03): «Como Super administradores debemos poder crear unas integraciones que pueden utilizar los clientes con algunas de nuestras aplicaciones. Por ejemplo Cabbity Health, app de gestión médica con una API para crear citas, consultar doctores, etc.». Primera feature de la fase: catálogo de integraciones gestionado por el superadmin (/platform), activación por cuenta con credenciales del cliente, y el primer punto de uso en el CRM. Cabbity Health (Laravel 12, /api/v1, Bearer Sanctum) aún no expone citas ni doctores: el diseño debe ser declarativo para no depender de esa API.",
+      "approval": "humano 2026-11-03 («dale»): aprobada con D1 declarativo, D2 feature booleana `integrations` por plan apagada por defecto, D3 soporte bloqueado, D4 punto de uso fuera (n13.2), D5 desactivar borra credencial, D6 10 s / 256 KiB / 60 llamadas-min",
+      "implementation": "progress/impl_integrations-catalog.md",
+      "commits": [
+        "c91a215",
+        "42c3f47",
+        "4ec171d",
+        "02093ff",
+        "7093949",
+        "ee06411",
+        "d87162b",
+        "5acee9a",
+        "d49fea2",
+        "f3fb5ca",
+        "a70baa4",
+        "2dab443"
+      ],
+      "review": "APPROVED en ronda 2 (2026-11-03) → progress/review_integrations-catalog.md; cierre approved→done lo hace el humano tras el guion manual (httpbin)",
+      "merged": "main 2026-11-03 (i12.1 ff 63a3ff9; n13.1 merge 2f46f45); compuerta completa en main: lint 0 err, typecheck, 5173 tests, build, replay 001–091 + verify-schema OK"
+    },
+    {
+      "id": "n13.2",
+      "name": "integration-flow-call",
+      "phase": "13",
+      "status": "pending",
+      "spec": "specs/integration-flow-call/",
+      "sdd": true,
+      "branch": "feat/integraciones",
+      "worktree": ".claude/worktrees/integraciones",
+      "depends_on": [
+        "n13.1"
+      ],
+      "note": "Primer punto de uso (recomendado por el spec de n13.1): nodo de flow `integration_call` que invoca una operación del catálogo con parámetros mapeados desde variables del flow y guarda la respuesta. Depende del ejecutor común de n13.1."
+    },
+    {
+      "id": "n13.3",
+      "name": "integration-ai-tools",
+      "phase": "13",
+      "status": "pending",
+      "spec": "specs/integration-ai-tools/",
+      "sdd": true,
+      "branch": "feat/integraciones",
+      "worktree": ".claude/worktrees/integraciones",
+      "depends_on": [
+        "n13.1"
+      ],
+      "note": "Las operaciones del catálogo activas en la cuenta se exponen como herramientas (tool calling) a la IA de respuesta automática. Hoy ningún proveedor (anthropic/gemini/openai) usa tools: hay que añadirlo en src/lib/ai/providers."
+    },
+    {
+      "id": "n13.4",
+      "name": "integration-automation-step",
+      "phase": "13",
+      "status": "pending",
+      "spec": "specs/integration-automation-step/",
+      "sdd": true,
+      "branch": "feat/integraciones",
+      "worktree": ".claude/worktrees/integraciones",
+      "depends_on": [
+        "n13.1"
+      ],
+      "note": "Paso de automatización que llama a una operación de integración (AutomationStepType nuevo), con el mismo ejecutor y registro que n13.2."
     }
   ]
 }
