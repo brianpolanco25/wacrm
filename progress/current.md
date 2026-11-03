@@ -5,7 +5,7 @@
 Origen: un cliente invitó a un usuario desde Miembros y ese usuario acabó como empresa nueva. Decisión del humano:
 el invitado que entra por el enlace cae directamente en la empresa que lo invitó, sin pantalla de aceptar.
 Feature `i12.1 invite-direct-join` (`pending`, sdd) en rama `feat/invitacion-directa` (worktree
-`.claude/worktrees/invitacion-directa`, desde `main @ 5f64211`). Spec aprobado por el humano el 2026-11-03 («dale»); `approved` (reviewer APPROVED, 3 commits be9cae6..63a3ff9, 4860 tests). `done`: fusionada en main (ff 63a3ff9) el 2026-11-03 y pusheada. Pendiente humano: aplicar la 090 en Supabase remoto ANTES de desplegar y los guiones S-M1..S-M3 en producción. Deuda anotada: rescate del usuario ya afectado (mover su cuenta a la
+`.claude/worktrees/invitacion-directa`, desde `main @ 5f64211`). Spec aprobado por el humano el 2026-11-03 («dale»); `approved` (reviewer APPROVED, 3 commits be9cae6..63a3ff9, 4860 tests). `done`: fusionada en main (ff 63a3ff9) el 2026-11-03 y pusheada. Migración 090 aplicada en Supabase remoto por Brian el 2026-11-03. Pendiente humano: guiones S-M1..S-M3 en producción. Deuda anotada: rescate del usuario ya afectado (mover su cuenta a la
 empresa invitadora) e invitaciones ligadas a email para quien se registra sin enlace.
 
 ## Fase 13 — integraciones con apps Cabbity (abierta el 2026-11-03)
@@ -14,7 +14,7 @@ Pedido del humano: el superadmin crea integraciones (p. ej. Cabbity Health: crea
 clientes activan y usan desde el CRM. Feature `n13.1 integrations-catalog` (`pending`, sdd) en rama
 `feat/integraciones` (worktree `.claude/worktrees/integraciones`, desde `main @ 5f64211`). Cabbity Health
 (Laravel 12, `/api/v1`, Sanctum) aún no expone citas ni doctores (sus features 1.3/1.4 están en spec_ready), así que el
-diseño es declarativo (D1). Spec aprobado por el humano el 2026-11-03 («dale»); `approved` (reviewer APPROVED en ronda 2, 12 commits 2dab443..c91a215, 5092 tests; la ronda 2 corrigió el guardia SSRF compartido en src/lib/webhooks/ssrf.ts). `done`: fusionada en main (merge 2f46f45, conflictos en CHANGELOG y verify-schema resueltos conservando ambos bloques) el 2026-11-03 y pusheada; compuerta completa en main (5173 tests, build, replay 001–091). Pendiente humano: aplicar la 091 en Supabase remoto ANTES de desplegar y el guion httpbin. n13.2–n13.4 (nodo de flow, herramientas IA, paso de automatización) en `pending` con sdd. Restricción añadida por el humano a la fase 12: el
+diseño es declarativo (D1). Spec aprobado por el humano el 2026-11-03 («dale»); `approved` (reviewer APPROVED en ronda 2, 12 commits 2dab443..c91a215, 5092 tests; la ronda 2 corrigió el guardia SSRF compartido en src/lib/webhooks/ssrf.ts). `done`: fusionada en main (merge 2f46f45, conflictos en CHANGELOG y verify-schema resueltos conservando ambos bloques) el 2026-11-03 y pusheada; compuerta completa en main (5173 tests, build, replay 001–091). Migración 091 aplicada en Supabase remoto por Brian el 2026-11-03. Pendiente humano: guion httpbin en producción. n13.2–n13.4 (nodo de flow, herramientas IA, paso de automatización) en `pending` con sdd. Restricción añadida por el humano a la fase 12: el
 número de invitados depende del plan del cliente (ya se pasó al spec de i12.1).
 
 Actualizado: 2026-10-01 (tarde). **Fases 9, 10 y 11 COMPLETAS** (30/30 features de las tres fases en `done`), sin

@@ -1302,11 +1302,11 @@
       "id": "n13.2",
       "name": "integration-flow-call",
       "phase": "13",
-      "status": "pending",
+      "status": "spec_ready",
       "spec": "specs/integration-flow-call/",
       "sdd": true,
-      "branch": "feat/integraciones",
-      "worktree": ".claude/worktrees/integraciones",
+      "branch": "feat/integration-flow-call",
+      "worktree": ".claude/worktrees/integration-flow-call",
       "depends_on": [
         "n13.1"
       ],
