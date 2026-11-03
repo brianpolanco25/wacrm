@@ -2485,6 +2485,48 @@ BEGIN
   END IF;
   -- /089 -----------------------------------------------------------
 
+  -- 090 (i12.1): el invitado entra directo a la empresa ---------------
+  -- handle_new_user() lee invite_token, lo busca por sha256 con bloqueo,
+  -- comprueba asientos y sigue siendo SECURITY DEFINER.
+  IF NOT (SELECT prosecdef FROM pg_proc
+          WHERE oid = 'public.handle_new_user()'::regprocedure) THEN
+    RAISE EXCEPTION 'handle_new_user() must be SECURITY DEFINER (migration 090)';
+  END IF;
+  IF pg_get_functiondef('public.handle_new_user()'::regprocedure) NOT LIKE '%invite_token%'
+     OR pg_get_functiondef('public.handle_new_user()'::regprocedure) NOT LIKE '%sha256(%'
+     OR pg_get_functiondef('public.handle_new_user()'::regprocedure) NOT LIKE '%FOR UPDATE%'
+     OR pg_get_functiondef('public.handle_new_user()'::regprocedure) NOT LIKE '%assert_seat_available%' THEN
+    RAISE EXCEPTION 'handle_new_user() does not bind the signup to the invitation (invite_token + sha256 + FOR UPDATE + seats) (migration 090)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'on_auth_user_created'
+      AND tgrelid = 'auth.users'::regclass
+      AND tgfoid = 'public.handle_new_user()'::regprocedure
+  ) THEN
+    RAISE EXCEPTION 'on_auth_user_created must fire public.handle_new_user() on auth.users (migration 090)';
+  END IF;
+  IF pg_get_functiondef('public.redeem_invitation(text)'::regprocedure) NOT LIKE '%HINT%'
+     OR pg_get_functiondef('public.redeem_invitation(text)'::regprocedure) NOT LIKE '%assert_seat_available%' THEN
+    RAISE EXCEPTION 'redeem_invitation() must carry a HINT per refusal and check seats (migration 090)';
+  END IF;
+  IF pg_get_functiondef('public.peek_invitation(text)'::regprocedure) NOT LIKE '%no_seats%' THEN
+    RAISE EXCEPTION 'peek_invitation() must report no_seats (migration 090)';
+  END IF;
+  IF NOT (SELECT prosecdef FROM pg_proc
+          WHERE oid = 'public.account_seat_limit(uuid)'::regprocedure)
+     OR NOT (SELECT prosecdef FROM pg_proc
+             WHERE oid = 'public.assert_seat_available(uuid, text)'::regprocedure) THEN
+    RAISE EXCEPTION 'account_seat_limit / assert_seat_available must be SECURITY DEFINER (migration 090)';
+  END IF;
+  IF has_function_privilege('anon', 'public.account_seat_limit(uuid)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.account_seat_limit(uuid)', 'EXECUTE')
+     OR has_function_privilege('anon', 'public.assert_seat_available(uuid, text)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.assert_seat_available(uuid, text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'account_seat_limit / assert_seat_available must not be callable by a client role (migration 090)';
+  END IF;
+  -- /090 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
