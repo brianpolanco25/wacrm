@@ -125,6 +125,21 @@ export function validateCallParams(
   return { ok: true, values };
 }
 
+/**
+ * El valor PROPIO de un parámetro. `values` es un objeto normal y un
+ * nombre válido de parámetro puede ser `constructor` o `toString`: leerlo
+ * a pelo devolvería la función heredada de `Object.prototype` y la
+ * mandaría como query o como cuerpo.
+ */
+function ownValue(
+  values: Record<string, ParamValue>,
+  name: string
+): ParamValue | undefined {
+  return Object.prototype.hasOwnProperty.call(values, name)
+    ? values[name]
+    : undefined;
+}
+
 /** `encodeURIComponent` más el punto: ningún valor forma un segmento `.`/`..`. */
 export function encodePathValue(value: ParamValue): string {
   return encodeURIComponent(String(value)).replace(/\./g, '%2E');
@@ -149,7 +164,7 @@ export function buildIntegrationRequest(
   let path = operation.path;
   for (const param of operation.params) {
     if (param.in !== 'path') continue;
-    const value = values[param.name];
+    const value = ownValue(values, param.name);
     if (value === undefined) return { blocked: true };
     path = path.split(`{${param.name}}`).join(encodePathValue(value));
   }
@@ -159,7 +174,7 @@ export function buildIntegrationRequest(
   const body: Record<string, ParamValue> = {};
   let hasBody = false;
   for (const param of operation.params) {
-    const value = values[param.name];
+    const value = ownValue(values, param.name);
     if (value === undefined) continue;
     if (param.in === 'query') query.append(param.name, String(value));
     if (param.in === 'body') {

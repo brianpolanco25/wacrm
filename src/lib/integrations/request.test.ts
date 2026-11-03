@@ -180,6 +180,68 @@ describe('buildIntegrationRequest (R21, R29)', () => {
   });
 });
 
+describe('parameters named like Object.prototype members', () => {
+  const op = {
+    method: 'POST' as const,
+    path: '/x',
+    params: [
+      P({ name: 'constructor' }),
+      P({ name: 'toString', in: 'body' }),
+      P({ name: 'valueOf', in: 'body', type: 'integer' }),
+    ],
+  };
+
+  it('omitted optionals send no query and no body', () => {
+    const check = validateCallParams(op.params, {});
+    expect(check).toEqual({ ok: true, values: {} });
+    const r = buildIntegrationRequest(
+      INTEGRATION,
+      op,
+      check.ok ? check.values : {}
+    );
+    expect(r).toEqual({
+      url: 'https://health.example.com/api/v1/x',
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Cabbity-CRM-Integrations/1',
+      },
+      body: undefined,
+    });
+  });
+
+  it('given ones travel as their own values', () => {
+    const check = validateCallParams(op.params, {
+      constructor: 'a',
+      toString: 'b',
+      valueOf: '3',
+    });
+    const r = buildIntegrationRequest(
+      INTEGRATION,
+      op,
+      check.ok ? check.values : {}
+    );
+    expect('url' in r && r.url).toBe(
+      'https://health.example.com/api/v1/x?constructor=a'
+    );
+    expect('url' in r && r.body).toBe('{"toString":"b","valueOf":3}');
+  });
+
+  it('a path placeholder named constructor without a value is blocked', () => {
+    expect(
+      buildIntegrationRequest(
+        INTEGRATION,
+        {
+          method: 'GET',
+          path: '/x/{constructor}',
+          params: [P({ name: 'constructor', in: 'path', required: true })],
+        },
+        {}
+      )
+    ).toEqual({ blocked: true });
+  });
+});
+
 describe('authHeader', () => {
   it('bearer and custom header', () => {
     expect(authHeader('bearer', null, 'tok')).toEqual([
