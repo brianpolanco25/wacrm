@@ -1906,7 +1906,7 @@
     },
     "integrations": {
       "title": "Integraciones",
-      "desc": "Conecta este espacio con otras apps de Cabbity, como Cabbity Health. La credencial se guarda cifrada y no se vuelve a mostrar.",
+      "desc": "Conecta este espacio con otras aplicaciones, como un gestor de consultas médicas. La credencial se guarda cifrada y no se vuelve a mostrar.",
       "empty": "Todavía no hay integraciones disponibles.",
       "loading": "Cargando integraciones…",
       "loadFailed": "No se pudieron cargar las integraciones.",
@@ -2499,7 +2499,7 @@
         "webhooks": "Webhooks salientes",
         "multi_number": "Varios números de WhatsApp",
         "priority_support": "Soporte prioritario",
-        "integrations": "Integraciones con apps Cabbity"
+        "integrations": "Integraciones con otras apps"
       },
       "errors": {
         "id": "El identificador debe empezar por una minúscula y tener de 2 a 32 caracteres (a-z, 0-9, - o _).",
@@ -2840,7 +2840,7 @@
     "passwordFailed": "No se pudo cambiar la contraseña.",
     "integrations": {
       "title": "Integraciones",
-      "subtitle": "Apps de Cabbity que los clientes pueden conectar desde Ajustes. Cada integración es un origen HTTPS y un conjunto de operaciones declaradas.",
+      "subtitle": "Aplicaciones que los clientes pueden conectar desde Ajustes. Cada integración es un origen HTTPS y un conjunto de operaciones declaradas.",
       "empty": "Todavía no hay integraciones.",
       "create": "Nueva integración",
       "createTitle": "Nueva integración",
@@ -2913,7 +2913,7 @@
         "add": "Añadir parámetro",
         "remove": "Quitar parámetro",
         "in_path": "Ruta",
-        "in_query": "Query",
+        "in_query": "Consulta (query)",
         "in_body": "Cuerpo"
       },
       "outputs": {

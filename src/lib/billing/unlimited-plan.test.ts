@@ -31,6 +31,32 @@ function planInsert(): string {
   return code.slice(start, code.indexOf(';', start) + 1);
 }
 
+/**
+ * Features a LATER migration added to the inventory with its marker line
+ * (`-- Claves de \`features\` añadidas: x.`), e.g. `integrations` (091).
+ * Those ship off on every plan by decision (n13.1, D2): the operator
+ * ticks them in /platform/plans, the migration gives them to no plan —
+ * not even this one.
+ */
+function featuresAddedAfter(migration: number): string[] {
+  const dir = path.join(process.cwd(), 'supabase/migrations');
+  const out: string[] = [];
+  for (const file of fs.readdirSync(dir)) {
+    if (Number(file.slice(0, 3)) <= migration) continue;
+    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+    for (const m of text.matchAll(
+      /^-- Claves de `features` añadidas:\s*([^\n]+)$/gm
+    )) {
+      out.push(...m[1].split(/[\s,.]+/).filter(Boolean));
+    }
+  }
+  return out;
+}
+
+const INVENTORY_074 = PLAN_FEATURES.filter(
+  (f) => !featuresAddedAfter(74).includes(f)
+);
+
 describe('plan ilimitado (074)', () => {
   it('has every limit key of the inventory, all null', () => {
     const blob = /'(\{[^']*\})'::jsonb/.exec(planInsert());
@@ -46,9 +72,9 @@ describe('plan ilimitado (074)', () => {
     const array = /ARRAY\[([^\]]*)\]::text\[\]/.exec(planInsert());
     expect(array).not.toBeNull();
     const features = [...array![1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
-    expect(features).toEqual([...PLAN_FEATURES]);
+    expect(features).toEqual(INVENTORY_074);
     const validated = validateFeatures(features);
-    expect(validated).toEqual({ ok: true, value: [...PLAN_FEATURES] });
+    expect(validated).toEqual({ ok: true, value: INVENTORY_074 });
   });
 
   it('is hidden, free, last, and never touches the PayPal ids', () => {

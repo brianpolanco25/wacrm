@@ -1906,7 +1906,7 @@
     },
     "integrations": {
       "title": "Integrations",
-      "desc": "Connect this workspace with other Cabbity apps, such as Cabbity Health. The credential is stored encrypted and is never shown again.",
+      "desc": "Connect this workspace with other apps, such as a medical practice manager. The credential is stored encrypted and is never shown again.",
       "empty": "There are no integrations available yet.",
       "loading": "Loading integrations…",
       "loadFailed": "The integrations could not be loaded.",
@@ -2499,7 +2499,7 @@
         "webhooks": "Outgoing webhooks",
         "multi_number": "Several WhatsApp numbers",
         "priority_support": "Priority support",
-        "integrations": "Cabbity app integrations"
+        "integrations": "Integrations with other apps"
       },
       "errors": {
         "id": "The identifier must start with a lowercase letter and have 2 to 32 characters (a-z, 0-9, - or _).",
@@ -2840,7 +2840,7 @@
     "passwordFailed": "Could not change the password.",
     "integrations": {
       "title": "Integrations",
-      "subtitle": "Cabbity apps that customers can connect from Settings. Each integration is an HTTPS origin and a set of declared operations.",
+      "subtitle": "Apps that customers can connect from Settings. Each integration is an HTTPS origin and a set of declared operations.",
       "empty": "There are no integrations yet.",
       "create": "New integration",
       "createTitle": "New integration",
