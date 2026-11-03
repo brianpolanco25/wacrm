@@ -137,17 +137,13 @@ export function isMetaSignupOrigin(origin: string): boolean {
 }
 
 /**
- * The `featureType` that makes the dialog offer "connect your existing
- * WhatsApp Business app account" (coexistence). Meta's coexistence
- * guide requires it in Embedded Signup v4 — this supersedes the older
- * note in `progress/meta_embedded-signup-verificacion.md` that said
- * `featureType` no longer existed. Meta's guide ("Onboard WhatsApp
- * Business app users") also requires `sessionInfoVersion: "3"` next to
- * it — coexistence only runs with session logging; without it the
- * dialog ignores `featureType` and falls into the ordinary signup (SMS
- * verification, error #2494064). A dialog that does not offer
- * coexistence simply ignores both, so the ordinary flow (`FINISH`)
- * keeps working with the same button.
+ * The name Meta gives the coexistence onboarding ("connect your existing
+ * WhatsApp Business app account"). Since Embedded Signup v5 (#1654,
+ * 2026-10-20) coexistence is on by default and this value is NO LONGER
+ * sent in `extras`: v4 needed `featureType` + `sessionInfoVersion: "3"`
+ * and, even with both, production kept falling into the ordinary SMS
+ * signup (#2494064). It stays as the feature's name; the session event
+ * that reports it is `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`.
  */
 export const COEXISTENCE_FEATURE_TYPE = 'whatsapp_business_app_onboarding';
 
@@ -162,11 +158,9 @@ export function buildFbLoginOptions(configId: string): Record<string, unknown> {
     // Without this Meta hands back a user access token instead of the
     // code, and there is nothing to exchange on the server.
     override_default_response_type: true,
-    extras: {
-      setup: {},
-      featureType: COEXISTENCE_FEATURE_TYPE,
-      sessionInfoVersion: '3',
-    },
+    // Embedded Signup v5: coexistence is offered by default and the
+    // session payload has a fixed shape (see parseSignupSessionMessage).
+    extras: { version: 'v5' },
   };
 }
 
@@ -191,8 +185,12 @@ export type SignupSessionEvent =
  * `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` is the coexistence finish:
  * the number stays on the phone app and is also on Cloud API.
  *
- * The payload's `version` (2, or 3 with `sessionInfoVersion: "3"`) is
- * deliberately not checked: both carry the same `event` and `data`.
+ * The payload's `version` is deliberately not checked. v2/v3/v4 carry
+ * `data.phone_number_id` and `data.waba_id`; v5 (#1654) carries
+ * `data.phone_number_id`, `data.is_on_biz_app` and
+ * `data.messaging_account_ids` instead of `waba_id`, so the WABA is
+ * `waba_id` when present and else the first messaging account id.
+ * Coexistence is the coexistence event OR `is_on_biz_app === true`.
  */
 export function parseSignupSessionMessage(
   data: unknown
@@ -217,14 +215,19 @@ export function parseSignupSessionMessage(
 
   switch (message.event) {
     case 'FINISH':
-    case 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING':
+    case 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING': {
+      const accounts = message.data?.messaging_account_ids;
       return {
         kind: 'finish',
         phoneNumberId: str(message.data?.phone_number_id),
-        wabaId: str(message.data?.waba_id),
+        wabaId:
+          str(message.data?.waba_id) ??
+          (Array.isArray(accounts) ? str(accounts[0]) : undefined),
         coexistence:
-          message.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+          message.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING' ||
+          message.data?.is_on_biz_app === true,
       };
+    }
     case 'CANCEL':
       return {
         kind: 'cancel',
@@ -243,10 +246,10 @@ export function parseSignupSessionMessage(
 /**
  * The body `POST /api/whatsapp/embedded-signup` receives.
  *
- * In coexistence Meta's `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` event
- * carries only `waba_id` — no `phone_number_id` — so the field travels
- * only when the dialog gave it; the server resolves it from the WABA
- * otherwise.
+ * In coexistence the pre-v5 `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`
+ * event carried only `waba_id`; v5 carries `phone_number_id` too. The
+ * field travels only when the dialog gave it; the server resolves it
+ * from the WABA otherwise.
  */
 export function buildSignupRequestBody(
   code: string,

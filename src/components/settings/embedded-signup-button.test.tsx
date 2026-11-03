@@ -81,17 +81,11 @@ describe('EmbeddedSignupButton', () => {
  * `progress/meta_embedded-signup-verificacion.md`.
  */
 describe('buildFbLoginOptions', () => {
-  it('passes `setup`, the coexistence featureType and sessionInfoVersion 3 in extras (R1, #1653)', () => {
+  it('uses Embedded Signup v5 extras, without featureType or sessionInfoVersion (#1654)', () => {
     const options = buildFbLoginOptions('cfgid-456');
-    // Meta's coexistence guide requires `featureType` together with
-    // `sessionInfoVersion: "3"` (session logging) for the dialog to offer
-    // "connect your WhatsApp Business app"; without the version it falls
-    // into the ordinary SMS signup.
-    expect(options.extras).toEqual({
-      setup: {},
-      featureType: 'whatsapp_business_app_onboarding',
-      sessionInfoVersion: '3',
-    });
+    // v5 offers coexistence by default; the v4 featureType +
+    // sessionInfoVersion pair kept falling into the SMS signup (#1653).
+    expect(options.extras).toEqual({ version: 'v5' });
   });
 
   it('asks for a code, overriding the SDK default', () => {
@@ -197,6 +191,101 @@ describe('parseSignupSessionMessage', () => {
         });
       }
     }
+  });
+
+  describe('Embedded Signup v5 payload (#1654)', () => {
+    const v5 = (event: string, data: Record<string, unknown>) =>
+      JSON.stringify({
+        type: 'WA_EMBEDDED_SIGNUP',
+        event,
+        version: 'v5',
+        data,
+      });
+
+    it('is_on_biz_app true → coexistence, waba from messaging_account_ids[0], phone kept', () => {
+      expect(
+        parseSignupSessionMessage(
+          v5('FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING', {
+            phone_number_id: 'pn-5',
+            is_on_biz_app: true,
+            messaging_account_ids: ['waba-5a', 'waba-5b'],
+            business_id: 'biz-5',
+          })
+        )
+      ).toEqual({
+        kind: 'finish',
+        phoneNumberId: 'pn-5',
+        wabaId: 'waba-5a',
+        coexistence: true,
+      });
+    });
+
+    it('is_on_biz_app true marks coexistence even under a plain FINISH event', () => {
+      expect(
+        parseSignupSessionMessage(
+          v5('FINISH', {
+            phone_number_id: 'pn-6',
+            is_on_biz_app: true,
+            messaging_account_ids: ['waba-6'],
+          })
+        )
+      ).toMatchObject({ kind: 'finish', wabaId: 'waba-6', coexistence: true });
+    });
+
+    it('is_on_biz_app false with FINISH → ordinary finish', () => {
+      expect(
+        parseSignupSessionMessage(
+          v5('FINISH', {
+            phone_number_id: 'pn-7',
+            is_on_biz_app: false,
+            messaging_account_ids: ['waba-7'],
+          })
+        )
+      ).toEqual({
+        kind: 'finish',
+        phoneNumberId: 'pn-7',
+        wabaId: 'waba-7',
+        coexistence: false,
+      });
+    });
+
+    it('prefers data.waba_id over messaging_account_ids when both come', () => {
+      expect(
+        parseSignupSessionMessage(
+          v5('FINISH', {
+            phone_number_id: 'pn-8',
+            waba_id: 'waba-explicit',
+            is_on_biz_app: false,
+            messaging_account_ids: ['waba-other'],
+          })
+        )
+      ).toMatchObject({ wabaId: 'waba-explicit', coexistence: false });
+    });
+
+    it('no waba_id and empty or malformed messaging_account_ids → no wabaId', () => {
+      for (const ids of [[], 'waba-x', [42], undefined]) {
+        expect(
+          parseSignupSessionMessage(
+            v5('FINISH', {
+              phone_number_id: 'pn-9',
+              messaging_account_ids: ids,
+            })
+          )
+        ).toMatchObject({ kind: 'finish', wabaId: undefined });
+      }
+    });
+
+    it('is_on_biz_app only counts when it is the boolean true', () => {
+      expect(
+        parseSignupSessionMessage(
+          v5('FINISH', {
+            phone_number_id: 'pn-10',
+            is_on_biz_app: 'true',
+            messaging_account_ids: ['waba-10'],
+          })
+        )
+      ).toMatchObject({ coexistence: false });
+    });
   });
 
   it('reads CANCEL and ERROR as before', () => {
