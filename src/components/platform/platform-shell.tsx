@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
+  Blocks,
   Building2,
   Coins,
   CreditCard,
@@ -45,7 +46,7 @@ import {
 import type { SupportBanner } from '@/lib/auth/support-view';
 
 export type PlatformSection =
-  'overview' | 'accounts' | 'plans' | 'rates' | 'operators';
+  'overview' | 'accounts' | 'plans' | 'rates' | 'integrations' | 'operators';
 
 export const PLATFORM_NAV: ReadonlyArray<{
   key: PlatformSection;
@@ -56,6 +57,7 @@ export const PLATFORM_NAV: ReadonlyArray<{
   { key: 'accounts', href: '/platform/accounts', icon: Building2 },
   { key: 'plans', href: '/platform/plans', icon: CreditCard },
   { key: 'rates', href: '/platform/rates', icon: Coins },
+  { key: 'integrations', href: '/platform/integrations', icon: Blocks },
   { key: 'operators', href: '/platform/operators', icon: ShieldUser },
 ];
 

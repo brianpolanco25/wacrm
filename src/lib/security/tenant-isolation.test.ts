@@ -372,6 +372,15 @@ import * as billingMetaUsage from '@/app/api/billing/meta-usage/route';
 import * as billingBroadcastEstimate from '@/app/api/billing/broadcast-estimate/route';
 import * as platformStatements from '@/app/api/platform/accounts/[id]/statements/route';
 import * as platformStatementConfirm from '@/app/api/platform/accounts/[id]/statements/[sid]/confirm/route';
+// n13.1: catálogo de integraciones (plataforma) y su activación por cuenta.
+import * as platformIntegrations from '@/app/api/platform/integrations/route';
+import * as platformIntegrationById from '@/app/api/platform/integrations/[id]/route';
+import * as platformIntegrationOps from '@/app/api/platform/integrations/[id]/operations/route';
+import * as platformIntegrationOpById from '@/app/api/platform/integrations/[id]/operations/[opId]/route';
+import * as accountIntegrations from '@/app/api/account/integrations/route';
+import * as accountIntegrationById from '@/app/api/account/integrations/[integrationId]/route';
+import * as accountIntegrationTest from '@/app/api/account/integrations/[integrationId]/test/route';
+import { executeIntegrationOperation } from '@/lib/integrations/execute';
 
 // ---- seed ------------------------------------------------------------
 
@@ -774,6 +783,13 @@ function seed(): FakeDatabase {
       // as a difference in an account snapshot.
       checkout_intents: [],
       billing_events: [],
+      // Migración 091 (n13.1): catálogo global de integraciones y su
+      // activación por cuenta. Vacías de salida; el bloque de integraciones
+      // las siembra.
+      integrations: [],
+      integration_operations: [],
+      account_integrations: [],
+      integration_calls: [],
     },
     {
       // Migration 037: one transaction for the broadcast + recipients.
@@ -5502,5 +5518,357 @@ describe('Meta usage (s10.5, service role)', () => {
     // B's 50 deliveries would have spent A's 10 included.
     expect(body).toMatchObject({ remaining: 10, inPackage: 5, overage: 0 });
     expectBUnchanged(beforeB);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integraciones (n13.1, R31). El catálogo (`integrations`,
+// `integration_operations`) es global; `account_integrations` e
+// `integration_calls` son de la cuenta. B activa `health` ANTES que A y con
+// otra credencial: una lectura de la activación sin `account_id` caería en
+// la fila de B.
+// ---------------------------------------------------------------------------
+describe('integrations (n13.1, service role)', () => {
+  const HEALTH = '9a000000-0000-4000-8000-0000000000aa';
+  const OP_LIST = '9b000000-0000-4000-8000-0000000000aa';
+  const CRED_A = 'integration-credential-of-A-1111';
+  const CRED_B = 'integration-credential-of-B-2222';
+
+  function seedIntegrations(): void {
+    // `pro` trae la feature para que activar y probar pasen el plan.
+    (h.db.rows('plans')[0].features as string[]).push('integrations');
+    h.db.rows('integrations').push({
+      id: HEALTH,
+      slug: 'health',
+      name: 'Cabbity Health',
+      description: null,
+      logo_url: null,
+      // TEST-NET-3: literal público para `isDeliverableUrl` sin DNS; el
+      // `fetch` está simulado, no sale nada a la red.
+      base_url: 'https://203.0.113.10/api/v1',
+      auth_scheme: 'bearer',
+      auth_header_name: null,
+      credential_help: null,
+      test_path: '/me',
+      is_active: true,
+      sort_order: 1,
+    });
+    h.db.rows('integration_operations').push({
+      id: OP_LIST,
+      integration_id: HEALTH,
+      key: 'list_doctors',
+      name: 'Listar doctores',
+      description: 'Lista',
+      method: 'GET',
+      path: '/doctors',
+      params: [],
+      outputs: [],
+      response_description: null,
+      is_active: true,
+      sort_order: 1,
+    });
+    h.db.rows('account_integrations').push(
+      {
+        id: 'ai-b',
+        account_id: B,
+        integration_id: HEALTH,
+        is_enabled: true,
+        credential: encrypt(CRED_B),
+        credential_last4: '2222',
+        enabled_by: USER_B,
+        enabled_at: OLDER,
+        last_tested_at: null,
+        last_test_status: null,
+      },
+      {
+        id: 'ai-a',
+        account_id: A,
+        integration_id: HEALTH,
+        is_enabled: true,
+        credential: encrypt(CRED_A),
+        credential_last4: '1111',
+        enabled_by: USER_A,
+        enabled_at: PAST,
+        last_tested_at: null,
+        last_test_status: null,
+      }
+    );
+    h.db.rows('integration_calls').push({
+      id: 'call-b',
+      account_id: B,
+      integration_id: HEALTH,
+      operation_key: null,
+      source: 'test',
+      outcome: 'ok',
+      status_code: 200,
+      latency_ms: 10,
+    });
+  }
+
+  const remote = () =>
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+
+  beforeEach(() => {
+    seedIntegrations();
+    extraWaivers.push(
+      {
+        table: 'integrations',
+        op: 'select',
+        reason:
+          'Catálogo global de integraciones (091): sin account_id. Se lee ' +
+          'por id, por slug o entero (el listado de Ajustes filtra en ' +
+          'proceso por activo / activado por ESTA cuenta, cuya activación ' +
+          'sí se lee con account_id).',
+      },
+      {
+        table: 'integrations',
+        op: 'insert',
+        reason:
+          'Alta en el catálogo desde el panel, detrás de requirePlatformAdmin().',
+      },
+      {
+        table: 'integrations',
+        op: 'update',
+        by: ['id'],
+        reason:
+          'Edición de una integración del catálogo por id, desde el panel.',
+      },
+      {
+        table: 'integration_operations',
+        op: 'select',
+        by: ['integration_id'],
+        reason:
+          'Operaciones de una integración del catálogo: hija de `integrations`, ' +
+          'sin account_id.',
+      },
+      {
+        table: 'integration_operations',
+        op: 'insert',
+        reason: 'Alta de una operación del catálogo desde el panel.',
+      },
+      {
+        table: 'integration_operations',
+        op: 'update',
+        by: ['integration_id', 'id'],
+        reason: 'Edición de una operación del catálogo, desde el panel.',
+      },
+      {
+        table: 'account_integrations',
+        op: 'select',
+        by: ['is_enabled'],
+        reason:
+          'Solo GET /api/platform/integrations: recuento de cuentas por ' +
+          'integración para el operador; devuelve ids de integración, ningún ' +
+          'dato de cuenta.',
+      },
+      {
+        table: 'account_integrations',
+        op: 'select',
+        by: ['integration_id', 'is_enabled'],
+        reason:
+          'PATCH de plataforma que cambia a dónde viaja la credencial: ' +
+          'recuento (head) de cuentas con la integración activada, para ' +
+          'pedir confirmación. No devuelve filas.',
+      },
+      {
+        table: 'account_integrations',
+        op: 'update',
+        by: ['integration_id', 'is_enabled'],
+        reason:
+          'Confirmado por el operador (reset_activations): desactiva la ' +
+          'integración en TODAS las cuentas y borra sus credenciales antes ' +
+          'de mandarlas a otro origen. Cruza cuentas a propósito y solo ' +
+          'apaga y borra, nunca escribe un secreto.',
+      }
+    );
+  });
+
+  it('(1) GET as A shows A state only: last4 of A, nothing of B', async () => {
+    const res = await accountIntegrations.GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expectNoBIds(body);
+    const raw = JSON.stringify(body);
+    expect(raw).toContain('"credentialLast4":"1111"');
+    expect(raw).not.toContain('2222');
+    expect(raw).not.toContain(CRED_A);
+    expect(raw).not.toContain('"credential"');
+  });
+
+  it('(2) PUT as A changes only the row of A', async () => {
+    const beforeB = h.db.snapshot(B);
+    const res = await accountIntegrationById.PUT(
+      req('PUT', `/api/account/integrations/${HEALTH}`, {
+        credential: 'new-credential-of-A-3333',
+      }),
+      params({ integrationId: HEALTH })
+    );
+    expect(res.status).toBe(200);
+    expectNoBIds(await res.json());
+    expectBUnchanged(beforeB);
+    const rows = h.db.rows('account_integrations');
+    expect(rows.filter((r) => r.account_id === A)).toHaveLength(1);
+    expect(rows.find((r) => r.account_id === A)!.credential_last4).toBe('3333');
+  });
+
+  it('(3) DELETE as A deactivates A only', async () => {
+    const beforeB = h.db.snapshot(B);
+    const res = await accountIntegrationById.DELETE(
+      req('DELETE', `/api/account/integrations/${HEALTH}`),
+      params({ integrationId: HEALTH })
+    );
+    expect(res.status).toBe(200);
+    expectBUnchanged(beforeB);
+    expect(
+      h.db.rows('account_integrations').find((r) => r.id === 'ai-a')
+    ).toMatchObject({
+      is_enabled: false,
+      credential: null,
+    });
+  });
+
+  it('(4) POST test as A sends the credential of A and logs for A', async () => {
+    const beforeB = h.db.snapshot(B);
+    const fetchSpy = remote();
+    vi.stubGlobal('fetch', fetchSpy);
+    const res = await accountIntegrationTest.POST(
+      req('POST', `/api/account/integrations/${HEALTH}/test`),
+      params({ integrationId: HEALTH })
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ result: 'ok' });
+    const init = (fetchSpy.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      `Bearer ${CRED_A}`
+    );
+    expectBUnchanged(beforeB);
+    const mine = h.db
+      .rows('integration_calls')
+      .filter((r) => r.account_id === A);
+    expect(mine).toHaveLength(1);
+  });
+
+  it('(5) executeIntegrationOperation for A uses the credential of A', async () => {
+    const beforeB = h.db.snapshot(B);
+    const fetchSpy = remote();
+    const result = await executeIntegrationOperation(
+      h.db.admin as never,
+      {
+        accountId: A,
+        integrationSlug: 'health',
+        operationKey: 'list_doctors',
+        params: {},
+        source: 'flow',
+      },
+      { fetch: fetchSpy as unknown as typeof fetch }
+    );
+    expect(result).toMatchObject({ ok: true, status: 200 });
+    const init = (fetchSpy.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      `Bearer ${CRED_A}`
+    );
+    expectBUnchanged(beforeB);
+    expect(
+      h.db.rows('integration_calls').filter((r) => r.account_id === A)
+    ).toMatchObject([{ operation_key: 'list_doctors', outcome: 'ok' }]);
+  });
+
+  it('(6) the platform routes 403 the owner of A and write nothing', async () => {
+    const tables = () =>
+      JSON.stringify([
+        h.db.rows('integrations'),
+        h.db.rows('integration_operations'),
+        h.db.rows('account_integrations'),
+      ]);
+    const before = tables();
+    const byId = params({ id: HEALTH });
+    const responses = [
+      await platformIntegrations.GET(),
+      await platformIntegrations.POST(
+        req('POST', '/api/platform/integrations', {
+          slug: 'evil',
+          name: 'Evil',
+          base_url: 'https://203.0.113.11',
+          auth_scheme: 'bearer',
+          test_path: '/',
+        })
+      ),
+      await platformIntegrationById.GET(req('GET', '/x'), byId),
+      await platformIntegrationById.PATCH(
+        req('PATCH', '/x', { is_active: false }),
+        byId
+      ),
+      await platformIntegrationOps.POST(
+        req('POST', '/x', {
+          key: 'x_op',
+          name: 'X',
+          description: 'X',
+          method: 'GET',
+          path: '/x',
+        }),
+        byId
+      ),
+      await platformIntegrationOpById.PATCH(
+        req('PATCH', '/x', { is_active: false }),
+        params({ id: HEALTH, opId: OP_LIST })
+      ),
+    ];
+    expect(responses.map((r) => r.status)).toEqual([
+      403, 403, 403, 403, 403, 403,
+    ]);
+    expect(tables()).toBe(before);
+    expect(
+      h.db.log
+        .filter((e) => e.rls === null)
+        .every((e) => e.table === 'platform_admins')
+    ).toBe(true);
+  });
+
+  it('an operator moving the origin needs confirmation, then wipes every credential', async () => {
+    makePlatformAdmin(USER_A);
+    const before = JSON.stringify(h.db.rows('account_integrations'));
+    const refused = await platformIntegrationById.PATCH(
+      req('PATCH', '/x', { base_url: 'https://203.0.113.99/api/v1' }),
+      params({ id: HEALTH })
+    );
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ accountsEnabled: 2 });
+    expect(JSON.stringify(h.db.rows('account_integrations'))).toBe(before);
+
+    const confirmed = await platformIntegrationById.PATCH(
+      req('PATCH', '/x', {
+        base_url: 'https://203.0.113.99/api/v1',
+        reset_activations: true,
+      }),
+      params({ id: HEALTH })
+    );
+    expect(confirmed.status).toBe(200);
+    for (const row of h.db.rows('account_integrations')) {
+      expect(row).toMatchObject({ is_enabled: false, credential: null });
+    }
+  });
+
+  it("an operator's catalogue edits move nothing of either company", async () => {
+    makePlatformAdmin(USER_A);
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+    const list = await platformIntegrations.GET();
+    expect(list.status).toBe(200);
+    const listed = await list.json();
+    expect(listed.integrations[0]).toMatchObject({ accountsEnabled: 2 });
+    expectNoBIds(listed);
+    const patched = await platformIntegrationById.PATCH(
+      req('PATCH', '/x', { name: 'Health' }),
+      params({ id: HEALTH })
+    );
+    expect(patched.status).toBe(200);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expect(h.db.snapshot(B)).toEqual(beforeB);
   });
 });

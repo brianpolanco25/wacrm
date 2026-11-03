@@ -30,6 +30,28 @@ function statement(start: string): string {
   return CODE.slice(at, CODE.indexOf(';', at) + 1);
 }
 
+/**
+ * Features a LATER migration added to the inventory with its marker line
+ * (`-- Claves de \`features\` añadidas: x.`), e.g. `integrations` (091).
+ * Those ship off on every plan by decision (n13.1, D2): the operator
+ * ticks them in /platform/plans, the migration gives them to no plan —
+ * not even this one.
+ */
+function featuresAddedAfter(migration: number): string[] {
+  const dir = path.join(process.cwd(), 'supabase/migrations');
+  const out: string[] = [];
+  for (const file of fs.readdirSync(dir)) {
+    if (Number(file.slice(0, 3)) <= migration) continue;
+    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+    for (const m of text.matchAll(
+      /^-- Claves de `features` añadidas:\s*([^\n]+)$/gm
+    )) {
+      out.push(...m[1].split(/[\s,.]+/).filter(Boolean));
+    }
+  }
+  return out;
+}
+
 const NEGOCIO_041 = {
   operators: 30,
   contacts: 50000,
@@ -66,7 +88,9 @@ describe('plan gestionado (077)', () => {
     const array = /ARRAY\[([^\]]*)\]/.exec(insert)![1];
     const features = [...array.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
     expect(validateFeatures(features).ok).toBe(true);
-    expect(features.sort()).toEqual([...PLAN_FEATURES].sort());
+    expect(features.sort()).toEqual(
+      PLAN_FEATURES.filter((f) => !featuresAddedAfter(77).includes(f)).sort()
+    );
   });
 
   it('seeds a default price the validator accepts: 7000 included, 1036, ×2,5', () => {

@@ -1713,6 +1713,7 @@
       "members": "Equipo",
       "api": "Claves de API",
       "webhooks": "Webhooks",
+      "integrations": "Integraciones",
       "subscription": "Suscripción"
     },
     "groups": {
@@ -1902,6 +1903,47 @@
         "dead": "Abandonado"
       },
       "docsLink": "Cómo verificar la firma y manejar reintentos"
+    },
+    "integrations": {
+      "title": "Integraciones",
+      "desc": "Conecta este espacio con otras aplicaciones, como un gestor de consultas médicas. La credencial se guarda cifrada y no se vuelve a mostrar.",
+      "empty": "Todavía no hay integraciones disponibles.",
+      "loading": "Cargando integraciones…",
+      "loadFailed": "No se pudieron cargar las integraciones.",
+      "planRequired": "Tu plan no incluye integraciones.",
+      "upgrade": "Ver planes",
+      "status": {
+        "active": "Activa",
+        "inactive": "No activada",
+        "planRequired": "Requiere plan",
+        "retired": "Retirada"
+      },
+      "operations": "Qué puede hacer",
+      "activate": "Activar",
+      "activateTitle": "Conectar {name}",
+      "credentialLabelBearer": "Token",
+      "credentialLabelHeader": "{header}",
+      "credentialSaved": "Credencial guardada: ••••{last4}",
+      "credentialSavedHidden": "Credencial guardada: ••••",
+      "save": "Guardar y probar",
+      "cancel": "Cancelar",
+      "test": "Probar conexión",
+      "testing": "Probando…",
+      "testResult": {
+        "ok": "Conexión correcta.",
+        "auth_failed": "La app rechazó la credencial.",
+        "unreachable": "No se pudo contactar con la app.",
+        "error": "La app respondió con un error."
+      },
+      "testUnavailable": "La prueba de conexión no pudo lanzarse ahora. Inténtalo en un minuto.",
+      "lastTested": "Última prueba: {when}",
+      "change": "Cambiar credencial",
+      "deactivate": "Desactivar",
+      "deactivateTitle": "¿Desactivar {name}?",
+      "deactivateConfirm": "Se borrará la credencial guardada de {name}. Para volver a usarla tendrás que pegarla otra vez.",
+      "deactivated": "Integración desactivada",
+      "readOnly": "Solo un administrador puede gestionar las integraciones.",
+      "failed": "No se pudo guardar. Inténtalo de nuevo."
     },
     "deals": {
       "title": "Oportunidades y moneda",
@@ -2282,6 +2324,7 @@
         "accounts": "Cuentas",
         "plans": "Planes",
         "rates": "Tarifas de Meta",
+        "integrations": "Integraciones",
         "operators": "Operadores"
       },
       "openMenu": "Abrir menú",
@@ -2455,7 +2498,8 @@
         "api": "API pública",
         "webhooks": "Webhooks salientes",
         "multi_number": "Varios números de WhatsApp",
-        "priority_support": "Soporte prioritario"
+        "priority_support": "Soporte prioritario",
+        "integrations": "Integraciones con otras apps"
       },
       "errors": {
         "id": "El identificador debe empezar por una minúscula y tener de 2 a 32 caracteres (a-z, 0-9, - o _).",
@@ -2793,7 +2837,102 @@
     "passwordInvalid": "La contraseña debe tener entre {min} y {max} caracteres.",
     "passwordReasonShort": "El motivo debe tener al menos {min} caracteres.",
     "passwordIsOperator": "No se puede cambiar la contraseña de otro operador desde aquí.",
-    "passwordFailed": "No se pudo cambiar la contraseña."
+    "passwordFailed": "No se pudo cambiar la contraseña.",
+    "integrations": {
+      "title": "Integraciones",
+      "subtitle": "Aplicaciones que los clientes pueden conectar desde Ajustes. Cada integración es un origen HTTPS y un conjunto de operaciones declaradas.",
+      "empty": "Todavía no hay integraciones.",
+      "create": "Nueva integración",
+      "createTitle": "Nueva integración",
+      "createDesc": "Se crea como borrador: los clientes no la verán hasta que la actives.",
+      "loading": "Cargando integraciones…",
+      "loadFailed": "No se pudieron cargar las integraciones.",
+      "notFound": "Esta integración no existe.",
+      "back": "Volver a integraciones",
+      "edit": "Editar",
+      "cancel": "Cancelar",
+      "columns": {
+        "name": "Integración",
+        "slug": "Identificador",
+        "status": "Estado",
+        "operations": "Operaciones activas",
+        "accounts": "Cuentas que la usan"
+      },
+      "status": {
+        "active": "Activa",
+        "draft": "Inactiva"
+      },
+      "form": {
+        "name": "Nombre",
+        "slug": "Identificador",
+        "slugHelp": "Minúsculas, dígitos y guiones. No se puede cambiar después.",
+        "description": "Descripción",
+        "logoUrl": "URL del logo (https)",
+        "baseUrl": "URL base",
+        "baseUrlHelp": "Solo https y host público. Toda llamada se queda dentro de este origen y ruta.",
+        "authScheme": "Autenticación",
+        "authBearer": "Token Bearer (cabecera Authorization)",
+        "authHeader": "Cabecera propia",
+        "headerName": "Nombre de la cabecera",
+        "credentialHelp": "Ayuda para el cliente (dónde conseguir la credencial)",
+        "testPath": "Ruta de prueba de conexión",
+        "testPathHelp": "Un GET a esta ruta comprueba la credencial del cliente, p. ej. /me.",
+        "active": "Visible para los clientes",
+        "sortOrder": "Orden de aparición",
+        "save": "Guardar integración",
+        "saved": "Integración guardada"
+      },
+      "operations": {
+        "title": "Operaciones",
+        "empty": "Esta integración todavía no tiene operaciones.",
+        "add": "Añadir operación",
+        "new": "Nueva operación",
+        "key": "Clave",
+        "name": "Nombre",
+        "description": "Descripción",
+        "descriptionHelp": "En lenguaje llano: es lo que leerá la IA para decidir cuándo usarla.",
+        "method": "Método",
+        "path": "Ruta",
+        "pathHelp": "Relativa a la URL base. Los parámetros de ruta van como marcadores entre llaves.",
+        "params": "Parámetros",
+        "outputs": "Salidas",
+        "responseDescription": "Qué devuelve",
+        "active": "Activa",
+        "sortOrder": "Orden",
+        "save": "Guardar operación",
+        "saved": "Operación guardada"
+      },
+      "params": {
+        "name": "Nombre",
+        "in": "Ubicación",
+        "type": "Tipo",
+        "required": "Obligatorio",
+        "description": "Descripción",
+        "enum": "Valores permitidos",
+        "enumHelp": "Separados por comas; solo texto.",
+        "add": "Añadir parámetro",
+        "remove": "Quitar parámetro",
+        "in_path": "Ruta",
+        "in_query": "Consulta (query)",
+        "in_body": "Cuerpo"
+      },
+      "outputs": {
+        "name": "Nombre",
+        "path": "Ruta en la respuesta",
+        "type": "Tipo",
+        "description": "Descripción",
+        "add": "Añadir salida",
+        "remove": "Quitar salida"
+      },
+      "errors": {
+        "field": "Revisa el campo «{field}».",
+        "exists": "Ese identificador ya está en uso.",
+        "failed": "No se pudo guardar. Inténtalo de nuevo.",
+        "inUseTitle": "¿Desactivarla en todas las cuentas?",
+        "inUse": "{count, plural, one {# cuenta tiene} other {# cuentas tienen}} esta integración activada. Cambiar la dirección o la autenticación enviaría su credencial a otro destino, así que se desactivará y se borrará su credencial: tendrán que pegarla otra vez.",
+        "inUseConfirm": "Desactivar en todas y guardar"
+      }
+    }
   },
   "Developers": {
     "ui": {

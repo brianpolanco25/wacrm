@@ -224,6 +224,13 @@ export const RATE_LIMITS = {
    *  basta para quien acaba de añadir la tarjeta y quiere ver el banner
    *  apagarse, y no deja martillear a Meta con el botón. */
   metaPaymentCheck: { limit: 6, windowMs: 60_000 },
+  /** Llamadas salientes a integraciones (n13.1, D6), por CUENTA y para
+   *  todas sus integraciones juntas: la prueba de conexión y, desde
+   *  n13.2–n13.4, cada llamada de un flow, de la IA o de una
+   *  automatización. 60/min ≈ una por segundo sostenida, holgado para un
+   *  flujo de citas y bastante para que un flow en bucle no martillee la
+   *  API de la app de destino. Por proceso, como todo este archivo. */
+  integrationCall: { limit: 60, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't

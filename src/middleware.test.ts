@@ -279,6 +279,11 @@ describe('middleware — support sessions write, and are recorded', () => {
     ['POST', '/api/account/api-keys/k-1/rotate'],
     ['POST', '/api/account/webhooks'],
     ['DELETE', '/api/account/webhooks/w-1'],
+    ['PUT', '/api/account/integrations/9a000000-0000-4000-8000-000000000001'],
+    [
+      'POST',
+      '/api/account/integrations/9a000000-0000-4000-8000-000000000001/test',
+    ],
     ['POST', '/api/invitations/tok/redeem'],
     ['POST', '/api/platform/impersonate'],
   ])('still refuses %s %s during a support session', async (method, path) => {

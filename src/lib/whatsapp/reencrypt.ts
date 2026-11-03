@@ -26,6 +26,8 @@ export const ENCRYPTED_COLUMNS: ReadonlyArray<EncryptedTarget> = [
   { table: 'whatsapp_config', columns: ['access_token', 'verify_token'] },
   { table: 'ai_configs', columns: ['api_key', 'embeddings_api_key'] },
   { table: 'webhook_endpoints', columns: ['secret'] },
+  // n13.1 (091): la credencial de una integración; NULL tras desactivar.
+  { table: 'account_integrations', columns: ['credential'] },
 ];
 
 export interface EncryptedTarget {

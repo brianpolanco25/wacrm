@@ -57,6 +57,12 @@ const IDENTICAL_TO_SOURCE_OK: Record<string, string> = {
   'Platform.managed.category.marketing': 'same word in Spanish',
   'Platform.managed.methodShort.paypal': 'proper noun',
   'Billing.statements.category.marketing': 'same word in Spanish',
+  // n13.1: the credential field. «Token» is the word the apps use in
+  // Spanish too, and the header label is only the operator's header name.
+  'Settings.integrations.credentialLabelBearer':
+    'technical term, same word in Spanish',
+  'Settings.integrations.credentialLabelHeader':
+    'placeholder only (the header name)',
 };
 
 function load(locale: string): Record<string, unknown> {

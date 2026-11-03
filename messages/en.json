@@ -1713,6 +1713,7 @@
       "members": "Team members",
       "api": "API keys",
       "webhooks": "Webhooks",
+      "integrations": "Integrations",
       "subscription": "Subscription"
     },
     "groups": {
@@ -1902,6 +1903,47 @@
         "dead": "Given up"
       },
       "docsLink": "How to verify the signature and handle retries"
+    },
+    "integrations": {
+      "title": "Integrations",
+      "desc": "Connect this workspace with other apps, such as a medical practice manager. The credential is stored encrypted and is never shown again.",
+      "empty": "There are no integrations available yet.",
+      "loading": "Loading integrations…",
+      "loadFailed": "The integrations could not be loaded.",
+      "planRequired": "Your plan does not include integrations.",
+      "upgrade": "See plans",
+      "status": {
+        "active": "Active",
+        "inactive": "Not enabled",
+        "planRequired": "Requires plan",
+        "retired": "Retired"
+      },
+      "operations": "What it can do",
+      "activate": "Activate",
+      "activateTitle": "Connect {name}",
+      "credentialLabelBearer": "Token",
+      "credentialLabelHeader": "{header}",
+      "credentialSaved": "Saved credential: ••••{last4}",
+      "credentialSavedHidden": "Saved credential: ••••",
+      "save": "Save and test",
+      "cancel": "Cancel",
+      "test": "Test connection",
+      "testing": "Testing…",
+      "testResult": {
+        "ok": "Connection OK.",
+        "auth_failed": "The app rejected the credential.",
+        "unreachable": "The app could not be reached.",
+        "error": "The app answered with an error."
+      },
+      "testUnavailable": "The connection test could not run right now. Try again in a minute.",
+      "lastTested": "Last test: {when}",
+      "change": "Change credential",
+      "deactivate": "Deactivate",
+      "deactivateTitle": "Deactivate {name}?",
+      "deactivateConfirm": "The saved credential for {name} will be deleted. To use it again you will have to paste it again.",
+      "deactivated": "Integration deactivated",
+      "readOnly": "Only an administrator can manage integrations.",
+      "failed": "It could not be saved. Try again."
     },
     "deals": {
       "title": "Deals & currency",
@@ -2282,6 +2324,7 @@
         "accounts": "Accounts",
         "plans": "Plans",
         "rates": "Meta rates",
+        "integrations": "Integrations",
         "operators": "Operators"
       },
       "openMenu": "Open menu",
@@ -2455,7 +2498,8 @@
         "api": "Public API",
         "webhooks": "Outgoing webhooks",
         "multi_number": "Several WhatsApp numbers",
-        "priority_support": "Priority support"
+        "priority_support": "Priority support",
+        "integrations": "Integrations with other apps"
       },
       "errors": {
         "id": "The identifier must start with a lowercase letter and have 2 to 32 characters (a-z, 0-9, - or _).",
@@ -2793,7 +2837,102 @@
     "passwordInvalid": "The password must be {min} to {max} characters.",
     "passwordReasonShort": "The reason must be at least {min} characters.",
     "passwordIsOperator": "Another operator's password cannot be changed from here.",
-    "passwordFailed": "Could not change the password."
+    "passwordFailed": "Could not change the password.",
+    "integrations": {
+      "title": "Integrations",
+      "subtitle": "Apps that customers can connect from Settings. Each integration is an HTTPS origin and a set of declared operations.",
+      "empty": "There are no integrations yet.",
+      "create": "New integration",
+      "createTitle": "New integration",
+      "createDesc": "It is created as a draft: customers will not see it until you activate it.",
+      "loading": "Loading integrations…",
+      "loadFailed": "The integrations could not be loaded.",
+      "notFound": "This integration does not exist.",
+      "back": "Back to integrations",
+      "edit": "Edit",
+      "cancel": "Cancel",
+      "columns": {
+        "name": "Integration",
+        "slug": "Identifier",
+        "status": "Status",
+        "operations": "Active operations",
+        "accounts": "Accounts using it"
+      },
+      "status": {
+        "active": "Active",
+        "draft": "Inactive"
+      },
+      "form": {
+        "name": "Name",
+        "slug": "Identifier",
+        "slugHelp": "Lowercase letters, digits and hyphens. It cannot be changed later.",
+        "description": "Description",
+        "logoUrl": "Logo URL (https)",
+        "baseUrl": "Base URL",
+        "baseUrlHelp": "https only, public host. Every call stays inside this origin and path.",
+        "authScheme": "Authentication",
+        "authBearer": "Bearer token (Authorization header)",
+        "authHeader": "Custom header",
+        "headerName": "Header name",
+        "credentialHelp": "Help for the customer (where to get the credential)",
+        "testPath": "Connection test path",
+        "testPathHelp": "A GET to this path checks the customer's credential, e.g. /me.",
+        "active": "Visible to customers",
+        "sortOrder": "Display order",
+        "save": "Save integration",
+        "saved": "Integration saved"
+      },
+      "operations": {
+        "title": "Operations",
+        "empty": "This integration has no operations yet.",
+        "add": "Add operation",
+        "new": "New operation",
+        "key": "Key",
+        "name": "Name",
+        "description": "Description",
+        "descriptionHelp": "Plain language: it is what the AI will read to decide when to use it.",
+        "method": "Method",
+        "path": "Path",
+        "pathHelp": "Relative to the base URL. Path parameters go in as placeholders between curly braces.",
+        "params": "Parameters",
+        "outputs": "Outputs",
+        "responseDescription": "What it returns",
+        "active": "Active",
+        "sortOrder": "Order",
+        "save": "Save operation",
+        "saved": "Operation saved"
+      },
+      "params": {
+        "name": "Name",
+        "in": "Location",
+        "type": "Type",
+        "required": "Required",
+        "description": "Description",
+        "enum": "Allowed values",
+        "enumHelp": "Comma separated; text only.",
+        "add": "Add parameter",
+        "remove": "Remove parameter",
+        "in_path": "Path",
+        "in_query": "Query",
+        "in_body": "Body"
+      },
+      "outputs": {
+        "name": "Name",
+        "path": "Path in the response",
+        "type": "Type",
+        "description": "Description",
+        "add": "Add output",
+        "remove": "Remove output"
+      },
+      "errors": {
+        "field": "Check the field “{field}”.",
+        "exists": "That identifier is already in use.",
+        "failed": "It could not be saved. Try again.",
+        "inUseTitle": "Deactivate it for every account?",
+        "inUse": "{count, plural, one {# account has} other {# accounts have}} this integration enabled. Changing the address or the authentication would send their credential somewhere else, so it will be deactivated and their credential deleted: they will have to paste it again.",
+        "inUseConfirm": "Deactivate for all and save"
+      }
+    }
   },
   "Developers": {
     "ui": {

@@ -22,6 +22,19 @@ and polish.
 - The failure screen of an email link opened in another browser keeps the invitation on its "Sign in" and "Request a new link" buttons.
 - The `/join` page and the invitation texts of `/signup` and `/login` are now translated (Spanish and English).
 
+### Security: webhook and integration URLs written as IPv4-mapped IPv6
+
+- The outbound address guard now recognises private IPv4 addresses written inside IPv6 literals — `https://[::ffff:127.0.0.1]` (which the URL parser rewrites as `[::ffff:7f00:1]`), IPv4-compatible `[::127.0.0.1]` and NAT64 `[64:ff9b::a9fe:a9fe]` — and refuses them. Before, such a webhook URL could reach the server's own loopback or the cloud metadata service.
+
+### Integrations with Cabbity apps: catalogue and per-account activation
+
+- **Migration required**: `supabase/migrations/091_integrations.sql` (new tables `integrations`, `integration_operations`, `account_integrations` and `integration_calls`, service role only). Number 090 is reserved by another feature in progress; if it does not exist when this ships, the gap is intentional (like 081 and 085).
+- Platform operators get a new **Integrations** section (`/platform/integrations`) to declare integrations with other Cabbity apps, such as Cabbity Health, as data: an HTTPS base URL, the authentication scheme (bearer token or a custom header), a connection-test path and the operations (method, path, typed parameters, outputs and a plain-language description). Integrations are created inactive and are retired, never deleted.
+- New plan feature **Integrations with other apps** (`integrations`), editable in `/platform/plans`. **No plan includes it by default**: an operator has to tick it on the plans that should offer integrations.
+- Changing the address or the authentication of an integration that accounts already use asks the operator to confirm, and then deactivates it in every account and deletes their credentials, so no credential is ever sent to a new destination silently.
+- Settings → **Integrations**: a workspace admin activates an integration by pasting its credential (stored encrypted, never shown again except its last four characters), and the connection is tested right away; they can test it again, change the credential or deactivate it, which deletes the stored credential. Other members see the status read-only, and a support session cannot change integration credentials.
+- Every call to an integration goes through one guarded client: HTTPS only, never to a private or internal address, never following redirects, 10-second timeout, 256 KiB response limit and 60 calls per minute per account. Each call is logged (outcome, status code and latency; no bodies, headers or parameters). Using integrations from flows, the AI agent and automations comes in later releases.
+
 ### WhatsApp coexistence: messages sent from the phone app, edits and deletions, chat history, phone contacts and disconnection
 
 - **Migration required**: `supabase/migrations/089_whatsapp_coexistence_batches.sql` (new table `whatsapp_coexistence_batches`, service role only).

@@ -74,7 +74,7 @@ function hrefs(html: string): string[] {
 }
 
 describe('PlatformFrame — the operator nav', () => {
-  it('offers Resumen, Cuentas, Planes, Tarifas de Meta and Operadores, in that order', () => {
+  it('offers Resumen, Cuentas, Planes, Tarifas de Meta, Integraciones and Operadores, in that order', () => {
     const links = hrefs(frame());
     const nav = links.filter((h) => h.startsWith('/platform'));
     // The logo links to /platform too, before the nav.
@@ -84,6 +84,7 @@ describe('PlatformFrame — the operator nav', () => {
       '/platform/accounts',
       '/platform/plans',
       '/platform/rates',
+      '/platform/integrations',
       '/platform/operators',
     ]);
   });
@@ -149,6 +150,7 @@ describe('PlatformFrame — the operator nav', () => {
       'accounts',
       'plans',
       'rates',
+      'integrations',
       'operators',
     ] as const) {
       expect(html).toContain(messages.Platform.shell.nav[key]);
@@ -200,6 +202,13 @@ describe('platformSectionFor', () => {
     ['/platform/plans', 'plans'],
     ['/platform/rates', 'rates'],
     ['/platform/operators', 'operators'],
+    ['/platform/integrations', 'integrations'],
+    // n13.1: an integration's editor belongs to «Integraciones», not to
+    // «Cuentas» (the `/platform/[id]` account file).
+    [
+      '/platform/integrations/9a000000-0000-4000-8000-000000000001',
+      'integrations',
+    ],
     // An account file belongs to «Cuentas».
     ['/platform/aaaaaaaa-0000-4000-8000-000000000001', 'accounts'],
   ])('%s → %s', (path, section) => {

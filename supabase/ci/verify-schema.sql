@@ -2527,6 +2527,56 @@ BEGIN
   END IF;
   -- /090 -----------------------------------------------------------
 
+  -- 091 — catálogo de integraciones (n13.1) ------------------------
+  IF to_regclass('public.integrations') IS NULL
+     OR to_regclass('public.integration_operations') IS NULL
+     OR to_regclass('public.account_integrations') IS NULL
+     OR to_regclass('public.integration_calls') IS NULL THEN
+    RAISE EXCEPTION 'integrations tables are missing (migration 091)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class
+             WHERE oid IN ('public.integrations'::regclass,
+                           'public.integration_operations'::regclass,
+                           'public.account_integrations'::regclass,
+                           'public.integration_calls'::regclass)
+               AND NOT relrowsecurity) THEN
+    RAISE EXCEPTION 'integrations tables must have RLS enabled (migration 091)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public'
+               AND tablename IN ('integrations', 'integration_operations',
+                                 'account_integrations', 'integration_calls')) THEN
+    RAISE EXCEPTION 'integrations tables must have no policies (migration 091)';
+  END IF;
+  IF EXISTS (SELECT 1
+             FROM unnest(ARRAY['public.integrations', 'public.integration_operations',
+                               'public.account_integrations', 'public.integration_calls']) t(name),
+                  unnest(ARRAY['anon', 'authenticated']) r(role),
+                  unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p(priv)
+             WHERE has_table_privilege(r.role, t.name, p.priv)) THEN
+    RAISE EXCEPTION 'integrations tables are readable or writable by a client role (migration 091)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conrelid = 'public.account_integrations'::regclass
+                   AND conname = 'account_integrations_enabled_has_credential') THEN
+    RAISE EXCEPTION 'account_integrations_enabled_has_credential is missing (migration 091)';
+  END IF;
+  IF (SELECT count(*) FROM pg_constraint
+      WHERE contype = 'f'
+        AND confrelid = 'public.integrations'::regclass
+        AND confdeltype = 'r') <> 3
+     OR EXISTS (SELECT 1 FROM pg_constraint
+                WHERE contype = 'f'
+                  AND confrelid = 'public.integrations'::regclass
+                  AND confdeltype <> 'r') THEN
+    RAISE EXCEPTION 'foreign keys to integrations must all be ON DELETE RESTRICT (migration 091)';
+  END IF;
+  IF to_regclass('public.integration_calls_account_created_idx') IS NULL
+     OR to_regclass('public.account_integrations_integration_idx') IS NULL THEN
+    RAISE EXCEPTION 'integrations indexes missing (migration 091)';
+  END IF;
+  -- /091 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
