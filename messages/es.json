@@ -2927,7 +2927,10 @@
       "errors": {
         "field": "Revisa el campo «{field}».",
         "exists": "Ese identificador ya está en uso.",
-        "failed": "No se pudo guardar. Inténtalo de nuevo."
+        "failed": "No se pudo guardar. Inténtalo de nuevo.",
+        "inUseTitle": "¿Desactivarla en todas las cuentas?",
+        "inUse": "{count, plural, one {# cuenta tiene} other {# cuentas tienen}} esta integración activada. Cambiar la dirección o la autenticación enviaría su credencial a otro destino, así que se desactivará y se borrará su credencial: tendrán que pegarla otra vez.",
+        "inUseConfirm": "Desactivar en todas y guardar"
       }
     }
   },

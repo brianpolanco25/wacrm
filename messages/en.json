@@ -2927,7 +2927,10 @@
       "errors": {
         "field": "Check the field “{field}”.",
         "exists": "That identifier is already in use.",
-        "failed": "It could not be saved. Try again."
+        "failed": "It could not be saved. Try again.",
+        "inUseTitle": "Deactivate it for every account?",
+        "inUse": "{count, plural, one {# account has} other {# accounts have}} this integration enabled. Changing the address or the authentication would send their credential somewhere else, so it will be deactivated and their credential deleted: they will have to paste it again.",
+        "inUseConfirm": "Deactivate for all and save"
       }
     }
   },

@@ -5666,6 +5666,25 @@ describe('integrations (n13.1, service role)', () => {
           'Solo GET /api/platform/integrations: recuento de cuentas por ' +
           'integración para el operador; devuelve ids de integración, ningún ' +
           'dato de cuenta.',
+      },
+      {
+        table: 'account_integrations',
+        op: 'select',
+        by: ['integration_id', 'is_enabled'],
+        reason:
+          'PATCH de plataforma que cambia a dónde viaja la credencial: ' +
+          'recuento (head) de cuentas con la integración activada, para ' +
+          'pedir confirmación. No devuelve filas.',
+      },
+      {
+        table: 'account_integrations',
+        op: 'update',
+        by: ['integration_id', 'is_enabled'],
+        reason:
+          'Confirmado por el operador (reset_activations): desactiva la ' +
+          'integración en TODAS las cuentas y borra sus credenciales antes ' +
+          'de mandarlas a otro origen. Cruza cuentas a propósito y solo ' +
+          'apaga y borra, nunca escribe un secreto.',
       }
     );
   });
@@ -5809,6 +5828,30 @@ describe('integrations (n13.1, service role)', () => {
         .filter((e) => e.rls === null)
         .every((e) => e.table === 'platform_admins')
     ).toBe(true);
+  });
+
+  it('an operator moving the origin needs confirmation, then wipes every credential', async () => {
+    makePlatformAdmin(USER_A);
+    const before = JSON.stringify(h.db.rows('account_integrations'));
+    const refused = await platformIntegrationById.PATCH(
+      req('PATCH', '/x', { base_url: 'https://203.0.113.99/api/v1' }),
+      params({ id: HEALTH })
+    );
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ accountsEnabled: 2 });
+    expect(JSON.stringify(h.db.rows('account_integrations'))).toBe(before);
+
+    const confirmed = await platformIntegrationById.PATCH(
+      req('PATCH', '/x', {
+        base_url: 'https://203.0.113.99/api/v1',
+        reset_activations: true,
+      }),
+      params({ id: HEALTH })
+    );
+    expect(confirmed.status).toBe(200);
+    for (const row of h.db.rows('account_integrations')) {
+      expect(row).toMatchObject({ is_enabled: false, credential: null });
+    }
   });
 
   it("an operator's catalogue edits move nothing of either company", async () => {

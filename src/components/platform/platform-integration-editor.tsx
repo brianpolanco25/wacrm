@@ -19,6 +19,14 @@ import { ArrowLeft, Loader2, Plus, ShieldAlert, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -97,7 +105,9 @@ async function send<R>(
   url: string,
   method: 'POST' | 'PATCH',
   body: Record<string, unknown>,
-  labels: Record<string, string>
+  labels: Record<string, string>,
+  /** Devuelve true si se ocupó de la respuesta (no se avisa nada más). */
+  intercept?: (status: number, json: Record<string, unknown> | null) => boolean
 ): Promise<R | null> {
   try {
     const res = await fetch(url, {
@@ -107,6 +117,9 @@ async function send<R>(
     });
     const json = (await res.json().catch(() => null)) as
       (R & { field?: string }) | null;
+    if (intercept?.(res.status, json as Record<string, unknown> | null)) {
+      return null;
+    }
     if (res.status === 409) {
       toast.error(t('errors.exists'));
       return null;
@@ -288,6 +301,7 @@ export function PlatformIntegrationEditor({
   const [state, setState] = useState<'ok' | 'failed' | 'missing'>('ok');
   const [saving, setSaving] = useState(false);
   const [drafts, setDrafts] = useState<number[]>([]);
+  const [confirmReset, setConfirmReset] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -318,7 +332,7 @@ export function PlatformIntegrationEditor({
     if (initial === null) load();
   }, [initial, load]);
 
-  async function save() {
+  async function save(resetActivations = false) {
     if (!form) return;
     const payload = integrationFormToBody(form, 'edit');
     if (!payload.ok) {
@@ -330,11 +344,23 @@ export function PlatformIntegrationEditor({
       t,
       `/api/platform/integrations/${encodeURIComponent(id)}`,
       'PATCH',
-      payload.body,
-      INTEGRATION_FIELD_LABEL
+      resetActivations
+        ? { ...payload.body, reset_activations: true }
+        : payload.body,
+      INTEGRATION_FIELD_LABEL,
+      (status, json) => {
+        // Cambia a dónde viaja la credencial de cuentas que la usan: se
+        // pide confirmación explícita antes de desactivarla en todas.
+        if (status === 409 && json?.code === 'integration_in_use') {
+          setConfirmReset(Number(json.accountsEnabled) || 0);
+          return true;
+        }
+        return false;
+      }
     );
     setSaving(false);
     if (!body) return;
+    setConfirmReset(null);
     setData((current) =>
       current ? { ...current, ...body.integration } : current
     );
@@ -419,6 +445,37 @@ export function PlatformIntegrationEditor({
           </Button>
         </div>
       </form>
+
+      <Dialog
+        open={confirmReset !== null}
+        onOpenChange={(next) => !next && !saving && setConfirmReset(null)}
+      >
+        <DialogContent className="sm:max-w-md" data-confirm-reset>
+          <DialogHeader>
+            <DialogTitle>{t('errors.inUseTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('errors.inUse', { count: confirmReset ?? 0 })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => setConfirmReset(null)}
+            >
+              {t('cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={saving}
+              aria-busy={saving}
+              onClick={() => void save(true)}
+            >
+              {t('errors.inUseConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">

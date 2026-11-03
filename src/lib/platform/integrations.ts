@@ -177,6 +177,74 @@ export async function updateIntegration(
   return data ? pickIntegration(data as IntegrationRow) : null;
 }
 
+/**
+ * El campo que cambia el destino de la credencial, o null. Cambiar solo
+ * el prefijo de ruta dentro del mismo origen no lo cambia.
+ */
+export function credentialDestinationChange(
+  existing: IntegrationRow,
+  next: IntegrationWrite
+): 'base_url' | 'auth_scheme' | 'auth_header_name' | null {
+  if (
+    next.base_url !== undefined &&
+    new URL(next.base_url).origin !== new URL(existing.base_url).origin
+  ) {
+    return 'base_url';
+  }
+  const scheme = next.auth_scheme ?? existing.auth_scheme;
+  if (scheme !== existing.auth_scheme) return 'auth_scheme';
+  if (scheme === 'header') {
+    const header =
+      next.auth_header_name !== undefined
+        ? next.auth_header_name
+        : existing.auth_header_name;
+    if (
+      (header ?? '').toLowerCase() !==
+      (existing.auth_header_name ?? '').toLowerCase()
+    ) {
+      return 'auth_header_name';
+    }
+  }
+  return null;
+}
+
+/**
+ * Cuentas que tienen activada la integración (cruza cuentas: solo un
+ * recuento, para decidir si un cambio de destino de la credencial pide
+ * confirmación).
+ */
+export async function countEnabledActivations(
+  integrationId: string
+): Promise<number> {
+  const { count, error } = await supabaseAdmin()
+    .from('account_integrations')
+    .select('id', { count: 'exact', head: true })
+    .eq('integration_id', integrationId)
+    .eq('is_enabled', true);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/**
+ * Desactiva la integración en TODAS las cuentas y borra sus credenciales
+ * (D5): lo que hace el operador, confirmándolo, antes de cambiar a dónde
+ * viaja la credencial. Las cuentas tendrán que pegarla otra vez.
+ */
+export async function resetActivations(integrationId: string): Promise<void> {
+  const { error } = await supabaseAdmin()
+    .from('account_integrations')
+    .update({
+      is_enabled: false,
+      credential: null,
+      credential_last4: null,
+      last_tested_at: null,
+      last_test_status: null,
+    })
+    .eq('integration_id', integrationId)
+    .eq('is_enabled', true);
+  if (error) throw error;
+}
+
 /** Operación de una integración concreta; null si no existe en ella. */
 export async function loadOperation(
   integrationId: string,

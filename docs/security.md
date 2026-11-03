@@ -222,6 +222,18 @@ typed parameters); one executor, `src/lib/integrations/execute.ts`, turns
   `execute.ts`. Deactivating sets it to `NULL` (D5). A support session
   cannot activate, change, test or deactivate an integration (D3,
   middleware block list + `assertNotSupportSession`).
+- **Moving the credential needs confirmation.** Changing an integration's
+  origin, auth scheme or header name while accounts have it enabled would
+  send each account's decrypted credential to the new destination on the
+  next call. `PATCH /api/platform/integrations/[id]` answers 409
+  `integration_in_use` instead; with `reset_activations: true` (the panel
+  asks first) it deactivates the integration in every account and deletes
+  their credentials before saving. A new path prefix on the same origin is
+  not a new destination.
+- **IPv4 inside IPv6 literals.** `isPrivateOrReservedIp` expands IPv6 and
+  checks the IPv4 embedded in IPv4-mapped (also the hex form the URL parser
+  writes, `[::ffff:7f00:1]`), IPv4-compatible and NAT64 (`64:ff9b::/96`)
+  addresses. This guard is shared with outbound webhooks.
 - **Call log without content.** `integration_calls` keeps account,
   integration, operation key, source, outcome, status code and latency —
   no bodies, headers or parameters, because the remote app may hold
