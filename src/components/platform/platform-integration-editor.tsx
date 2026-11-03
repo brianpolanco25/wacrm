@@ -255,14 +255,16 @@ export function IntegrationFields({
           onChange={(e) => set('sortOrder', e.target.value)}
         />
       </div>
-      <div className="flex items-center gap-2 self-end pb-1.5">
-        <Switch
-          id="int-active"
-          checked={form.isActive}
-          onCheckedChange={(checked) => set('isActive', checked === true)}
-        />
-        <Label htmlFor="int-active">{t('form.active')}</Label>
-      </div>
+      {mode === 'edit' ? (
+        <div className="flex items-center gap-2 self-end pb-1.5">
+          <Switch
+            id="int-active"
+            checked={form.isActive}
+            onCheckedChange={(checked) => set('isActive', checked === true)}
+          />
+          <Label htmlFor="int-active">{t('form.active')}</Label>
+        </div>
+      ) : null}
     </div>
   );
 }

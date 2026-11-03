@@ -144,7 +144,13 @@ export async function createIntegration(
 ): Promise<IntegrationRow> {
   const { data, error } = await supabaseAdmin()
     .from('integrations')
-    .insert({ ...value, created_by: userId, updated_by: userId })
+    // R5: nace en borrador pase lo que pase con el cuerpo.
+    .insert({
+      ...value,
+      is_active: false,
+      created_by: userId,
+      updated_by: userId,
+    })
     .select(INTEGRATION_COLUMNS)
     .single();
   if (error) {

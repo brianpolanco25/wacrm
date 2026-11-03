@@ -132,6 +132,21 @@ describe('POST /api/platform/integrations', () => {
     expect(row.updated_by).toBe(OPERATOR);
   });
 
+  it('R5: a POST asking for is_active: true is refused and creates nothing', async () => {
+    const res = await post({ ...NEW, is_active: true });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: 'is_active' });
+    expect(h.db.rows('integrations')).toHaveLength(3);
+  });
+
+  it('R5: the row is stored inactive even with is_active: false in the body', async () => {
+    const res = await post({ ...NEW, is_active: false });
+    expect(res.status).toBe(201);
+    expect(
+      h.db.rows('integrations').find((r) => r.slug === 'agenda')!.is_active
+    ).toBe(false);
+  });
+
   it('400 with the field on a validation error', async () => {
     const res = await post({ ...NEW, base_url: 'https://10.0.0.1' });
     expect(res.status).toBe(400);

@@ -30,7 +30,7 @@ const ROW: IntegrationRow = {
 };
 
 describe('integrationFormToBody', () => {
-  it('create sends the slug and every field', () => {
+  it('create sends the slug and every field but is_active (born inactive, R5)', () => {
     const form = {
       ...emptyIntegrationForm(2),
       slug: ' agenda ',
@@ -50,7 +50,6 @@ describe('integrationFormToBody', () => {
         auth_header_name: null,
         credential_help: null,
         test_path: '/ping',
-        is_active: false,
         sort_order: 2,
       },
     });

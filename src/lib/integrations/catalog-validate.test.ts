@@ -211,6 +211,23 @@ describe('validateIntegrationInput (R5)', () => {
     }
   });
 
+  it('a create cannot be born active (R5); an explicit false is fine', () => {
+    expect(
+      fieldOf(
+        validateIntegrationInput({ ...INTEGRATION, is_active: true }, 'create')
+      )
+    ).toBe('is_active');
+    const r = validateIntegrationInput(
+      { ...INTEGRATION, is_active: false },
+      'create'
+    );
+    expect(r.ok && 'is_active' in r.value).toBe(false);
+    expect(validateIntegrationInput({ is_active: true }, 'update')).toEqual({
+      ok: true,
+      value: { is_active: true },
+    });
+  });
+
   it('refuses unknown fields and missing required ones', () => {
     expect(
       fieldOf(

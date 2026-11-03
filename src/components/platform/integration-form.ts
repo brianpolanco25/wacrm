@@ -136,7 +136,8 @@ export function integrationFormToBody(
   const testPath = form.testPath.trim();
   if (!testPath) return { ok: false, field: 'test_path' };
   body.test_path = testPath;
-  body.is_active = form.isActive;
+  // Nace en borrador (R5): el estado solo se manda al editar.
+  if (mode === 'edit') body.is_active = form.isActive;
   const order = form.sortOrder.trim();
   if (!INT_RE.test(order)) return { ok: false, field: 'sort_order' };
   body.sort_order = Number(order);

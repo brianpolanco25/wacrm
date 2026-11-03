@@ -352,7 +352,15 @@ export function validateIntegrationInput(
     if (typeof body.is_active !== 'boolean') {
       return fail('is_active', "'is_active' must be a boolean");
     }
-    value.is_active = body.is_active;
+    // R5: una integración nace en borrador. Activarla es una edición
+    // aparte, cuando ya tiene operaciones que enseñar.
+    if (mode === 'create' && body.is_active) {
+      return fail(
+        'is_active',
+        'an integration is created inactive; activate it with an edit'
+      );
+    }
+    if (mode === 'update') value.is_active = body.is_active;
   }
 
   const order = sortOrder(body);
