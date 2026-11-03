@@ -19,6 +19,7 @@ import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { WebhooksSettings } from '@/components/settings/webhooks-settings';
+import { IntegrationsSettings } from '@/components/settings/integrations-settings';
 import { SubscriptionPanel } from '@/components/settings/subscription-panel';
 import {
   resolveSection,
@@ -84,6 +85,7 @@ function SettingsPageInner() {
     members: <MembersTab />,
     api: <ApiKeysSettings />,
     webhooks: <WebhooksSettings />,
+    integrations: <IntegrationsSettings />,
     subscription: <SubscriptionPanel />,
   };
 

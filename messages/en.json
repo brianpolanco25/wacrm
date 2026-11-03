@@ -1713,6 +1713,7 @@
       "members": "Team members",
       "api": "API keys",
       "webhooks": "Webhooks",
+      "integrations": "Integrations",
       "subscription": "Subscription"
     },
     "groups": {
@@ -1902,6 +1903,47 @@
         "dead": "Given up"
       },
       "docsLink": "How to verify the signature and handle retries"
+    },
+    "integrations": {
+      "title": "Integrations",
+      "desc": "Connect this workspace with other Cabbity apps, such as Cabbity Health. The credential is stored encrypted and is never shown again.",
+      "empty": "There are no integrations available yet.",
+      "loading": "Loading integrations…",
+      "loadFailed": "The integrations could not be loaded.",
+      "planRequired": "Your plan does not include integrations.",
+      "upgrade": "See plans",
+      "status": {
+        "active": "Active",
+        "inactive": "Not enabled",
+        "planRequired": "Requires plan",
+        "retired": "Retired"
+      },
+      "operations": "What it can do",
+      "activate": "Activate",
+      "activateTitle": "Connect {name}",
+      "credentialLabelBearer": "Token",
+      "credentialLabelHeader": "{header}",
+      "credentialSaved": "Saved credential: ••••{last4}",
+      "credentialSavedHidden": "Saved credential: ••••",
+      "save": "Save and test",
+      "cancel": "Cancel",
+      "test": "Test connection",
+      "testing": "Testing…",
+      "testResult": {
+        "ok": "Connection OK.",
+        "auth_failed": "The app rejected the credential.",
+        "unreachable": "The app could not be reached.",
+        "error": "The app answered with an error."
+      },
+      "testUnavailable": "The connection test could not run right now. Try again in a minute.",
+      "lastTested": "Last test: {when}",
+      "change": "Change credential",
+      "deactivate": "Deactivate",
+      "deactivateTitle": "Deactivate {name}?",
+      "deactivateConfirm": "The saved credential for {name} will be deleted. To use it again you will have to paste it again.",
+      "deactivated": "Integration deactivated",
+      "readOnly": "Only an administrator can manage integrations.",
+      "failed": "It could not be saved. Try again."
     },
     "deals": {
       "title": "Deals & currency",

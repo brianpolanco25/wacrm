@@ -1,4 +1,5 @@
 import {
+  Blocks,
   Coins,
   CreditCard,
   FileText,
@@ -36,6 +37,7 @@ export const SETTINGS_SECTIONS = [
   'members',
   'api',
   'webhooks',
+  'integrations',
   'subscription',
 ] as const;
 
@@ -127,6 +129,15 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
     id: 'webhooks',
     label: 'Webhooks',
     icon: Webhook,
+    group: 'workspace',
+  },
+  // n13.1: integraciones con apps Cabbity. Cualquier miembro ve el
+  // estado; activar, probar y desactivar es de admin+ (y nunca en una
+  // sesión de soporte), así que la entrada NO es `adminOnly`.
+  integrations: {
+    id: 'integrations',
+    label: 'Integrations',
+    icon: Blocks,
     group: 'workspace',
   },
   // Fase 3 §6: "En Ajustes, visible para `admin`+".

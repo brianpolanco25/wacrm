@@ -1713,6 +1713,7 @@
       "members": "Equipo",
       "api": "Claves de API",
       "webhooks": "Webhooks",
+      "integrations": "Integraciones",
       "subscription": "Suscripción"
     },
     "groups": {
@@ -1902,6 +1903,47 @@
         "dead": "Abandonado"
       },
       "docsLink": "Cómo verificar la firma y manejar reintentos"
+    },
+    "integrations": {
+      "title": "Integraciones",
+      "desc": "Conecta este espacio con otras apps de Cabbity, como Cabbity Health. La credencial se guarda cifrada y no se vuelve a mostrar.",
+      "empty": "Todavía no hay integraciones disponibles.",
+      "loading": "Cargando integraciones…",
+      "loadFailed": "No se pudieron cargar las integraciones.",
+      "planRequired": "Tu plan no incluye integraciones.",
+      "upgrade": "Ver planes",
+      "status": {
+        "active": "Activa",
+        "inactive": "No activada",
+        "planRequired": "Requiere plan",
+        "retired": "Retirada"
+      },
+      "operations": "Qué puede hacer",
+      "activate": "Activar",
+      "activateTitle": "Conectar {name}",
+      "credentialLabelBearer": "Token",
+      "credentialLabelHeader": "{header}",
+      "credentialSaved": "Credencial guardada: ••••{last4}",
+      "credentialSavedHidden": "Credencial guardada: ••••",
+      "save": "Guardar y probar",
+      "cancel": "Cancelar",
+      "test": "Probar conexión",
+      "testing": "Probando…",
+      "testResult": {
+        "ok": "Conexión correcta.",
+        "auth_failed": "La app rechazó la credencial.",
+        "unreachable": "No se pudo contactar con la app.",
+        "error": "La app respondió con un error."
+      },
+      "testUnavailable": "La prueba de conexión no pudo lanzarse ahora. Inténtalo en un minuto.",
+      "lastTested": "Última prueba: {when}",
+      "change": "Cambiar credencial",
+      "deactivate": "Desactivar",
+      "deactivateTitle": "¿Desactivar {name}?",
+      "deactivateConfirm": "Se borrará la credencial guardada de {name}. Para volver a usarla tendrás que pegarla otra vez.",
+      "deactivated": "Integración desactivada",
+      "readOnly": "Solo un administrador puede gestionar las integraciones.",
+      "failed": "No se pudo guardar. Inténtalo de nuevo."
     },
     "deals": {
       "title": "Oportunidades y moneda",
