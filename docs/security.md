@@ -8,8 +8,9 @@ server-side; none of it changes the UI.
 ## Encryption key rotation
 
 Every stored credential — `whatsapp_config.access_token` /
-`verify_token`, `ai_configs.api_key` / `embeddings_api_key` and
-`webhook_endpoints.secret` — is encrypted at rest with AES-256-GCM by
+`verify_token`, `ai_configs.api_key` / `embeddings_api_key`,
+`webhook_endpoints.secret` and `account_integrations.credential` (091) —
+is encrypted at rest with AES-256-GCM by
 `src/lib/whatsapp/encryption.ts`.
 
 ### Variables
@@ -189,6 +190,44 @@ with two valid secrets: from the rotation response onward everything is
 signed with the new one, so a receiver has to be updated before the next
 delivery. That is deliberate — a second valid secret is a second thing
 that can leak.
+
+## Outbound integration calls
+
+Integrations (n13.1, migration 091) let an account call another Cabbity
+app — Cabbity Health, for instance — with a credential the account
+pastes in Settings. The operator declares each integration as data in
+`/platform/integrations` (an HTTPS origin, an auth scheme, operations with
+typed parameters); one executor, `src/lib/integrations/execute.ts`, turns
+"operation + parameters + credential" into a request. The controls:
+
+- **Allowlist by origin.** The request URL is `base_url` + the operation
+  path with each `{placeholder}` replaced by `encodeURIComponent(value)`
+  (and `.` encoded too). If the result leaves the origin or the path
+  prefix of `base_url`, or the URL parser would normalize it, the call is
+  `blocked` before any network I/O. Path templates themselves refuse
+  `..`, `//`, `?`, `#`, `%`, `\` and spaces.
+- **SSRF.** `base_url` must be `https:`, without credentials, query or
+  fragment, and not a private literal or an internal name; the platform
+  route also requires `isDeliverableUrl` at save time, and the executor
+  runs it again on every call, with `redirect: 'manual'` (a 3xx is an
+  error, never followed). DNS rebinding remains the residual risk
+  described for webhooks.
+- **Budgets (D6).** 10 s per call including the body, 256 KiB maximum
+  response (declared or streamed; the body is cancelled past it), and 60
+  calls per minute per account across all its integrations
+  (`RATE_LIMITS.integrationCall`, per process).
+- **Credential handling.** Stored with `encrypt()`, never returned to any
+  client (the panel shows the last four characters, and only for
+  credentials of 12 characters or more), and decrypted only in
+  `execute.ts`. Deactivating sets it to `NULL` (D5). A support session
+  cannot activate, change, test or deactivate an integration (D3,
+  middleware block list + `assertNotSupportSession`).
+- **Call log without content.** `integration_calls` keeps account,
+  integration, operation key, source, outcome, status code and latency —
+  no bodies, headers or parameters, because the remote app may hold
+  patient data.
+- **Plan.** The `integrations` feature of `plans.features`; no plan has
+  it by default.
 
 ## Private attachments
 

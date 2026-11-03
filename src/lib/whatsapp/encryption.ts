@@ -3,7 +3,9 @@ import crypto from 'crypto';
 /**
  * Secret-at-rest encryption for every credential this app stores:
  * `whatsapp_config.access_token` / `verify_token`, `ai_configs.api_key`
- * / `embeddings_api_key` and `webhook_endpoints.secret`.
+ * / `embeddings_api_key`, `webhook_endpoints.secret` and
+ * `account_integrations.credential` (n13.1; only `src/lib/integrations/
+ * execute.ts` decrypts it).
  *
  * Format — versioned GCM (current, what `encrypt()` emits):
  *   `k<key-id>:<iv-hex>:<ciphertext-hex>:<authTag-hex>`   (three colons)

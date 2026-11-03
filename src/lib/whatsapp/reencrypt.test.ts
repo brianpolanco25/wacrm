@@ -266,7 +266,35 @@ describe('reencryptAll', () => {
       { table: 'whatsapp_config', columns: ['access_token', 'verify_token'] },
       { table: 'ai_configs', columns: ['api_key', 'embeddings_api_key'] },
       { table: 'webhook_endpoints', columns: ['secret'] },
+      { table: 'account_integrations', columns: ['credential'] },
     ]);
+  });
+
+  it('rotates an integration credential and skips a deactivated (NULL) one', async () => {
+    process.env.ENCRYPTION_KEY_PREVIOUS = OLD_KEY_HEX;
+    const { db, updates } = fakeDb({
+      account_integrations: [
+        { id: 'i-1', credential: encryptWithKey('health-token', OLD_KEY_HEX) },
+        { id: 'i-2', credential: null },
+      ],
+    });
+    const target = ENCRYPTED_COLUMNS.find(
+      (t) => t.table === 'account_integrations'
+    )!;
+    const stats = await reencryptTable(db, target, {
+      dryRun: false,
+      batchSize: 50,
+    });
+    expect(stats).toMatchObject({
+      scanned: 2,
+      rewritten: 1,
+      skipped: 1,
+      failed: 0,
+    });
+    expect(updates.map((u) => u.id)).toEqual(['i-1']);
+    expect(decrypt(updates[0].values.credential as string)).toBe(
+      'health-token'
+    );
   });
 
   it('walks every target and returns one stats block per table', async () => {
@@ -276,6 +304,7 @@ describe('reencryptAll', () => {
       'whatsapp_config',
       'ai_configs',
       'webhook_endpoints',
+      'account_integrations',
     ]);
   });
 });

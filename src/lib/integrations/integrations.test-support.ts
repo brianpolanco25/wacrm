@@ -181,3 +181,40 @@ export function seedIntegrationTables(): Tables {
     ],
   };
 }
+
+export const USER_A = 'a0000000-0000-4000-8000-0000000000a1';
+
+/** Contexto de cuenta como lo devuelve `requireRole` / `getCurrentAccount`. */
+export function accountCtx(
+  role: 'owner' | 'admin' | 'agent' | 'viewer',
+  options: { accountId?: string; userId?: string; impersonated?: boolean } = {}
+) {
+  const accountId = options.accountId ?? ACCOUNT_A;
+  return {
+    supabase: {},
+    userId: options.userId ?? USER_A,
+    accountId,
+    role,
+    account: { id: accountId, name: 'Cuenta' },
+    impersonation: options.impersonated
+      ? { accountId, logId: 'log-1', operatorId: OPERATOR }
+      : null,
+  };
+}
+
+/** Entitlements mínimos con o sin la feature `integrations`. */
+export function entitlementsWith(features: string[]) {
+  return {
+    planId: 'pro',
+    status: 'active',
+    limits: {},
+    features,
+    readOnly: false,
+    readOnlyReason: null,
+    manualHold: false,
+    trialEndsAt: null,
+    metaBilling: 'direct',
+    paymentMethod: null,
+    openStatement: null,
+  };
+}
