@@ -141,9 +141,13 @@ export function isMetaSignupOrigin(origin: string): boolean {
  * WhatsApp Business app account" (coexistence). Meta's coexistence
  * guide requires it in Embedded Signup v4 — this supersedes the older
  * note in `progress/meta_embedded-signup-verificacion.md` that said
- * `featureType` no longer existed. A dialog that does not offer
- * coexistence simply ignores it, so the ordinary flow (`FINISH`) keeps
- * working with the same button.
+ * `featureType` no longer existed. Meta's guide ("Onboard WhatsApp
+ * Business app users") also requires `sessionInfoVersion: "3"` next to
+ * it — coexistence only runs with session logging; without it the
+ * dialog ignores `featureType` and falls into the ordinary signup (SMS
+ * verification, error #2494064). A dialog that does not offer
+ * coexistence simply ignores both, so the ordinary flow (`FINISH`)
+ * keeps working with the same button.
  */
 export const COEXISTENCE_FEATURE_TYPE = 'whatsapp_business_app_onboarding';
 
@@ -158,7 +162,11 @@ export function buildFbLoginOptions(configId: string): Record<string, unknown> {
     // Without this Meta hands back a user access token instead of the
     // code, and there is nothing to exchange on the server.
     override_default_response_type: true,
-    extras: { setup: {}, featureType: COEXISTENCE_FEATURE_TYPE },
+    extras: {
+      setup: {},
+      featureType: COEXISTENCE_FEATURE_TYPE,
+      sessionInfoVersion: '3',
+    },
   };
 }
 
@@ -182,6 +190,9 @@ export type SignupSessionEvent =
  *
  * `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` is the coexistence finish:
  * the number stays on the phone app and is also on Cloud API.
+ *
+ * The payload's `version` (2, or 3 with `sessionInfoVersion: "3"`) is
+ * deliberately not checked: both carry the same `event` and `data`.
  */
 export function parseSignupSessionMessage(
   data: unknown

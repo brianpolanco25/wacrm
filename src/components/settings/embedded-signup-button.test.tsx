@@ -81,14 +81,16 @@ describe('EmbeddedSignupButton', () => {
  * `progress/meta_embedded-signup-verificacion.md`.
  */
 describe('buildFbLoginOptions', () => {
-  it('passes `setup` and the coexistence featureType in extras (R1)', () => {
+  it('passes `setup`, the coexistence featureType and sessionInfoVersion 3 in extras (R1, #1653)', () => {
     const options = buildFbLoginOptions('cfgid-456');
-    // Meta's coexistence guide requires `featureType` in v4 for the
-    // dialog to offer "connect your WhatsApp Business app"; a dialog
-    // without coexistence ignores it.
+    // Meta's coexistence guide requires `featureType` together with
+    // `sessionInfoVersion: "3"` (session logging) for the dialog to offer
+    // "connect your WhatsApp Business app"; without the version it falls
+    // into the ordinary SMS signup.
     expect(options.extras).toEqual({
       setup: {},
       featureType: 'whatsapp_business_app_onboarding',
+      sessionInfoVersion: '3',
     });
   });
 
@@ -173,6 +175,28 @@ describe('parseSignupSessionMessage', () => {
       wabaId: 'waba-3',
       coexistence: true,
     });
+  });
+
+  it('accepts version 3 and version 2 payloads for both finish events (#1653)', () => {
+    for (const version of [3, 2]) {
+      for (const event of [
+        'FINISH',
+        'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+      ]) {
+        const raw = JSON.stringify({
+          type: 'WA_EMBEDDED_SIGNUP',
+          event,
+          version,
+          data: { phone_number_id: 'pn-v', waba_id: 'waba-v' },
+        });
+        expect(parseSignupSessionMessage(raw)).toEqual({
+          kind: 'finish',
+          phoneNumberId: 'pn-v',
+          wabaId: 'waba-v',
+          coexistence: event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+        });
+      }
+    }
   });
 
   it('reads CANCEL and ERROR as before', () => {
