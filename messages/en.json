@@ -2282,6 +2282,7 @@
         "accounts": "Accounts",
         "plans": "Plans",
         "rates": "Meta rates",
+        "integrations": "Integrations",
         "operators": "Operators"
       },
       "openMenu": "Open menu",
@@ -2794,7 +2795,99 @@
     "passwordInvalid": "The password must be {min} to {max} characters.",
     "passwordReasonShort": "The reason must be at least {min} characters.",
     "passwordIsOperator": "Another operator's password cannot be changed from here.",
-    "passwordFailed": "Could not change the password."
+    "passwordFailed": "Could not change the password.",
+    "integrations": {
+      "title": "Integrations",
+      "subtitle": "Cabbity apps that customers can connect from Settings. Each integration is an HTTPS origin and a set of declared operations.",
+      "empty": "There are no integrations yet.",
+      "create": "New integration",
+      "createTitle": "New integration",
+      "createDesc": "It is created as a draft: customers will not see it until you activate it.",
+      "loading": "Loading integrations…",
+      "loadFailed": "The integrations could not be loaded.",
+      "notFound": "This integration does not exist.",
+      "back": "Back to integrations",
+      "edit": "Edit",
+      "cancel": "Cancel",
+      "columns": {
+        "name": "Integration",
+        "slug": "Identifier",
+        "status": "Status",
+        "operations": "Active operations",
+        "accounts": "Accounts using it"
+      },
+      "status": {
+        "active": "Active",
+        "draft": "Inactive"
+      },
+      "form": {
+        "name": "Name",
+        "slug": "Identifier",
+        "slugHelp": "Lowercase letters, digits and hyphens. It cannot be changed later.",
+        "description": "Description",
+        "logoUrl": "Logo URL (https)",
+        "baseUrl": "Base URL",
+        "baseUrlHelp": "https only, public host. Every call stays inside this origin and path.",
+        "authScheme": "Authentication",
+        "authBearer": "Bearer token (Authorization header)",
+        "authHeader": "Custom header",
+        "headerName": "Header name",
+        "credentialHelp": "Help for the customer (where to get the credential)",
+        "testPath": "Connection test path",
+        "testPathHelp": "A GET to this path checks the customer's credential, e.g. /me.",
+        "active": "Visible to customers",
+        "sortOrder": "Display order",
+        "save": "Save integration",
+        "saved": "Integration saved"
+      },
+      "operations": {
+        "title": "Operations",
+        "empty": "This integration has no operations yet.",
+        "add": "Add operation",
+        "new": "New operation",
+        "key": "Key",
+        "name": "Name",
+        "description": "Description",
+        "descriptionHelp": "Plain language: it is what the AI will read to decide when to use it.",
+        "method": "Method",
+        "path": "Path",
+        "pathHelp": "Relative to the base URL. Path parameters go in as placeholders between curly braces.",
+        "params": "Parameters",
+        "outputs": "Outputs",
+        "responseDescription": "What it returns",
+        "active": "Active",
+        "sortOrder": "Order",
+        "save": "Save operation",
+        "saved": "Operation saved"
+      },
+      "params": {
+        "name": "Name",
+        "in": "Location",
+        "type": "Type",
+        "required": "Required",
+        "description": "Description",
+        "enum": "Allowed values",
+        "enumHelp": "Comma separated; text only.",
+        "add": "Add parameter",
+        "remove": "Remove parameter",
+        "in_path": "Path",
+        "in_query": "Query",
+        "in_body": "Body"
+      },
+      "outputs": {
+        "name": "Name",
+        "path": "Path in the response",
+        "type": "Type",
+        "description": "Description",
+        "add": "Add output",
+        "remove": "Remove output"
+      },
+      "errors": {
+        "field": "Check the field “{field}”.",
+        "exists": "That identifier is already in use.",
+        "failed": "It could not be saved. Try again."
+      }
+    }
   },
   "Developers": {
     "ui": {
