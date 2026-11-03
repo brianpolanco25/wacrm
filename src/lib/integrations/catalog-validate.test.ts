@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   FORBIDDEN_AUTH_HEADERS,
+  isForbiddenHost,
   normalizeBaseUrl,
   pathPlaceholders,
   validateIntegrationInput,
@@ -108,6 +109,11 @@ describe('validateIntegrationInput (R5)', () => {
     ['https://192.168.1.4/api'],
     ['https://169.254.169.254'],
     ['https://[::1]/x'],
+    ['https://[::ffff:127.0.0.1]/api'],
+    ['https://[::ffff:169.254.169.254]'],
+    ['https://[::ffff:7f00:1]'],
+    ['https://[::127.0.0.1]'],
+    ['https://[64:ff9b::a9fe:a9fe]'],
     ['https://localhost'],
     ['https://api.localhost'],
     ['https://svc.internal'],
@@ -260,6 +266,21 @@ describe('validateIntegrationInput update (R6)', () => {
         })
       )
     ).toBe('auth_header_name');
+  });
+});
+
+describe('isForbiddenHost', () => {
+  it('reads the hex form the URL parser writes for IPv4-mapped literals', () => {
+    expect(
+      isForbiddenHost(new URL('https://[::ffff:127.0.0.1]').hostname)
+    ).toBe(true);
+    expect(
+      isForbiddenHost(new URL('https://[::ffff:169.254.169.254]').hostname)
+    ).toBe(true);
+    expect(isForbiddenHost(new URL('https://[::ffff:8.8.8.8]').hostname)).toBe(
+      false
+    );
+    expect(isForbiddenHost('health.example.com')).toBe(false);
   });
 });
 

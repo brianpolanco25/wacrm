@@ -4,7 +4,9 @@
 // Único sitio que hace la petición saliente. En orden:
 //
 //   1. cubo `integrationCall:<accountId>` (60/min, D6) → `rate_limited`;
-//   2. `isDeliverableUrl` sobre la URL final → `blocked` sin `fetch`;
+//   2. literal privado (también IPv4-mapped en hex, `[::ffff:7f00:1]`) o
+//      nombre interno, y `isDeliverableUrl` sobre la URL final → `blocked`
+//      sin `fetch`;
 //   3. `fetch` con `redirect: 'manual'` (un 3xx no se sigue: podría
 //      rebotar a una IP interna) y un plazo de 10 s que cubre también la
 //      lectura del cuerpo → `timeout`;
@@ -18,6 +20,7 @@
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 
+import { isForbiddenHost } from './catalog-validate';
 import type { BuiltRequest } from './request';
 import {
   INTEGRATION_MAX_RESPONSE_BYTES,
@@ -110,6 +113,16 @@ export async function performIntegrationRequest(
     RATE_LIMITS.integrationCall
   );
   if (!limit.success) return done('rate_limited', null);
+
+  // Literal privado o nombre interno: fuera sin preguntar al resolutor
+  // (también cuando un test o un llamador inyecta el suyo).
+  let hostname: string;
+  try {
+    hostname = new URL(req.url).hostname;
+  } catch {
+    return done('blocked', null);
+  }
+  if (isForbiddenHost(hostname)) return done('blocked', null);
 
   const isDeliverable = deps.isDeliverable ?? isDeliverableUrl;
   if (!(await isDeliverable(req.url))) return done('blocked', null);

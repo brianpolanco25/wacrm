@@ -46,6 +46,38 @@ describe('performIntegrationRequest', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each([
+    'https://[::ffff:127.0.0.1]/me',
+    'https://[::ffff:169.254.169.254]/latest/meta-data',
+    'https://[::ffff:7f00:1]/me',
+    'https://[64:ff9b::a9fe:a9fe]/me',
+    'https://127.0.0.1/me',
+    'https://svc.internal/me',
+  ])(
+    'R22: the literal %s is blocked before fetch, even if the resolver says yes',
+    async (url) => {
+      const fetch = vi.fn();
+      const r = await performIntegrationRequest(
+        'acc-a',
+        { ...REQ, url },
+        { fetch, isDeliverable: async () => true }
+      );
+      expect(r.outcome).toBe('blocked');
+      expect(fetch).not.toHaveBeenCalled();
+    }
+  );
+
+  it('R22: the real resolver refuses IPv4-mapped loopback too', async () => {
+    const fetch = vi.fn();
+    const r = await performIntegrationRequest(
+      'acc-a',
+      { ...REQ, url: 'https://[::ffff:127.0.0.1]/me' },
+      { fetch }
+    );
+    expect(r.outcome).toBe('blocked');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('R23: a 302 to an internal host is an http_error, never followed', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(
       async () =>
