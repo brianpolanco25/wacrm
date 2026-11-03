@@ -2455,7 +2455,8 @@
         "api": "API pública",
         "webhooks": "Webhooks salientes",
         "multi_number": "Varios números de WhatsApp",
-        "priority_support": "Soporte prioritario"
+        "priority_support": "Soporte prioritario",
+        "integrations": "Integraciones con apps Cabbity"
       },
       "errors": {
         "id": "El identificador debe empezar por una minúscula y tener de 2 a 32 caracteres (a-z, 0-9, - o _).",

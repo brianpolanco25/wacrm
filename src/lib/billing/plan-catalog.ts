@@ -49,6 +49,9 @@ export const PLAN_FEATURES = [
   'webhooks',
   'multi_number',
   'priority_support',
+  // n13.1 (091): integraciones con apps Cabbity. Ningún plan la trae de
+  // serie; el operador la marca en /platform/plans (D2).
+  'integrations',
 ] as const;
 
 export type PlanFeature = (typeof PLAN_FEATURES)[number];

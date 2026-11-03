@@ -64,14 +64,27 @@ describe('the plan inventories (s9.3)', () => {
     }
   });
 
-  it('feature keys are exactly the ones the 041 seed documents', () => {
+  it('feature keys are exactly the ones the 041 seed documents plus later migrations add', () => {
     const documented =
       /Claves de `features`:\s*--\s*([^\n]+)\n--\s*([^\n]+)/.exec(SEED);
     expect(documented).not.toBeNull();
     const keys = `${documented![1]} ${documented![2]}`
       .split(/[\s,.]+/)
       .filter(Boolean);
-    expect([...keys].sort()).toEqual([...PLAN_FEATURES].sort());
+    // A later migration that adds a key says so on its own line
+    // (`-- Claves de \`features\` añadidas: x, y.`), e.g. 091.
+    const migrations = path.join(ROOT, 'supabase/migrations');
+    const added: string[] = [];
+    for (const file of fs.readdirSync(migrations)) {
+      const text = fs.readFileSync(path.join(migrations, file), 'utf8');
+      for (const m of text.matchAll(
+        /^-- Claves de `features` añadidas:\s*([^\n]+)$/gm
+      )) {
+        added.push(...m[1].split(/[\s,.]+/).filter(Boolean));
+      }
+    }
+    expect(added).toContain('integrations');
+    expect([...keys, ...added].sort()).toEqual([...PLAN_FEATURES].sort());
   });
 
   it('every feature the code checks is in the inventory', () => {
