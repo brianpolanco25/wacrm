@@ -2266,6 +2266,19 @@ BEGIN
     RAISE EXCEPTION 'a managed subscription has no statement_period_end (migration 078)';
   END IF;
   -- /078 -----------------------------------------------------------
+  -- 093 — bitácora: alta directa de un miembro (i12.2) --------------
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impersonation_log_action_check'
+      AND pg_get_constraintdef(oid) LIKE '%member_create%'
+      AND pg_get_constraintdef(oid) LIKE '%password_set%'
+      AND pg_get_constraintdef(oid) LIKE '%member_invite%'
+      AND pg_get_constraintdef(oid) LIKE '%statement_void%'
+      AND pg_get_constraintdef(oid) LIKE '%impersonation%'
+  ) THEN
+    RAISE EXCEPTION 'impersonation_log.action must admit member_create without dropping the earlier acts (migration 093)';
+  END IF;
+  -- /093 -----------------------------------------------------------
   -- 079 — estado del método de pago del WABA (p11.1) ----------------
   IF (SELECT count(*) FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'whatsapp_config'

@@ -76,6 +76,7 @@ const h = vi.hoisted(() => ({
   cookies: new Map<string, string>(),
   /** Emails the s9.4 routes asked Supabase to invite. */
   invitedEmails: [] as string[],
+  createdMembers: [] as string[],
 }));
 
 // ---- module mocks --------------------------------------------------
@@ -243,6 +244,42 @@ vi.mock('@/lib/platform/provisioning', async (importOriginal) => ({
     h.invitedEmails.push(email);
     return { ok: true, userId };
   },
+  // i12.2: `auth.admin.createUser` is Supabase Auth too. With the invite
+  // token in the metadata, `handle_new_user()` (090) finds the pending
+  // invitation by its hash, makes the person a member of THAT company
+  // with its role and accepts it — no company of their own. Simulated
+  // here so the snapshot comparison sees exactly what the trigger writes.
+  createConfirmedMember: async ({
+    email,
+    fullName,
+    inviteToken,
+  }: {
+    email: string;
+    fullName: string;
+    inviteToken: string;
+  }) => {
+    const { hashInviteToken } = await import('@/lib/auth/invitations');
+    const invitation = h.db
+      .rows('account_invitations')
+      .find(
+        (r) =>
+          r.token_hash === hashInviteToken(inviteToken) && r.accepted_at == null
+      );
+    if (!invitation) return { ok: false, reason: 'rejected' };
+    const userId = crypto.randomUUID();
+    h.db.rows('profiles').push({
+      id: `profile-${userId}`,
+      user_id: userId,
+      account_id: invitation.account_id,
+      account_role: invitation.role,
+      full_name: fullName,
+      email,
+    });
+    invitation.accepted_at = new Date().toISOString();
+    invitation.accepted_by_user_id = userId;
+    h.createdMembers.push(email);
+    return { ok: true, userId };
+  },
 }));
 
 vi.mock('@/lib/whatsapp/webhook-signature', async (importOriginal) => ({
@@ -350,6 +387,7 @@ import * as platformPlanSync from '@/app/api/platform/plans/[id]/sync/route';
 import * as platformAccountPlan from '@/app/api/platform/accounts/[id]/plan/route';
 import * as platformAccountMetaPricing from '@/app/api/platform/accounts/[id]/meta-pricing/route';
 import * as platformAccountMembers from '@/app/api/platform/accounts/[id]/members/route';
+import * as platformAccountMemberCreate from '@/app/api/platform/accounts/[id]/members/create/route';
 import * as platformOperators from '@/app/api/platform/operators/route';
 import * as platformOperatorById from '@/app/api/platform/operators/[userId]/route';
 // Etiquetas (fase 7 §2) y plantillas (fase 7 §3) de la API pública. Al
@@ -1309,6 +1347,7 @@ beforeEach(() => {
   h.actor = { userId: USER_A, accountId: A };
   extraWaivers = [];
   h.invitedEmails = [];
+  h.createdMembers = [];
   h.after = [];
   h.meta.sends = [];
   h.webhookEvents = [];
@@ -3925,6 +3964,13 @@ describe('/api/platform provisioning (s9.4, service role)', () => {
     );
   }
 
+  function memberCreateReq(accountId: string, body: unknown) {
+    return platformAccountMemberCreate.POST(
+      req('POST', `/api/platform/accounts/${accountId}/members/create`, body),
+      { params: Promise.resolve({ id: accountId }) }
+    );
+  }
+
   it('403s the owner of A on every s9.4 route, and moves nothing', async () => {
     seedTarget();
     const beforeA = h.db.snapshot(A);
@@ -4256,6 +4302,84 @@ describe('/api/platform provisioning (s9.4, service role)', () => {
     // The Supabase invite made the new person their own (empty) company,
     // which redeem_invitation() dissolves on accept. A and B did not move.
     expect(h.invitedEmails).toEqual(['new.agent@acme.test']);
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+  });
+
+  it('i12.2: 403s the owner of A on «Crear miembro», and moves nothing', async () => {
+    seedTarget();
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+    const beforeT = h.db.snapshot(TARGET);
+
+    const res = await memberCreateReq(TARGET, {
+      email: 'spy@x.test',
+      fullName: 'Spy',
+      role: 'admin',
+      password: 'Clave-Secreta-2026',
+      reason: REASON_S94,
+    });
+    expect(res.status).toBe(403);
+    expectNoBIds(await res.json());
+    expect(h.db.snapshot(A)).toEqual(beforeA);
+    expectBUnchanged(beforeB);
+    expect(h.db.snapshot(TARGET)).toEqual(beforeT);
+    expect(h.db.rows('impersonation_log')).toEqual([]);
+    expect(h.createdMembers).toEqual([]);
+  });
+
+  it('i12.2: creates a member in ONE company: profile in T with its role, A and B untouched (R25)', async () => {
+    makePlatformAdmin(USER_A);
+    seedTarget();
+    extraWaivers = [EMAIL_LOOKUP];
+    // Declared before the snapshots, so the table merely appearing is not
+    // read as a difference in A's.
+    h.db.rows('account_invitations');
+    const beforeA = h.db.snapshot(A);
+    const beforeB = h.db.snapshot(B);
+    const accountsBefore = h.db.rows('accounts').length;
+
+    const res = await memberCreateReq(TARGET, {
+      email: 'new.viewer@acme.test',
+      fullName: 'Nueva Viewer',
+      role: 'viewer',
+      password: 'Clave-Secreta-2026',
+      reason: REASON_S94,
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expectNoBIds(body);
+
+    const created = h.db
+      .rows('profiles')
+      .filter((p) => p.email === 'new.viewer@acme.test');
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      user_id: body.member.userId,
+      account_id: TARGET,
+      account_role: 'viewer',
+      full_name: 'Nueva Viewer',
+    });
+    // No company of their own.
+    expect(h.db.rows('accounts')).toHaveLength(accountsBefore);
+    const invitations = h.db.rows('account_invitations');
+    expect(invitations).toHaveLength(1);
+    expect(invitations[0]).toMatchObject({
+      account_id: TARGET,
+      role: 'viewer',
+      created_by_user_id: USER_A,
+      accepted_by_user_id: body.member.userId,
+    });
+    expect(invitations[0].accepted_at).toBeTruthy();
+    expect(h.db.rows('impersonation_log')[0]).toMatchObject({
+      action: 'member_create',
+      account_id: TARGET,
+    });
+    expect(JSON.stringify(h.db.rows('impersonation_log'))).not.toContain(
+      'Clave-Secreta-2026'
+    );
+    expect(h.createdMembers).toEqual(['new.viewer@acme.test']);
+    expect(h.invitedEmails).toEqual([]);
     expect(h.db.snapshot(A)).toEqual(beforeA);
     expectBUnchanged(beforeB);
   });

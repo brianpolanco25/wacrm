@@ -26,18 +26,29 @@ const h = vi.hoisted(() => ({
   },
   audit: [] as Record<string, unknown>[],
   auditId: 'log-1' as string | null,
+  create: {
+    args: null as unknown,
+    result: { data: { user: { id: 'new-member' } }, error: null } as {
+      data: unknown;
+      error: unknown;
+    },
+  },
+  /** Make the builder throw on settle (the helper must not). */
+  throwOnSettle: false,
 }));
 
 function builder(table: string) {
   const call: Call = { table, op: 'select', filters: [] };
   h.calls.push(call);
   const settle = () =>
-    Promise.resolve(
-      (h.results[`${table}:${call.op}`] as object) ?? {
-        data: null,
-        error: null,
-      }
-    );
+    h.throwOnSettle
+      ? Promise.reject(new Error('network down'))
+      : Promise.resolve(
+          (h.results[`${table}:${call.op}`] as object) ?? {
+            data: null,
+            error: null,
+          }
+        );
   const b: Record<string, unknown> = {
     select: (_c?: string, opts?: unknown) => {
       if (opts) call.options = opts;
@@ -51,6 +62,10 @@ function builder(table: string) {
     update: (payload: unknown) => {
       call.op = 'update';
       call.payload = payload;
+      return b;
+    },
+    delete: () => {
+      call.op = 'delete';
       return b;
     },
     upsert: (payload: unknown, options: unknown) => {
@@ -85,6 +100,10 @@ vi.mock('@/lib/auth/admin-client', () => ({
         inviteUserByEmail: async (email: string, options: unknown) => {
           h.invite.args = { email, options };
           return h.invite.result;
+        },
+        createUser: async (attrs: unknown) => {
+          h.create.args = attrs;
+          return h.create.result;
         },
       },
     },
@@ -121,6 +140,9 @@ beforeEach(() => {
   h.invite.result = { data: { user: { id: 'new-user' } }, error: null };
   h.audit = [];
   h.auditId = 'log-1';
+  h.create.args = null;
+  h.create.result = { data: { user: { id: 'new-member' } }, error: null };
+  h.throwOnSettle = false;
 });
 
 describe('normalizeEmail', () => {
@@ -640,6 +662,118 @@ describe('inviteAuthUser', () => {
     expect(
       await p.inviteAuthUser({ email: 'x@y.test', redirectTo: 'https://a/b' })
     ).toEqual({ ok: false, reason: 'failed' });
+  });
+});
+
+describe('createConfirmedMember (i12.2)', () => {
+  const PARAMS = {
+    email: 'ana@acme.test',
+    password: 'S3cret-pass-2026',
+    fullName: 'Ana Agent',
+    inviteToken: 'tok-1',
+  };
+
+  it('creates a confirmed user with the token in the metadata, and sends no invite (R20)', async () => {
+    const out = await p.createConfirmedMember(PARAMS);
+    expect(out).toEqual({ ok: true, userId: 'new-member' });
+    expect(h.create.args).toEqual({
+      email: 'ana@acme.test',
+      password: 'S3cret-pass-2026',
+      email_confirm: true,
+      user_metadata: { full_name: 'Ana Agent', invite_token: 'tok-1' },
+    });
+    expect(h.invite.args).toBeNull();
+  });
+
+  it.each([
+    [{ code: 'email_exists', message: 'whatever' }],
+    [{ code: 'user_already_exists', message: 'whatever' }],
+    [{ message: 'A user with this email address has already been registered' }],
+    [{ message: 'User already exists' }],
+  ])('says "exists" for %o (R20)', async (error) => {
+    h.create.result = { data: { user: null }, error };
+    expect(await p.createConfirmedMember(PARAMS)).toEqual({
+      ok: false,
+      reason: 'exists',
+    });
+  });
+
+  it('says "rejected" when the signup trigger aborted it (R20)', async () => {
+    h.create.result = {
+      data: { user: null },
+      error: { status: 500, message: 'Database error creating new user' },
+    };
+    expect(await p.createConfirmedMember(PARAMS)).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+  });
+
+  it('says "failed" for any other error, and with no user id (R20)', async () => {
+    h.create.result = { data: { user: null }, error: { message: 'boom' } };
+    expect(await p.createConfirmedMember(PARAMS)).toEqual({
+      ok: false,
+      reason: 'failed',
+    });
+    h.create.result = { data: { user: null }, error: null };
+    expect(await p.createConfirmedMember(PARAMS)).toEqual({
+      ok: false,
+      reason: 'failed',
+    });
+  });
+
+  it('never logs the password (R14)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      for (const e of [
+        { message: 'boom' },
+        { status: 500, message: 'Database error creating new user' },
+        { code: 'email_exists', message: 'exists' },
+      ]) {
+        h.create.result = { data: { user: null }, error: e };
+        await p.createConfirmedMember(PARAMS);
+      }
+      expect(error).toHaveBeenCalled();
+      const logged = JSON.stringify([error.mock.calls, warn.mock.calls]);
+      expect(logged).not.toContain(PARAMS.password);
+      expect(logged).not.toContain(PARAMS.inviteToken);
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('deleteInvitation (i12.2)', () => {
+  it('deletes one PENDING invitation of ONE company (R21)', async () => {
+    await p.deleteInvitation(A, 'inv-1');
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toMatchObject({
+      table: 'account_invitations',
+      op: 'delete',
+    });
+    expect(h.calls[0].filters).toEqual([
+      ['account_id', 'eq', A],
+      ['id', 'eq', 'inv-1'],
+      ['accepted_at', 'is', null],
+    ]);
+  });
+
+  it('does not throw when the delete fails (R21)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      h.results['account_invitations:delete'] = {
+        data: null,
+        error: { message: 'nope' },
+      };
+      await expect(p.deleteInvitation(A, 'inv-1')).resolves.toBeUndefined();
+      h.throwOnSettle = true;
+      await expect(p.deleteInvitation(A, 'inv-1')).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledTimes(2);
+    } finally {
+      error.mockRestore();
+    }
   });
 });
 

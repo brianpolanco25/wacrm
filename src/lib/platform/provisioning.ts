@@ -23,6 +23,7 @@ import { addCycle } from '@/lib/billing/webhook-events';
 import { isPlatformAdmin } from '@/lib/auth/platform-admins';
 import { recordPlatformAction } from './audit';
 export {
+  MAX_MEMBER_NAME_LENGTH,
   OPERATOR_MAX_PASSWORD_LENGTH,
   OPERATOR_MIN_PASSWORD_LENGTH,
 } from './password-rules';
@@ -127,6 +128,64 @@ export async function inviteAuthUser(params: {
       return { ok: false, reason: 'exists' };
     }
     console.error('[platform/provisioning] invite failed:', error);
+    return { ok: false, reason: 'failed' };
+  }
+  const userId = result?.user?.id;
+  if (!userId) return { ok: false, reason: 'failed' };
+  return { ok: true, userId };
+}
+
+export type CreateMemberOutcome =
+  | { ok: true; userId: string }
+  | { ok: false; reason: 'exists' | 'rejected' | 'failed' };
+
+/**
+ * Create a CONFIRMED user with a password, through the Auth admin API:
+ * no email, no link (i12.2). With `inviteToken` in the metadata the
+ * signup trigger (090) makes the person a member of the company of that
+ * invitation, with its role, and accepts it in the same transaction — so
+ * the invitation row must exist before this call. If the trigger refuses
+ * (no seat left, invitation gone) GoTrue rolls the whole signup back and
+ * answers «Database error …»: `rejected`.
+ *
+ * Never logs `params`: the password is in there.
+ */
+export async function createConfirmedMember(params: {
+  email: string;
+  password: string;
+  fullName: string;
+  inviteToken: string;
+}): Promise<CreateMemberOutcome> {
+  const { data: result, error } = await supabaseAdmin().auth.admin.createUser({
+    email: params.email,
+    password: params.password,
+    email_confirm: true,
+    user_metadata: {
+      full_name: params.fullName,
+      invite_token: params.inviteToken,
+    },
+  });
+
+  if (error) {
+    const code = (error as { code?: string }).code;
+    const message = error.message ?? '';
+    if (
+      code === 'email_exists' ||
+      code === 'user_already_exists' ||
+      /already (been )?registered|already exists/i.test(message)
+    ) {
+      return { ok: false, reason: 'exists' };
+    }
+    // Only what identifies the error — never the request.
+    const status = (error as { status?: number }).status;
+    console.error('[platform/provisioning] member create failed:', {
+      code,
+      status,
+      message,
+    });
+    if (/database error/i.test(message)) {
+      return { ok: false, reason: 'rejected' };
+    }
     return { ok: false, reason: 'failed' };
   }
   const userId = result?.user?.id;
@@ -601,6 +660,32 @@ export async function insertInvitation(params: {
     id: (data as { id: string }).id,
     expiresAt: (data as { expires_at: string }).expires_at,
   };
+}
+
+/**
+ * Delete a PENDING invitation of ONE company — the one a route has just
+ * written when the signup it was for did not happen, so it stops holding
+ * a seat. Filters by account, id and `accepted_at IS NULL`: an accepted
+ * invitation is the trail of a member and stays. Never throws: the caller
+ * is already answering an error, and an orphan invitation expires anyway.
+ */
+export async function deleteInvitation(
+  accountId: string,
+  invitationId: string
+): Promise<void> {
+  try {
+    const { error } = await supabaseAdmin()
+      .from('account_invitations')
+      .delete()
+      .eq('account_id', accountId)
+      .eq('id', invitationId)
+      .is('accepted_at', null);
+    if (error) {
+      console.error('[platform/provisioning] invitation delete failed:', error);
+    }
+  } catch (err) {
+    console.error('[platform/provisioning] invitation delete failed:', err);
+  }
 }
 
 // ------------------------------------------------------------
