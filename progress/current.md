@@ -295,3 +295,15 @@ De `progress/review_webhooks-durable.md` (a7.4 APPROVED) e `impl_webhooks-durabl
   `source.ts` al generador real hay que: pasar el origen (`serverUrl`) al construir la referencia para
   que el curl de ejemplo sea absoluto, y aceptar que las anclas cambien (o normalizarlas). Detalle en
   `review_developer-docs.md` §Segunda ronda.
+
+## Fase 12 — i12.2 member-direct-create (abierta el 2026-11-04)
+
+Pedido del humano: un invitado al equipo no consigue terminar de crearse; el superadmin debe poder, desde la ficha de
+la empresa (bloque «Equipo»), crear un miembro ya validado con nombre, email, contraseña y rol para que entre
+directamente. Feature `i12.2 member-direct-create` (`pending`, sdd) en rama `feat/miembro-directo` (worktree
+`.claude/worktrees/miembro-directo`, desde `main @ 0e9c956`). Lanzado `spec_author` (Opus) el 2026-11-04.
+Spec aprobado por el humano el 2026-11-04 («dale», seis decisiones recomendadas). `approved` (reviewer APPROVED, 2 commits
+4577e66..6de5654, 5250 tests). `done`: fusionada en main (ff 6de5654) el 2026-11-04 y pusheada; compuerta completa en main
+(lint src 0 err, typecheck, 5250 tests, build, replay 001–093 + verify-schema). **Pendiente humano: aplicar la migración 093
+en Supabase remoto** (añade `member_create` al CHECK de `impersonation_log`; sin ella la ruta responde 500 al escribir la
+bitácora) y guiones S1/S2 de `progress/impl_member-direct-create.md`. Deuda: usuario en Auth sin perfil → 409, sin reparar.

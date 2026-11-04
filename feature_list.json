@@ -1339,6 +1339,29 @@
         "n13.1"
       ],
       "note": "Paso de automatización que llama a una operación de integración (AutomationStepType nuevo), con el mismo ejecutor y registro que n13.2."
+    },
+    {
+      "id": "i12.2",
+      "name": "member-direct-create",
+      "phase": "12",
+      "status": "done",
+      "spec": "specs/member-direct-create/",
+      "sdd": true,
+      "branch": "feat/miembro-directo",
+      "worktree": ".claude/worktrees/miembro-directo",
+      "base": "main @ 0e9c956",
+      "depends_on": [
+        "i12.1"
+      ],
+      "note": "Pedido del humano (2026-11-04): un usuario invitado al equipo de una empresa no consigue terminar de crearse (el alta por enlace se pierde: correo limitado, PKCE en otro navegador, etc.). El superadmin, desde la ficha de la empresa (bloque «Equipo», junto a «Cambiar contraseña»), debe poder CREAR un miembro ya validado: nombre, email, contraseña y rol (admin/agent/viewer, nunca owner), confirmado de entrada (email_confirm) para que entre directamente con esa contraseña, sin correo ni enlace. Reutilizar lo que ya hay: `supabaseAdmin().auth.admin.createUser` (hoy solo se usa inviteUserByEmail en src/lib/platform/provisioning.ts), el trigger handle_new_user de la 090 (invite_token en user_metadata → perfil nace en la empresa con el rol) o una vía equivalente que no cree empresa propia; límite de asientos del plan (assert_seat_available / countSeats); bitácora PRIMERO (recordPlatformAction, nueva acción p. ej. member_create) con motivo; 409 si el email ya existe (ofrecer el camino existente de invitación/cambio de contraseña); reglas de contraseña de OPERATOR_MIN/MAX_PASSWORD_LENGTH; la contraseña nunca al log. Si el email ya tiene usuario de Supabase pero sin perfil en esta empresa, decidir en el spec (probablemente 409 + mensaje). UI: diálogo «Crear miembro» en platform-account-detail.tsx con el mismo patrón que member-password.tsx (generar/copiar contraseña, motivo, resultado mostrado una sola vez). Rutas: POST /api/platform/accounts/[id]/members/create o similar (no romper el POST actual de invitación). Tests vitest de ruta y de helper; migración solo si la vía elegida la necesita.",
+      "approval": "humano 2026-11-04 («dale»): aprobadas las seis decisiones recomendadas de design.md §10 (vía A con invitación + createUser email_confirm; 409 email_exists en D2/D3; motivo obligatorio; migración 093; rate limit compartido)",
+      "implementation": "progress/impl_member-direct-create.md",
+      "commits": [
+        "6de5654",
+        "4577e66"
+      ],
+      "review": "APPROVED 2026-11-04 → progress/review_member-direct-create.md",
+      "merged": "main 2026-11-04 (ff 6de5654); compuerta completa en main: lint src 0 err, typecheck, 5250 tests, build, replay 001–093 + verify-schema OK"
     }
   ]
 }
