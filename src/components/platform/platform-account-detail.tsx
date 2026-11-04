@@ -42,6 +42,7 @@ import {
   type MemberInviteOutcome,
 } from './platform-provisioning';
 import { ImpersonationActions } from './impersonation-actions';
+import { MemberCreate } from './member-create';
 import { MemberPassword } from './member-password';
 import { CheckoutLinkNotice, ManagedPricingCard } from './platform-managed';
 import { PlatformStatements } from './platform-statements';
@@ -481,9 +482,15 @@ export function PlatformAccountDetail({
       {/* ---- members ------------------------------------------------- */}
       <Card>
         <CardContent className="flex flex-col gap-3 p-4">
-          <h2 className="text-foreground text-sm font-semibold">
-            {t('membersTitle', { count: detail.members.length })}
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-foreground text-sm font-semibold">
+              {t('membersTitle', { count: detail.members.length })}
+            </h2>
+            {/* i12.2: a member already confirmed, with a password. The
+                reload keeps the file on screen (`fileScreen`), so the
+                one-time password the form shows survives it. */}
+            <MemberCreate accountId={accountId} onCreated={() => void load()} />
+          </div>
           <ul className="flex flex-col gap-1 text-sm">
             {detail.members.map((member) => (
               <li key={member.userId} className="flex flex-wrap gap-2">

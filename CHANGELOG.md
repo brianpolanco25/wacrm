@@ -11,6 +11,12 @@ and polish.
 
 ## [Unreleased]
 
+### Platform panel: create a verified member from a company's file
+
+- **Migration required**: `supabase/migrations/093_platform_member_create.sql` (widens the `impersonation_log` action CHECK with `member_create`; no data changes).
+- An operator can create, from a company's file («Equipo» block, «Crear miembro»), a member who is already verified: name, email, password and role (admin, agent or viewer — never owner). The person signs in with that password right away; no email or link is sent, and no company of their own is created.
+- The plan's seat limit applies, a reason is required and recorded in the audit log (`member_create`) before anything is created, and the password is shown once to be copied. An email that already has an account, a member of this company or a platform operator is refused with a pointer to «Añadir miembro» or «Cambiar contraseña».
+
 ### Invitations: invitees go straight into the company that invited them
 
 - **Migration required**: `supabase/migrations/090_invite_direct_join.sql` (replaces `handle_new_user()`, `redeem_invitation()` and `peek_invitation()`; adds `account_seat_limit()` and `assert_seat_available()`, not callable by clients).

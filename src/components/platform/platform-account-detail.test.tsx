@@ -120,3 +120,17 @@ describe('PlatformAccountDetail — payment method per number (p11.1)', () => {
     expect(paymentLine(html)).toContain(en.Platform.paymentRecheck);
   });
 });
+
+describe('PlatformAccountDetail — «Crear miembro» (i12.2, R26)', () => {
+  it('the team block offers «Crear miembro», closed, in both languages', () => {
+    const html = render(DETAIL);
+    const team = html.slice(
+      html.indexOf(es.Platform.membersTitle.split('(')[0].trim())
+    );
+    expect(team).toContain(es.Platform.memberCreateButton);
+    expect(team).not.toContain(`id="mc-name-${DETAIL.accountId}"`);
+    expect(render(DETAIL, en as Catalogue, 'en')).toContain(
+      en.Platform.memberCreateButton
+    );
+  });
+});
