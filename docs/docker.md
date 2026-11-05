@@ -182,6 +182,18 @@ tenants can be measured per account. All three surfaces that call a
 provider write a row, told apart by `mode`: `auto_reply`, `draft` and
 `playground`.
 
+### Integration tools in the AI (optional tuning)
+
+When an account turns on «Use in AI» for an activated integration
+(Settings → Integrations, migration 094), the auto-reply bot, the
+playground and the draft (read-only operations only) can call that
+integration's operations as tools. A single reply may take several
+provider calls; the `ai_usage_log` row of that reply carries their sum.
+
+| Variable            | Default | What it does                                                                                                                                                                       |
+| ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AI_TOOL_BUDGET_MS` | `40000` | Time budget of one reply that uses tools. Once spent, the next provider call is the last one and may not call tools. Each provider call still has its own `AI_REQUEST_TIMEOUT_MS`. |
+
 ## PayPal catalogue (optional until billing is enabled)
 
 Create the initial product and six plans in the PayPal sandbox with
