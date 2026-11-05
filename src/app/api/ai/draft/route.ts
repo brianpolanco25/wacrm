@@ -14,6 +14,8 @@ import { latestUserMessage } from '@/lib/ai/query';
 import { logAiUsage } from '@/lib/ai/usage';
 import { supabaseAdmin } from '@/lib/ai/admin-client';
 import { AiError } from '@/lib/ai/types';
+import { loadAiToolset } from '@/lib/ai/tools/load';
+import { EMPTY_TOOLSET } from '@/lib/ai/tools/types';
 
 /**
  * POST /api/ai/draft  (agent+)
@@ -111,17 +113,37 @@ export async function POST(request: Request) {
       latestUserMessage(messages)
     );
 
+    // n13.3: read-only integration tools (GET only, D5) — a draft is
+    // reviewed by an agent before it is sent, so it must not change
+    // anything. No service-role key → no tools, same as before.
+    let toolset = EMPTY_TOOLSET;
+    let admin: ReturnType<typeof supabaseAdmin> | null = null;
+    try {
+      admin = supabaseAdmin();
+    } catch {
+      admin = null;
+    }
+    if (admin) {
+      toolset = await loadAiToolset(admin, accountId, { mode: 'draft' });
+    }
+
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,
       mode: 'draft',
       knowledge,
+      tools: toolset,
     });
 
-    const { text, usage } = await generateReply({
-      config,
-      systemPrompt,
-      messages,
-    });
+    const { text, usage, toolsUsed } = await generateReply(
+      admin && toolset.tools.length > 0
+        ? {
+            config,
+            systemPrompt,
+            messages,
+            tools: { toolset, db: admin, accountId },
+          }
+        : { config, systemPrompt, messages }
+    );
 
     // Record spend, tagged with whose key paid for it (BYO or the
     // platform's). Best-effort + via the
@@ -145,7 +167,10 @@ export async function POST(request: Request) {
       console.error('[ai/draft] usage log skipped:', logErr);
     }
 
-    return NextResponse.json({ draft: text });
+    return NextResponse.json({
+      draft: text,
+      ...(toolsUsed ? { toolsUsed } : {}),
+    });
   } catch (err) {
     if (err instanceof AiError) {
       return NextResponse.json(

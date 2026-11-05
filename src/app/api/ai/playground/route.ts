@@ -13,6 +13,8 @@ import { latestUserMessage } from '@/lib/ai/query';
 import { logAiUsage } from '@/lib/ai/usage';
 import { supabaseAdmin } from '@/lib/ai/admin-client';
 import { AiError, type ChatMessage } from '@/lib/ai/types';
+import { loadAiToolset } from '@/lib/ai/tools/load';
+import { EMPTY_TOOLSET } from '@/lib/ai/tools/types';
 
 // Keep the tested transcript bounded, mirroring the live context window.
 const MAX_TURNS = 20;
@@ -94,17 +96,38 @@ export async function POST(request: Request) {
       config,
       latestUserMessage(messages)
     );
+    // n13.3: the same integration tools the bot would get. They run for
+    // real against the integration (the UI says so). The account comes
+    // from the session, never from the body. No service-role key → no
+    // tools, same as before.
+    let toolset = EMPTY_TOOLSET;
+    let admin: ReturnType<typeof supabaseAdmin> | null = null;
+    try {
+      admin = supabaseAdmin();
+    } catch {
+      admin = null;
+    }
+    if (admin) {
+      toolset = await loadAiToolset(admin, accountId, { mode: 'playground' });
+    }
+
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
+      tools: toolset,
     });
 
-    const { text, handoff, usage } = await generateReply({
-      config,
-      systemPrompt,
-      messages,
-    });
+    const { text, handoff, usage, toolsUsed } = await generateReply(
+      admin && toolset.tools.length > 0
+        ? {
+            config,
+            systemPrompt,
+            messages,
+            tools: { toolset, db: admin, accountId },
+          }
+        : { config, systemPrompt, messages }
+    );
 
     // Record spend, tagged with whose key paid for it (BYO or the
     // platform's). No conversation to attach it to — this never touches
@@ -126,7 +149,11 @@ export async function POST(request: Request) {
       console.error('[ai/playground] usage log skipped:', logErr);
     }
 
-    return NextResponse.json({ reply: text, handoff });
+    return NextResponse.json({
+      reply: text,
+      handoff,
+      ...(toolsUsed ? { toolsUsed } : {}),
+    });
   } catch (err) {
     if (err instanceof AiError) {
       return NextResponse.json(

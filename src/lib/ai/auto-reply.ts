@@ -21,6 +21,8 @@ import {
 } from '@/lib/billing/enforce';
 import { isAiPausedByServiceCap } from '@/lib/billing/service-cap';
 import type { AiConfig } from './types';
+import type { Entitlements } from '@/lib/billing/entitlements';
+import { loadAiToolset } from './tools/load';
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -103,8 +105,9 @@ export async function dispatchInboundToAiReply(
     // Deliberately BEFORE the per-message reservation below: a reply we
     // are not entitled to send must not consume the reservation, or the
     // inbound would be locked with nobody left to answer it.
+    let entitlements: Entitlements;
     try {
-      const entitlements = await assertWritable(accountId);
+      entitlements = await assertWritable(accountId);
       await assertPlanFeature(accountId, 'ai_autoreply', entitlements);
       await assertQuota(accountId, 'ai_replies', 1);
     } catch (err) {
@@ -229,18 +232,32 @@ export async function dispatchInboundToAiReply(
       latestUserMessage(messages)
     );
 
+    // n13.3: the account's integration operations marked «use in AI», as
+    // tools. Never throws; on any failure (or none enabled) the turn runs
+    // exactly as before, with the same `generateReply` call.
+    const toolset = await loadAiToolset(db, accountId, {
+      mode: 'auto_reply',
+      entitlements,
+    });
+
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
       resumedAfterHandoff,
+      tools: toolset,
     });
 
-    const { text, handoff, usage } = await generateReply({
-      config,
-      systemPrompt,
-      messages,
-    });
+    const { text, handoff, usage } = await generateReply(
+      toolset.tools.length > 0
+        ? {
+            config,
+            systemPrompt,
+            messages,
+            tools: { toolset, db, accountId },
+          }
+        : { config, systemPrompt, messages }
+    );
 
     // Record token spend, tagged with whose key paid for it (the
     // account's or the platform's). Fire-and-forget so it
