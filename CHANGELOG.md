@@ -11,6 +11,14 @@ and polish.
 
 ## [Unreleased]
 
+### Integrations: Cabbity Health connector
+
+- No migration. The Cabbity Health catalogue (16 operations: centre, locations, practitioners, specialties, availability, patient lookup and registration, and the appointment lifecycle) is versioned in the repo and loaded with `node --env-file=.env.local scripts/integrations-bootstrap-catalog.ts cabbity-health`. The script is idempotent: it creates the integration inactive, only patches what changed, and never touches what the operator switched on or off. See `docs/integrations/cabbity-health.md`.
+- `list_patients` and `get_patient` are loaded switched off (they return full personal data), and listing appointments always needs a patient. Editing or deactivating patients is not offered.
+- Operations can now declare a generated header (`in: header`, auto UUID), such as `Idempotency-Key`: the CRM puts a new UUID on every call, and flows and the AI never see or send it. The operation editor in `/platform` offers it as «Header (generated)».
+- Body parameters can be nested with dotted names (`consent.accepted`, up to 3 levels); they are sent as JSON objects.
+- When an integration answers an error with a `{"error": {"code", "message"}}` body, the call result now carries that code and message (`remoteError`). They are not stored in the call log.
+
 ### Platform panel: create a verified member from a company's file
 
 - **Migration required**: `supabase/migrations/093_platform_member_create.sql` (widens the `impersonation_log` action CHECK with `member_create`; no data changes).
