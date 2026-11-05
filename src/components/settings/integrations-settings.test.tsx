@@ -153,6 +153,28 @@ describe('IntegrationsSettings — plan and role', () => {
     expect(html).toContain('••••4242');
   });
 
+  it('n13.6: a support session manages, with a notice that it is recorded', () => {
+    for (const locale of ['es', 'en'] as const) {
+      const html = render({ supportSession: true }, locale);
+      expect(html).toContain('data-support-notice');
+      expect(html).toContain(
+        CATALOGUES[locale].Settings.integrations.supportNotice
+      );
+      expect(html).not.toContain('data-read-only');
+      expect(actionsOf(html, 'health')).toEqual([
+        'test',
+        'change',
+        'deactivate',
+      ]);
+      expect(actionsOf(html, 'agenda')).toEqual(['activate']);
+    }
+  });
+
+  it('no support notice for the customer’s own admin', () => {
+    const html = render({ supportSession: false });
+    expect(html).not.toContain('data-support-notice');
+  });
+
   it('says so when the catalogue is empty', () => {
     expect(render({ integrations: [] })).toContain(
       es.Settings.integrations.empty

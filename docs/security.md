@@ -219,9 +219,14 @@ typed parameters); one executor, `src/lib/integrations/execute.ts`, turns
 - **Credential handling.** Stored with `encrypt()`, never returned to any
   client (the panel shows the last four characters, and only for
   credentials of 12 characters or more), and decrypted only in
-  `execute.ts`. Deactivating sets it to `NULL` (D5). A support session
-  cannot activate, change, test or deactivate an integration (D3,
-  middleware block list + `assertNotSupportSession`).
+  `execute.ts`. Deactivating sets it to `NULL` (D5). Since n13.6 (D3
+  reverted by human decision) a support session CAN activate, change,
+  test, deactivate and adjust the AI settings of an integration, and each
+  of those writes is recorded in `impersonation_actions` with the action
+  (`integration.enable` / `.test` / `.disable` / `.ai_settings`) and the
+  integration slug appended to `path` — never the credential nor its last
+  four. If the trail row cannot be written the route answers 503 and
+  writes nothing (`src/lib/integrations/support-trace.ts`).
 - **Moving the credential needs confirmation.** Changing an integration's
   origin, auth scheme or header name while accounts have it enabled would
   send each account's decrypted credential to the new destination on the

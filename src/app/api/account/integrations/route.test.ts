@@ -98,6 +98,7 @@ describe('GET /api/account/integrations', () => {
     expect(body).toEqual({
       planAllows: true,
       canManage: false,
+      supportSession: false,
       integrations: [
         {
           id: HEALTH_ID,
@@ -174,11 +175,19 @@ describe('GET /api/account/integrations', () => {
     expect(body.canManage).toBe(true);
   });
 
-  it('canManage is false inside a support session (D3)', async () => {
+  it('n13.6: canManage is true inside a support session, and supportSession says so', async () => {
     h.ctx = accountCtx('admin', { impersonated: true });
     const res = await GET();
     expect(res.status).toBe(200);
-    expect((await res.json()).canManage).toBe(false);
+    expect(await res.json()).toMatchObject({
+      canManage: true,
+      supportSession: true,
+    });
+  });
+
+  it('supportSession is false outside a support session', async () => {
+    h.ctx = accountCtx('admin');
+    expect((await (await GET()).json()).supportSession).toBe(false);
   });
 
   it('an account that never enabled anything sees the catalogue as not enabled', async () => {

@@ -5,8 +5,10 @@
 //
 // Una tarjeta por integración del catálogo activo (y por las retiradas
 // que la cuenta aún tiene activadas). Cualquier miembro ve el estado;
-// quien tenga `canManage` (admin+ y fuera de una sesión de soporte, D3)
-// activa con su credencial, prueba la conexión, la cambia o desactiva.
+// quien tenga `canManage` (admin+; también el operador en sesión de
+// soporte, n13.6) activa con su credencial, prueba la conexión, la cambia o
+// desactiva. En sesión de soporte, un aviso dice que la acción queda
+// registrada.
 //
 // La credencial se teclea en un campo de contraseña, viaja una vez en el
 // PUT y no vuelve: lo único que se enseña es `••••<last4>`. Al guardarla,
@@ -74,6 +76,8 @@ export interface IntegrationsPayload {
   integrations: AccountIntegrationView[];
   planAllows: boolean;
   canManage: boolean;
+  /** n13.6: la petición viene de una sesión de soporte (rol efectivo admin). */
+  supportSession?: boolean;
 }
 
 const STATUS_VARIANT: Record<
@@ -306,6 +310,15 @@ export function IntegrationsSettings({
           {!data.canManage ? (
             <p className="text-muted-foreground text-sm" data-read-only>
               {t('readOnly')}
+            </p>
+          ) : null}
+          {data.canManage && data.supportSession ? (
+            <p
+              role="note"
+              className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+              data-support-notice
+            >
+              {t('supportNotice')}
             </p>
           ) : null}
           {data.integrations.length === 0 ? (

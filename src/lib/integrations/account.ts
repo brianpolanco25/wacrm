@@ -187,15 +187,33 @@ export async function loadAccountIntegrations(
 export async function findActiveIntegration(
   db: SupabaseClient,
   integrationId: string
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; slug: string } | null> {
   const { data, error } = await db
     .from('integrations')
-    .select('id, is_active')
+    .select('id, slug, is_active')
     .eq('id', integrationId)
     .maybeSingle();
   if (error) throw error;
-  const row = data as { id: string; is_active: boolean } | null;
-  return row?.is_active ? { id: row.id } : null;
+  const row = data as { id: string; slug: string; is_active: boolean } | null;
+  return row?.is_active ? { id: row.id, slug: row.slug } : null;
+}
+
+/**
+ * El slug de una integración del catálogo, activa o retirada; `null` si no
+ * existe. Para la traza de una sesión de soporte (n13.6), que nombra la
+ * integración por su slug y no por el uuid de la ruta.
+ */
+export async function findIntegrationSlug(
+  db: SupabaseClient,
+  integrationId: string
+): Promise<string | null> {
+  const { data, error } = await db
+    .from('integrations')
+    .select('slug')
+    .eq('id', integrationId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as { slug: string } | null)?.slug ?? null;
 }
 
 /**

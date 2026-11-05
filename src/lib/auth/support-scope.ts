@@ -201,14 +201,15 @@ const SUPPORT_SESSION_EXEMPT = [
  *   /api/account/webhooks            a permanent outbound channel (and its
  *                                    signing secret) that outlives the
  *                                    session.
- *   /api/account/integrations        credentials of an integration with
- *                                    another app (n13.1, D3): activating,
- *                                    changing, deactivating and testing.
- *                                    The GET stays open.
  *   /api/invitations/                redeeming moves the OPERATOR'S own
  *                                    profile into another company.
  *   /api/platform/impersonate (exact) no nested sessions: exit first.
  *                                    `/stop` stays open.
+ *
+ * NOT here: /api/account/integrations. n13.1 (D3) blocked it; n13.6
+ * reverted that by human decision — the operator sets up an integration
+ * for the customer. It is recorded like any other write, and the routes
+ * name the action and the integration in the row (`support-trace.ts`).
  */
 const SUPPORT_SESSION_BLOCKED: readonly { path: string; exact?: boolean }[] = [
   { path: '/api/billing/' },
@@ -218,7 +219,6 @@ const SUPPORT_SESSION_BLOCKED: readonly { path: string; exact?: boolean }[] = [
   { path: '/api/account/invitations' },
   { path: '/api/account/api-keys' },
   { path: '/api/account/webhooks' },
-  { path: '/api/account/integrations' },
   { path: '/api/invitations/' },
   { path: '/api/platform/impersonate', exact: true },
 ];

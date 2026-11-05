@@ -5,7 +5,9 @@
 // efectiva): el catálogo activo, las retiradas que la cuenta aún tiene
 // activadas y, por cada una, el estado de ESTA cuenta. Nunca la
 // credencial ni su cifrado. Más `planAllows` (feature `integrations`,
-// D2) y `canManage` (admin+ y sin sesión de soporte, D3).
+// D2), `canManage` (admin+; en sesión de soporte también, porque el rol
+// efectivo es `admin`: n13.6 revirtió D3) y `supportSession`, para que la
+// UI avise de que la acción queda registrada.
 // ============================================================
 
 import { NextResponse } from 'next/server';
@@ -26,7 +28,8 @@ export async function GET() {
     return NextResponse.json({
       integrations,
       planAllows: hasFeature(entitlements, 'integrations'),
-      canManage: hasMinRole(ctx.role, 'admin') && !ctx.impersonation,
+      canManage: hasMinRole(ctx.role, 'admin'),
+      supportSession: Boolean(ctx.impersonation),
     });
   } catch (err) {
     return toErrorResponse(err);

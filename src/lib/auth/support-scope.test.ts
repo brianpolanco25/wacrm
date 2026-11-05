@@ -81,6 +81,17 @@ describe('supportWriteVerdict — what the middleware does with a support cookie
     ['DELETE', '/api/whatsapp/config'],
     ['PUT', '/api/flows/f-1'],
     ['POST', '/api/accounting'],
+    // n13.6: D3 of n13.1 reverted — support manages integrations, recorded.
+    ['PUT', '/api/account/integrations/9a000000-0000-4000-8000-000000000001'],
+    ['PATCH', '/api/account/integrations/9a000000-0000-4000-8000-000000000001'],
+    [
+      'DELETE',
+      '/api/account/integrations/9a000000-0000-4000-8000-000000000001',
+    ],
+    [
+      'POST',
+      '/api/account/integrations/9a000000-0000-4000-8000-000000000001/test',
+    ],
   ])('records %s %s', (method, p) => {
     expect(supportWriteVerdict(method, p)).toBe('record');
   });
@@ -99,16 +110,6 @@ describe('supportWriteVerdict — what the middleware does with a support cookie
     ['POST', '/api/account/webhooks'],
     ['PATCH', '/api/account/webhooks/w-1'],
     ['POST', '/api/account/webhooks/w-1/rotate-secret'],
-    // n13.1 (D3): integration credentials stay with the customer.
-    ['PUT', '/api/account/integrations/9a000000-0000-4000-8000-000000000001'],
-    [
-      'DELETE',
-      '/api/account/integrations/9a000000-0000-4000-8000-000000000001',
-    ],
-    [
-      'POST',
-      '/api/account/integrations/9a000000-0000-4000-8000-000000000001/test',
-    ],
     ['POST', '/api/invitations/t/redeem'],
     ['POST', '/api/platform/impersonate'],
     ['POST', '/contacts'],

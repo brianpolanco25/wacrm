@@ -11,6 +11,8 @@
 import type { Row, Tables } from '@/lib/security/fake-supabase';
 
 export const OPERATOR = '11111111-1111-4111-8111-111111111111';
+/** `impersonation_log.id` de la sesión de soporte de `accountCtx` (n13.6). */
+export const SUPPORT_LOG_ID = '5e000000-0000-4000-8000-000000000001';
 export const PLAIN_OWNER = '22222222-2222-4222-8222-222222222222';
 
 export const ACCOUNT_A = 'aaaaaaaa-0000-4000-8000-00000000000a';
@@ -197,7 +199,12 @@ export function accountCtx(
     role,
     account: { id: accountId, name: 'Cuenta' },
     impersonation: options.impersonated
-      ? { accountId, logId: 'log-1', operatorId: OPERATOR }
+      ? {
+          accountId,
+          logId: SUPPORT_LOG_ID,
+          actorUserId: OPERATOR,
+          expiresAt: Date.now() + 30 * 60_000,
+        }
       : null,
   };
 }

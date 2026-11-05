@@ -216,6 +216,29 @@ describe('middleware — support sessions write, and are recorded', () => {
     }
   );
 
+  it.each([
+    ['PUT', '/api/account/integrations/9a000000-0000-4000-8000-000000000001'],
+    ['PATCH', '/api/account/integrations/9a000000-0000-4000-8000-000000000001'],
+    [
+      'DELETE',
+      '/api/account/integrations/9a000000-0000-4000-8000-000000000001',
+    ],
+    [
+      'POST',
+      '/api/account/integrations/9a000000-0000-4000-8000-000000000001/test',
+    ],
+  ])(
+    'n13.6: lets %s %s through, tagged to be recorded',
+    async (method, path) => {
+      const res = await middleware(
+        request(`https://app.test${path}`, { method })
+      );
+      expect(res.status).not.toBe(403);
+      expect(forwarded(res, 'x-wacrm-support-method')).toBe(method);
+      expect(forwarded(res, 'x-wacrm-support-path')).toBe(path);
+    }
+  );
+
   it('gives every request its own id, so one request is one row', async () => {
     const a = await middleware(request('https://app.test/api/quick-replies'));
     const b = await middleware(request('https://app.test/api/quick-replies'));
@@ -279,11 +302,6 @@ describe('middleware — support sessions write, and are recorded', () => {
     ['POST', '/api/account/api-keys/k-1/rotate'],
     ['POST', '/api/account/webhooks'],
     ['DELETE', '/api/account/webhooks/w-1'],
-    ['PUT', '/api/account/integrations/9a000000-0000-4000-8000-000000000001'],
-    [
-      'POST',
-      '/api/account/integrations/9a000000-0000-4000-8000-000000000001/test',
-    ],
     ['POST', '/api/invitations/tok/redeem'],
     ['POST', '/api/platform/impersonate'],
   ])('still refuses %s %s during a support session', async (method, path) => {

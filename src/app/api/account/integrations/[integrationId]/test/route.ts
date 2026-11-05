@@ -5,20 +5,18 @@
 // `GET base_url + test_path` con la credencial de ESTA cuenta por el
 // núcleo HTTP común (SSRF, plazo, tamaño, cubo `integrationCall`), y
 // responde solo el estado (`ok` | `auth_failed` | `unreachable` |
-// `error`) y el código: nunca el cuerpo remoto. Admin+, sin sesión de
-// soporte (D3) y con la feature `integrations` en el plan (R13).
+// `error`) y el código: nunca el cuerpo remoto. Admin+ y con la feature
+// `integrations` en el plan (R13). En sesión de soporte se permite y deja
+// su fila `integration.test` en `impersonation_actions` (n13.6).
 // ============================================================
 
 import { NextResponse } from 'next/server';
 
-import {
-  assertNotSupportSession,
-  requireRole,
-  toErrorResponse,
-} from '@/lib/auth/account';
+import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/auth/admin-client';
 import { assertPlanFeature } from '@/lib/billing/enforce';
 import { testIntegrationConnection } from '@/lib/integrations/execute';
+import { traceIntegrationSupportAction } from '@/lib/integrations/support-trace';
 import { UUID_RE } from '@/lib/platform/integrations';
 import { RATE_LIMITS } from '@/lib/rate-limit';
 
@@ -28,7 +26,6 @@ export async function POST(
 ) {
   try {
     const ctx = await requireRole('admin');
-    await assertNotSupportSession(ctx);
     await assertPlanFeature(ctx.accountId, 'integrations');
 
     const { integrationId } = await params;
@@ -38,8 +35,16 @@ export async function POST(
     );
     if (!UUID_RE.test(integrationId)) return notFound;
 
+    const db = supabaseAdmin();
+    const traced = await traceIntegrationSupportAction(ctx, db, {
+      integrationId,
+      action: 'integration.test',
+      method: 'POST',
+      path: `/api/account/integrations/${integrationId}/test`,
+    });
+    if (!traced) return notFound;
     const outcome = await testIntegrationConnection(
-      supabaseAdmin(),
+      db,
       ctx.accountId,
       integrationId
     );

@@ -64,7 +64,7 @@ features siguientes de la fase, que el líder debe dar de alta:
 |---|---|---|---|
 | D1 | Modelo de integración | **Declarativo**: integración + operaciones HTTP como filas; un ejecutor genérico. Cero despliegues por integración; sirve a Health antes de que sus rutas existan. | Conectores codificados (un módulo TS por integración). Más expresivos (OAuth, paginación, transformaciones), pero cada integración es un PR + despliegue. |
 | D2 | Limitación por plan | **Entitlement booleano** `integrations` en `plans.features`, que el operador marca en `/platform/plans`. La migración no se lo da a ningún plan. | Lista de planes por integración (`integrations.plan_ids text[]`). Más fina; cuesta una columna y un editor. Se puede añadir después sin romper nada. |
-| D3 | Sesión de soporte | **Bloqueada** para escribir: activar, cambiar credencial, desactivar y probar dan 403, como las claves API (`/api/account/api-keys`). Leer el estado sí. | Permitida con traza en `impersonation_actions`; el operador vería el último 4 y podría pegar credenciales ajenas. |
+| D3 | Sesión de soporte | ~~**Bloqueada** para escribir: activar, cambiar credencial, desactivar y probar dan 403, como las claves API (`/api/account/api-keys`). Leer el estado sí.~~ **Revertida por n13.6** (humano, 2026-11-05: «el superadmin debería poder hacerlo»): rige la alternativa. | **Vigente desde n13.6:** permitida con traza en `impersonation_actions` (acción `integration.enable` / `.test` / `.disable` / `.ai_settings` y slug, nunca la credencial ni su último 4); el operador ve el último 4 en la pantalla y puede pegar la credencial del cliente. |
 | D4 | Punto de uso | **Fuera de n13.1**; n13.2 = nodo de flow. | Meter el nodo de flow aquí (feature ~2× más grande). |
 | D5 | Desactivar | **Borra la credencial** (la columna queda `NULL`); reactivar exige pegarla de nuevo. | Conservarla cifrada para reactivar con un clic. |
 | D6 | Números | Timeout 10 s, respuesta ≤ 256 KiB, 60 llamadas/min por cuenta (por proceso, como todo `rate-limit.ts`). | Otros valores; son constantes. |
@@ -173,7 +173,8 @@ features siguientes de la fase, que el líder debe dar de alta:
   (`key`, `name`, `description`, `method`) más, como `retired: true`, las inactivas que la cuenta
   aún tenga activadas; por cada una, el estado de **esa** cuenta (`enabled`, `credentialLast4`,
   `enabledAt`, `lastTestedAt`, `lastTestStatus`) y nunca `credential` ni su cifrado; y los
-  indicadores `planAllows` y `canManage` (rol ≥ `admin` y sin sesión de soporte).
+  indicadores `planAllows` y `canManage` (rol ≥ `admin`; n13.6: también en sesión de soporte,
+  cuyo rol efectivo es `admin`) y `supportSession` (n13.6).
   *Verificación:* `src/app/api/account/integrations/route.test.ts` (forma exacta; búsqueda de la
   cadena cifrada y del texto claro en el JSON → ausente; integración inactiva sin activación → no
   aparece; con activación → `retired: true`).
@@ -283,7 +284,10 @@ features siguientes de la fase, que el líder debe dar de alta:
   `GET`/`PUT`/`DELETE`/`test` sobre la integración que B tiene activada → no ve ni toca la fila de
   B (B byte a byte igual); `executeIntegrationOperation` para A usa la credencial de A aunque B
   esté sembrada primero con el mismo `integration_id`; auditoría de consultas sin alcance vacía.
-- **R32** (A4, D3) Mientras haya una sesión de soporte, el sistema debe bloquear `POST`, `PUT`,
+- **R32** (A4, D3) — **Sustituido por n13.6** (D3 revertida): en sesión de soporte las escrituras
+  bajo `/api/account/integrations` se permiten (`supportWriteVerdict` → `record`) y cada una deja
+  su fila en `impersonation_actions` con la acción y el slug (`src/lib/integrations/support-trace.ts`).
+  Texto original: mientras haya una sesión de soporte, el sistema debe bloquear `POST`, `PUT`,
   `PATCH` y `DELETE` bajo `/api/account/integrations` (middleware, `supportWriteVerdict`) y las
   rutas deben llamar a `assertNotSupportSession`; el `GET` debe seguir funcionando con la cuenta
   efectiva.
@@ -314,7 +318,9 @@ No hay API de Health con citas todavía. Para comprobar de punta a punta contra 
    la prueba sale `ok`. Cambiar a `test_path = /status/401` → `auth_failed`.
 3. `select outcome, status_code, source from integration_calls order by created_at desc limit 2;`
    → dos filas `test`, sin rastro de `abc123`.
-4. Abrir una sesión de soporte sobre esa cuenta: la pestaña se ve; «Probar» responde 403.
+4. Abrir una sesión de soporte sobre esa cuenta: la pestaña se ve con el aviso de soporte;
+   «Probar» responde 200 y deja una fila en `impersonation_actions` cuyo `path` termina en
+   `· integration.test · <slug>` (n13.6; antes de n13.6, 403).
 
 ## Fuera de alcance (deuda anotada)
 

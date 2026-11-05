@@ -1944,6 +1944,7 @@
       "deactivateConfirm": "The saved credential for {name} will be deleted. To use it again you will have to paste it again.",
       "deactivated": "Integration deactivated",
       "readOnly": "Only an administrator can manage integrations.",
+      "supportNotice": "You are acting as support: every action you take here (activate, test, deactivate or change the AI settings) is recorded.",
       "failed": "It could not be saved. Try again.",
       "aiToggle": "Use in AI",
       "aiToggleHint": "The auto-reply AI will be able to look things up and make changes with this integration.",

@@ -43,7 +43,8 @@ const support = await import('@/lib/integrations/integrations.test-support');
 const { encrypt } = await import('@/lib/whatsapp/encryption');
 const { __resetRateLimitForTests } = await import('@/lib/rate-limit');
 const { POST } = await import('./route');
-const { ACCOUNT_A, HEALTH_ID, DRAFT_ID, accountCtx } = support;
+const { ACCOUNT_A, HEALTH_ID, DRAFT_ID, OPERATOR, SUPPORT_LOG_ID, accountCtx } =
+  support;
 
 const CRED_A = 'credential-of-account-A-7777';
 let fetchSpy: ReturnType<typeof vi.fn>;
@@ -146,9 +147,29 @@ describe('POST /api/account/integrations/{id}/test', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('403 inside a support session', async () => {
+  it('n13.6: 200 inside a support session, with an integration.test row and no credential', async () => {
     h.ctx = accountCtx('admin', { impersonated: true });
-    expect((await test()).status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    const res = await test();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ result: 'ok' });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const trail = h.db.rows('impersonation_actions');
+    expect(trail).toHaveLength(1);
+    expect(trail[0]).toMatchObject({
+      log_id: SUPPORT_LOG_ID,
+      actor_user_id: OPERATOR,
+      account_id: ACCOUNT_A,
+      method: 'POST',
+      path: `/api/account/integrations/${HEALTH_ID}/test · integration.test · health`,
+      source: 'http',
+    });
+    const raw = JSON.stringify(trail);
+    expect(raw).not.toContain(CRED_A);
+    expect(raw).not.toContain('7777');
+  });
+
+  it('no trail row outside a support session', async () => {
+    expect((await test()).status).toBe(200);
+    expect(h.db.rows('impersonation_actions')).toHaveLength(0);
   });
 });

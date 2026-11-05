@@ -59,6 +59,7 @@ const {
   recordSupportAction,
   markSupportActionStatus,
   SupportAuditError,
+  labelledSupportPath,
 } = await import('./support-actions');
 
 const SESSION = {
@@ -179,5 +180,25 @@ describe('SupportAuditError', () => {
     const err = new SupportAuditError();
     expect(err.status).toBe(503);
     expect(err.message).toContain('nothing was changed');
+  });
+});
+
+describe('labelledSupportPath (n13.6)', () => {
+  it('appends the action and its detail to the real path', () => {
+    expect(
+      labelledSupportPath('/api/account/integrations/i-1', {
+        action: 'integration.enable',
+        detail: 'health',
+      })
+    ).toBe('/api/account/integrations/i-1 · integration.enable · health');
+  });
+
+  it('stays within the 2048 characters the column accepts, keeping the label', () => {
+    const out = labelledSupportPath(`/${'x'.repeat(3000)}`, {
+      action: 'integration.test',
+      detail: 'health',
+    });
+    expect(out.length).toBeLessThanOrEqual(2048);
+    expect(out.endsWith(' · integration.test · health')).toBe(true);
   });
 });

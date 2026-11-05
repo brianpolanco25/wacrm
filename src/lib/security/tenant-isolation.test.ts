@@ -375,6 +375,7 @@ import * as aiKnowledgeReindex from '@/app/api/ai/knowledge/reindex/route';
 import * as aiPlayground from '@/app/api/ai/playground/route';
 import * as aiTest from '@/app/api/ai/test/route';
 import { getCurrentAccount } from '@/lib/auth/account';
+import { SUPPORT_COOKIE, signSupportSession } from '@/lib/auth/impersonation';
 import * as platformImpersonate from '@/app/api/platform/impersonate/route';
 import * as platformImpersonateStop from '@/app/api/platform/impersonate/stop/route';
 import * as platformAccounts from '@/app/api/platform/accounts/route';
@@ -818,6 +819,9 @@ function seed(): FakeDatabase {
       // row is put here by hand, and the tests that need one add it.
       platform_admins: [],
       impersonation_log: [],
+      // Migration 072. Declared so that a support session's first trail
+      // row does not show up as a new table in an account snapshot.
+      impersonation_actions: [],
       // Migrations 048 and 041. Declared even though empty so that
       // merely READING them does not make the table appear and show up
       // as a difference in an account snapshot.
@@ -6094,6 +6098,105 @@ describe('integrations (n13.1, service role)', () => {
       ai_timezone: 'America/Santo_Domingo',
     });
     expect(aiRow('ai-b').ai_enabled).toBeUndefined();
+  });
+
+  // n13.6 (A3): D3 revertida. El operador es el owner de B (su propia
+  // empresa), en sesión de soporte sobre A. Todo lo que escribe cae en la
+  // fila de A —la cuenta impersonada—, nada en la de B (la suya), y la
+  // traza va a A sin credencial.
+  it('(10, n13.6) a support session over A manages the integration of A and never touches the row of B', async () => {
+    const LOG = '5e000000-0000-4000-8000-0000000000aa';
+    const expiresAt = Date.now() + 30 * 60_000;
+    makePlatformAdmin(USER_B);
+    h.db.rows('impersonation_log').push({
+      id: LOG,
+      action: 'impersonation',
+      account_id: A,
+      actor_user_id: USER_B,
+      reason: 'ticket 77: configurar Cabbity Health',
+      started_at: PAST,
+      expires_at: new Date(expiresAt).toISOString(),
+      ended_at: null,
+      ended_reason: null,
+    });
+    h.cookies.set(
+      SUPPORT_COOKIE,
+      signSupportSession({
+        logId: LOG,
+        actorUserId: USER_B,
+        accountId: A,
+        expiresAt,
+      })
+    );
+    h.actor = { userId: USER_B, accountId: B };
+    const beforeB = h.db.snapshot(B);
+    const rowB = JSON.stringify(aiRow('ai-b'));
+    const NEW_CRED = 'support-pasted-credential-5555';
+
+    const list = await accountIntegrations.GET();
+    expect(list.status).toBe(200);
+    const listed = await list.json();
+    expect(listed).toMatchObject({ canManage: true, supportSession: true });
+    expectNoBIds(listed);
+    expect(JSON.stringify(listed)).not.toContain('2222');
+
+    const byId = params({ integrationId: HEALTH });
+    const path = `/api/account/integrations/${HEALTH}`;
+    const put = await accountIntegrationById.PUT(
+      req('PUT', path, { credential: NEW_CRED }),
+      byId
+    );
+    expect(put.status).toBe(200);
+    expectNoBIds(await put.json());
+    const patch = await accountIntegrationById.PATCH(
+      req('PATCH', path, { aiEnabled: true, aiInstructions: 'Para A' }),
+      byId
+    );
+    expect(patch.status).toBe(200);
+    vi.stubGlobal('fetch', remote());
+    const tested = await accountIntegrationTest.POST(
+      req('POST', `${path}/test`),
+      byId
+    );
+    expect(tested.status).toBe(200);
+    expect(aiRow('ai-a')).toMatchObject({
+      credential_last4: '5555',
+      ai_enabled: true,
+      ai_instructions: 'Para A',
+      last_test_status: 'ok',
+    });
+    const del = await accountIntegrationById.DELETE(req('DELETE', path), byId);
+    expect(del.status).toBe(200);
+    expect(aiRow('ai-a')).toMatchObject({
+      is_enabled: false,
+      credential: null,
+    });
+
+    // B — the operator's own company — is exactly as it was.
+    expect(JSON.stringify(aiRow('ai-b'))).toBe(rowB);
+    expectBUnchanged(beforeB);
+    expect(
+      h.db.rows('integration_calls').filter((r) => r.account_id === B)
+    ).toHaveLength(1);
+
+    // One trail row per write, all filed under A, never a credential.
+    const trail = h.db.rows('impersonation_actions');
+    expect(trail.map((r) => [r.account_id, r.log_id, r.method])).toEqual([
+      [A, LOG, 'PUT'],
+      [A, LOG, 'PATCH'],
+      [A, LOG, 'POST'],
+      [A, LOG, 'DELETE'],
+    ]);
+    expect(trail.map((r) => String(r.path).split(' · ')[1])).toEqual([
+      'integration.enable',
+      'integration.ai_settings',
+      'integration.test',
+      'integration.disable',
+    ]);
+    expect(trail.every((r) => String(r.path).endsWith(' · health'))).toBe(true);
+    const raw = JSON.stringify(trail);
+    expect(raw).not.toContain(NEW_CRED);
+    expect(raw).not.toContain('5555');
   });
 
   it('an operator moving the origin needs confirmation, then wipes every credential', async () => {

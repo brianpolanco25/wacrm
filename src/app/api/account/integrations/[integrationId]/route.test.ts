@@ -7,6 +7,14 @@ const h = vi.hoisted(() => ({
   db: null as unknown as import('@/lib/security/fake-supabase').FakeDatabase,
   ctx: null as unknown as { role: string; impersonation: unknown },
   features: ['integrations'] as string[],
+  /** Tags the middleware would put on the request (n13.6); none by default. */
+  supportHeaders: {} as Record<string, string>,
+  failTrail: false,
+}));
+
+vi.mock('next/headers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/headers')>()),
+  headers: async () => new Headers(h.supportHeaders),
 }));
 
 vi.mock('@/lib/auth/account', async (importOriginal) => {
@@ -28,7 +36,22 @@ vi.mock('@/lib/auth/support-actions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/auth/support-actions')>()),
   markSupportActionStatus: async () => {},
 }));
-vi.mock('@/lib/auth/admin-client', () => ({ supabaseAdmin: () => h.db.admin }));
+vi.mock('@/lib/auth/admin-client', () => ({
+  supabaseAdmin: () => {
+    const client = h.db.admin;
+    if (!h.failTrail) return client;
+    // n13.6: the trail table is down; everything else answers.
+    return new Proxy(client, {
+      get(target, prop, receiver) {
+        if (prop !== 'from') return Reflect.get(target, prop, receiver);
+        return (table: string) =>
+          table === 'impersonation_actions'
+            ? { insert: async () => ({ error: { message: 'down' } }) }
+            : target.from(table);
+      },
+    });
+  },
+}));
 vi.mock('@/lib/billing/entitlements', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/billing/entitlements')>()),
   getEntitlements: async () => support.entitlementsWith(h.features),
@@ -39,7 +62,39 @@ const support = await import('@/lib/integrations/integrations.test-support');
 const { decrypt } = await import('@/lib/whatsapp/encryption');
 const { __resetRateLimitForTests } = await import('@/lib/rate-limit');
 const { PUT, DELETE, PATCH } = await import('./route');
-const { ACCOUNT_A, HEALTH_ID, DRAFT_ID, USER_A, accountCtx } = support;
+const {
+  ACCOUNT_A,
+  HEALTH_ID,
+  DRAFT_ID,
+  USER_A,
+  OPERATOR,
+  SUPPORT_LOG_ID,
+  accountCtx,
+} = support;
+
+/** The support-session trail rows (n13.6). */
+const trail = () => h.db.rows('impersonation_actions');
+const REQUEST_ID = '7e000000-0000-4000-8000-000000000001';
+
+/** What `resolveSupportSession` wrote for a tagged request, before the route. */
+function tagRequest(method: string, path: string) {
+  h.supportHeaders = {
+    'x-wacrm-support-method': method,
+    'x-wacrm-support-path': path,
+    'x-wacrm-support-request': REQUEST_ID,
+  };
+  trail().push({
+    id: 'act-1',
+    log_id: SUPPORT_LOG_ID,
+    actor_user_id: OPERATOR,
+    account_id: ACCOUNT_A,
+    method,
+    path,
+    status: null,
+    source: 'http',
+    request_id: REQUEST_ID,
+  });
+}
 
 const params = (integrationId: string) => ({
   params: Promise.resolve({ integrationId }),
@@ -76,6 +131,8 @@ beforeEach(() => {
   h.db = new FakeDatabase(support.seedIntegrationTables());
   h.ctx = accountCtx('admin');
   h.features = ['integrations'];
+  h.supportHeaders = {};
+  h.failTrail = false;
 });
 
 describe('PUT — activate / change the credential (R15)', () => {
@@ -172,10 +229,57 @@ describe('PUT — activate / change the credential (R15)', () => {
     expect(rowsA()).toHaveLength(0);
   });
 
-  it('403 inside a support session (D3, R32)', async () => {
+  it('n13.6: 200 inside a support session, with an integration.enable row and no credential', async () => {
     h.ctx = accountCtx('admin', { impersonated: true });
-    expect((await put(HEALTH_ID, { credential: CRED })).status).toBe(403);
+    const res = await put(HEALTH_ID, { credential: CRED });
+    expect(res.status).toBe(200);
+    expect(rowsA()).toHaveLength(1);
+    expect(decrypt(rowsA()[0].credential as string)).toBe(CRED);
+    expect(trail()).toHaveLength(1);
+    expect(trail()[0]).toMatchObject({
+      log_id: SUPPORT_LOG_ID,
+      actor_user_id: OPERATOR,
+      account_id: ACCOUNT_A,
+      method: 'PUT',
+      path: `/api/account/integrations/${HEALTH_ID} · integration.enable · health`,
+      source: 'http',
+    });
+    const raw = JSON.stringify(trail());
+    expect(raw).not.toContain(CRED);
+    expect(raw).not.toContain('1234');
+  });
+
+  it('n13.6: labels the row the middleware-tagged request already has, instead of adding one', async () => {
+    h.ctx = accountCtx('admin', { impersonated: true });
+    const path = `/api/account/integrations/${HEALTH_ID}`;
+    tagRequest('PUT', path);
+    expect((await put(HEALTH_ID, { credential: CRED })).status).toBe(200);
+    expect(trail()).toHaveLength(1);
+    expect(trail()[0]).toMatchObject({
+      id: 'act-1',
+      request_id: REQUEST_ID,
+      path: `${path} · integration.enable · health`,
+    });
+  });
+
+  it('n13.6: a 400 in a support session writes nothing and labels nothing', async () => {
+    h.ctx = accountCtx('admin', { impersonated: true });
+    expect((await put(HEALTH_ID, { credential: '' })).status).toBe(400);
     expect(rowsA()).toHaveLength(0);
+    expect(trail()).toHaveLength(0);
+  });
+
+  it('n13.6: 503 and no write when the trail cannot be recorded', async () => {
+    h.ctx = accountCtx('admin', { impersonated: true });
+    h.failTrail = true;
+    const res = await put(HEALTH_ID, { credential: CRED });
+    expect(res.status).toBe(503);
+    expect(rowsA()).toHaveLength(0);
+  });
+
+  it('no trail row outside a support session', async () => {
+    expect((await put(HEALTH_ID, { credential: CRED })).status).toBe(200);
+    expect(trail()).toHaveLength(0);
   });
 });
 
@@ -295,10 +399,17 @@ describe('PATCH — AI settings (n13.3, R32)', () => {
     expect(rowsA()[0].ai_enabled).toBeUndefined();
   });
 
-  it('403 inside a support session', async () => {
+  it('n13.6: 200 inside a support session, with an integration.ai_settings row', async () => {
     h.ctx = accountCtx('admin', { impersonated: true });
-    expect((await patch(HEALTH_ID, { aiEnabled: true })).status).toBe(403);
-    expect(rowsA()[0].ai_enabled).toBeUndefined();
+    trail().length = 0;
+    expect((await patch(HEALTH_ID, { aiEnabled: true })).status).toBe(200);
+    expect(rowsA()[0].ai_enabled).toBe(true);
+    expect(trail()).toHaveLength(1);
+    expect(trail()[0]).toMatchObject({
+      account_id: ACCOUNT_A,
+      method: 'PATCH',
+      path: `/api/account/integrations/${HEALTH_ID} · integration.ai_settings · health`,
+    });
   });
 });
 
@@ -336,9 +447,23 @@ describe('DELETE — deactivate (R17, D5)', () => {
     expect(rowsA()[0].is_enabled).toBe(true);
   });
 
-  it('403 inside a support session', async () => {
+  it('n13.6: 200 inside a support session, with an integration.disable row', async () => {
     h.ctx = accountCtx('admin', { impersonated: true });
-    expect((await del(HEALTH_ID)).status).toBe(403);
-    expect(rowsA()[0].is_enabled).toBe(true);
+    expect((await del(HEALTH_ID)).status).toBe(200);
+    expect(rowsA()[0]).toMatchObject({ is_enabled: false, credential: null });
+    expect(trail()).toHaveLength(1);
+    expect(trail()[0]).toMatchObject({
+      account_id: ACCOUNT_A,
+      method: 'DELETE',
+      path: `/api/account/integrations/${HEALTH_ID} · integration.disable · health`,
+    });
+    expect(JSON.stringify(trail())).not.toContain('1234');
+  });
+
+  it('n13.6: 404 for an id that is not in the catalogue, without a trail row', async () => {
+    h.ctx = accountCtx('admin', { impersonated: true });
+    const missing = 'dddddddd-0000-4000-8000-00000000dead';
+    expect((await del(missing)).status).toBe(404);
+    expect(trail()).toHaveLength(0);
   });
 });

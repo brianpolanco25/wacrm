@@ -11,10 +11,14 @@ and polish.
 
 ## [Unreleased]
 
+### Integrations: platform support can set them up for the customer
+
+- No migration. During a support session the platform operator can now activate (paste the credential), test, deactivate and change the AI settings of a customer's integration in Settings → Integrations, which shows a notice that the action is recorded. Each of those writes leaves a row in the support-session trail naming the action and the integration (never the credential). Before, these actions were refused (403) in a support session.
+
 ### AI: the auto-reply agent can use the account's integrations as tools
 
 - **Migration required**: `supabase/migrations/094_integration_ai_tools.sql` (adds `ai_enabled`, `ai_instructions` and `ai_timezone` to `account_integrations`; `ai_enabled` defaults to off, no data changes).
-- Settings → Integrations: an activated integration has a «Use in AI» switch (off by default) and, when on, instructions for the AI and a time zone. Admins only, outside support sessions, with a plan that includes integrations.
+- Settings → Integrations: an activated integration has a «Use in AI» switch (off by default) and, when on, instructions for the AI and a time zone. Admins only (and platform support, recorded), with a plan that includes integrations.
 - With it on, the auto-reply AI can call the integration's active operations (for example, look up a patient or book an appointment) with OpenAI, Anthropic and Gemini. It is told to confirm with the customer before any change, never to invent ids, and to send dates with the integration's local time offset. Each call is recorded in `integration_calls` with source `ai`.
 - The playground warns that tools really run against the integration and shows under each reply which tools were used and whether they failed. The inbox draft can only use read operations and says which ones it consulted.
 - Limits per reply: 20 tools offered, 5 rounds and 8 calls, and a time budget (`AI_TOOL_BUDGET_MS`, 40 s by default). Token usage of all rounds is added up in one `ai_usage_log` row.
