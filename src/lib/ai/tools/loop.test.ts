@@ -339,6 +339,32 @@ describe('runToolLoop', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it('a provider AiError after earlier rounds carries their usage (finding 6)', async () => {
+    const u = (p: number, c: number) => ({
+      promptTokens: p,
+      completionTokens: c,
+      totalTokens: p + c,
+    });
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(round([call('c1')], '', u(10, 1)))
+      .mockResolvedValueOnce(round([call('c2')], '', u(20, 2)))
+      .mockRejectedValueOnce(new AiError('down', { code: 'timeout' }));
+    const err = await run({
+      callProvider: fn,
+      execute: okExec() as never,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AiError);
+    expect((err as AiError).usage).toEqual(u(30, 3));
+
+    // A failure in the first round has nothing to carry.
+    const first = await run({
+      callProvider: vi.fn().mockRejectedValue(new AiError('x')),
+      execute: okExec() as never,
+    }).catch((e: unknown) => e);
+    expect((first as AiError).usage).toBeNull();
+  });
+
   it('sums usage over all rounds; null when none reported', async () => {
     const u = (p: number, c: number) => ({
       promptTokens: p,

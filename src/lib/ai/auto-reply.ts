@@ -20,7 +20,7 @@ import {
   recordUsage,
 } from '@/lib/billing/enforce';
 import { isAiPausedByServiceCap } from '@/lib/billing/service-cap';
-import type { AiConfig } from './types';
+import { AiError, type AiConfig } from './types';
 import type { Entitlements } from '@/lib/billing/entitlements';
 import { loadAiToolset } from './tools/load';
 
@@ -257,7 +257,21 @@ export async function dispatchInboundToAiReply(
             tools: { toolset, db, accountId },
           }
         : { config, systemPrompt, messages }
-    );
+    ).catch((err: unknown) => {
+      // n13.3: a later tool round failed; the earlier rounds still cost.
+      if (err instanceof AiError && err.usage) {
+        void logAiUsage(db, {
+          accountId,
+          conversationId,
+          mode: 'auto_reply',
+          provider: config.provider,
+          model: config.model,
+          keySource: config.keySource,
+          usage: err.usage,
+        });
+      }
+      throw err;
+    });
 
     // Record token spend, tagged with whose key paid for it (the
     // account's or the platform's). Fire-and-forget so it

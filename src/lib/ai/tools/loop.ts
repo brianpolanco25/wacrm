@@ -128,7 +128,8 @@ export async function runToolLoop(
       rounds >= AI_TOOL_MAX_ROUNDS ||
       executed >= AI_TOOL_MAX_CALLS ||
       now() - started > budget;
-    // R22: un AiError del proveedor se propaga tal cual.
+    // R22: un AiError del proveedor se propaga, con el uso de las vueltas
+    // previas para que el llamador lo registre igualmente.
     const round = await callProvider(args.config.provider, {
       apiKey: args.config.apiKey,
       model: args.config.model,
@@ -138,6 +139,10 @@ export async function runToolLoop(
       tools: specs,
       steps: [...steps],
       toolChoice: final ? 'none' : 'auto',
+    }).catch((err: unknown) => {
+      if (err instanceof AiError && usage)
+        err.usage = sumUsage(err.usage, usage);
+      throw err;
     });
     usage = sumUsage(usage, round.usage);
     if (final || round.toolCalls.length === 0) {

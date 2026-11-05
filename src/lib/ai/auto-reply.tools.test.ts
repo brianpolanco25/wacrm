@@ -66,6 +66,7 @@ vi.mock('@/lib/billing/enforce', () => ({
 vi.mock('./admin-client', () => ({ supabaseAdmin: () => h.db }));
 
 import { dispatchInboundToAiReply } from './auto-reply';
+import { AiError } from './types';
 
 const ACCOUNT = 'acct-A';
 const toolset = {
@@ -162,5 +163,30 @@ describe('auto-reply with integration tools', () => {
       'systemPrompt',
     ]);
     expect(call.systemPrompt).not.toContain('Tools: you can call tools');
+  });
+
+  it('a failed later tool round still logs the usage of the earlier rounds (finding 6)', async () => {
+    h.loadAiToolset.mockResolvedValue(toolset);
+    const err = new AiError('down', { code: 'timeout' });
+    err.usage = usage;
+    h.generateReply.mockRejectedValue(err);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await dispatch();
+    expect(h.logAiUsage).toHaveBeenCalledTimes(1);
+    expect(h.logAiUsage.mock.calls[0][1]).toMatchObject({
+      accountId: ACCOUNT,
+      conversationId: 'conv-1',
+      mode: 'auto_reply',
+      usage,
+    });
+    expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+
+  it('a failure without earlier usage logs nothing', async () => {
+    h.loadAiToolset.mockResolvedValue(toolset);
+    h.generateReply.mockRejectedValue(new AiError('down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await dispatch();
+    expect(h.logAiUsage).not.toHaveBeenCalled();
   });
 });

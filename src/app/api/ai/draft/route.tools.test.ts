@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   requireRole: vi.fn(),
   generateReply: vi.fn(),
   loadAiToolset: vi.fn(),
+  logAiUsage: vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
   admin: { tag: 'admin' },
 }));
 
@@ -37,11 +38,12 @@ vi.mock('@/lib/ai/knowledge', () => ({
   retrieveKnowledge: vi.fn(async () => []),
 }));
 vi.mock('@/lib/ai/generate', () => ({ generateReply: mocks.generateReply }));
-vi.mock('@/lib/ai/usage', () => ({ logAiUsage: vi.fn(async () => {}) }));
+vi.mock('@/lib/ai/usage', () => ({ logAiUsage: mocks.logAiUsage }));
 vi.mock('@/lib/ai/tools/load', () => ({ loadAiToolset: mocks.loadAiToolset }));
 vi.mock('@/lib/ai/admin-client', () => ({ supabaseAdmin: () => mocks.admin }));
 
 import { POST } from './route';
+import { AiError } from '@/lib/ai/types';
 
 const supabase = {
   from: () => ({
@@ -111,5 +113,25 @@ describe('POST /api/ai/draft with tools', () => {
       'messages',
       'systemPrompt',
     ]);
+  });
+
+  it('a failed later tool round still logs the earlier usage (finding 6)', async () => {
+    mocks.loadAiToolset.mockResolvedValue({
+      tools: [{ name: 'health__search' }],
+      integrations: [],
+    });
+    const usage = { promptTokens: 5, completionTokens: 1, totalTokens: 6 };
+    const err = new AiError('down', { code: 'timeout', status: 504 });
+    err.usage = usage;
+    mocks.generateReply.mockRejectedValue(err);
+    const res = await post();
+    expect(res.status).toBe(504);
+    expect(mocks.logAiUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.logAiUsage.mock.calls[0][1]).toMatchObject({
+      accountId: 'acct-A',
+      conversationId: 'conv-1',
+      mode: 'draft',
+      usage,
+    });
   });
 });

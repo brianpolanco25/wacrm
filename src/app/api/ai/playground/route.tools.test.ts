@@ -44,6 +44,7 @@ vi.mock('@/lib/ai/admin-client', () => ({
 }));
 
 import { POST } from './route';
+import { AiError } from '@/lib/ai/types';
 
 const toolset = {
   tools: [{ name: 'health__search', integrationSlug: 'health' }],
@@ -133,5 +134,20 @@ describe('POST /api/ai/playground with tools', () => {
     expect(res.status).toBe(200);
     expect(mocks.loadAiToolset).not.toHaveBeenCalled();
     expect(mocks.generateReply.mock.calls[0][0]).not.toHaveProperty('tools');
+  });
+
+  it('a failed later tool round still logs the earlier usage (finding 6)', async () => {
+    mocks.loadAiToolset.mockResolvedValue(toolset);
+    const err = new AiError('down', { code: 'timeout', status: 504 });
+    err.usage = usage;
+    mocks.generateReply.mockRejectedValue(err);
+    const res = await post();
+    expect(res.status).toBe(504);
+    expect(mocks.logAiUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.logAiUsage.mock.calls[0][1]).toMatchObject({
+      accountId: 'acct-A',
+      mode: 'playground',
+      usage,
+    });
   });
 });

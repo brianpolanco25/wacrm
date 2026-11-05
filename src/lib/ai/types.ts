@@ -151,6 +151,9 @@ export interface GenerateResult {
 export class AiError extends Error {
   readonly code: string;
   readonly status: number;
+  /** n13.3: tokens already spent by earlier tool rounds of the turn that
+   *  failed, so the caller can still log them to `ai_usage_log`. */
+  usage: AiUsage | null = null;
   constructor(message: string, opts: { code?: string; status?: number } = {}) {
     super(message);
     this.name = 'AiError';

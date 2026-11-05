@@ -143,7 +143,21 @@ export async function POST(request: Request) {
             tools: { toolset, db: admin, accountId },
           }
         : { config, systemPrompt, messages }
-    );
+    ).catch((err: unknown) => {
+      // n13.3: a later tool round failed; the earlier rounds still cost.
+      if (admin && err instanceof AiError && err.usage) {
+        void logAiUsage(admin, {
+          accountId,
+          conversationId,
+          mode: 'draft',
+          provider: config.provider,
+          model: config.model,
+          keySource: config.keySource,
+          usage: err.usage,
+        });
+      }
+      throw err;
+    });
 
     // Record spend, tagged with whose key paid for it (BYO or the
     // platform's). Best-effort + via the
