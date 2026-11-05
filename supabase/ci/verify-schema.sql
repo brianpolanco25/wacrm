@@ -2590,6 +2590,26 @@ BEGIN
   END IF;
   -- /091 -----------------------------------------------------------
 
+  -- 094 — herramientas de IA desde integraciones (n13.3) -------------
+  IF (SELECT count(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'account_integrations'
+        AND column_name IN ('ai_enabled', 'ai_instructions', 'ai_timezone')) <> 3 THEN
+    RAISE EXCEPTION 'account_integrations.ai_* columns are missing (migration 094)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'account_integrations'
+                   AND column_name = 'ai_enabled' AND is_nullable = 'NO'
+                   AND column_default = 'false') THEN
+    RAISE EXCEPTION 'account_integrations.ai_enabled must be NOT NULL DEFAULT false (migration 094)';
+  END IF;
+  IF (SELECT count(*) FROM pg_constraint
+      WHERE conrelid = 'public.account_integrations'::regclass
+        AND conname IN ('account_integrations_ai_instructions_len',
+                        'account_integrations_ai_timezone_len')) <> 2 THEN
+    RAISE EXCEPTION 'account_integrations ai_* length checks are missing (migration 094)';
+  END IF;
+  -- /094 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
