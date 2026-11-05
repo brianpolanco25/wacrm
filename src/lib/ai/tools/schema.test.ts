@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { HttpMethod, OperationParam } from '@/lib/integrations/types';
+
+import { flattenToolArgs, MAX_ARG_DEPTH } from './args';
 
 import {
   buildAiTools,
@@ -223,6 +225,35 @@ describe('buildParameterSchema (R7, R8)', () => {
       { mode: 'auto_reply' }
     );
     expect(tools.map((t) => t.operationKey)).toEqual(['good']);
+  });
+
+  it('never offers a parameter deeper than flattenToolArgs accepts (4)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const four = p('a.b.c.d', { in: 'body' });
+    const five = p('a.b.c.d.e', { in: 'body' });
+    const schema = buildParameterSchema([four, five])!;
+    expect(
+      JSON.stringify(schema.properties!.a.properties!.b.properties!.c)
+    ).not.toContain('"e"');
+    expect(
+      schema.properties!.a.properties!.b.properties!.c.properties!.d
+    ).toEqual({
+      type: 'string',
+      description: 'desc a.b.c.d',
+    });
+    // A required one that cannot be sent takes the operation out.
+    expect(
+      buildParameterSchema([p('x.y.z.w.v', { in: 'body', required: true })])
+    ).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[ai tools] a parameter is nested too deeply for the AI'
+    );
+    // What is offered round-trips through flattenToolArgs.
+    expect(flattenToolArgs({ a: { b: { c: { d: 'v' } } } })).toEqual({
+      'a.b.c.d': 'v',
+    });
+    expect(MAX_ARG_DEPTH).toBe(4);
+    warn.mockRestore();
   });
 
   it('a param named constructor or __proto__ is just a property', () => {

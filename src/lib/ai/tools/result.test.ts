@@ -124,11 +124,16 @@ describe('toolResultPayload — failure (R24)', () => {
     expect(r.payload.hint).toBe(OUTCOME_HINTS[outcome]);
   });
 
-  it('reads an optional remote error (remoteError of n13.5 or error), cut to 300', () => {
+  it('carries the remote error of the executor (remoteError), cut to 300', () => {
     const long = 'm'.repeat(500);
     const viaRemote = toolResultPayload(
       fail('http_error', 409, {
-        remoteError: { code: 'slot_taken', message: long, field: null },
+        remoteError: {
+          code: 'slot_taken',
+          message: long,
+          field: 'starts_at',
+          requestId: 'req-1',
+        },
       }),
       declared,
       {}
@@ -137,17 +142,20 @@ describe('toolResultPayload — failure (R24)', () => {
       code: 'slot_taken',
       message: 'm'.repeat(300),
     });
-    const viaError = toolResultPayload(
-      fail('http_error', 422, { error: { code: 42, message: 'bad date' } }),
+    const noMessage = toolResultPayload(
+      fail('http_error', 422, {
+        remoteError: {
+          code: 'bad',
+          message: null,
+          field: null,
+          requestId: null,
+        },
+      }),
       declared,
       {}
     );
-    expect(viaError.payload.error).toEqual({ message: 'bad date' });
-    const none = toolResultPayload(
-      fail('http_error', 422, { remoteError: 'nope' }),
-      declared,
-      {}
-    );
+    expect(noMessage.payload.error).toEqual({ code: 'bad' });
+    const none = toolResultPayload(fail('http_error', 422), declared, {});
     expect(none.payload).not.toHaveProperty('error');
   });
 });

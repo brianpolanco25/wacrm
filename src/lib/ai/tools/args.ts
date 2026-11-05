@@ -8,7 +8,8 @@
 // lo que no esté declarado o no tenga el tipo).
 // ============================================================
 
-const MAX_DEPTH = 4;
+/** Niveles que se aplanan; `schema.ts` no ofrece parámetros más hondos. */
+export const MAX_ARG_DEPTH = 4;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -23,7 +24,7 @@ function walk(
   for (const key of Object.keys(source)) {
     const value = source[key];
     const name = prefix ? `${prefix}.${key}` : key;
-    if (isPlainObject(value) && depth < MAX_DEPTH) {
+    if (isPlainObject(value) && depth < MAX_ARG_DEPTH) {
       walk(value, name, depth + 1, out);
     } else {
       // defineProperty: un `__proto__` del modelo es un nombre, no un setter.

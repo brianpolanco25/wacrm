@@ -10,7 +10,7 @@
 
 import type { IntegrationCallResult } from '@/lib/integrations/execute';
 import { validateCallParams } from '@/lib/integrations/request';
-import type { OperationParam } from '@/lib/integrations/types';
+import type { OperationParam, RemoteError } from '@/lib/integrations/types';
 
 import { AI_TOOL_RESULT_MAX_BYTES } from './types';
 
@@ -97,30 +97,18 @@ function shortText(value: unknown): string | null {
   return Array.from(value).slice(0, REMOTE_TEXT_MAX).join('');
 }
 
-/**
- * El cuerpo de error del tercero, si el ejecutor lo trae. n13.5 lo
- * añade como `remoteError` opcional; se lee por acceso defensivo, sin
- * depender del tipo (y también como `error`, el nombre del spec).
- */
+/** El cuerpo de error del tercero (`remoteError`, n13.5), cortado a 300. */
 function remoteErrorOf(
-  result: object
+  remote: RemoteError | undefined
 ): { code?: string; message?: string } | null {
-  const candidates: unknown[] = [];
-  if ('remoteError' in result) {
-    candidates.push((result as { remoteError?: unknown }).remoteError);
-  }
-  if ('error' in result) candidates.push((result as { error?: unknown }).error);
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'object' || candidate === null) continue;
-    const code = shortText((candidate as { code?: unknown }).code);
-    const message = shortText((candidate as { message?: unknown }).message);
-    if (code === null && message === null) continue;
-    return {
-      ...(code !== null ? { code } : {}),
-      ...(message !== null ? { message } : {}),
-    };
-  }
-  return null;
+  if (!remote) return null;
+  const code = shortText(remote.code);
+  const message = shortText(remote.message);
+  if (code === null && message === null) return null;
+  return {
+    ...(code !== null ? { code } : {}),
+    ...(message !== null ? { message } : {}),
+  };
 }
 
 /** R23/R24: resultado del ejecutor → payload para el modelo. */
@@ -148,7 +136,7 @@ export function toolResultPayload(
       payload.param = check.param;
     }
   }
-  const remote = remoteErrorOf(result);
+  const remote = remoteErrorOf(result.remoteError);
   if (remote) payload.error = remote;
   return { isError: true, payload };
 }

@@ -4,11 +4,13 @@
 // Puro. Una operación activa → una herramienta con nombre estable, una
 // descripción para el modelo y un JSON Schema de entrada derivado de sus
 // `params`. Solo entran los parámetros que el modelo puede mandar
-// (`path`, `query`, `body`): cualquier otra ubicación —p. ej. la cabecera
-// que n13.5 genera sola— se omite. El filtro es local a propósito: no se
-// usa `PARAM_LOCATIONS`, que n13.5 amplía con `header`.
+// (`callerParams` de n13.5): la cabecera que genera el ejecutor
+// (`in: 'header'`, `auto`) se omite.
 // ============================================================
 
+import { callerParams } from '@/lib/integrations/request';
+
+import { MAX_ARG_DEPTH } from './args';
 import type { HttpMethod, OperationParam } from '@/lib/integrations/types';
 
 import {
@@ -21,7 +23,6 @@ import {
 export const TOOL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 const TOOL_NAME_MAX = 64;
 const DESCRIPTION_MAX = 1024;
-const CALLER_LOCATIONS: readonly string[] = ['path', 'query', 'body'];
 
 /** Una operación del catálogo con su integración, tal como la lee `load.ts`. */
 export interface ToolSourceRow {
@@ -35,18 +36,6 @@ export interface ToolSourceRow {
     responseDescription: string | null;
     sortOrder: number;
   };
-}
-
-/** Los parámetros que el modelo manda (R7). */
-export function callerSideParams(
-  params: OperationParam[] | null | undefined
-): OperationParam[] {
-  return (params ?? []).filter(
-    (p) =>
-      !!p &&
-      typeof p.name === 'string' &&
-      CALLER_LOCATIONS.includes(String((p as { in?: unknown }).in))
-  );
 }
 
 /**
@@ -109,16 +98,24 @@ function toSchema(node: Node): JsonSchema {
 
 /**
  * R7/R8: el esquema de entrada de la herramienta, o `null` si dos
- * parámetros chocan (`a` y `a.b`, o el mismo nombre dos veces): esa
- * operación no se ofrece.
+ * parámetros chocan (`a` y `a.b`, o el mismo nombre dos veces) o si un
+ * requerido pasa de MAX_ARG_DEPTH segmentos: esa operación no se ofrece.
  */
 export function buildParameterSchema(
   params: OperationParam[] | null | undefined
 ): JsonSchema | null {
   const root: Node = { kind: 'object', children: new Map() };
-  for (const param of callerSideParams(params)) {
+  for (const param of callerParams(params ?? [])) {
     const segments = param.name.split('.');
     if (segments.some((s) => s === '')) return null;
+    // `flattenToolArgs` no baja de MAX_ARG_DEPTH niveles: un parámetro más
+    // hondo se ofrecería pero nunca llegaría al ejecutor con su nombre.
+    // Opcional → fuera del esquema; requerido → la operación entera fuera.
+    if (segments.length > MAX_ARG_DEPTH) {
+      console.warn('[ai tools] a parameter is nested too deeply for the AI');
+      if (param.required) return null;
+      continue;
+    }
     let current = root;
     for (let i = 0; i < segments.length; i += 1) {
       const segment = segments[i];
@@ -211,7 +208,7 @@ export function buildAiTools(
         method: row.operation.method,
       }),
       parameters,
-      declaredParams: callerSideParams(row.operation.params),
+      declaredParams: callerParams(row.operation.params ?? []),
     });
   }
   return tools;
