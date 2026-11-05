@@ -2940,7 +2940,9 @@
         "remove": "Remove parameter",
         "in_path": "Path",
         "in_query": "Query",
-        "in_body": "Body"
+        "in_body": "Body",
+        "in_header": "Header (generated)",
+        "autoUuid": "The CRM generates a new UUID for every call. Flows and the AI never see or send it."
       },
       "outputs": {
         "name": "Name",

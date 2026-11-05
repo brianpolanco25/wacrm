@@ -116,4 +116,53 @@ describe('PlatformIntegrationEditor', () => {
     expect(html).toContain(m.params.in_path);
     expect(html).not.toContain('Platform.integrations.');
   });
+
+  it('a header param shows the auto-UUID help and locks type, required and enum (n13.5, R17)', () => {
+    const op = DETAIL.operations[0];
+    const detail: PlatformIntegrationDetailView = {
+      ...DETAIL,
+      operations: [
+        {
+          ...op,
+          params: [
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              type: 'string',
+              required: true,
+              auto: 'uuid',
+              description: 'Clave',
+            },
+          ],
+          path: '/appointments',
+        },
+      ],
+    };
+    for (const loc of ['es', 'en'] as const) {
+      const html = render(loc, detail);
+      const m = CATALOGUES[loc].Platform.integrations.params;
+      expect(html).toContain(m.autoUuid);
+      expect(html).toContain(m.in_header);
+      const row = html.slice(
+        html.indexOf('data-param-row="0"'),
+        html.indexOf('data-param-auto="0"')
+      );
+      // Type select, required checkbox and enum input are disabled.
+      expect(row).toMatch(
+        /<select[^>]*disabled[^>]*>(?:(?!<\/select>)[\s\S])*<option value="integer"/
+      );
+      expect(row).toMatch(
+        /id="[^"]*-p0-req"[^>]*disabled|disabled[^>]*id="[^"]*-p0-req"/
+      );
+      expect(row).toMatch(
+        /placeholder="[^"]*"[^>]*disabled|disabled[^>]*placeholder=/
+      );
+    }
+  });
+
+  it('a plain param has no auto-UUID help', () => {
+    expect(render('es')).not.toContain(
+      es.Platform.integrations.params.autoUuid
+    );
+  });
 });

@@ -233,3 +233,57 @@ describe('operationFormToBody', () => {
     });
   });
 });
+
+// n13.5 (R17): una cabecera autogenerada sobrevive a abrir y guardar.
+describe('operationFormToBody with an auto header (n13.5)', () => {
+  const IK = {
+    name: 'Idempotency-Key',
+    in: 'header' as const,
+    type: 'string' as const,
+    required: true,
+    description: 'Clave de idempotencia',
+    auto: 'uuid' as const,
+  };
+
+  it('round-trips auto: uuid unchanged', () => {
+    const op: OperationRow = { ...OP, params: [...OP.params, IK] };
+    const form = operationToForm(op);
+    expect(form.params.at(-1)?.auto).toBe('uuid');
+    expect(form.params[0].auto).toBeNull();
+    const r = operationFormToBody(form);
+    expect(r.ok && r.body.params).toEqual(op.params);
+  });
+
+  it('a header row is always a required string with auto uuid and no enum', () => {
+    const form = {
+      ...emptyOperationForm(1),
+      key: 'book',
+      name: 'Reservar',
+      description: 'Reserva',
+      method: 'POST' as const,
+      path: '/a',
+      params: [
+        {
+          ...emptyParamRow(),
+          name: ' Idempotency-Key ',
+          in: 'header' as const,
+          type: 'integer' as const,
+          required: false,
+          description: 'Clave',
+          enumText: 'a, b',
+        },
+      ],
+    };
+    const r = operationFormToBody(form);
+    expect(r.ok && r.body.params).toEqual([
+      {
+        name: 'Idempotency-Key',
+        in: 'header',
+        type: 'string',
+        required: true,
+        description: 'Clave',
+        auto: 'uuid',
+      },
+    ]);
+  });
+});

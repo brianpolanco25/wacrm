@@ -2940,7 +2940,9 @@
         "remove": "Quitar parámetro",
         "in_path": "Ruta",
         "in_query": "Consulta (query)",
-        "in_body": "Cuerpo"
+        "in_body": "Cuerpo",
+        "in_header": "Cabecera (generada)",
+        "autoUuid": "El CRM genera un UUID nuevo en cada llamada. Ni los flows ni la IA lo ven ni lo mandan."
       },
       "outputs": {
         "name": "Nombre",
