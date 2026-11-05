@@ -15,7 +15,7 @@ import {
 
 function p(
   name: string,
-  over: Partial<OperationParam> & { in?: string } = {}
+  over: Omit<Partial<OperationParam>, 'in'> & { in?: string } = {}
 ): OperationParam {
   return {
     name,

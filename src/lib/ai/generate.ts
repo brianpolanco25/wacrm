@@ -9,6 +9,9 @@ import { HANDOFF_SENTINEL, aiRequestTimeoutMs } from './defaults';
 import { generateOpenAi } from './providers/openai';
 import { generateAnthropic } from './providers/anthropic';
 import { generateGemini } from './providers/gemini';
+import { runToolLoop } from './tools/loop';
+import type { AiToolset } from './tools/types';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface GenerateArgs {
   config: AiConfig;
@@ -16,6 +19,9 @@ export interface GenerateArgs {
   systemPrompt: string;
   /** Recent conversation turns, oldest first. */
   messages: ChatMessage[];
+  /** n13.3: integration tools for this turn. Without it, or with an empty
+   *  toolset, the path is exactly the one before n13.3 (R14). */
+  tools?: { toolset: AiToolset; db: SupabaseClient; accountId: string };
 }
 
 /**
@@ -27,6 +33,22 @@ export async function generateReply(
   args: GenerateArgs
 ): Promise<GenerateResult> {
   const { config, systemPrompt, messages } = args;
+
+  if (args.tools && args.tools.toolset.tools.length > 0) {
+    const looped = await runToolLoop({
+      config,
+      systemPrompt,
+      messages,
+      toolset: args.tools.toolset,
+      db: args.tools.db,
+      accountId: args.tools.accountId,
+    });
+    return {
+      ...parseGeneration(looped.text, looped.usage),
+      toolsUsed: looped.toolsUsed,
+    };
+  }
+
   const timeoutMs = aiRequestTimeoutMs();
   const providerArgs = {
     apiKey: config.apiKey,

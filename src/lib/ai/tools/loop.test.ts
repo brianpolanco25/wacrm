@@ -1,0 +1,507 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// n13.3 R15, R17–R22, R29, R37: el bucle de herramientas.
+
+const h = vi.hoisted(() => ({ execute: vi.fn() }));
+vi.mock('@/lib/integrations/execute', () => ({
+  executeIntegrationOperation: h.execute,
+}));
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+import { generateReply } from '../generate';
+import type { ProviderToolArgs, ProviderToolResult } from '../providers/shared';
+import { AiError, type AiConfig, type AiUsage } from '../types';
+import { runToolLoop, type ToolLoopDeps } from './loop';
+import {
+  INVALID_ARGS,
+  type AiTool,
+  type AiToolset,
+  type ToolCall,
+} from './types';
+
+const ACCOUNT = 'acct-A';
+const db = { tag: 'db' } as unknown as SupabaseClient;
+
+function config(over: Partial<AiConfig> = {}): AiConfig {
+  return {
+    provider: 'anthropic',
+    model: 'm',
+    apiKey: 'sk-provider',
+    keySource: 'account',
+    systemPrompt: null,
+    isActive: true,
+    autoReplyEnabled: true,
+    autoReplyMaxPerConversation: 3,
+    handoffMode: 'queue',
+    handoffAgentId: null,
+    handoffMessage: null,
+    embeddingsApiKey: null,
+    embeddingsProvider: 'openai',
+    ...over,
+  };
+}
+
+function tool(key: string): AiTool {
+  return {
+    name: `health__${key}`,
+    integrationSlug: 'health',
+    integrationName: 'Cabbity Health',
+    operationKey: key,
+    method: 'GET',
+    description: key,
+    parameters: { type: 'object', properties: {} },
+    declaredParams: [
+      {
+        name: 'doc',
+        in: 'query',
+        type: 'string',
+        required: true,
+        description: '',
+      },
+    ],
+  };
+}
+
+const toolset: AiToolset = {
+  tools: [tool('search'), tool('create')],
+  integrations: [
+    {
+      slug: 'health',
+      name: 'Cabbity Health',
+      instructions: null,
+      timezone: null,
+    },
+  ],
+};
+
+function round(
+  calls: ToolCall[],
+  text = '',
+  usage: AiUsage | null = null
+): ProviderToolResult {
+  return {
+    text,
+    toolCalls: calls,
+    usage,
+    assistant: { calls: calls.map((c) => c.id) },
+  };
+}
+
+const call = (
+  id: string,
+  name = 'health__search',
+  args: unknown = { doc: '1' }
+): ToolCall => ({
+  id,
+  name,
+  args,
+});
+
+function scripted(rounds: ProviderToolResult[]) {
+  const seen: ProviderToolArgs[] = [];
+  const fn = vi.fn(async (_p: string, a: ProviderToolArgs) => {
+    seen.push(a);
+    const next = rounds.shift();
+    if (!next) throw new Error('no more rounds');
+    return next;
+  });
+  return { fn, seen };
+}
+
+const okExec = () =>
+  vi.fn(async () => ({
+    ok: true as const,
+    status: 200,
+    data: { id: 1 },
+    latencyMs: 1,
+  }));
+
+function run(deps: ToolLoopDeps, ts: AiToolset = toolset) {
+  return runToolLoop(
+    {
+      config: config(),
+      systemPrompt: 'SYS',
+      messages: [{ role: 'user', content: 'hi' }],
+      toolset: ts,
+      db,
+      accountId: ACCOUNT,
+    },
+    deps
+  );
+}
+
+beforeEach(() => {
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+describe('runToolLoop', () => {
+  it('executes calls in order, one at a time, with source ai and the account', async () => {
+    const order: string[] = [];
+    let running = 0;
+    const execute = vi.fn(
+      async (_db: unknown, input: { operationKey: string }) => {
+        running += 1;
+        expect(running).toBe(1);
+        await new Promise((r) => setTimeout(r, 1));
+        order.push(input.operationKey);
+        running -= 1;
+        return {
+          ok: true as const,
+          status: 200,
+          data: { k: input.operationKey },
+          latencyMs: 1,
+        };
+      }
+    );
+    const { fn, seen } = scripted([
+      round([
+        call('c1', 'health__create', { doc: 'x' }),
+        call('c2', 'health__search', { doc: { a: 1 } }),
+      ]),
+      round([], 'Listo'),
+    ]);
+    const r = await run({ callProvider: fn, execute: execute as never });
+    expect(order).toEqual(['create', 'search']);
+    expect(execute.mock.calls[0][0]).toBe(db);
+    expect(execute.mock.calls[0][1]).toEqual({
+      accountId: ACCOUNT,
+      integrationSlug: 'health',
+      operationKey: 'create',
+      params: { doc: 'x' },
+      source: 'ai',
+    });
+    expect(execute.mock.calls[1][1]).toMatchObject({ params: { 'doc.a': 1 } });
+    expect(r).toEqual({
+      text: 'Listo',
+      usage: null,
+      toolsUsed: [
+        { integration: 'Cabbity Health', operation: 'create', ok: true },
+        { integration: 'Cabbity Health', operation: 'search', ok: true },
+      ],
+    });
+    // Round 2 carries the native assistant turn and both results.
+    expect(seen[1].steps).toEqual([
+      {
+        assistant: { calls: ['c1', 'c2'] },
+        results: [
+          {
+            callId: 'c1',
+            name: 'health__create',
+            isError: false,
+            payload: { ok: true, status: 200, data: { k: 'create' } },
+          },
+          {
+            callId: 'c2',
+            name: 'health__search',
+            isError: false,
+            payload: { ok: true, status: 200, data: { k: 'search' } },
+          },
+        ],
+      },
+    ]);
+    expect(seen[0].toolChoice).toBe('auto');
+    expect(seen[0].tools.map((t) => t.name)).toEqual([
+      'health__search',
+      'health__create',
+    ]);
+  });
+
+  it('unknown tool and invalid arguments answer an error without the executor', async () => {
+    const execute = okExec();
+    const { fn, seen } = scripted([
+      round([
+        call('c1', 'evil__drop'),
+        call('c2', 'health__search', INVALID_ARGS),
+      ]),
+      round([], 'ok'),
+    ]);
+    const r = await run({ callProvider: fn, execute: execute as never });
+    expect(execute).not.toHaveBeenCalled();
+    expect(
+      seen[1].steps[0].results.map((x) => [x.isError, x.payload.outcome])
+    ).toEqual([
+      [true, 'unknown_tool'],
+      [true, 'invalid_arguments'],
+    ]);
+    expect(r.toolsUsed).toEqual([]);
+  });
+
+  it('after 5 rounds with calls the 6th is final with toolChoice none', async () => {
+    const execute = okExec();
+    const rounds = Array.from({ length: 5 }, (_, i) => round([call(`c${i}`)]));
+    rounds.push(round([call('ignored')], 'Final'));
+    const { fn, seen } = scripted(rounds);
+    const r = await run({ callProvider: fn, execute: execute as never });
+    expect(fn).toHaveBeenCalledTimes(6);
+    expect(seen.map((s) => s.toolChoice)).toEqual([
+      'auto',
+      'auto',
+      'auto',
+      'auto',
+      'auto',
+      'none',
+    ]);
+    expect(execute).toHaveBeenCalledTimes(5);
+    expect(r.text).toBe('Final');
+  });
+
+  it('the 9th call gets limit_reached and the next round is final', async () => {
+    const execute = okExec();
+    const nine = Array.from({ length: 9 }, (_, i) => call(`c${i}`));
+    const { fn, seen } = scripted([round(nine), round([], 'Done')]);
+    const r = await run({ callProvider: fn, execute: execute as never });
+    expect(execute).toHaveBeenCalledTimes(8);
+    const results = seen[1].steps[0].results;
+    expect(results[8].payload.outcome).toBe('limit_reached');
+    expect(results[7].isError).toBe(false);
+    expect(seen[1].toolChoice).toBe('none');
+    expect(r.toolsUsed).toHaveLength(8);
+  });
+
+  it('past the 40 s budget the next round is final', async () => {
+    let t = 0;
+    const execute = vi.fn(async () => {
+      t += 40_001;
+      return { ok: true as const, status: 200, data: 1, latencyMs: 1 };
+    });
+    const { fn, seen } = scripted([round([call('c1')]), round([], 'late')]);
+    await run({ callProvider: fn, execute: execute as never, now: () => t });
+    expect(seen[1].toolChoice).toBe('none');
+  });
+
+  it('AI_TOOL_BUDGET_MS changes the budget', async () => {
+    vi.stubEnv('AI_TOOL_BUDGET_MS', '100');
+    let t = 0;
+    const execute = vi.fn(async () => {
+      t += 101;
+      return { ok: true as const, status: 200, data: 1, latencyMs: 1 };
+    });
+    const { fn, seen } = scripted([round([call('c1')]), round([], 'x')]);
+    await run({ callProvider: fn, execute: execute as never, now: () => t });
+    expect(seen[1].toolChoice).toBe('none');
+
+    vi.stubEnv('AI_TOOL_BUDGET_MS', '1000');
+    t = 0;
+    const second = scripted([round([call('c1')]), round([], 'x')]);
+    await run({
+      callProvider: second.fn,
+      execute: execute as never,
+      now: () => t,
+    });
+    expect(second.seen[1].toolChoice).toBe('auto');
+  });
+
+  it('only the last round text is the answer', async () => {
+    const { fn } = scripted([
+      round([call('c1')], 'Let me check'),
+      round([], 'Your doctor is Ana'),
+    ]);
+    const r = await run({ callProvider: fn, execute: okExec() as never });
+    expect(r.text).toBe('Your doctor is Ana');
+  });
+
+  it('an executor that throws gives the model an error payload and goes on', async () => {
+    const execute = vi.fn(async () => {
+      throw new Error('boom with secret');
+    });
+    const { fn, seen } = scripted([round([call('c1')]), round([], 'Sorry')]);
+    const r = await run({ callProvider: fn, execute: execute as never });
+    expect(seen[1].steps[0].results[0]).toMatchObject({
+      isError: true,
+      payload: { outcome: 'error' },
+    });
+    expect(r).toMatchObject({
+      text: 'Sorry',
+      toolsUsed: [{ operation: 'search', ok: false }],
+    });
+  });
+
+  it('a provider AiError in round 2 propagates (calls already ran)', async () => {
+    const execute = okExec();
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(round([call('c1')]))
+      .mockRejectedValueOnce(
+        new AiError('down', { code: 'timeout', status: 504 })
+      );
+    await expect(
+      run({ callProvider: fn, execute: execute as never })
+    ).rejects.toMatchObject({
+      code: 'timeout',
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('sums usage over all rounds; null when none reported', async () => {
+    const u = (p: number, c: number) => ({
+      promptTokens: p,
+      completionTokens: c,
+      totalTokens: p + c,
+    });
+    const { fn } = scripted([
+      round([call('c1')], '', u(10, 1)),
+      round([call('c2')], '', null),
+      round([], 'x', u(30, 3)),
+    ]);
+    const r = await run({ callProvider: fn, execute: okExec() as never });
+    expect(r.usage).toEqual({
+      promptTokens: 40,
+      completionTokens: 4,
+      totalTokens: 44,
+    });
+
+    const none = scripted([round([call('c1')]), round([], 'x')]);
+    expect(
+      (await run({ callProvider: none.fn, execute: okExec() as never })).usage
+    ).toBeNull();
+  });
+
+  it('console never carries arguments, response bodies or result text (R29)', async () => {
+    const ARG = 'cedula-00112345678';
+    const DATA = 'patient-secret-name';
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { name: DATA },
+        latencyMs: 1,
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        outcome: 'http_error',
+        status: 422,
+        latencyMs: 1,
+        remoteError: { code: 'x', message: DATA },
+      })
+      .mockRejectedValueOnce(new Error(DATA));
+    const { fn } = scripted([
+      round([
+        call('c1', 'health__search', { doc: ARG }),
+        call('c2', 'health__create', { doc: ARG }),
+        call('c3', 'health__search', { doc: ARG }),
+      ]),
+      round([], 'x'),
+    ]);
+    await run({ callProvider: fn, execute: execute as never });
+    const logged = JSON.stringify([
+      ...(console.info as unknown as { mock: { calls: unknown[] } }).mock.calls,
+      ...(console.error as unknown as { mock: { calls: unknown[] } }).mock
+        .calls,
+    ]);
+    expect(logged).toContain(ACCOUNT);
+    expect(logged).toContain('http_error');
+    expect(logged).not.toContain(ARG);
+    expect(logged).not.toContain(DATA);
+    expect(logged).not.toContain('sk-provider');
+  });
+});
+
+describe('generateReply with tools', () => {
+  function openAi(json: unknown): Response {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => json,
+    } as unknown as Response;
+  }
+
+  it('[[HANDOFF]] in the final round → handoff true, toolsUsed present', async () => {
+    h.execute.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: [],
+      latencyMs: 1,
+    });
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(
+        openAi({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'c1',
+                    type: 'function',
+                    function: {
+                      name: 'health__search',
+                      arguments: '{"doc":"1"}',
+                    },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+        })
+      )
+      .mockResolvedValueOnce(
+        openAi({
+          choices: [
+            {
+              message: { role: 'assistant', content: '[[HANDOFF]]' },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 20, completion_tokens: 1, total_tokens: 21 },
+        })
+      );
+    vi.stubGlobal('fetch', fetchSpy);
+    const r = await generateReply({
+      config: config({ provider: 'openai' }),
+      systemPrompt: 'SYS',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: { toolset, db, accountId: ACCOUNT },
+    });
+    expect(r).toEqual({
+      text: '',
+      handoff: true,
+      usage: { promptTokens: 30, completionTokens: 3, totalTokens: 33 },
+      toolsUsed: [
+        { integration: 'Cabbity Health', operation: 'search', ok: true },
+      ],
+    });
+    expect(h.execute.mock.calls[0][1]).toMatchObject({
+      accountId: ACCOUNT,
+      source: 'ai',
+    });
+  });
+
+  it('an empty toolset takes the plain path (no toolsUsed)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          openAi({ choices: [{ message: { content: 'Hola' } }] })
+        )
+    );
+    const r = await generateReply({
+      config: config({ provider: 'openai' }),
+      systemPrompt: 'SYS',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: {
+        toolset: { tools: [], integrations: [] },
+        db,
+        accountId: ACCOUNT,
+      },
+    });
+    expect(r).toEqual({ text: 'Hola', handoff: false, usage: null });
+    const body = JSON.parse(
+      ((vi.mocked(fetch).mock.calls[0] as unknown[])[1] as RequestInit)
+        .body as string
+    );
+    expect(body).not.toHaveProperty('tools');
+  });
+});

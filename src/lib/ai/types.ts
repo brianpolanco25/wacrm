@@ -138,6 +138,9 @@ export interface GenerateResult {
   handoff: boolean;
   /** Provider token usage for this call, or null when unavailable. */
   usage: AiUsage | null;
+  /** n13.3: integration tools the model ran this turn. Present only when
+   *  tools were offered (R35/R36); absent on the plain path (R14). */
+  toolsUsed?: { integration: string; operation: string; ok: boolean }[];
 }
 
 /**
