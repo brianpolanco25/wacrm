@@ -1361,7 +1361,7 @@
         "4577e66"
       ],
       "review": "APPROVED 2026-11-04 → progress/review_member-direct-create.md",
-      "merged": "main 2026-11-04 (ff 6de5654); compuerta completa en main: lint src 0 err, typecheck, 5250 tests, build, replay 001–093 + verify-schema OK"
+      "merged": "main 2026-11-04 (ff 6de5654); compuerta completa en main: lint src 0 err, typecheck, 5250 tests, build, replay 001–093 + verify-schema OK; migración 093 aplicada en remoto 2026-11-04 (API de gestión), junto con 088/089 que faltaban"
     }
   ]
 }
