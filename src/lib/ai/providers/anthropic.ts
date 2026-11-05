@@ -6,7 +6,10 @@ import {
   providerHttpError,
   toNetworkError,
   type ProviderArgs,
+  type ProviderToolArgs,
+  type ProviderToolResult,
 } from './shared';
+import type { ToolCall } from '../tools/types';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -88,4 +91,117 @@ export async function generateAnthropic(
     completion: data?.usage?.output_tokens,
   });
   return { text, usage };
+}
+
+interface AnthropicToolResponse {
+  content?: {
+    type?: string;
+    text?: string;
+    id?: string;
+    name?: string;
+    input?: unknown;
+  }[];
+  stop_reason?: string;
+  usage?: { input_tokens?: number; output_tokens?: number };
+}
+
+/**
+ * n13.3 (R10, R13): one round of the Messages API with client tools.
+ * Earlier rounds are replayed as the assistant's full `content` array —
+ * untouched, thinking blocks included — followed by ONE `user` message
+ * holding every `tool_result` of that round. A round cut by `max_tokens`
+ * or a `refusal` runs no tools.
+ */
+export async function generateAnthropicWithTools(
+  args: ProviderToolArgs
+): Promise<ProviderToolResult> {
+  const {
+    apiKey,
+    model,
+    systemPrompt,
+    messages,
+    timeoutMs,
+    tools,
+    steps,
+    toolChoice,
+  } = args;
+
+  const transcript: unknown[] = [
+    ...normalizeForAnthropic(messages),
+    ...steps.flatMap((step) => [
+      { role: 'assistant', content: step.assistant },
+      {
+        role: 'user',
+        content: step.results.map((r) => ({
+          type: 'tool_result',
+          tool_use_id: r.callId,
+          content: JSON.stringify(r.payload),
+          ...(r.isError ? { is_error: true } : {}),
+        })),
+      },
+    ]),
+  ];
+
+  let res: Response;
+  try {
+    res = await fetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        system: systemPrompt,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        messages: transcript,
+        tools: tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.parameters,
+        })),
+        tool_choice: { type: toolChoice },
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw toNetworkError(err);
+  }
+
+  if (!res.ok) {
+    throw await providerHttpError('Anthropic', res);
+  }
+
+  const data = (await res
+    .json()
+    .catch(() => null)) as AnthropicToolResponse | null;
+  const content = Array.isArray(data?.content) ? data.content : [];
+  const text = content
+    .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text)
+    .join('')
+    .trim();
+  const cut =
+    data?.stop_reason === 'max_tokens' || data?.stop_reason === 'refusal';
+  const toolCalls: ToolCall[] = cut
+    ? []
+    : content
+        .filter(
+          (b) =>
+            b?.type === 'tool_use' &&
+            typeof b.id === 'string' &&
+            typeof b.name === 'string'
+        )
+        .map((b) => ({ id: b.id!, name: b.name!, args: b.input ?? {} }));
+  if (!text && toolCalls.length === 0) {
+    throw new AiError('Anthropic returned an empty response.', {
+      code: 'empty_response',
+    });
+  }
+  const usage = normalizeUsage({
+    prompt: data?.usage?.input_tokens,
+    completion: data?.usage?.output_tokens,
+  });
+  return { text, toolCalls, usage, assistant: content };
 }

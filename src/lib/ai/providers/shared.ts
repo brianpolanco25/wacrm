@@ -1,4 +1,10 @@
 import { AiError, type AiUsage, type ChatMessage } from '../types';
+import {
+  INVALID_ARGS,
+  type JsonSchema,
+  type ToolCall,
+  type ToolResultForModel,
+} from '../tools/types';
 
 // ============================================================
 // Bits shared by the OpenAI, Anthropic and Gemini adapters.
@@ -132,4 +138,64 @@ export function mergeConsecutive(messages: ChatMessage[]): ChatMessage[] {
     }
   }
   return out;
+}
+
+// ============================================================
+// Tool calling (n13.3). Each adapter keeps its plain `generate<X>` intact
+// (R14) and adds a sibling `generate<X>WithTools` built on these types.
+// ============================================================
+
+/** A tool as offered to the model, provider-neutral. */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  parameters: JsonSchema;
+}
+
+/** One finished tool round: the provider's own assistant turn, opaque and
+ *  re-sent untouched (thinking blocks, thought signatures), and the results
+ *  of the calls it asked for. */
+export interface ToolStep {
+  assistant: unknown;
+  results: ToolResultForModel[];
+}
+
+export interface ProviderToolArgs extends ProviderArgs {
+  tools: ToolSpec[];
+  steps: ToolStep[];
+  /** `none` = the final round: the model must answer in text. */
+  toolChoice: 'auto' | 'none';
+}
+
+export interface ProviderToolResult {
+  /** Text of this round (the loop keeps only the final round's). */
+  text: string;
+  /** Calls to run; empty when the round ended for any other reason. */
+  toolCalls: ToolCall[];
+  usage: AiUsage | null;
+  /** The provider-native assistant turn, for the next round. */
+  assistant: unknown;
+}
+
+/** R37: add two usages; null only when neither reported anything. */
+export function sumUsage(a: AiUsage | null, b: AiUsage | null): AiUsage | null {
+  if (!a) return b ? { ...b } : null;
+  if (!b) return { ...a };
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+  };
+}
+
+/** OpenAI sends tool arguments as JSON text; anything unparsable is
+ *  `INVALID_ARGS` so the loop can answer `invalid_arguments` (R17). */
+export function parseToolArguments(raw: unknown): unknown {
+  if (typeof raw !== 'string') return INVALID_ARGS;
+  if (raw.trim() === '') return {};
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return INVALID_ARGS;
+  }
 }
