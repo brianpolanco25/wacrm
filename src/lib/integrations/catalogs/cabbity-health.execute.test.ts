@@ -180,13 +180,16 @@ describe('Cabbity Health requests with a simulated fetch (R22)', () => {
     });
   });
 
-  it('list_appointments: patient and status in the query', async () => {
+  it('list_appointments: patient and range in the query', async () => {
     const r = await call('list_appointments', {
       patient_id: 42,
-      status: 'confirmed',
+      from: '2026-11-09',
+      to: '2026-11-15',
     });
     expect(r.method).toBe('GET');
-    expect(r.url).toBe(`${BASE}/appointments?patient_id=42&status=confirmed`);
+    expect(r.url).toBe(
+      `${BASE}/appointments?patient_id=42&from=2026-11-09&to=2026-11-15`
+    );
     expect(r.body).toBeUndefined();
     expect(r.headers['Idempotency-Key']).toBeUndefined();
   });

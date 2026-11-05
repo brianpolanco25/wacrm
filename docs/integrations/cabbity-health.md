@@ -95,8 +95,13 @@ flow) y `DELETE /appointments/{id}` (alias de `cancel`; duplicarlo confunde a la
 - `consent{accepted, accepted_at, reference}` de `create_patient` se declara con nombres con punto
   (`consent.accepted`, …) y viaja como objeto anidado. Quien llama puede mandarlo con punto o como
   objeto.
-- `status` de `list_appointments` admite **un** estado (`status=confirmed`); el OpenAPI acepta
-  varios, pero la IA puede filtrar el resultado.
+- `list_appointments` **no filtra por estado**. Health exige el filtro como lista estilo PHP
+  (`status[]=confirmed`); `status=confirmed` responde `422 validation_failed` (`field` = `status`,
+  comprobado contra el servicio real el 2026-11-05). El modelo de parámetros no tiene arrays, así que
+  el parámetro se quitó: la IA filtra el resultado, que trae `status` en cada cita.
+- `lookup_patient` y `create_patient`: un número de documento con formato inválido responde
+  `422 validation_failed` con `field` = `document_number`. Las descripciones le piden a la IA que
+  vuelva a pedir el dato al cliente.
 - Horas: `starts_at` siempre en ISO 8601 con el offset de la zona del centro
   (p. ej. `2026-11-12T10:30:00-04:00`; la zona sale de `get_center`). Fechas de rango: `YYYY-MM-DD`.
 - Paginación: `meta.next_cursor` se pasa como `cursor` hasta que sea `null` (no hay paginación
@@ -119,18 +124,18 @@ devuelve `{ ok: false, outcome: 'http_error', status, remoteError: { code, messa
 requestId } }` (se leen como mucho 8 KiB; `details` se descarta; el mensaje se corta a 300
 caracteres). `integration_calls` solo guarda `outcome` y `status_code`, no el código ni el mensaje.
 
-| `code`                           | HTTP | Qué hacer                                                                             |
-| -------------------------------- | ---- | ------------------------------------------------------------------------------------- |
-| `slot_unavailable`               | 409  | El hueco se ocupó: volver a `find_availability` y ofrecer otro                        |
-| `too_many_upcoming_appointments` | 409  | El paciente ya tiene 3 citas futuras: ofrecer reprogramar o cancelar una              |
-| `patient_exists`                 | 409  | Ya existía: buscarlo con `lookup_patient`                                             |
-| `appointment_not_changeable`     | 409  | La cita ya pasó, se atendió o se canceló                                              |
-| `consent_required`               | 422  | Falta el consentimiento expreso del cliente                                           |
-| `validation_failed`              | 422  | Un dato no vale (`field` dice cuál; p. ej. rango de más de 13 días)                   |
-| `idempotency_mismatch`           | 409  | Misma clave con otro cuerpo; no debería ocurrir (el CRM genera una clave por llamada) |
-| `api_key_expired`                | 401  | La clave venció: el cliente pide otra y la pega en Ajustes                            |
-| `api_key_revoked`                | 401  | La clave fue revocada: ídem                                                           |
-| `rate_limited`                   | 429  | Más de 120/min en Health: esperar y reintentar                                        |
+| `code`                           | HTTP | Qué hacer                                                                                                        |
+| -------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------- |
+| `slot_unavailable`               | 409  | El hueco se ocupó: volver a `find_availability` y ofrecer otro                                                   |
+| `too_many_upcoming_appointments` | 409  | El paciente ya tiene 3 citas futuras: ofrecer reprogramar o cancelar una                                         |
+| `patient_exists`                 | 409  | Ya existía: buscarlo con `lookup_patient`                                                                        |
+| `appointment_not_changeable`     | 409  | La cita ya pasó, se atendió o se canceló                                                                         |
+| `consent_required`               | 422  | Falta el consentimiento expreso del cliente                                                                      |
+| `validation_failed`              | 422  | Un dato no vale (`field` dice cuál: rango de más de 13 días, o `document_number` mal formado → volver a pedirlo) |
+| `idempotency_mismatch`           | 409  | Misma clave con otro cuerpo; no debería ocurrir (el CRM genera una clave por llamada)                            |
+| `api_key_expired`                | 401  | La clave venció: el cliente pide otra y la pega en Ajustes                                                       |
+| `api_key_revoked`                | 401  | La clave fue revocada: ídem                                                                                      |
+| `rate_limited`                   | 429  | Más de 120/min en Health: esperar y reintentar                                                                   |
 
 La prueba de conexión traduce cualquier 401/403 a «falló la autenticación» (`auth_failed`).
 
@@ -147,12 +152,13 @@ La prueba de conexión traduce cualquier 401/403 a «falló la autenticación» 
   unset CABBITY_HEALTH_KEY
   ```
 
-  Solo lecturas (`/me`, `/practitioners`, `/availability`, un `lookup` de un documento
-  inexistente). Las escrituras no se prueban contra el centro real: crearían datos reales.
+  Solo lecturas (`/me`, `/practitioners`, `/availability`, un `lookup` por un teléfono
+  inexistente, y un `status=` escalar que Health rechaza con 422). Las escrituras no se prueban contra el centro real: crearían datos reales.
 
 ## 7. Deuda
 
-- Filtro `status` con varios valores (array en `params`).
+- Filtros de lista estilo PHP (`status[]=`): sin arrays en `params` no hay filtro `status` en
+  `list_appointments`; la IA filtra sobre el resultado.
 - Paginación automática (hoy el `cursor` se encadena a mano).
 - Reutilizar la misma `Idempotency-Key` en reintentos: el ejecutor no reintenta y cada llamada,
   también un reintento del flow o de la IA, lleva clave nueva.

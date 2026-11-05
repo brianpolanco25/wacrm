@@ -241,14 +241,7 @@ describe('CABBITY_HEALTH_CATALOG matches the OpenAPI (R3)', () => {
       }
 
       if (p.enum) {
-        const allowed =
-          schema!.enum ??
-          schema!.items?.enum ??
-          // `status` de GET /appointments: array sin enum en el parámetro;
-          // los valores son los de Appointment.status.
-          (key === 'list_appointments' && p.name === 'status'
-            ? OPENAPI.components.schemas.Appointment.properties!.status.enum
-            : undefined);
+        const allowed = schema!.enum ?? schema!.items?.enum;
         expect(allowed, label).toBeDefined();
         for (const v of p.enum) expect(allowed, label).toContain(v);
       }
@@ -335,19 +328,31 @@ describe('CABBITY_HEALTH_CATALOG texts for the AI (R4)', () => {
   });
 });
 
-describe('list_appointments status filter (R16)', () => {
-  it('is a scalar query with the 7 states, sent as status=<value>', () => {
-    const status = op('list_appointments').params.find(
-      (p) => p.name === 'status'
-    );
-    expect(status).toMatchObject({ in: 'query', type: 'string' });
-    expect(status?.enum).toHaveLength(7);
+describe('list_appointments has no status filter (R16, §M1)', () => {
+  // Health exige `status[]=` (lista estilo PHP): `status=confirmed` da 422.
+  // El modelo no tiene arrays, así que el filtro se quita (deuda).
+  it('does not declare status; the URL carries only what was sent', () => {
+    expect(
+      op('list_appointments').params.some((p) => p.name === 'status')
+    ).toBe(false);
     const r = buildIntegrationRequest(integration, op('list_appointments'), {
       patient_id: 42,
-      status: 'confirmed',
+      from: '2026-11-09',
     });
     expect('url' in r && r.url).toBe(
-      'https://api.health.cabbity.com/api/integrations/v1/appointments?patient_id=42&status=confirmed'
+      'https://api.health.cabbity.com/api/integrations/v1/appointments?patient_id=42&from=2026-11-09'
     );
+  });
+
+  it('tells the AI to filter by status on the result', () => {
+    expect(op('list_appointments').description).toMatch(/filtra tú/);
+  });
+});
+
+describe('a malformed document is a 422 the AI should ask again for (§M1)', () => {
+  it.each(['lookup_patient', 'create_patient'])('%s', (key) => {
+    const text = `${op(key).description} ${op(key).response_description}`;
+    expect(text).toMatch(/validation_failed/);
+    expect(text).toMatch(/document_number/);
   });
 });

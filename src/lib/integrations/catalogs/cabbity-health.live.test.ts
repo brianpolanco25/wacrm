@@ -98,13 +98,29 @@ describe.skipIf(!KEY)('Cabbity Health live (R23)', () => {
     console.log(`slots: ${body.data.length}`);
   });
 
-  it('lookup_patient with a document that does not exist → not_found', async () => {
-    const r = await send('lookup_patient', {
-      document_type: 'passport',
-      document_number: 'ZZ-NOEXISTE-000000',
-    });
+  it('lookup_patient with a phone that does not exist → not_found', async () => {
+    // Por teléfono: un documento inventado puede no tener formato válido
+    // (422 validation_failed en document_number, §M1).
+    const r = await send('lookup_patient', { phone: '+18090000000' });
     expect(r.outcome).toBe('ok');
     expect((r.data as Body<{ source: string }>).data.source).toBe('not_found');
+  });
+
+  it('list_appointments with a scalar status is refused by Health (why it is not in the catalog)', async () => {
+    // Fuera del catálogo a propósito: se arma a mano para vigilar si Health
+    // empieza a aceptarlo.
+    const r = await performIntegrationRequest('live-test', {
+      url: `${integration.base_url}/appointments?from=${isoDate(0)}&to=${isoDate(6)}&status=confirmed`,
+      method: 'GET',
+      headers: withAuthHeader(
+        { Accept: 'application/json' },
+        'Authorization',
+        `Bearer ${KEY}`
+      ),
+      body: undefined,
+    });
+    expect(r).toMatchObject({ outcome: 'http_error', status: 422 });
+    expect(r.remoteError?.field).toBe('status');
   });
 
   it('find_availability with 20 days → validation_failed', async () => {

@@ -11,7 +11,9 @@
 // Fuera (D1): `PATCH`/`DELETE /patients/{id}` y `DELETE /appointments/{id}`
 // (alias de `cancel`). `list_patients` y `get_patient` nacen apagadas
 // (devuelven datos personales completos). `list_appointments` exige
-// `patient_id` aunque el OpenAPI acepte un rango (agenda entera).
+// `patient_id` aunque el OpenAPI acepte un rango (agenda entera). Sin
+// filtro `status`: Health lo exige como lista estilo PHP (`status[]=`) y
+// el modelo no tiene arrays; la IA filtra sobre el resultado (§M1, D4).
 //
 // Ejecutable por Node 24 sin alias: solo `import type` y rutas `.ts`.
 // La clave de Health nunca aparece aquí: la pega cada cliente en Ajustes.
@@ -65,15 +67,6 @@ const IDEMPOTENCY_KEY: OperationParam = {
 
 const DOCUMENT_TYPES = ['cedula', 'passport'];
 const SEXES = ['male', 'female', 'other'];
-const APPOINTMENT_STATUSES = [
-  'scheduled',
-  'confirmed',
-  'arrived',
-  'in_consultation',
-  'completed',
-  'cancelled',
-  'no_show',
-];
 const ORIGINS = ['integration', 'staff', 'mine'];
 
 const ID_PATH = (what: string) =>
@@ -231,7 +224,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     key: 'lookup_patient',
     name: 'Buscar paciente',
     description:
-      'Busca si el cliente ya es paciente del centro por documento (document_type + document_number) o por teléfono. Úsala SIEMPRE antes de create_patient para no duplicar pacientes. Pide el documento al cliente si no lo tienes.',
+      'Busca si el cliente ya es paciente del centro por documento (document_type + document_number) o por teléfono. Úsala SIEMPRE antes de create_patient para no duplicar pacientes. Pide el documento al cliente si no lo tienes. Si el documento está mal formado, Health responde 422 validation_failed con field = document_number: vuelve a pedirle el dato al cliente.',
     method: 'POST',
     path: '/patients/lookup',
     params: [
@@ -382,7 +375,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
       out('patient_id', 'data.id', 'integer', 'Id del paciente creado'),
     ],
     response_description:
-      'data {id, first_name, last_name, document_type, document_hint}. data.id es el patient_id. Error 409 patient_exists: ya existía, búscalo con lookup_patient. Error 422 consent_required si falta el consentimiento.',
+      'data {id, first_name, last_name, document_type, document_hint}. data.id es el patient_id. Error 409 patient_exists: ya existía, búscalo con lookup_patient. Error 422 consent_required si falta el consentimiento. Error 422 validation_failed con field = document_number si el documento está mal formado: vuelve a pedirle el dato al cliente.',
     is_active: true,
   },
   {
@@ -402,7 +395,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     key: 'list_appointments',
     name: 'Citas del paciente',
     description:
-      'Citas de un paciente (patient_id de lookup_patient), opcionalmente entre dos fechas (como mucho 31 días) o con un estado. Úsala cuando el cliente pregunte por sus citas, o antes de reprogramar o cancelar para obtener el id de la cita.',
+      'Citas de un paciente (patient_id de lookup_patient), opcionalmente entre dos fechas (como mucho 31 días). No filtra por estado: si el cliente pregunta por citas confirmadas o canceladas, filtra tú el resultado por status. Úsala cuando el cliente pregunte por sus citas, o antes de reprogramar o cancelar para obtener el id de la cita.',
     method: 'GET',
     path: '/appointments',
     params: [
@@ -428,14 +421,6 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
         'integer',
         false,
         'Solo las de este profesional.'
-      ),
-      param(
-        'status',
-        'query',
-        'string',
-        false,
-        'Solo las de este estado.',
-        APPOINTMENT_STATUSES
       ),
       param(
         'origin',
