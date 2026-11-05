@@ -12,12 +12,27 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import type { ToolUseRecord } from '@/lib/ai/tools/types';
+import { PlaygroundToolsNotice, ToolsUsedLine } from './ai-tools-used';
 
 interface Turn {
   role: 'user' | 'assistant';
   content: string;
   /** assistant-only: the agent signalled a human handoff on this turn. */
   handoff?: boolean;
+  /** assistant-only (n13.3): integration tools the agent ran this turn. */
+  toolsUsed?: ToolUseRecord[];
+}
+
+function readToolsUsed(raw: unknown): ToolUseRecord[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.filter(
+    (u): u is ToolUseRecord =>
+      !!u &&
+      typeof u.integration === 'string' &&
+      typeof u.operation === 'string' &&
+      typeof u.ok === 'boolean'
+  );
 }
 
 export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
@@ -68,6 +83,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
               ? data.reply
               : '',
           handoff: Boolean(data.handoff),
+          toolsUsed: readToolsUsed(data.toolsUsed),
         },
       ]);
     } catch {
@@ -109,6 +125,8 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
           <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Reset
         </Button>
       </div>
+
+      <PlaygroundToolsNotice />
 
       {/* Transcript */}
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-4">
@@ -164,6 +182,9 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
                   <UserCircle2 className="h-3.5 w-3.5" />
                   Would hand off to a human here
                 </p>
+              )}
+              {t.role === 'assistant' && t.toolsUsed && (
+                <ToolsUsedLine toolsUsed={t.toolsUsed} />
               )}
             </div>
             {t.role === 'user' && (

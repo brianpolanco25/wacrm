@@ -281,6 +281,20 @@ export function MessageComposer({
         return;
       }
       setText(draftText);
+      // n13.3 (R36): say which integration tools the draft consulted.
+      if (Array.isArray(data.toolsUsed) && data.toolsUsed.length > 0) {
+        const tools = (data.toolsUsed as unknown[])
+          .filter(
+            (u): u is { integration: string; operation: string } =>
+              !!u &&
+              typeof (u as { integration?: unknown }).integration ===
+                "string" &&
+              typeof (u as { operation?: unknown }).operation === "string"
+          )
+          .map((u) => `${u.integration} · ${u.operation}`)
+          .join(", ");
+        if (tools) toast.info(t("draftUsedTools", { tools }));
+      }
       // Let the textarea grow to fit and drop the cursor at the end so
       // the agent can tweak immediately.
       requestAnimationFrame(() => {
@@ -296,7 +310,7 @@ export function MessageComposer({
     } finally {
       setDrafting(false);
     }
-  }, [drafting, conversationId, adjustHeight]);
+  }, [drafting, conversationId, adjustHeight, t]);
 
   // ---- Interactive message + quick replies --------------------------
 

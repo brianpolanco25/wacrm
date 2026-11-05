@@ -271,7 +271,8 @@
       "send": "Enviar",
       "quickReplyNamePrompt": "Ponle nombre a esta respuesta rápida:",
       "quickReplySaved": "Guardada como respuesta rápida.",
-      "quickReplySaveError": "No se pudo guardar la respuesta rápida."
+      "quickReplySaveError": "No se pudo guardar la respuesta rápida.",
+      "draftUsedTools": "El borrador consultó: {tools}"
     },
     "bubble": {
       "photo": "Foto",
@@ -1943,7 +1944,20 @@
       "deactivateConfirm": "Se borrará la credencial guardada de {name}. Para volver a usarla tendrás que pegarla otra vez.",
       "deactivated": "Integración desactivada",
       "readOnly": "Solo un administrador puede gestionar las integraciones.",
-      "failed": "No se pudo guardar. Inténtalo de nuevo."
+      "failed": "No se pudo guardar. Inténtalo de nuevo.",
+      "aiToggle": "Usar en IA",
+      "aiToggleHint": "La IA de respuesta automática podrá consultar y hacer cambios con esta integración.",
+      "aiInstructionsButton": "Instrucciones para la IA",
+      "aiInstructionsTitle": "Instrucciones para la IA — {name}",
+      "aiInstructionsDesc": "Lo que la IA debe saber al usar esta integración. Se añade a sus instrucciones solo cuando la integración está en uso.",
+      "aiInstructionsLabel": "Instrucciones",
+      "aiInstructionsPlaceholder": "Por ejemplo: las citas duran 30 minutos; confirma siempre la sede.",
+      "aiInstructionsCount": "{count} de 2000",
+      "aiTimezoneLabel": "Zona horaria",
+      "aiTimezoneHint": "La IA la usa para enviar fechas y horas con la hora local correcta.",
+      "aiTimezoneNone": "Sin zona",
+      "aiSaved": "Guardado.",
+      "aiSaveFailed": "No se pudo guardar."
     },
     "deals": {
       "title": "Oportunidades y moneda",
@@ -3242,5 +3256,11 @@
     "rejected": "Esta invitación ya no es válida. Pide un enlace nuevo.",
     "backToSignIn": "Volver a iniciar sesión",
     "signupWithoutInvite": "Crear una cuenta sin la invitación"
+  },
+  "AiTools": {
+    "used": "Usó:",
+    "ok": "correcto",
+    "failed": "falló",
+    "playgroundNotice": "Las herramientas activas se ejecutan de verdad contra la integración (por ejemplo, crean citas)."
   }
 }

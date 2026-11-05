@@ -271,7 +271,8 @@
       "send": "Send",
       "quickReplyNamePrompt": "Name this quick reply:",
       "quickReplySaved": "Saved as a quick reply.",
-      "quickReplySaveError": "Couldn't save the quick reply."
+      "quickReplySaveError": "Couldn't save the quick reply.",
+      "draftUsedTools": "The draft looked up: {tools}"
     },
     "bubble": {
       "photo": "Photo",
@@ -1943,7 +1944,20 @@
       "deactivateConfirm": "The saved credential for {name} will be deleted. To use it again you will have to paste it again.",
       "deactivated": "Integration deactivated",
       "readOnly": "Only an administrator can manage integrations.",
-      "failed": "It could not be saved. Try again."
+      "failed": "It could not be saved. Try again.",
+      "aiToggle": "Use in AI",
+      "aiToggleHint": "The auto-reply AI will be able to look things up and make changes with this integration.",
+      "aiInstructionsButton": "Instructions for the AI",
+      "aiInstructionsTitle": "Instructions for the AI — {name}",
+      "aiInstructionsDesc": "What the AI should know when it uses this integration. Added to its instructions only while the integration is in use.",
+      "aiInstructionsLabel": "Instructions",
+      "aiInstructionsPlaceholder": "For example: appointments last 30 minutes; always confirm the location.",
+      "aiInstructionsCount": "{count} of 2000",
+      "aiTimezoneLabel": "Time zone",
+      "aiTimezoneHint": "The AI uses it to send dates and times in the right local time.",
+      "aiTimezoneNone": "No time zone",
+      "aiSaved": "Saved.",
+      "aiSaveFailed": "Could not save."
     },
     "deals": {
       "title": "Deals & currency",
@@ -3242,5 +3256,11 @@
     "rejected": "This invitation is no longer valid. Ask for a new link.",
     "backToSignIn": "Back to sign in",
     "signupWithoutInvite": "Create an account without the invitation"
+  },
+  "AiTools": {
+    "used": "Used:",
+    "ok": "ok",
+    "failed": "failed",
+    "playgroundNotice": "Active tools really run against the integration (for example, they create appointments)."
   }
 }

@@ -11,9 +11,12 @@
 // La credencial se teclea en un campo de contraseña, viaja una vez en el
 // PUT y no vuelve: lo único que se enseña es `••••<last4>`. Al guardarla,
 // la prueba se lanza sola y su resultado se dice en voz alta.
+//
+// n13.3: con la integración activada, «Usar en IA» (PATCH inmediato) y un
+// diálogo con instrucciones para la IA y zona horaria.
 // ============================================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Blocks, Loader2 } from 'lucide-react';
@@ -32,7 +35,12 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { AccountIntegrationView } from '@/lib/integrations/types';
+import { Textarea } from '@/components/ui/textarea';
+import { AI_INSTRUCTIONS_MAX } from '@/lib/ai/tools/types';
+import {
+  IntegrationAiControls,
+  type IntegrationViewWithAi,
+} from './integration-ai-controls';
 import {
   activateAndTest,
   cardStatus,
@@ -44,6 +52,23 @@ import {
   type TestOutcome,
 } from './integration-card-state';
 import { SettingsPanelHead } from './settings-panel-head';
+
+type AccountIntegrationView = IntegrationViewWithAi;
+
+const SELECT_CLASS =
+  'border-input bg-background h-8 w-full rounded-lg border px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50';
+
+/** Zonas IANA del navegador; la guardada va siempre aunque no esté. */
+function timeZoneOptions(current: string | null): string[] {
+  let zones: string[] = [];
+  try {
+    zones = Intl.supportedValuesOf('timeZone');
+  } catch {
+    zones = [];
+  }
+  if (current && !zones.includes(current)) zones = [current, ...zones];
+  return zones;
+}
 
 export interface IntegrationsPayload {
   integrations: AccountIntegrationView[];
@@ -78,6 +103,16 @@ export function IntegrationsSettings({
     null
   );
   const [busy, setBusy] = useState<string | null>(null);
+  const [aiEditing, setAiEditing] = useState<AccountIntegrationView | null>(
+    null
+  );
+  const [aiInstructions, setAiInstructions] = useState('');
+  const [aiTimezone, setAiTimezone] = useState('');
+  const [aiSaving, setAiSaving] = useState(false);
+  const zones = useMemo(
+    () => (aiEditing ? timeZoneOptions(aiEditing.aiTimezone ?? null) : []),
+    [aiEditing]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -178,6 +213,9 @@ export function IntegrationsSettings({
         enabledAt: null,
         lastTestedAt: null,
         lastTestStatus: null,
+        aiEnabled: false,
+        aiInstructions: null,
+        aiTimezone: null,
       });
       setConfirming(null);
       toast.success(t('deactivated'));
@@ -186,6 +224,54 @@ export function IntegrationsSettings({
     } finally {
       setBusy(null);
     }
+  }
+
+  /** PATCH de los ajustes de IA (n13.3, R32). */
+  async function patchAi(
+    view: AccountIntegrationView,
+    body: Record<string, unknown>
+  ): Promise<boolean> {
+    try {
+      const res = await fetch(
+        `/api/account/integrations/${encodeURIComponent(view.id)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      );
+      const data = (await res.json().catch(() => null)) as {
+        integration?: AccountIntegrationView | null;
+        error?: string;
+      } | null;
+      if (!res.ok) {
+        toast.error(data?.error ?? t('aiSaveFailed'));
+        return false;
+      }
+      if (data?.integration) patchView(view.id, data.integration);
+      toast.success(t('aiSaved'));
+      return true;
+    } catch {
+      toast.error(t('aiSaveFailed'));
+      return false;
+    }
+  }
+
+  async function toggleAi(view: AccountIntegrationView, next: boolean) {
+    setBusy(view.id);
+    await patchAi(view, { aiEnabled: next });
+    setBusy(null);
+  }
+
+  async function saveAiSettings() {
+    if (!aiEditing) return;
+    setAiSaving(true);
+    const ok = await patchAi(aiEditing, {
+      aiInstructions,
+      aiTimezone: aiTimezone || null,
+    });
+    setAiSaving(false);
+    if (ok) setAiEditing(null);
   }
 
   const label = editing ? credentialLabel(editing) : null;
@@ -238,6 +324,12 @@ export function IntegrationsSettings({
               }}
               onTest={() => void test(view)}
               onDeactivate={() => setConfirming(view)}
+              onToggleAi={(next) => void toggleAi(view, next)}
+              onEditAi={() => {
+                setAiInstructions(view.aiInstructions ?? '');
+                setAiTimezone(view.aiTimezone ?? '');
+                setAiEditing(view);
+              }}
             />
           ))}
         </div>
@@ -308,6 +400,91 @@ export function IntegrationsSettings({
       </Dialog>
 
       <Dialog
+        open={aiEditing !== null}
+        onOpenChange={(next) => {
+          if (!next && !aiSaving) setAiEditing(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {aiEditing
+                ? t('aiInstructionsTitle', { name: aiEditing.name })
+                : null}
+            </DialogTitle>
+            <DialogDescription>{t('aiInstructionsDesc')}</DialogDescription>
+          </DialogHeader>
+          <form
+            id="integration-ai-settings"
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveAiSettings();
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="integration-ai-instructions">
+                {t('aiInstructionsLabel')}
+              </Label>
+              <Textarea
+                id="integration-ai-instructions"
+                rows={5}
+                maxLength={AI_INSTRUCTIONS_MAX}
+                placeholder={t('aiInstructionsPlaceholder')}
+                value={aiInstructions}
+                onChange={(e) => setAiInstructions(e.target.value)}
+              />
+              <p
+                className="text-muted-foreground self-end text-xs"
+                aria-live="polite"
+              >
+                {t('aiInstructionsCount', { count: aiInstructions.length })}
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="integration-ai-timezone">
+                {t('aiTimezoneLabel')}
+              </Label>
+              <select
+                id="integration-ai-timezone"
+                className={SELECT_CLASS}
+                value={aiTimezone}
+                onChange={(e) => setAiTimezone(e.target.value)}
+              >
+                <option value="">{t('aiTimezoneNone')}</option>
+                {zones.map((zone) => (
+                  <option key={zone} value={zone}>
+                    {zone}
+                  </option>
+                ))}
+              </select>
+              <p className="text-muted-foreground text-xs">
+                {t('aiTimezoneHint')}
+              </p>
+            </div>
+          </form>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={aiSaving}
+              onClick={() => setAiEditing(null)}
+            >
+              {t('cancel')}
+            </Button>
+            <Button
+              type="submit"
+              form="integration-ai-settings"
+              disabled={aiSaving}
+              aria-busy={aiSaving}
+            >
+              {aiSaving ? <Loader2 className="size-4 animate-spin" /> : null}
+              {t('save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={confirming !== null}
         onOpenChange={(next) => !next && busy === null && setConfirming(null)}
       >
@@ -355,6 +532,8 @@ function IntegrationCard({
   onActivate,
   onTest,
   onDeactivate,
+  onToggleAi,
+  onEditAi,
 }: {
   view: AccountIntegrationView;
   planAllows: boolean;
@@ -363,6 +542,8 @@ function IntegrationCard({
   onActivate: () => void;
   onTest: () => void;
   onDeactivate: () => void;
+  onToggleAi: (next: boolean) => void;
+  onEditAi: () => void;
 }) {
   const t = useTranslations('Settings.integrations');
   const format = useFormatter();
@@ -444,6 +625,13 @@ function IntegrationCard({
             ) : null}
           </div>
         ) : null}
+
+        <IntegrationAiControls
+          integration={view}
+          disabled={!canManage || !planAllows || view.retired || busy}
+          onToggle={onToggleAi}
+          onEdit={onEditAi}
+        />
 
         {actions.length > 0 ? (
           <div className="flex flex-wrap gap-2">
