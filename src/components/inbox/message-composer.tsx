@@ -48,6 +48,7 @@ import {
 } from "@/lib/storage/upload-media";
 import { ReplyQuote } from "./reply-quote";
 import { useTranslations } from "next-intl";
+import { formatToolsUsed } from "@/lib/ai/tools/tools-used";
 import {
   InteractiveBuilder,
   blankButtonsPayload,
@@ -282,19 +283,8 @@ export function MessageComposer({
       }
       setText(draftText);
       // n13.3 (R36): say which integration tools the draft consulted.
-      if (Array.isArray(data.toolsUsed) && data.toolsUsed.length > 0) {
-        const tools = (data.toolsUsed as unknown[])
-          .filter(
-            (u): u is { integration: string; operation: string } =>
-              !!u &&
-              typeof (u as { integration?: unknown }).integration ===
-                "string" &&
-              typeof (u as { operation?: unknown }).operation === "string"
-          )
-          .map((u) => `${u.integration} · ${u.operation}`)
-          .join(", ");
-        if (tools) toast.info(t("draftUsedTools", { tools }));
-      }
+      const tools = formatToolsUsed(data.toolsUsed);
+      if (tools) toast.info(t("draftUsedTools", { tools }));
       // Let the textarea grow to fit and drop the cursor at the end so
       // the agent can tweak immediately.
       requestAnimationFrame(() => {

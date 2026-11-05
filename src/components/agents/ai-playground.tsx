@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import type { ToolUseRecord } from '@/lib/ai/tools/types';
+import { readToolsUsed } from '@/lib/ai/tools/tools-used';
 import { PlaygroundToolsNotice, ToolsUsedLine } from './ai-tools-used';
 
 interface Turn {
@@ -22,17 +23,6 @@ interface Turn {
   handoff?: boolean;
   /** assistant-only (n13.3): integration tools the agent ran this turn. */
   toolsUsed?: ToolUseRecord[];
-}
-
-function readToolsUsed(raw: unknown): ToolUseRecord[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  return raw.filter(
-    (u): u is ToolUseRecord =>
-      !!u &&
-      typeof u.integration === 'string' &&
-      typeof u.operation === 'string' &&
-      typeof u.ok === 'boolean'
-  );
 }
 
 export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
