@@ -8,6 +8,34 @@ Feature `i12.1 invite-direct-join` (`pending`, sdd) en rama `feat/invitacion-dir
 `.claude/worktrees/invitacion-directa`, desde `main @ 5f64211`). Spec aprobado por el humano el 2026-11-03 («dale»); `approved` (reviewer APPROVED, 3 commits be9cae6..63a3ff9, 4860 tests). `done`: fusionada en main (ff 63a3ff9) el 2026-11-03 y pusheada. Migración 090 aplicada en Supabase remoto por Brian el 2026-11-03. Pendiente humano: guiones S-M1..S-M3 en producción. Deuda anotada: rescate del usuario ya afectado (mover su cuenta a la
 empresa invitadora) e invitaciones ligadas a email para quien se registra sin enlace.
 
+## Fase 13 — conector Cabbity Health para la IA (2026-11-05)
+
+Pedido del humano: con la clave `chk_live_…` del centro Rehactive (cinco scopes, 120/min; verificada con GET /me) y
+el OpenAPI de la API de terceros de Cabbity Health (`docs/integrations/cabbity-health-openapi.json`, 19 operaciones),
+«crear el conector para que el agente de IA pueda utilizarlo y sepa cómo hacerlo». Specs aprobados por el humano
+(«dale») el 2026-11-05 con todas las decisiones recomendadas. Dos features en paralelo desde `main @ fd4ce95`:
+
+- `n13.5 cabbity-health-connector` — catálogo versionado (`src/lib/integrations/catalogs/cabbity-health.ts`, 16 de
+  19 operaciones; `list_patients`/`get_patient` cargadas apagadas; `list_appointments` exige `patient_id` y sin
+  `status`, Health exige `status[]`), script `scripts/integrations-bootstrap-catalog.ts <slug>`, cabecera
+  `Idempotency-Key` autogenerada (`in:'header'`, `auto:'uuid'`, `callerParams()`), cuerpos anidados con punto,
+  `remoteError` en `ok:false`. Sin migración. Reviewer APPROVED ronda 1; guion §M1 de lectura y test vivo 7/7
+  corridos por el líder contra el servicio real. `main` ff 69d67dd.
+- `n13.3 integration-ai-tools` — tool calling en anthropic/openai/gemini (`src/lib/ai/tools/*`,
+  `generate*WithTools`), bucle 5+1 vueltas / 8 ejecuciones / 40 s, resultados a 8 KiB, borrador solo GET,
+  «Usar en IA» + instrucciones + zona horaria por integración (migración 094), línea «Usó:» en playground y
+  borrador. Reviewer APPROVED en ronda 2 (ronda 1: test de R36, uso en `ai_usage_log` al fallar una vuelta,
+  límite de anidamiento, unificación con `callerParams`). `main` ff a5c7617.
+
+Compuerta completa en `main` tras la fusión: lint 0 errores (ojo: lintear el checkout raíz con worktrees que
+tienen `.next/` da miles de errores falsos; borrar los worktrees fusionados antes), typecheck, 5571 tests, build,
+replay 001–094. Pendiente del humano: aplicar 094 en Supabase remoto, cargar el catálogo
+(`node --env-file=.env.local scripts/integrations-bootstrap-catalog.ts cabbity-health`), activarlo en `/platform`,
+pegar la clave en Ajustes → Integraciones, encender «Usar en IA» con zona `America/Santo_Domingo`, y rotar la clave
+(se pegó en el chat). Decisiones abiertas del reviewer de n13.3: doble despacho (dos entrantes seguidos pueden
+ejecutar la misma escritura), playground ejecuta escrituras reales como `agent`, reactivar conserva `ai_enabled`.
+n13.2 sigue `spec_ready` en su rama sin aprobar; debe adoptar `callerParams()` y convivir con `remoteError`.
+
 ## Fase 13 — integraciones con apps Cabbity (abierta el 2026-11-03)
 
 Pedido del humano: el superadmin crea integraciones (p. ej. Cabbity Health: crear citas, consultar doctores) que los

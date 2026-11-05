@@ -1316,15 +1316,46 @@
       "id": "n13.3",
       "name": "integration-ai-tools",
       "phase": "13",
-      "status": "pending",
+      "status": "done",
       "spec": "specs/integration-ai-tools/",
       "sdd": true,
-      "branch": "feat/integraciones",
-      "worktree": ".claude/worktrees/integraciones",
+      "branch": "feat/integration-ai-tools",
+      "worktree": ".claude/worktrees/integration-ai-tools",
       "depends_on": [
         "n13.1"
       ],
-      "note": "Las operaciones del catálogo activas en la cuenta se exponen como herramientas (tool calling) a la IA de respuesta automática. Hoy ningún proveedor (anthropic/gemini/openai) usa tools: hay que añadirlo en src/lib/ai/providers."
+      "note": "Las operaciones del catálogo activas en la cuenta se exponen como herramientas (tool calling) a la IA de respuesta automática. Hoy ningún proveedor (anthropic/gemini/openai) usa tools: hay que añadirlo en src/lib/ai/providers. Encargo del humano (2026-11-05): «crear el conector para que el agente de IA pueda utilizar la API de Cabbity Health y sepa cómo hacerlo». Genérico: cualquier integración activa de la cuenta; la definición concreta de Health es n13.5.",
+      "acceptance": [
+        "A1 Las operaciones activas de las integraciones activadas en la cuenta (y con plan `integrations`) se ofrecen a la IA de respuesta automática como herramientas (tool calling) en los tres proveedores: anthropic, gemini y openai. Esquema de cada herramienta derivado de integration_operations (key, description, params con tipo/required/enum/description, response_description).",
+        "A2 Bucle de herramientas: el modelo pide una herramienta, el CRM ejecuta executeIntegrationOperation con source ai, devuelve el resultado (o el fallo con su outcome, sin lanzar) y el modelo continúa; tope de iteraciones por turno y por tiempo; el resultado final sigue pasando por parseGeneration (handoff).",
+        "A3 El system prompt le explica a la IA cuándo y cómo usar las herramientas (idioma del cliente, confirmar datos antes de escrituras como crear o cancelar citas, no inventar ids, fecha y hora actual con zona horaria para fechas ISO con offset) y el cliente puede añadir instrucciones por integración.",
+        "A4 Seguridad y aislamiento: solo herramientas de la cuenta de la conversación; params validados por el ejecutor; cuerpos de respuesta truncados antes de volver al modelo; nada de credenciales ni cuerpos en logs; registro en integration_calls; CP3 en tenant-isolation.",
+        "A5 Observabilidad y control: el cliente puede activar o desactivar «usar en IA» por integración (o por operación) desde Ajustes > Integraciones; el playground (/api/ai/playground) y el borrador muestran que se usó una herramienta; uso de tokens de todas las vueltas sumado en ai_usage_log.",
+        "A6 Sin herramientas activas el comportamiento es idéntico al actual (tests existentes intactos). i18n es/en. Compuerta en verde."
+      ],
+      "approval": "humano 2026-11-05 («dale»): aprobada con todas las decisiones recomendadas del spec",
+      "implementation": "progress/impl_integration-ai-tools.md",
+      "commits": [
+        "a5c7617",
+        "9e8bdf6",
+        "b323aea",
+        "43cff17",
+        "4fd75f0",
+        "15b0852",
+        "6ea70a2",
+        "7695795",
+        "60978b9",
+        "b828b42",
+        "8397f01",
+        "26c09f0",
+        "1d1daeb",
+        "f4fe2f1",
+        "0b61d5c",
+        "2f6df67",
+        "2e78ed2"
+      ],
+      "review": "ronda 1 CHANGES_REQUESTED, ronda 2 APPROVED (2026-11-05) → progress/review_integration-ai-tools.md",
+      "merged": "main 2026-11-05 (ff a5c7617); compuerta completa en main: lint 0 err, typecheck, 5571 tests, build, replay 001–094; pusheada"
     },
     {
       "id": "n13.4",
@@ -1362,6 +1393,38 @@
       ],
       "review": "APPROVED 2026-11-04 → progress/review_member-direct-create.md",
       "merged": "main 2026-11-04 (ff 6de5654); compuerta completa en main: lint src 0 err, typecheck, 5250 tests, build, replay 001–093 + verify-schema OK; migración 093 aplicada en remoto 2026-11-04 (API de gestión), junto con 088/089 que faltaban"
+    },
+    {
+      "id": "n13.5",
+      "name": "cabbity-health-connector",
+      "phase": "13",
+      "status": "done",
+      "spec": "specs/cabbity-health-connector/",
+      "sdd": true,
+      "branch": "feat/cabbity-health-connector",
+      "worktree": ".claude/worktrees/cabbity-health-connector",
+      "depends_on": [
+        "n13.1"
+      ],
+      "note": "Encargo del humano (2026-11-05): conector de Cabbity Health (API de terceros, https://api.health.cabbity.com/api/integrations/v1, Bearer chk_live_..., OpenAPI en docs/integrations/cabbity-health-openapi.json). La clave de prueba del centro Rehactive la tiene Brian y se pega en Ajustes > Integraciones, NUNCA en el repo. Define la integración y sus operaciones en el catálogo declarativo de n13.1 y amplía el modelo justo lo que Health exige.",
+      "acceptance": [
+        "A1 Definición versionada en el repo de la integración cabbity-health (base_url, bearer, test_path /me, credential_help) y de sus operaciones a partir del OpenAPI, con description y response_description pensadas para que una IA sepa cuándo usarlas; carga idempotente al catálogo con un script al estilo scripts/paypal-bootstrap-catalog.ts (service role), no a mano en /platform.",
+        "A2 El modelo declarativo cubre lo que Health exige: cabecera Idempotency-Key (obligatoria en POST /appointments, aceptada en el resto de escrituras) generada por el ejecutor (UUID por llamada), nunca pedida al modelo ni al flow; cuerpo anidado consent{accepted,accepted_at,reference} de POST /patients; query repetible status[] de GET /appointments (o se documenta por qué se omite).",
+        "A3 Errores de Health {error:{code,message,field,details,request_id}} conservados en el resultado del ejecutor (code y message) para que IA y flow puedan reaccionar (409 idempotency_mismatch, 422, 401 api_key_expired o api_key_revoked, 429 rate_limited); la prueba de conexión reporta auth_failed en 401.",
+        "A4 Catálogo probado contra el servicio real por guion manual (GET /me centro y scopes; GET /practitioners; GET /availability) y por tests vitest con fetch simulado para las peticiones construidas (ruta, query, cuerpo anidado, cabecera de idempotencia).",
+        "A5 Migración solo si hace falta columna nueva (numeración siguiente libre; 092 la reserva n13.2), idempotente, con verify-schema y checks. Documentación docs/integrations/cabbity-health.md: cómo cargar el catálogo, cómo activa el cliente, límites (120/min, 3 citas futuras por paciente, sin datos clínicos). Compuerta en verde."
+      ],
+      "approval": "humano 2026-11-05 («dale»): aprobada con todas las decisiones recomendadas del spec",
+      "implementation": "progress/impl_cabbity-health-connector.md",
+      "commits": [
+        "69d67dd",
+        "80942a2",
+        "5b33da6",
+        "ea868d7",
+        "254316a"
+      ],
+      "review": "APPROVED (2026-11-05) → progress/review_cabbity-health-connector.md; guion §M1 de lectura y test vivo 7/7 corridos por el líder",
+      "merged": "main 2026-11-05 (ff 69d67dd); pusheada 2026-11-05 con n13.3"
     }
   ]
 }
