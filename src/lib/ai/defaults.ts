@@ -1,4 +1,6 @@
 import type { AiProvider } from './types';
+import { buildToolsPromptSection } from './tools/prompt';
+import type { AiToolset } from './tools/types';
 
 // ============================================================
 // Tunables + prompt scaffold for the AI reply assistant.
@@ -61,8 +63,13 @@ export function buildSystemPrompt(args: {
    *  has since returned it (see `stripHandoffNotices`). Teaches the model
    *  to pick the thread back up instead of handing off again. */
   resumedAfterHandoff?: boolean;
+  /** n13.3: integration tools offered this turn. Without it (or with no
+   *  tools) the prompt is byte-for-byte the one before n13.3 (R27). */
+  tools?: AiToolset;
+  /** Clock for the tools section (tests). */
+  now?: Date;
 }): string {
-  const { userPrompt, mode, knowledge, resumedAfterHandoff } = args;
+  const { userPrompt, mode, knowledge, resumedAfterHandoff, tools, now } = args;
   const parts: string[] = [
     'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
       'You are shown the recent WhatsApp conversation between the business (assistant) and a customer (user). ' +
@@ -88,6 +95,12 @@ export function buildSystemPrompt(args: {
 
   if (userPrompt && userPrompt.trim()) {
     parts.push(`Business context and instructions:\n${userPrompt.trim()}`);
+  }
+
+  if (tools && tools.tools.length > 0) {
+    parts.push(
+      buildToolsPromptSection(tools, { now: now ?? new Date(), mode })
+    );
   }
 
   if (knowledge && knowledge.length > 0) {

@@ -50,3 +50,63 @@ describe('buildSystemPrompt — hand-off protocol', () => {
     );
   });
 });
+
+describe('buildSystemPrompt — integration tools (n13.3, R25, R27)', () => {
+  const toolset = {
+    tools: [
+      {
+        name: 'health__search',
+        integrationSlug: 'health',
+        integrationName: 'Health',
+        operationKey: 'search',
+        method: 'GET' as const,
+        description: 'Search',
+        parameters: { type: 'object' as const, properties: {} },
+        declaredParams: [],
+      },
+    ],
+    integrations: [
+      { slug: 'health', name: 'Health', instructions: null, timezone: null },
+    ],
+  };
+  const now = new Date('2026-11-05T14:31:00Z');
+
+  it('without tools the text is identical to the call without the parameter', () => {
+    for (const mode of ['draft', 'auto_reply'] as const) {
+      const base = buildSystemPrompt({
+        userPrompt: 'Ctx',
+        mode,
+        knowledge: ['k1'],
+      });
+      expect(
+        buildSystemPrompt({ userPrompt: 'Ctx', mode, knowledge: ['k1'], now })
+      ).toBe(base);
+      expect(
+        buildSystemPrompt({
+          userPrompt: 'Ctx',
+          mode,
+          knowledge: ['k1'],
+          tools: { tools: [], integrations: toolset.integrations },
+          now,
+        })
+      ).toBe(base);
+    }
+  });
+
+  it('adds the tools section after the business context and before the knowledge base', () => {
+    const prompt = buildSystemPrompt({
+      userPrompt: 'Ctx',
+      mode: 'auto_reply',
+      knowledge: ['k1'],
+      tools: toolset,
+      now,
+    });
+    const ctx = prompt.indexOf('Business context and instructions');
+    const tools = prompt.indexOf('Tools: you can call tools');
+    const kb = prompt.indexOf('Knowledge base');
+    expect(ctx).toBeGreaterThan(-1);
+    expect(tools).toBeGreaterThan(ctx);
+    expect(kb).toBeGreaterThan(tools);
+    expect(prompt).toContain('2026-11-05T14:31:00Z (UTC)');
+  });
+});
