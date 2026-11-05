@@ -4,13 +4,13 @@ Orden pensado para que cada paso deje la compuerta dirigida en verde
 (`./init.sh feature n13.3 --test <ruta>...`). Los tests van junto al código (`*.test.ts[x]`).
 Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el código está mal.
 
-- [ ] **T1 Migración 094 y esquema** — `supabase/migrations/094_integration_ai_tools.sql`
+- [x] **T1 Migración 094 y esquema** — `supabase/migrations/094_integration_ai_tools.sql`
   (design §2) y bloque `-- 094` en `supabase/ci/verify-schema.sql`. Validar con
   `scripts/replay-migrations.sh` (aplicada dos veces) y escribir
   `progress/checks_integration-ai-tools.sql` (checks de CHECK y default).
   Cubre **R31** (y la parte SQL de **R30**). Prueba: replay verde + SQL del harness.
 
-- [ ] **T2 Esquema de herramientas (puro)** — `src/lib/ai/tools/types.ts`, `schema.ts`.
+- [x] **T2 Esquema de herramientas (puro)** — `src/lib/ai/tools/types.ts`, `schema.ts`.
   Cubre **R4, R5, R6, R7, R8, R9**. Test `src/lib/ai/tools/schema.test.ts`: orden y tope de 20;
   `draft` deja solo `GET`; nombres `health__search_patient`, colisión y nombre > 64 → `op<n>_…`,
   todos casan con `^[a-zA-Z][a-zA-Z0-9_]{0,63}$`; tipos, `required`, `enum` en string y en
@@ -18,7 +18,7 @@ Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el cód
   `required` propagado; choque `a`/`a.b` → operación fuera; nombre `constructor` no rompe;
   descripción con «Write operation» para `POST` y ≤ 1024.
 
-- [ ] **T3 Argumentos y resultados (puro)** — `src/lib/ai/tools/args.ts`, `result.ts`.
+- [x] **T3 Argumentos y resultados (puro)** — `src/lib/ai/tools/args.ts`, `result.ts`.
   Cubre **R16, R17, R23, R24** (y los payloads de R18/R21). Tests `args.test.ts`
   (`{a:{b:1}}` → `{'a.b':1}`, arrays hoja, profundidad 4, no-objeto → `{}`, propiedades heredadas
   ignoradas) y `result.test.ts` (ok bajo 8192; ok sobre 8192 → `truncated`, ≤ 8192 bytes, sin
@@ -26,7 +26,7 @@ Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el cód
   `http_error` 404 con su hint; `error.code/message` opcionales cortados a 300; `unknown_tool`,
   `invalid_arguments`, `limit_reached`, `error`).
 
-- [ ] **T4 Sección de prompt** — `src/lib/ai/tools/prompt.ts` y `buildSystemPrompt` en
+- [x] **T4 Sección de prompt** — `src/lib/ai/tools/prompt.ts` y `buildSystemPrompt` en
   `src/lib/ai/defaults.ts` (parámetros opcionales `tools`, `now`).
   Cubre **R25, R26, R27**. Test `prompt.test.ts`: `formatNowInZone(new Date('2026-11-05T14:31:00Z'),
   'America/Santo_Domingo')` → `2026-11-05T10:31:00-04:00`; zona inválida → `null`; la sección
@@ -35,7 +35,7 @@ Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el cód
   el handoff. En `src/lib/ai/defaults.test.ts` (casos nuevos): sin `tools` el texto es idéntico al
   de antes (comparación con la llamada sin el parámetro).
 
-- [ ] **T5 Adaptadores con herramientas** — `src/lib/ai/providers/shared.ts` (`ToolSpec`,
+- [x] **T5 Adaptadores con herramientas** — `src/lib/ai/providers/shared.ts` (`ToolSpec`,
   `ToolStep`, `ProviderToolArgs`, `ProviderToolResult`, `sumUsage`, `parseToolArguments`) y
   `generate<X>WithTools` en `anthropic.ts`, `openai.ts`, `gemini.ts` (design §4).
   Cubre **R10, R11, R12, R13, R14**. Tests con `fetch` simulado (`vi.stubGlobal`):
@@ -47,7 +47,7 @@ Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el cód
   JSON → `INVALID_ARGS`, `max_tokens`/`refusal`/`length`/`MAX_TOKENS` → sin llamadas; sin texto ni
   llamadas → `empty_response`. R14: `src/lib/ai/generate.test.ts` existente sin tocar sigue verde.
 
-- [ ] **T6 Bucle** — `src/lib/ai/tools/loop.ts` y la rama nueva de `generateReply` en
+- [x] **T6 Bucle** — `src/lib/ai/tools/loop.ts` y la rama nueva de `generateReply` en
   `src/lib/ai/generate.ts` (`GenerateArgs.tools`, `GenerateResult.toolsUsed?`).
   Cubre **R15, R17, R18, R19, R20, R21, R22, R37** (suma) y **R29** (logs del bucle). Test
   `loop.test.ts` con `callProvider` y `execute` simulados y reloj inyectado: orden secuencial y
@@ -59,14 +59,14 @@ Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el cód
   sumado de tres vueltas y `null` si ninguna informa; `console.*` espiado no contiene credencial,
   valores de argumentos ni del `data`.
 
-- [ ] **T7 Carga de herramientas** — `src/lib/ai/tools/load.ts`.
+- [x] **T7 Carga de herramientas** — `src/lib/ai/tools/load.ts`.
   Cubre **R1, R2, R3** y la parte de carga de **R28**. Test `load.test.ts` con base simulada
   (patrón de `src/lib/integrations/integrations.test-support.ts`): solo filas con `is_enabled`,
   `ai_enabled`, credencial, integración y operación activas; plan sin `integrations` → vacío;
   error de base → vacío + un `console.error` fijo; `entitlements` pasados no vuelven a pedirse;
   la consulta a `account_integrations` lleva `.eq('account_id', A)`.
 
-- [ ] **T8 Llamadores** — `src/lib/ai/auto-reply.ts`, `src/app/api/ai/playground/route.ts`,
+- [x] **T8 Llamadores** — `src/lib/ai/auto-reply.ts`, `src/app/api/ai/playground/route.ts`,
   `src/app/api/ai/draft/route.ts` (design §7).
   Cubre **R5** (draft), **R35** y **R36** (contrato de la respuesta), **R37** (una fila de
   `ai_usage_log` con la suma), **R38**. Tests nuevos `src/lib/ai/auto-reply.tools.test.ts`,
@@ -77,7 +77,7 @@ Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el cód
   messages}`. Los tests existentes (`auto-reply.test.ts`, `playground/route.test.ts`, borrador)
   pasan sin cambios.
 
-- [ ] **T9 Ajustes: API** — `src/lib/integrations/{types,account}.ts` (`aiEnabled`,
+- [x] **T9 Ajustes: API** — `src/lib/integrations/{types,account}.ts` (`aiEnabled`,
   `aiInstructions`, `aiTimezone`, `validateAiSettings`, `updateAccountIntegrationAi`) y `PATCH` en
   `src/app/api/account/integrations/[integrationId]/route.ts`.
   Cubre **R32, R33**. Tests en `[integrationId]/route.test.ts` (casos nuevos: 200 y vista
@@ -86,7 +86,7 @@ Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el cód
   `src/app/api/account/integrations/route.test.ts` (la vista trae los tres campos; `false`/`null`
   si no está activada). `enableAccountIntegration` no pisa `ai_*` (caso en el test de la ruta PUT).
 
-- [ ] **T10 Ajustes, playground y compositor: UI + i18n** —
+- [x] **T10 Ajustes, playground y compositor: UI + i18n** —
   `src/components/settings/integration-ai-controls.tsx` (usado desde
   `integrations-settings.tsx`), `src/components/agents/ai-tools-used.tsx` (usado desde
   `ai-playground.tsx`), toast en `src/components/inbox/message-composer.tsx`, claves de design §10
@@ -97,17 +97,17 @@ Ninguna task modifica los tests existentes de IA (R38): si uno se rompe, el cód
   herramienta; aviso del playground presente. `src/i18n/messages.test.ts` verde. Sin capturas:
   si se abre el navegador, se aserta texto/`disabled`, no se guarda imagen.
 
-- [ ] **T11 Aislamiento CP3** — casos nuevos en `src/lib/security/tenant-isolation.test.ts`
+- [x] **T11 Aislamiento CP3** — casos nuevos en `src/lib/security/tenant-isolation.test.ts`
   (design §11 a–c).
   Cubre **R28, R30** (fila de `integration_calls` con `source:'ai'` y `account_id` A en la base
   simulada), **R29**. Prueba: los tres casos verdes con dos cuentas y credenciales distintas.
 
-- [ ] **T12 Guion manual** — dejar en `progress/impl_integration-ai-tools.md` el guion de design
+- [x] **T12 Guion manual** — dejar en `progress/impl_integration-ai-tools.md` el guion de design
   §12 listo para el humano (no lo ejecuta el agente: depende de claves reales de los tres
   proveedores y de una integración de pruebas).
   Cubre **R41** [M].
 
-- [ ] **T13 Compuerta en verde + CHANGELOG** — `./init.sh feature n13.3 --test <cada test nuevo y
+- [x] **T13 Compuerta en verde + CHANGELOG** — `./init.sh feature n13.3 --test <cada test nuevo y
   tocado>... --lint <archivos tocados>`; entrada en `CHANGELOG.md` (formato de `CONTRIBUTING.md`):
   «La IA de respuesta automática puede usar las integraciones activadas como herramientas».
   Cubre **R40** (y confirma **R38**).
