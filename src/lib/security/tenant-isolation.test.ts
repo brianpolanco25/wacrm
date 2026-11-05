@@ -419,6 +419,8 @@ import * as accountIntegrations from '@/app/api/account/integrations/route';
 import * as accountIntegrationById from '@/app/api/account/integrations/[integrationId]/route';
 import * as accountIntegrationTest from '@/app/api/account/integrations/[integrationId]/test/route';
 import { executeIntegrationOperation } from '@/lib/integrations/execute';
+import { loadAiToolset } from '@/lib/ai/tools/load';
+import { runToolLoop } from '@/lib/ai/tools/loop';
 
 // ---- seed ------------------------------------------------------------
 
@@ -5952,6 +5954,146 @@ describe('integrations (n13.1, service role)', () => {
         .filter((e) => e.rls === null)
         .every((e) => e.table === 'platform_admins')
     ).toBe(true);
+  });
+
+  // n13.3 (R28–R30, design §11): las herramientas de IA. B tiene la misma
+  // integración activada, con otra credencial, y también «usar en IA».
+  const aiRow = (id: string) =>
+    h.db.rows('account_integrations').find((r) => r.id === id)!;
+
+  it('(7, n13.3 a) the toolset of each account comes from its own activation only', async () => {
+    aiRow('ai-a').ai_enabled = true;
+    aiRow('ai-a').ai_instructions = 'Instrucciones de A';
+    aiRow('ai-b').ai_enabled = false;
+    aiRow('ai-b').ai_instructions = 'Instrucciones de B';
+    const beforeB = h.db.snapshot(B);
+
+    const forB = await loadAiToolset(h.db.admin as never, B, {
+      mode: 'auto_reply',
+    });
+    expect(forB.tools).toEqual([]);
+
+    const forA = await loadAiToolset(h.db.admin as never, A, {
+      mode: 'auto_reply',
+    });
+    expect(forA.tools.map((t) => t.name)).toEqual(['health__list_doctors']);
+    expect(JSON.stringify(forA)).not.toContain('Instrucciones de B');
+    expect(forA.integrations[0].instructions).toBe('Instrucciones de A');
+    expectBUnchanged(beforeB);
+    expect(
+      h.db.log.filter(
+        (e) => e.table === 'account_integrations' && e.op === 'select'
+      ).length
+    ).toBeGreaterThan(0);
+  });
+
+  it('(8, n13.3 b) a tool call of A runs with the credential of A, logs for A, and keeps logs clean', async () => {
+    aiRow('ai-a').ai_enabled = true;
+    aiRow('ai-b').ai_enabled = true;
+    const ARG = 'cedula-00112345678';
+    const DATA = 'Doctora Ana Pérez';
+    h.db.rows('integration_operations')[0].params = [
+      {
+        name: 'specialty',
+        in: 'query',
+        type: 'string',
+        required: false,
+        description: 'Especialidad',
+      },
+    ];
+    const beforeB = h.db.snapshot(B);
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(JSON.stringify([{ name: DATA }]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const spies = (['log', 'info', 'warn', 'error'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => {})
+    );
+
+    const toolset = await loadAiToolset(h.db.admin as never, A, {
+      mode: 'auto_reply',
+    });
+    const rounds = [
+      {
+        text: '',
+        toolCalls: [
+          { id: 'c1', name: 'health__list_doctors', args: { specialty: ARG } },
+        ],
+        usage: null,
+        assistant: [],
+      },
+      { text: 'Hay una doctora.', toolCalls: [], usage: null, assistant: [] },
+    ];
+    const result = await runToolLoop(
+      {
+        config: {
+          provider: 'anthropic',
+          model: 'm',
+          apiKey: 'sk-provider-key',
+          keySource: 'account',
+          systemPrompt: null,
+          isActive: true,
+          autoReplyEnabled: true,
+          autoReplyMaxPerConversation: 3,
+          handoffMode: 'queue',
+          handoffAgentId: null,
+          handoffMessage: null,
+          embeddingsApiKey: null,
+          embeddingsProvider: 'openai',
+        },
+        systemPrompt: 'SYS',
+        messages: [{ role: 'user', content: 'doctores' }],
+        toolset,
+        db: h.db.admin as never,
+        accountId: A,
+      },
+      { callProvider: async () => rounds.shift()! }
+    );
+    expect(result.toolsUsed).toEqual([
+      { integration: 'Cabbity Health', operation: 'list_doctors', ok: true },
+    ]);
+    const init = (fetchSpy.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      `Bearer ${CRED_A}`
+    );
+    expect(JSON.stringify(fetchSpy.mock.calls)).not.toContain(CRED_B);
+    expectBUnchanged(beforeB);
+    expect(
+      h.db.rows('integration_calls').filter((r) => r.account_id === A)
+    ).toMatchObject([
+      { source: 'ai', operation_key: 'list_doctors', outcome: 'ok' },
+    ]);
+
+    const logged = JSON.stringify(spies.map((sp) => sp.mock.calls));
+    for (const secret of [CRED_A, CRED_B, ARG, DATA, 'sk-provider-key']) {
+      expect(logged).not.toContain(secret);
+    }
+    spies.forEach((sp) => sp.mockRestore());
+  });
+
+  it('(9, n13.3 c) PATCH of the AI settings as A changes only the row of A', async () => {
+    const beforeB = h.db.snapshot(B);
+    const res = await accountIntegrationById.PATCH(
+      req('PATCH', `/api/account/integrations/${HEALTH}`, {
+        aiEnabled: true,
+        aiInstructions: 'Solo A',
+        aiTimezone: 'America/Santo_Domingo',
+      }),
+      params({ integrationId: HEALTH })
+    );
+    expect(res.status).toBe(200);
+    expectNoBIds(await res.json());
+    expectBUnchanged(beforeB);
+    expect(aiRow('ai-a')).toMatchObject({
+      ai_enabled: true,
+      ai_instructions: 'Solo A',
+      ai_timezone: 'America/Santo_Domingo',
+    });
+    expect(aiRow('ai-b').ai_enabled).toBeUndefined();
   });
 
   it('an operator moving the origin needs confirmation, then wipes every credential', async () => {
