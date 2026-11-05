@@ -38,7 +38,7 @@ const { FakeDatabase } = await import('@/lib/security/fake-supabase');
 const support = await import('@/lib/integrations/integrations.test-support');
 const { decrypt } = await import('@/lib/whatsapp/encryption');
 const { __resetRateLimitForTests } = await import('@/lib/rate-limit');
-const { PUT, DELETE } = await import('./route');
+const { PUT, DELETE, PATCH } = await import('./route');
 const { ACCOUNT_A, HEALTH_ID, DRAFT_ID, USER_A, accountCtx } = support;
 
 const params = (integrationId: string) => ({
@@ -51,6 +51,16 @@ function put(id: string, body: unknown) {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+    }),
+    params(id)
+  );
+}
+function patch(id: string, body: unknown, raw?: string) {
+  return PATCH(
+    new Request('http://localhost', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: raw ?? JSON.stringify(body),
     }),
     params(id)
   );
@@ -166,6 +176,129 @@ describe('PUT — activate / change the credential (R15)', () => {
     h.ctx = accountCtx('admin', { impersonated: true });
     expect((await put(HEALTH_ID, { credential: CRED })).status).toBe(403);
     expect(rowsA()).toHaveLength(0);
+  });
+});
+
+describe('PUT keeps the AI settings (n13.3)', () => {
+  it('changing the credential does not touch ai_*', async () => {
+    await put(HEALTH_ID, { credential: 'sanctum-token-ABCDEFGH-1234' });
+    Object.assign(rowsA()[0], {
+      ai_enabled: true,
+      ai_instructions: 'Citas de 30 min.',
+      ai_timezone: 'America/Santo_Domingo',
+    });
+    await put(HEALTH_ID, { credential: 'second-credential-XYZW' });
+    expect(rowsA()[0]).toMatchObject({
+      ai_enabled: true,
+      ai_instructions: 'Citas de 30 min.',
+      ai_timezone: 'America/Santo_Domingo',
+    });
+  });
+});
+
+describe('PATCH — AI settings (n13.3, R32)', () => {
+  beforeEach(async () => {
+    await put(HEALTH_ID, { credential: 'sanctum-token-ABCDEFGH-1234' });
+  });
+
+  it('stores the three fields and answers the updated view', async () => {
+    const res = await patch(HEALTH_ID, {
+      aiEnabled: true,
+      aiInstructions: '  Citas de 30 min.  ',
+      aiTimezone: 'America/Santo_Domingo',
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).integration).toMatchObject({
+      id: HEALTH_ID,
+      aiEnabled: true,
+      aiInstructions: 'Citas de 30 min.',
+      aiTimezone: 'America/Santo_Domingo',
+    });
+    expect(rowsA()[0]).toMatchObject({
+      ai_enabled: true,
+      ai_instructions: 'Citas de 30 min.',
+      ai_timezone: 'America/Santo_Domingo',
+    });
+  });
+
+  it('a partial patch leaves the other fields alone; empty text and null clear', async () => {
+    await patch(HEALTH_ID, {
+      aiEnabled: true,
+      aiInstructions: 'x',
+      aiTimezone: 'UTC',
+    });
+    await patch(HEALTH_ID, { aiInstructions: '   ' });
+    expect(rowsA()[0]).toMatchObject({
+      ai_enabled: true,
+      ai_instructions: null,
+      ai_timezone: 'UTC',
+    });
+    await patch(HEALTH_ID, { aiTimezone: null, aiEnabled: false });
+    expect(rowsA()[0]).toMatchObject({ ai_enabled: false, ai_timezone: null });
+  });
+
+  it.each([
+    ['aiEnabled', { aiEnabled: 'yes' }],
+    ['aiInstructions', { aiInstructions: 'x'.repeat(2001) }],
+    ['aiInstructions', { aiInstructions: 42 }],
+    ['aiTimezone', { aiTimezone: 'Mars/Base' }],
+    ['aiTimezone', { aiTimezone: 7 }],
+    ['body', {}],
+    ['body', { other: true }],
+  ])('400 with field %s', async (field, body) => {
+    const before = { ...rowsA()[0] };
+    const res = await patch(HEALTH_ID, body);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field });
+    expect(rowsA()[0]).toEqual(before);
+  });
+
+  it('400 for an empty body', async () => {
+    const res = await patch(HEALTH_ID, null, '');
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: 'body' });
+  });
+
+  it('accepts exactly 2000 characters', async () => {
+    expect(
+      (await patch(HEALTH_ID, { aiInstructions: 'x'.repeat(2000) })).status
+    ).toBe(200);
+  });
+
+  it('402 without the integrations feature', async () => {
+    h.features = ['api'];
+    expect((await patch(HEALTH_ID, { aiEnabled: true })).status).toBe(402);
+    expect(rowsA()[0].ai_enabled).toBeUndefined();
+  });
+
+  it('404 when this account has not activated it (or deactivated it)', async () => {
+    expect((await patch(DRAFT_ID, { aiEnabled: true })).status).toBe(404);
+    expect((await patch('not-a-uuid', { aiEnabled: true })).status).toBe(404);
+    await del(HEALTH_ID);
+    expect((await patch(HEALTH_ID, { aiEnabled: true })).status).toBe(404);
+    expect(rowsA()[0].ai_enabled).toBeUndefined();
+  });
+
+  it('404 on an integration only another account activated; its row is untouched', async () => {
+    const rowB = h.db
+      .rows('account_integrations')
+      .find((r) => r.id === 'ai-b-retired')!;
+    const before = { ...rowB };
+    const { RETIRED_ID } = support;
+    expect((await patch(RETIRED_ID, { aiEnabled: true })).status).toBe(404);
+    expect(rowB).toEqual(before);
+  });
+
+  it.each(['agent', 'viewer'] as const)('403 for %s', async (role) => {
+    h.ctx = accountCtx(role);
+    expect((await patch(HEALTH_ID, { aiEnabled: true })).status).toBe(403);
+    expect(rowsA()[0].ai_enabled).toBeUndefined();
+  });
+
+  it('403 inside a support session', async () => {
+    h.ctx = accountCtx('admin', { impersonated: true });
+    expect((await patch(HEALTH_ID, { aiEnabled: true })).status).toBe(403);
+    expect(rowsA()[0].ai_enabled).toBeUndefined();
   });
 });
 

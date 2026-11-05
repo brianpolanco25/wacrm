@@ -48,6 +48,49 @@ beforeEach(() => {
 });
 
 describe('GET /api/account/integrations', () => {
+  it('carries the AI settings of this account (n13.3, R33)', async () => {
+    Object.assign(
+      h.db.rows('account_integrations').find((r) => r.id === 'ai-a-health')!,
+      {
+        ai_enabled: true,
+        ai_instructions: 'Citas de 30 min.',
+        ai_timezone: 'America/Santo_Domingo',
+      }
+    );
+    // B's row for the same integration carries other values.
+    Object.assign(
+      h.db.rows('account_integrations').find((r) => r.id === 'ai-b-health')!,
+      { ai_enabled: false, ai_instructions: 'B only', ai_timezone: 'UTC' }
+    );
+    const body = await (await GET()).json();
+    expect(body.integrations[0]).toMatchObject({
+      aiEnabled: true,
+      aiInstructions: 'Citas de 30 min.',
+      aiTimezone: 'America/Santo_Domingo',
+    });
+    expect(JSON.stringify(body)).not.toContain('B only');
+  });
+
+  it('a deactivated integration reports false/null even with stored AI values (R33)', async () => {
+    Object.assign(
+      h.db.rows('account_integrations').find((r) => r.id === 'ai-a-health')!,
+      {
+        is_enabled: false,
+        credential: null,
+        ai_enabled: true,
+        ai_instructions: 'kept',
+        ai_timezone: 'UTC',
+      }
+    );
+    const body = await (await GET()).json();
+    expect(body.integrations[0]).toMatchObject({
+      enabled: false,
+      aiEnabled: false,
+      aiInstructions: null,
+      aiTimezone: null,
+    });
+  });
+
   it('returns the exact shape, with this account state and no credential', async () => {
     const res = await GET();
     expect(res.status).toBe(200);
@@ -85,6 +128,10 @@ describe('GET /api/account/integrations', () => {
           enabledAt: '2026-11-02T10:00:00.000Z',
           lastTestedAt: '2026-11-02T10:00:05.000Z',
           lastTestStatus: 'ok',
+          // n13.3 (R33): defaults of migration 094.
+          aiEnabled: false,
+          aiInstructions: null,
+          aiTimezone: null,
         },
       ],
     });

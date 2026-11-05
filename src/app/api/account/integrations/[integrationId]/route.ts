@@ -7,6 +7,9 @@
 //   DELETE  desactiva y borra la credencial (R17, D5). Admin+, sin
 //           sesión de soporte; se permite sin el plan, para que una
 //           cuenta que bajó de plan pueda limpiar.
+//   PATCH   ajustes de IA de la integración activada (n13.3, R32):
+//           `aiEnabled`, `aiInstructions`, `aiTimezone`. Admin+, sin
+//           sesión de soporte y con el plan.
 //
 // Rol de servicio acotado por el `accountId` de la sesión.
 // ============================================================
@@ -26,6 +29,8 @@ import {
   enableAccountIntegration,
   findActiveIntegration,
   loadAccountIntegrations,
+  updateAccountIntegrationAi,
+  validateAiSettings,
   validateCredential,
 } from '@/lib/integrations/account';
 import { UUID_RE } from '@/lib/platform/integrations';
@@ -109,6 +114,47 @@ export async function DELETE(_request: Request, { params }: Context) {
     );
     if (!found) return notFound();
     return NextResponse.json({ integrationId, enabled: false });
+  } catch (err) {
+    return toErrorResponse(err);
+  }
+}
+
+export async function PATCH(request: Request, { params }: Context) {
+  try {
+    const ctx = await requireRole('admin');
+    await assertNotSupportSession(ctx);
+    await assertPlanFeature(ctx.accountId, 'integrations');
+
+    const limit = checkRateLimit(
+      `admin:integrations:${ctx.userId}`,
+      RATE_LIMITS.adminAction
+    );
+    if (!limit.success) return rateLimitResponse(limit);
+
+    const { integrationId } = await params;
+    if (!UUID_RE.test(integrationId)) return notFound();
+
+    const { data: body } = await readJsonBody(request, { allowEmpty: true });
+    const check = validateAiSettings(body);
+    if (!check.ok) {
+      return NextResponse.json(
+        { error: check.error, field: check.field },
+        { status: 400 }
+      );
+    }
+
+    const db = supabaseAdmin();
+    const found = await updateAccountIntegrationAi(
+      db,
+      ctx.accountId,
+      integrationId,
+      check.value
+    );
+    if (!found) return notFound();
+    const views = await loadAccountIntegrations(db, ctx.accountId);
+    return NextResponse.json({
+      integration: views.find((v) => v.id === integrationId) ?? null,
+    });
   } catch (err) {
     return toErrorResponse(err);
   }

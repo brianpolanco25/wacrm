@@ -13,6 +13,11 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { isValidTimeZone } from '@/lib/ai/tools/prompt';
+import {
+  AI_INSTRUCTIONS_MAX,
+  type AccountIntegrationAiFields,
+} from '@/lib/ai/tools/types';
 import { encrypt } from '@/lib/whatsapp/encryption';
 
 import type {
@@ -71,7 +76,14 @@ interface ActivationRow {
   enabled_at: string | null;
   last_tested_at: string | null;
   last_test_status: IntegrationTestStatus | null;
+  ai_enabled?: boolean | null;
+  ai_instructions?: string | null;
+  ai_timezone?: string | null;
 }
+
+/** La vista de Ajustes con los campos de IA de n13.3 (R33). */
+export type AccountIntegrationWithAi = AccountIntegrationView &
+  AccountIntegrationAiFields;
 
 interface OperationSummaryRow {
   integration_id: string;
@@ -87,7 +99,7 @@ const CATALOG_COLUMNS =
   'id, slug, name, description, logo_url, auth_scheme, auth_header_name, credential_help, is_active, sort_order';
 // Sin `credential`: ni el cifrado sale de aquí.
 const ACTIVATION_COLUMNS =
-  'integration_id, is_enabled, credential_last4, enabled_at, last_tested_at, last_test_status';
+  'integration_id, is_enabled, credential_last4, enabled_at, last_tested_at, last_test_status, ai_enabled, ai_instructions, ai_timezone';
 
 /**
  * R14: integraciones activas del catálogo con sus operaciones activas, y
@@ -97,7 +109,7 @@ const ACTIVATION_COLUMNS =
 export async function loadAccountIntegrations(
   db: SupabaseClient,
   accountId: string
-): Promise<AccountIntegrationView[]> {
+): Promise<AccountIntegrationWithAi[]> {
   const { data: acts, error: actsError } = await db
     .from('account_integrations')
     .select(ACTIVATION_COLUMNS)
@@ -163,6 +175,10 @@ export async function loadAccountIntegrations(
       enabledAt: enabled ? (act?.enabled_at ?? null) : null,
       lastTestedAt: enabled ? (act?.last_tested_at ?? null) : null,
       lastTestStatus: enabled ? (act?.last_test_status ?? null) : null,
+      // n13.3 (R33): solo con la integración activada.
+      aiEnabled: enabled ? act?.ai_enabled === true : false,
+      aiInstructions: enabled ? (act?.ai_instructions ?? null) : null,
+      aiTimezone: enabled ? (act?.ai_timezone ?? null) : null,
     };
   });
 }
@@ -226,6 +242,111 @@ export async function disableAccountIntegration(
     .update({ is_enabled: false, credential: null, credential_last4: null })
     .eq('account_id', accountId)
     .eq('integration_id', integrationId)
+    .select('id');
+  if (error) throw error;
+  return Array.isArray(data) && data.length > 0;
+}
+
+/** Columnas de IA que escribe el PATCH de Ajustes (n13.3, R32). */
+export interface AiSettingsPatch {
+  ai_enabled?: boolean;
+  ai_instructions?: string | null;
+  ai_timezone?: string | null;
+}
+
+export type AiSettingsValidation =
+  | { ok: true; value: AiSettingsPatch }
+  | {
+      ok: false;
+      field: 'aiEnabled' | 'aiInstructions' | 'aiTimezone' | 'body';
+      error: string;
+    };
+
+/**
+ * R32: `aiEnabled` boolean; `aiInstructions` texto ≤ 2000 o `null` (se
+ * recorta; `''` → `null`); `aiTimezone` zona IANA válida o `null`. Al
+ * menos una de las tres.
+ */
+export function validateAiSettings(body: unknown): AiSettingsValidation {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, field: 'body', error: 'Body must be a JSON object' };
+  }
+  const input = body as Record<string, unknown>;
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(input, k);
+  const value: AiSettingsPatch = {};
+
+  if (has('aiEnabled')) {
+    if (typeof input.aiEnabled !== 'boolean') {
+      return {
+        ok: false,
+        field: 'aiEnabled',
+        error: "'aiEnabled' must be a boolean",
+      };
+    }
+    value.ai_enabled = input.aiEnabled;
+  }
+  if (has('aiInstructions')) {
+    const raw = input.aiInstructions;
+    if (raw === null) {
+      value.ai_instructions = null;
+    } else if (typeof raw !== 'string') {
+      return {
+        ok: false,
+        field: 'aiInstructions',
+        error: "'aiInstructions' must be a string or null",
+      };
+    } else {
+      const trimmed = raw.trim();
+      if (trimmed.length > AI_INSTRUCTIONS_MAX) {
+        return {
+          ok: false,
+          field: 'aiInstructions',
+          error: `'aiInstructions' must be at most ${AI_INSTRUCTIONS_MAX} characters`,
+        };
+      }
+      value.ai_instructions = trimmed === '' ? null : trimmed;
+    }
+  }
+  if (has('aiTimezone')) {
+    const raw = input.aiTimezone;
+    if (raw === null || raw === '') {
+      value.ai_timezone = null;
+    } else if (typeof raw !== 'string' || !isValidTimeZone(raw)) {
+      return {
+        ok: false,
+        field: 'aiTimezone',
+        error: "'aiTimezone' must be a valid IANA time zone or null",
+      };
+    } else {
+      value.ai_timezone = raw;
+    }
+  }
+  if (Object.keys(value).length === 0) {
+    return {
+      ok: false,
+      field: 'body',
+      error: "Send at least one of 'aiEnabled', 'aiInstructions', 'aiTimezone'",
+    };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * R32: guarda los ajustes de IA en la fila de ESTA cuenta, solo si la
+ * integración está activada. `false` = sin fila activada (404).
+ */
+export async function updateAccountIntegrationAi(
+  db: SupabaseClient,
+  accountId: string,
+  integrationId: string,
+  patch: AiSettingsPatch
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('account_integrations')
+    .update(patch)
+    .eq('account_id', accountId)
+    .eq('integration_id', integrationId)
+    .eq('is_enabled', true)
     .select('id');
   if (error) throw error;
   return Array.isArray(data) && data.length > 0;
