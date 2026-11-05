@@ -5,6 +5,7 @@ import { __resetRateLimitForTests } from '@/lib/rate-limit';
 import { performIntegrationRequest } from './http';
 import type { BuiltRequest } from './request';
 import {
+  INTEGRATION_MAX_ERROR_BYTES,
   INTEGRATION_MAX_RESPONSE_BYTES,
   INTEGRATION_TIMEOUT_MS,
 } from './types';
@@ -254,5 +255,119 @@ describe('performIntegrationRequest', () => {
       now: () => t,
     });
     expect(r.latencyMs).toBe(250);
+  });
+});
+
+// ---- n13.5 (R19): el cuerpo de error JSON pequeño se conserva ----
+
+describe('performIntegrationRequest: remote errors (n13.5)', () => {
+  const HEALTH_422 = {
+    error: {
+      code: 'validation_failed',
+      message: 'El rango no puede pasar de 13 días.',
+      field: 'to',
+      details: { max_days: 13 },
+      request_id: 'req_x',
+    },
+  };
+
+  it('a 422 JSON error keeps code, message, field and request id', async () => {
+    const r = await performIntegrationRequest('acc-a', REQ, {
+      fetch: async () => json(HEALTH_422, { status: 422 }),
+      isDeliverable: publicHost,
+    });
+    expect(r).toEqual({
+      outcome: 'http_error',
+      status: 422,
+      data: null,
+      latencyMs: r.latencyMs,
+      remoteError: {
+        code: 'validation_failed',
+        message: 'El rango no puede pasar de 13 días.',
+        field: 'to',
+        requestId: 'req_x',
+      },
+    });
+  });
+
+  it('a 500 text/html body is discarded, without remoteError', async () => {
+    const r = await performIntegrationRequest('acc-a', REQ, {
+      fetch: async () =>
+        new Response(JSON.stringify(HEALTH_422), {
+          status: 500,
+          headers: { 'content-type': 'text/html' },
+        }),
+      isDeliverable: publicHost,
+    });
+    expect(r).toMatchObject({ outcome: 'http_error', status: 500 });
+    expect(r.remoteError).toBeUndefined();
+  });
+
+  it('a declared content-length over 8 KiB is cancelled unread', async () => {
+    const cancel = vi.fn(async () => {});
+    const getReader = vi.fn();
+    const res = {
+      status: 422,
+      headers: new Headers({
+        'content-length': '9000',
+        'content-type': 'application/json',
+      }),
+      body: { cancel, getReader },
+    } as unknown as Response;
+    const r = await performIntegrationRequest('acc-a', REQ, {
+      fetch: async () => res,
+      isDeliverable: publicHost,
+    });
+    expect(r).toMatchObject({ outcome: 'http_error', status: 422 });
+    expect(r.remoteError).toBeUndefined();
+    expect(cancel).toHaveBeenCalled();
+    expect(getReader).not.toHaveBeenCalled();
+  });
+
+  it('a stream past 8 KiB without content-length is cut, without remoteError', async () => {
+    const cancel = vi.fn();
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= 64 * 1024) return controller.close();
+        sent += 4 * 1024;
+        controller.enqueue(new TextEncoder().encode(' '.repeat(4 * 1024)));
+      },
+      cancel,
+    });
+    const r = await performIntegrationRequest('acc-a', REQ, {
+      fetch: async () =>
+        new Response(stream, {
+          status: 409,
+          headers: { 'content-type': 'application/json' },
+        }),
+      isDeliverable: publicHost,
+    });
+    expect(r).toMatchObject({ outcome: 'http_error', status: 409 });
+    expect(r.remoteError).toBeUndefined();
+    expect(cancel).toHaveBeenCalled();
+    expect(sent).toBeLessThanOrEqual(INTEGRATION_MAX_ERROR_BYTES + 8 * 1024);
+  });
+
+  it('a 302 with a JSON error body is not read', async () => {
+    const r = await performIntegrationRequest('acc-a', REQ, {
+      fetch: async () => json(HEALTH_422, { status: 302 }),
+      isDeliverable: publicHost,
+    });
+    expect(r).toMatchObject({ outcome: 'http_error', status: 302 });
+    expect(r.remoteError).toBeUndefined();
+  });
+
+  it('a 2xx is unchanged: no remoteError even with an error-shaped body', async () => {
+    const r = await performIntegrationRequest('acc-a', REQ, {
+      fetch: async () => json(HEALTH_422),
+      isDeliverable: publicHost,
+    });
+    expect(r).toEqual({
+      outcome: 'ok',
+      status: 200,
+      data: HEALTH_422,
+      latencyMs: r.latencyMs,
+    });
   });
 });

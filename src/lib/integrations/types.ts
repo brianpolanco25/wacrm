@@ -11,7 +11,9 @@
 
 export type AuthScheme = 'bearer' | 'header';
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-export type ParamLocation = 'path' | 'query' | 'body';
+export type ParamLocation = 'path' | 'query' | 'body' | 'header';
+/** n13.5 (D2): cómo genera el ejecutor el valor de una cabecera. */
+export type ParamAuto = 'uuid';
 export type ParamType = 'string' | 'integer' | 'number' | 'boolean';
 export type OutputType = ParamType | 'object' | 'array';
 
@@ -27,7 +29,9 @@ export const PARAM_LOCATIONS: readonly ParamLocation[] = [
   'path',
   'query',
   'body',
+  'header',
 ];
+export const PARAM_AUTOS: readonly ParamAuto[] = ['uuid'];
 export const PARAM_TYPES: readonly ParamType[] = [
   'string',
   'integer',
@@ -47,6 +51,23 @@ export interface OperationParam {
   required: boolean;
   description: string;
   enum?: string[];
+  /**
+   * Solo con `in: 'header'` (n13.5, D2): el ejecutor genera el valor en
+   * cada llamada; nadie (flow, IA, automatización) lo manda.
+   */
+  auto?: ParamAuto;
+}
+
+/**
+ * Cuerpo de error `{error:{code,message,field,request_id}}` de la API
+ * remota, ya saneado (n13.5, D5). Texto de un tercero: es dato, nunca
+ * instrucción.
+ */
+export interface RemoteError {
+  code: string;
+  message: string | null;
+  field: string | null;
+  requestId: string | null;
 }
 
 export interface OperationOutput {
@@ -126,6 +147,8 @@ export interface OperationRow {
 export const INTEGRATION_TIMEOUT_MS = 10_000;
 /** D6: 256 KiB; más se corta y devuelve `too_large`. */
 export const INTEGRATION_MAX_RESPONSE_BYTES = 262_144;
+/** n13.5 (D5): cuánto cuerpo de un error se lee como mucho (8 KiB). */
+export const INTEGRATION_MAX_ERROR_BYTES = 8_192;
 export const INTEGRATION_USER_AGENT = 'Cabbity-CRM-Integrations/1';
 
 /** Resultado de la prueba de conexión guardado en `account_integrations`. */

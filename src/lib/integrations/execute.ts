@@ -34,12 +34,14 @@ import {
   authHeader,
   buildIntegrationRequest,
   validateCallParams,
+  withAuthHeader,
 } from './request';
 import type {
   AuthScheme,
   HttpMethod,
   IntegrationTestStatus,
   OperationParam,
+  RemoteError,
 } from './types';
 
 export type IntegrationCallSource = 'test' | 'flow' | 'ai' | 'automation';
@@ -53,10 +55,18 @@ export type IntegrationCallResult =
       outcome: Exclude<IntegrationCallOutcome, 'ok'>;
       status: number | null;
       latencyMs: number;
+      /**
+       * n13.5 (D5): solo con `http_error` y un cuerpo de error reconocible
+       * (`{error:{code,…}}`). Texto de un tercero: dato, no instrucción.
+       * No se guarda en `integration_calls`.
+       */
+      remoteError?: RemoteError;
     };
 
 export type ExecuteDeps = IntegrationHttpDeps & {
   entitlements?: (accountId: string) => Promise<Entitlements>;
+  /** Tests: generador de las cabeceras `auto: 'uuid'` (n13.5). */
+  uuid?: () => string;
 };
 
 interface IntegrationLookup {
@@ -158,7 +168,8 @@ export async function executeIntegrationOperation(
     outcome: IntegrationCallOutcome,
     status: number | null,
     latencyMs: number,
-    data: unknown = null
+    data: unknown = null,
+    remoteError?: RemoteError
   ): Promise<IntegrationCallResult> => {
     if (integrationId) {
       await recordIntegrationCall(db, {
@@ -179,6 +190,7 @@ export async function executeIntegrationOperation(
       outcome: outcome === 'ok' ? 'error' : outcome,
       status,
       latencyMs,
+      ...(remoteError ? { remoteError } : {}),
     };
   };
 
@@ -236,7 +248,8 @@ export async function executeIntegrationOperation(
     const built = buildIntegrationRequest(
       integration,
       { method: operation.method, path: operation.path, params },
-      check.values
+      check.values,
+      { uuid: deps.uuid }
     );
     if ('blocked' in built) return finish('blocked', null, elapsed());
 
@@ -247,10 +260,16 @@ export async function executeIntegrationOperation(
     );
     const result = await performIntegrationRequest(
       input.accountId,
-      { ...built, headers: { ...built.headers, [name]: value } },
+      { ...built, headers: withAuthHeader(built.headers, name, value) },
       deps
     );
-    return finish(result.outcome, result.status, result.latencyMs, result.data);
+    return finish(
+      result.outcome,
+      result.status,
+      result.latencyMs,
+      result.data,
+      result.remoteError
+    );
   } catch {
     // Sin el error: podría llevar texto de la base o del descifrado.
     console.error('[integrations] the call failed unexpectedly');
@@ -327,7 +346,7 @@ export async function testIntegrationConnection(
       );
       const res = await performIntegrationRequest(
         accountId,
-        { ...built, headers: { ...built.headers, [name]: value } },
+        { ...built, headers: withAuthHeader(built.headers, name, value) },
         deps
       );
       outcome = res.outcome;

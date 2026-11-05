@@ -442,3 +442,169 @@ describe('testIntegrationConnection (R18)', () => {
     expect(calls().at(-1)).toMatchObject({ outcome: 'rate_limited' });
   });
 });
+
+// ---- n13.5: cabeceras autogeneradas, credencial única, error remoto ----
+
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function addBookOperation(headerName = 'Idempotency-Key') {
+  db.rows('integration_operations').push({
+    id: '9b000000-0000-4000-8000-000000000099',
+    integration_id: HEALTH_ID,
+    key: 'book',
+    name: 'Reservar',
+    description: 'Reserva',
+    method: 'POST',
+    path: '/appointments',
+    params: [
+      {
+        name: headerName,
+        in: 'header',
+        type: 'string',
+        required: true,
+        auto: 'uuid',
+        description: 'Idempotencia',
+      },
+      {
+        name: 'starts_at',
+        in: 'body',
+        type: 'string',
+        required: true,
+        description: 'Inicio',
+      },
+    ],
+    outputs: [],
+    response_description: null,
+    is_active: true,
+    sort_order: 9,
+  });
+}
+
+const healthError = (code: string, message: string) => ({
+  error: {
+    code,
+    message,
+    field: null,
+    details: { hint: SENTINEL },
+    request_id: 'req_x',
+  },
+});
+
+describe('executeIntegrationOperation: auto headers (n13.5, R10–R12)', () => {
+  it('Idempotency-Key from the caller → invalid_params, no request', async () => {
+    addBookOperation();
+    const r = await run('book', {
+      starts_at: '2026-11-12T10:30:00-04:00',
+      'Idempotency-Key': 'mine',
+    });
+    expect(r).toMatchObject({ ok: false, outcome: 'invalid_params' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(calls()[0]).toMatchObject({
+      outcome: 'invalid_params',
+      operation_key: 'book',
+    });
+  });
+
+  it('two executions carry two different UUID v4 keys', async () => {
+    addBookOperation();
+    await run('book', { starts_at: '2026-11-12T10:30:00-04:00' });
+    await run('book', { starts_at: '2026-11-12T10:30:00-04:00' });
+    const keys = fetchSpy.mock.calls.map(
+      (c) => (c[1].headers as Record<string, string>)['Idempotency-Key']
+    );
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(UUID_V4);
+    expect(keys[1]).toMatch(UUID_V4);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it('the injected generator is used', async () => {
+    addBookOperation();
+    await run('book', { starts_at: 'x' }, deps({ uuid: () => 'fixed-key' }));
+    expect(fetchSpy.mock.calls[0][1].headers['Idempotency-Key']).toBe(
+      'fixed-key'
+    );
+  });
+
+  it('a header named like the credential never travels twice', async () => {
+    const integ = db.rows('integrations').find((r) => r.id === HEALTH_ID)!;
+    integ.auth_scheme = 'header';
+    integ.auth_header_name = 'X-Api-Key';
+    addBookOperation('x-api-key');
+    await run('book', { starts_at: 'x' }, deps({ uuid: () => 'forged' }));
+    const headers = fetchSpy.mock.calls[0][1].headers as Record<string, string>;
+    const matching = Object.keys(headers).filter(
+      (k) => k.toLowerCase() === 'x-api-key'
+    );
+    expect(matching).toEqual(['X-Api-Key']);
+    expect(headers['X-Api-Key']).toBe(CRED_A);
+  });
+});
+
+describe('executeIntegrationOperation: remote errors (n13.5, R20)', () => {
+  it.each([
+    [409, 'idempotency_mismatch', 'La misma clave con otro cuerpo.'],
+    [422, 'validation_failed', 'El rango no puede pasar de 13 días.'],
+    [401, 'api_key_expired', 'La clave venció.'],
+    [401, 'api_key_revoked', 'La clave fue revocada.'],
+    [429, 'rate_limited', 'Demasiadas peticiones.'],
+  ])('HTTP %i %s → remoteError, the n13.1 row', async (status, code, msg) => {
+    fetchSpy.mockResolvedValue(json(healthError(code, msg), status));
+    const r = await run('list_doctors');
+    expect(r).toEqual({
+      ok: false,
+      outcome: 'http_error',
+      status,
+      latencyMs: expect.any(Number),
+      remoteError: { code, message: msg, field: null, requestId: 'req_x' },
+    });
+    expect(calls()).toHaveLength(1);
+    expect(Object.keys(calls()[0]).sort()).toEqual(
+      [
+        'account_id',
+        'created_at',
+        'id',
+        'integration_id',
+        'latency_ms',
+        'operation_key',
+        'outcome',
+        'source',
+        'status_code',
+        'updated_at',
+      ].sort()
+    );
+    expect(calls()[0]).toMatchObject({
+      outcome: 'http_error',
+      status_code: status,
+    });
+    const recorded = JSON.stringify(db.rows('integration_calls'));
+    expect(recorded).not.toContain(code);
+    expect(recorded).not.toContain(msg);
+    const consoleText = JSON.stringify([
+      ...errorSpy.mock.calls,
+      ...warnSpy.mock.calls,
+      ...logSpy.mock.calls,
+    ]);
+    expect(consoleText).not.toContain(msg);
+    expectNoSecretsLeaked();
+  });
+});
+
+describe('testIntegrationConnection with a Health 401 (n13.5, R21)', () => {
+  it('api_key_revoked → auth_failed, same result shape', async () => {
+    fetchSpy.mockResolvedValue(
+      json(healthError('api_key_revoked', 'La clave fue revocada.'), 401)
+    );
+    const r = await testIntegrationConnection(client(), ACCOUNT_A, HEALTH_ID, {
+      fetch: fetchSpy as unknown as typeof fetch,
+      isDeliverable: async () => true,
+    });
+    expect(r).toEqual({
+      result: 'auth_failed',
+      status: 401,
+      testedAt: expect.any(String),
+    });
+    expect(rowA()).toMatchObject({ last_test_status: 'auth_failed' });
+  });
+});

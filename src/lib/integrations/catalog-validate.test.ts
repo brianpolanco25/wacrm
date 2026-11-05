@@ -646,3 +646,125 @@ describe('validateOperationInput update', () => {
     });
   });
 });
+
+// ---- n13.5 (R9, R13): cabeceras autogeneradas y cuerpos anidados ----
+
+const IK = {
+  name: 'Idempotency-Key',
+  in: 'header',
+  type: 'string',
+  required: true,
+  auto: 'uuid',
+  description: 'Clave de idempotencia; la genera el CRM.',
+};
+
+function withParams(params: unknown[]) {
+  return validateOperationInput({ ...CREATE_APPOINTMENT, params }, 'create');
+}
+
+function paramsError(params: unknown[]): string | null {
+  const r = withParams(params);
+  return r.ok ? null : `${r.field}: ${r.error}`;
+}
+
+describe('validateOperationInput: header params (n13.5, R9)', () => {
+  it('accepts an auto uuid header and keeps `auto` in the output', () => {
+    const r = withParams([...CREATE_APPOINTMENT.params, IK]);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.value.params?.at(-1)).toEqual(IK);
+    // The n13.1 params keep their shape: no `auto` key added.
+    expect(r.ok && 'auto' in r.value.params![0]).toBe(false);
+  });
+
+  it.each([
+    ['without auto', { ...IK, auto: undefined }],
+    ['with an unknown auto', { ...IK, auto: 'random' }],
+    ['typed integer', { ...IK, type: 'integer' }],
+    ['optional', { ...IK, required: false }],
+    ['with an enum', { ...IK, enum: ['a'] }],
+    ['named Authorization', { ...IK, name: 'Authorization' }],
+    ['named content-type', { ...IK, name: 'content-type' }],
+    ['named Cookie', { ...IK, name: 'Cookie' }],
+    ['with a bad name', { ...IK, name: 'X Key' }],
+  ])('rejects a header %s', (_label, param) => {
+    expect(paramsError([param])).toMatch(/^params: /);
+  });
+
+  it('rejects two headers with the same name in another case', () => {
+    expect(paramsError([IK, { ...IK, name: 'idempotency-key' }])).toMatch(
+      /repeated/
+    );
+  });
+
+  it.each(['query', 'body', 'path'])('rejects auto with in: %s', (loc) => {
+    expect(
+      paramsError([
+        {
+          name: 'id',
+          in: loc,
+          type: 'string',
+          required: true,
+          description: 'x',
+          auto: 'uuid',
+        },
+      ])
+    ).toMatch(/auto is only allowed/);
+  });
+
+  it('a header is fine in a GET', () => {
+    const r = validateOperationInput(
+      {
+        key: 'list_x',
+        name: 'X',
+        description: 'x',
+        method: 'GET',
+        path: '/x',
+        params: [IK],
+      },
+      'create'
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('validateOperationInput: dotted body names (n13.5, R13)', () => {
+  const leaf = (name: string, loc = 'body') => ({
+    name,
+    in: loc,
+    type: 'boolean',
+    required: true,
+    description: 'x',
+  });
+
+  it('accepts consent.accepted in body and up to 3 parts', () => {
+    expect(withParams([leaf('consent.accepted'), leaf('a.b.c')]).ok).toBe(true);
+  });
+
+  it.each(['query', 'path'])('rejects a dotted name in %s', (loc) => {
+    expect(paramsError([leaf('consent.accepted', loc)])).toMatch(
+      /name must match/
+    );
+  });
+
+  it.each(['a.b.c.d', 'consent.', '.x', 'consent.Accepted', 'a..b'])(
+    'rejects %s',
+    (name) => {
+      expect(paramsError([leaf(name)])).toMatch(/dot-separated/);
+    }
+  );
+
+  it('rejects a name that is both a leaf and a prefix', () => {
+    expect(paramsError([leaf('consent'), leaf('consent.accepted')])).toMatch(
+      /both a value and an object/
+    );
+    expect(paramsError([leaf('a.b.c'), leaf('a.b')])).toMatch(
+      /both a value and an object/
+    );
+  });
+
+  it('siblings under one parent are fine', () => {
+    expect(
+      withParams([leaf('consent.accepted'), leaf('consent.reference')]).ok
+    ).toBe(true);
+  });
+});

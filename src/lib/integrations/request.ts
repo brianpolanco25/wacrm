@@ -12,6 +12,11 @@
 // que `../admin` no sea un segmento de punto; y si aun así el parser de
 // URL normaliza la ruta (p. ej. un valor que codificado sea `%2E%2E`),
 // la petición se bloquea.
+//
+// n13.5: cabeceras autogeneradas (`in: 'header'`, `auto: 'uuid'`, p. ej.
+// `Idempotency-Key`), que nadie manda y el constructor rellena con un
+// UUID nuevo por llamada; y nombres `body` con punto (`consent.accepted`)
+// que viajan como objetos anidados.
 // ============================================================
 
 import {
@@ -41,6 +46,83 @@ export type ParamCheck =
 
 /** Longitud máxima de un parámetro de texto. */
 export const PARAM_STRING_MAX = 2000;
+
+/** Profundidad máxima de un nombre con punto (igual que catalog-validate). */
+const MAX_DEPTH = 3;
+
+/**
+ * Los parámetros que puede mandar quien llama: todos menos los `auto`
+ * (n13.5, D2). El formulario del nodo de flow (n13.2) y el esquema de las
+ * herramientas de la IA (n13.3) listan estos, nunca `params` a pelo.
+ */
+export function callerParams(params: OperationParam[]): OperationParam[] {
+  return params.filter((p) => p.auto === undefined && p.in !== 'header');
+}
+
+export interface BuildOptions {
+  /** Generador de las cabeceras `auto: 'uuid'`. Tests: inyectado. */
+  uuid?: () => string;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+/**
+ * R15: `{consent:{accepted:true}}` → `{'consent.accepted': true}` cuando
+ * `consent` es prefijo de algún parámetro declarado con punto. Devuelve el
+ * nombre con punto repetido si la misma hoja llega por las dos vías.
+ */
+function flattenGiven(
+  declared: OperationParam[],
+  input: Record<string, unknown>
+): { ok: true; flat: Record<string, unknown> } | { ok: false; param: string } {
+  const prefixes = new Set<string>();
+  for (const p of declared) {
+    const parts = p.name.split('.');
+    for (let i = 1; i < parts.length; i++) {
+      prefixes.add(parts.slice(0, i).join('.'));
+    }
+  }
+  if (prefixes.size === 0) return { ok: true, flat: input };
+
+  const flat: Record<string, unknown> = {};
+  const walk = (
+    prefix: string,
+    obj: Record<string, unknown>,
+    depth: number
+  ): void => {
+    for (const key of Object.keys(obj)) {
+      const name = `${prefix}.${key}`;
+      const v = obj[key];
+      if (isPlainRecord(v) && prefixes.has(name) && depth < MAX_DEPTH) {
+        walk(name, v, depth + 1);
+      } else {
+        defineOwn(flat, name, v);
+      }
+    }
+  };
+  for (const key of Object.keys(input)) {
+    const v = input[key];
+    if (isPlainRecord(v) && prefixes.has(key)) {
+      walk(key, v, 2);
+    }
+  }
+  for (const key of Object.keys(input)) {
+    const v = input[key];
+    if (isPlainRecord(v) && prefixes.has(key)) continue;
+    if (Object.prototype.hasOwnProperty.call(flat, key)) {
+      return { ok: false, param: key };
+    }
+    defineOwn(flat, key, v);
+  }
+  return { ok: true, flat };
+}
 
 function isAbsent(v: unknown): boolean {
   return v === null || v === undefined || v === '';
@@ -100,13 +182,20 @@ export function validateCallParams(
   declared: OperationParam[],
   given: Record<string, unknown> | null | undefined
 ): ParamCheck {
-  const input = given ?? {};
-  const names = new Set(declared.map((p) => p.name));
+  const flattened = flattenGiven(declared, given ?? {});
+  if (!flattened.ok) {
+    return { ok: false, problem: 'unknown', param: flattened.param };
+  }
+  const input = flattened.flat;
+  // Un parámetro `auto` lo rellena el ejecutor: si alguien lo manda, es
+  // desconocido (R10).
+  const accepted = callerParams(declared);
+  const names = new Set(accepted.map((p) => p.name));
   for (const key of Object.keys(input)) {
     if (!names.has(key)) return { ok: false, problem: 'unknown', param: key };
   }
   const values: Record<string, ParamValue> = {};
-  for (const param of declared) {
+  for (const param of accepted) {
     const raw = Object.prototype.hasOwnProperty.call(input, param.name)
       ? input[param.name]
       : undefined;
@@ -140,6 +229,46 @@ function ownValue(
     : undefined;
 }
 
+/** Asigna una propiedad PROPIA (nunca un setter heredado como `__proto__`). */
+function defineOwn(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/**
+ * R14: `['consent', 'accepted']` → `body.consent.accepted = value`,
+ * creando los intermedios como propiedades propias. El padre solo existe
+ * si alguna hoja viaja (se crea aquí, al poner la primera).
+ */
+function setNested(
+  body: Record<string, unknown>,
+  parts: string[],
+  value: ParamValue
+): void {
+  let node = body;
+  for (const part of parts.slice(0, -1)) {
+    const own = Object.prototype.hasOwnProperty.call(node, part)
+      ? node[part]
+      : undefined;
+    if (isPlainRecord(own)) {
+      node = own;
+    } else {
+      const child: Record<string, unknown> = {};
+      defineOwn(node, part, child);
+      node = child;
+    }
+  }
+  defineOwn(node, parts[parts.length - 1], value);
+}
+
 /** `encodeURIComponent` más el punto: ningún valor forma un segmento `.`/`..`. */
 export function encodePathValue(value: ParamValue): string {
   return encodeURIComponent(String(value)).replace(/\./g, '%2E');
@@ -152,7 +281,8 @@ export function encodePathValue(value: ParamValue): string {
 export function buildIntegrationRequest(
   integration: { base_url: string },
   operation: { method: HttpMethod; path: string; params: OperationParam[] },
-  values: Record<string, ParamValue>
+  values: Record<string, ParamValue>,
+  options: BuildOptions = {}
 ): BuiltRequest | { blocked: true } {
   let base: URL;
   try {
@@ -171,14 +301,15 @@ export function buildIntegrationRequest(
   if (/[{}]/.test(path)) return { blocked: true };
 
   const query = new URLSearchParams();
-  const body: Record<string, ParamValue> = {};
+  const body: Record<string, unknown> = {};
   let hasBody = false;
   for (const param of operation.params) {
+    if (param.in === 'header') continue;
     const value = ownValue(values, param.name);
     if (value === undefined) continue;
     if (param.in === 'query') query.append(param.name, String(value));
     if (param.in === 'body') {
-      body[param.name] = value;
+      setNested(body, param.name.split('.'), value);
       hasBody = true;
     }
   }
@@ -204,6 +335,13 @@ export function buildIntegrationRequest(
     'User-Agent': INTEGRATION_USER_AGENT,
   };
   if (hasBody) headers['Content-Type'] = 'application/json';
+  // R11: valor nuevo por llamada; cualquier `values[name]` se ignora.
+  const uuid = options.uuid ?? (() => globalThis.crypto.randomUUID());
+  for (const param of operation.params) {
+    if (param.in === 'header' && param.auto === 'uuid') {
+      headers[param.name] = uuid();
+    }
+  }
 
   return {
     url,
@@ -221,4 +359,23 @@ export function authHeader(
 ): [string, string] {
   if (scheme === 'header' && headerName) return [headerName, credential];
   return ['Authorization', `Bearer ${credential}`];
+}
+
+/**
+ * Copia `headers` sin ninguna clave igual a `name` (sin distinguir
+ * mayúsculas) y añade `[name, value]` (n13.5, R12): la credencial es la
+ * única cabecera con ese nombre que sale.
+ */
+export function withAuthHeader(
+  headers: Record<string, string>,
+  name: string,
+  value: string
+): Record<string, string> {
+  const lower = name.toLowerCase();
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() !== lower) out[k] = v;
+  }
+  out[name] = value;
+  return out;
 }

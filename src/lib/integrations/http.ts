@@ -12,6 +12,9 @@
 //      lectura del cuerpo → `timeout`;
 //   4. cuerpo de como mucho 256 KiB: `content-length` mayor, o el stream
 //      que lo supere, se cancela → `too_large`.
+//   5. (n13.5, D5) un no-2xx que no sea 3xx, con JSON de como mucho
+//      8 KiB, se lee para conservar `{error:{code,…}}` en `remoteError`;
+//      cualquier otro cuerpo de error se descarta como antes.
 //
 // No registra nada ni escribe en consola: quien llama (execute.ts) decide
 // qué guardar, y nunca guarda cuerpos ni cabeceras (R20).
@@ -21,10 +24,13 @@ import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 
 import { isForbiddenHost } from './catalog-validate';
+import { parseRemoteError } from './remote-error';
 import type { BuiltRequest } from './request';
 import {
+  INTEGRATION_MAX_ERROR_BYTES,
   INTEGRATION_MAX_RESPONSE_BYTES,
   INTEGRATION_TIMEOUT_MS,
+  type RemoteError,
 } from './types';
 
 export interface IntegrationHttpDeps {
@@ -49,6 +55,8 @@ export interface HttpResult {
   status: number | null;
   data: unknown;
   latencyMs: number;
+  /** Solo en `http_error` con un cuerpo de error reconocible (n13.5, D5). */
+  remoteError?: RemoteError;
 }
 
 class TooLarge extends Error {}
@@ -147,10 +155,37 @@ export async function performIntegrationRequest(
       return done(controller.signal.aborted ? 'timeout' : 'unreachable', null);
     }
 
-    // 3xx (no seguido) y cualquier no-2xx: el cuerpo se descarta.
-    if (res.status < 200 || res.status >= 300) {
+    // 3xx (no seguido): el cuerpo se descarta.
+    if (res.status >= 300 && res.status < 400) {
       await cancelBody(res);
       return done('http_error', res.status);
+    }
+    // Otro no-2xx: solo un JSON pequeño se lee, para conservar el
+    // `error.code` de la API (D5). El plazo de arriba cubre esta lectura.
+    if (res.status < 200 || res.status >= 300) {
+      const type = (res.headers.get('content-type') ?? '').toLowerCase();
+      const length = Number(res.headers.get('content-length'));
+      if (
+        !type.includes('json') ||
+        (res.headers.has('content-length') &&
+          (!Number.isFinite(length) || length > INTEGRATION_MAX_ERROR_BYTES))
+      ) {
+        await cancelBody(res);
+        return done('http_error', res.status);
+      }
+      let errorText: string;
+      try {
+        errorText = new TextDecoder().decode(
+          await readCapped(res, INTEGRATION_MAX_ERROR_BYTES)
+        );
+      } catch {
+        // Demasiado grande, cortado o plazo vencido: la respuesta ya
+        // llegó, así que sigue siendo un http_error con su status.
+        return done('http_error', res.status);
+      }
+      const remoteError = parseRemoteError(errorText);
+      const result = done('http_error', res.status);
+      return remoteError ? { ...result, remoteError } : result;
     }
 
     const declared = Number(res.headers.get('content-length'));
