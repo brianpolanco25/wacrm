@@ -15,6 +15,7 @@ import type {
   IntegrationRow,
   OperationRow,
   OutputType,
+  ParamAuto,
   ParamLocation,
   ParamType,
 } from '@/lib/integrations/types';
@@ -41,6 +42,8 @@ export interface ParamRowForm {
   description: string;
   /** Valores permitidos separados por comas; vacío = sin `enum`. */
   enumText: string;
+  /** n13.5: `uuid` en una cabecera autogenerada; `null` en el resto. */
+  auto: ParamAuto | null;
 }
 
 export interface OutputRowForm {
@@ -152,6 +155,7 @@ export function emptyParamRow(): ParamRowForm {
     required: false,
     description: '',
     enumText: '',
+    auto: null,
   };
 }
 
@@ -188,6 +192,7 @@ export function operationToForm(row: OperationRow): OperationForm {
       required: p.required,
       description: p.description,
       enumText: (p.enum ?? []).join(', '),
+      auto: p.auto ?? null,
     })),
     outputs: row.outputs.map((o) => ({ ...o })),
     responseDescription: row.response_description ?? '',
@@ -219,6 +224,19 @@ export function operationFormToBody(form: OperationForm): FormResult {
   for (const row of form.params) {
     if (!row.name.trim() || !row.description.trim()) {
       return { ok: false, field: 'params' };
+    }
+    if (row.in === 'header') {
+      // n13.5 (D2): una cabecera siempre la genera el CRM; nada de tipo,
+      // obligatoriedad ni valores que elegir.
+      params.push({
+        name: row.name.trim(),
+        in: 'header' as const,
+        type: 'string' as const,
+        required: true,
+        description: row.description.trim(),
+        auto: 'uuid' as const,
+      });
+      continue;
     }
     const values = row.enumText
       .split(',')

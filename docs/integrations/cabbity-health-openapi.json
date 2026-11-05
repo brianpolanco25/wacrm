@@ -1,0 +1,2289 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "API de terceros de Cabbity Health",
+    "version": "1.0.0",
+    "description": "API para que una aplicación tercera de Cabbity Health consulte disponibilidad y gestione pacientes y citas **de un solo centro**.\n\n**Autenticación.** Cabecera `Authorization: Bearer chk_live_...`. Cada clave pertenece a un centro y lleva scopes (`availability:read`, `patients:read`, `patients:write`, `appointments:read`, `appointments:write`). La emite el administrador de la plataforma con un nombre y una caducidad (N días o nunca). Una clave vencida responde `401 api_key_expired`; una revocada, `401 api_key_revoked`. Al rotar una clave, la anterior sigue valiendo durante un periodo de gracia que nunca pasa de su vencimiento.\n\n**Errores.** Siempre `{ \"error\": { code, message, field, details, request_id } }`; el contrato es `code`.\n\n**Idempotencia.** Crear una cita exige `Idempotency-Key`; el resto de escrituras la aceptan. La misma clave con otro cuerpo da `409 idempotency_mismatch`.\n\n**Paginación.** Las listas usan cursor: pase `meta.next_cursor` como `cursor` hasta que sea `null`.\n\n**Límites.** 120 peticiones por minuto por clave (`429 rate_limited`). Hasta 3 citas futuras por paciente creadas por integraciones.\n\n**Privacidad.** La API nunca devuelve datos clínicos (alergias, alertas, consultas, signos), ni motivos de cita o de cancelación."
+  },
+  "servers": [
+    {
+      "url": "https://api.health.cabbity.com/api/integrations/v1",
+      "description": "API de terceros de Cabbity Health"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth"
+    },
+    {
+      "name": "Catálogo"
+    },
+    {
+      "name": "Pacientes"
+    },
+    {
+      "name": "Citas"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "paths": {
+    "/me": {
+      "get": {
+        "operationId": "getMe",
+        "summary": "Centro y permisos de la clave",
+        "tags": [
+          "Auth"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Centro, integración y límite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Me"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/locations": {
+      "get": {
+        "operationId": "listLocations",
+        "summary": "Sedes con profesionales agendables",
+        "tags": [
+          "Catálogo"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "availability:read",
+        "responses": {
+          "200": {
+            "description": "Sedes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Location"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/practitioners": {
+      "get": {
+        "operationId": "listPractitioners",
+        "summary": "Profesionales agendables",
+        "tags": [
+          "Catálogo"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "availability:read",
+        "parameters": [
+          {
+            "name": "location_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "specialty",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profesionales",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Practitioner"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/practitioners/{id}": {
+      "get": {
+        "operationId": "getPractitioner",
+        "summary": "Detalle de un profesional",
+        "tags": [
+          "Catálogo"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "availability:read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profesional",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Practitioner"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/specialties": {
+      "get": {
+        "operationId": "listSpecialties",
+        "summary": "Especialidades con profesionales agendables",
+        "tags": [
+          "Catálogo"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "availability:read",
+        "responses": {
+          "200": {
+            "description": "Especialidades",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Specialty"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/availability": {
+      "get": {
+        "operationId": "listAvailability",
+        "summary": "Huecos libres de una sede",
+        "tags": [
+          "Catálogo"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "availability:read",
+        "parameters": [
+          {
+            "name": "location_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "Máximo 13 días después de `from`.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "membership_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "specialty",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Huecos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Slot"
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "truncated": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/patients/lookup": {
+      "post": {
+        "operationId": "lookupPatient",
+        "summary": "Buscar paciente por documento o teléfono",
+        "tags": [
+          "Pacientes"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "patients:read",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatientLookup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Coincidencias (máx. 5, solo activos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PatientLookupResult"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/patients": {
+      "get": {
+        "operationId": "listPatients",
+        "summary": "Listar pacientes activos",
+        "tags": [
+          "Pacientes"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "patients:read",
+        "parameters": [
+          {
+            "name": "document_type",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cedula",
+                "passport"
+              ]
+            }
+          },
+          {
+            "name": "document_number",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "phone",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de pacientes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/IntegrationPatient"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/CursorMeta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPatient",
+        "summary": "Registrar un paciente",
+        "tags": [
+          "Pacientes"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "patients:write",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Identificador único de la operación (UUID recomendado). Repetir la misma petición con la misma clave devuelve la respuesta original con `Idempotent-Replayed: true` durante 24 h.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatientCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Paciente creado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PatientSummary"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/patients/{id}": {
+      "get": {
+        "operationId": "getPatient",
+        "summary": "Detalle de un paciente",
+        "tags": [
+          "Pacientes"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "patients:read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paciente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/IntegrationPatient"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updatePatient",
+        "summary": "Editar datos administrativos",
+        "tags": [
+          "Pacientes"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "patients:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Identificador único de la operación (UUID recomendado). Repetir la misma petición con la misma clave devuelve la respuesta original con `Idempotent-Replayed: true` durante 24 h.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatientUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Paciente actualizado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/IntegrationPatient"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deactivatePatient",
+        "summary": "Desactivar un paciente (no lo borra)",
+        "tags": [
+          "Pacientes"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "patients:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Identificador único de la operación (UUID recomendado). Repetir la misma petición con la misma clave devuelve la respuesta original con `Idempotent-Replayed: true` durante 24 h.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paciente desactivado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "is_active": {
+                          "type": "boolean",
+                          "const": false
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/appointments": {
+      "get": {
+        "operationId": "listAppointments",
+        "summary": "Listar citas",
+        "tags": [
+          "Citas"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "appointments:read",
+        "description": "Envíe `patient_id` o un rango `from`/`to` de hasta 31 días.",
+        "parameters": [
+          {
+            "name": "patient_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "location_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "membership_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "integration",
+                "staff",
+                "mine"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de citas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Appointment"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/CursorMeta"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAppointment",
+        "summary": "Crear una cita",
+        "tags": [
+          "Citas"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "appointments:write",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Identificador único de la operación (UUID recomendado). Repetir la misma petición con la misma clave devuelve la respuesta original con `Idempotent-Replayed: true` durante 24 h.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointmentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cita creada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Appointment"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/appointments/{id}": {
+      "get": {
+        "operationId": "getAppointment",
+        "summary": "Detalle de una cita",
+        "tags": [
+          "Citas"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "appointments:read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cita",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Appointment"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAppointment",
+        "summary": "Cancelar una cita (alias de cancel sin motivo; no la borra)",
+        "tags": [
+          "Citas"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "appointments:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Identificador único de la operación (UUID recomendado). Repetir la misma petición con la misma clave devuelve la respuesta original con `Idempotent-Replayed: true` durante 24 h.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cita cancelada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Appointment"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/appointments/{id}/reschedule": {
+      "post": {
+        "operationId": "rescheduleAppointment",
+        "summary": "Reprogramar una cita",
+        "tags": [
+          "Citas"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "appointments:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Identificador único de la operación (UUID recomendado). Repetir la misma petición con la misma clave devuelve la respuesta original con `Idempotent-Replayed: true` durante 24 h.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointmentReschedule"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cita reprogramada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Appointment"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          },
+          "422": {
+            "$ref": "#/components/responses/E422"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/appointments/{id}/confirm": {
+      "post": {
+        "operationId": "confirmAppointment",
+        "summary": "Confirmar una cita",
+        "tags": [
+          "Citas"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "appointments:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Identificador único de la operación (UUID recomendado). Repetir la misma petición con la misma clave devuelve la respuesta original con `Idempotent-Replayed: true` durante 24 h.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cita confirmada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Appointment"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    },
+    "/appointments/{id}/cancel": {
+      "post": {
+        "operationId": "cancelAppointment",
+        "summary": "Cancelar una cita",
+        "tags": [
+          "Citas"
+        ],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-required-scope": "appointments:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Identificador único de la operación (UUID recomendado). Repetir la misma petición con la misma clave devuelve la respuesta original con `Idempotent-Replayed: true` durante 24 h.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointmentCancel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cita cancelada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Appointment"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Clave de API `chk_live_...`"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "bad_request",
+                  "idempotency_key_required",
+                  "unauthorized",
+                  "api_key_expired",
+                  "api_key_revoked",
+                  "forbidden",
+                  "center_inactive",
+                  "not_found",
+                  "method_not_allowed",
+                  "slot_unavailable",
+                  "appointment_not_changeable",
+                  "patient_exists",
+                  "patient_inactive",
+                  "too_many_upcoming_appointments",
+                  "idempotency_mismatch",
+                  "idempotency_in_progress",
+                  "validation_failed",
+                  "consent_required",
+                  "rate_limited",
+                  "internal"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "field": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "details": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "request_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "request_id"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "CursorMeta": {
+        "type": "object",
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "next_cursor",
+          "limit"
+        ]
+      },
+      "Specialty": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
+      "Location": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": "string"
+          }
+        }
+      },
+      "Practitioner": {
+        "type": "object",
+        "properties": {
+          "membership_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "specialty": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Specialty"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "additional_specialties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Specialty"
+            }
+          },
+          "location_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "Slot": {
+        "type": "object",
+        "properties": {
+          "membership_id": {
+            "type": "integer"
+          },
+          "practitioner_name": {
+            "type": "string"
+          },
+          "location_id": {
+            "type": "integer"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PatientSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "document_type": {
+            "type": "string"
+          },
+          "document_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        }
+      },
+      "IntegrationPatient": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "document_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "cedula",
+              "passport",
+              null
+            ]
+          },
+          "document_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "birth_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "sex": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "province": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "municipality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PatientCreate": {
+        "type": "object",
+        "properties": {
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "document_type": {
+            "type": "string",
+            "enum": [
+              "cedula",
+              "passport"
+            ]
+          },
+          "document_number": {
+            "type": "string"
+          },
+          "birth_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "sex": {
+            "type": "string",
+            "enum": [
+              "male",
+              "female",
+              "other"
+            ]
+          },
+          "phone": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "consent": {
+            "type": "object",
+            "properties": {
+              "accepted": {
+                "type": "boolean",
+                "const": true
+              },
+              "accepted_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "reference": {
+                "type": "string",
+                "maxLength": 191
+              }
+            },
+            "required": [
+              "accepted",
+              "accepted_at",
+              "reference"
+            ]
+          }
+        },
+        "required": [
+          "first_name",
+          "last_name",
+          "document_type",
+          "document_number",
+          "phone",
+          "consent"
+        ]
+      },
+      "PatientUpdate": {
+        "type": "object",
+        "properties": {
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "document_type": {
+            "type": "string",
+            "enum": [
+              "cedula",
+              "passport"
+            ]
+          },
+          "document_number": {
+            "type": "string"
+          },
+          "birth_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "sex": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "province": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "municipality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PatientLookup": {
+        "type": "object",
+        "properties": {
+          "document_type": {
+            "type": "string",
+            "enum": [
+              "cedula",
+              "passport"
+            ]
+          },
+          "document_number": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          }
+        }
+      },
+      "PatientLookupResult": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "center",
+              "not_found"
+            ]
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PatientSummary"
+            }
+          },
+          "padron": {
+            "type": "null"
+          }
+        }
+      },
+      "AppointmentCreate": {
+        "type": "object",
+        "properties": {
+          "patient_id": {
+            "type": "integer"
+          },
+          "membership_id": {
+            "type": "integer"
+          },
+          "location_id": {
+            "type": "integer"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 con offset, p. ej. `2026-11-12T10:30:00-04:00`."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255
+          },
+          "external_reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "patient_id",
+          "membership_id",
+          "location_id",
+          "starts_at"
+        ]
+      },
+      "AppointmentReschedule": {
+        "type": "object",
+        "properties": {
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "membership_id": {
+            "type": "integer"
+          },
+          "location_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "starts_at"
+        ]
+      },
+      "AppointmentCancel": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255
+          }
+        }
+      },
+      "Appointment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "confirmed",
+              "arrived",
+              "in_consultation",
+              "completed",
+              "cancelled",
+              "no_show"
+            ]
+          },
+          "status_label": {
+            "type": "string"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "patient": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "first_name": {
+                "type": "string"
+              },
+              "last_name": {
+                "type": "string"
+              }
+            }
+          },
+          "practitioner": {
+            "type": "object",
+            "properties": {
+              "membership_id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "specialty": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Specialty"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "location": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "staff",
+                  "integration"
+                ]
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "integration_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "is_mine": {
+                "type": "boolean"
+              }
+            }
+          },
+          "external_reference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "arrived_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "no_show_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Me": {
+        "type": "object",
+        "properties": {
+          "center": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "timezone": {
+                "type": "string"
+              }
+            }
+          },
+          "integration": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "origin_label": {
+                "type": "string"
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "padron_available": {
+                "type": "boolean"
+              }
+            }
+          },
+          "rate_limit": {
+            "type": "object",
+            "properties": {
+              "per_minute": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "E400": {
+        "description": "Petición mal formada, JSON inválido, `Idempotency-Key` ausente (en crear cita) o mal formada.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E401": {
+        "description": "Clave ausente, inválida, vencida (`api_key_expired`) o revocada (`api_key_revoked`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E403": {
+        "description": "La clave no tiene el scope requerido (`forbidden`) o el centro no tiene el servicio activo (`center_inactive`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E404": {
+        "description": "Recurso inexistente o de otro centro.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E405": {
+        "description": "Método no admitido.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E409": {
+        "description": "Conflicto de negocio (ver `error.code`): `slot_unavailable`, `appointment_not_changeable`, `patient_exists`, `patient_inactive`, `too_many_upcoming_appointments`, `idempotency_mismatch`, `idempotency_in_progress`.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E422": {
+        "description": "Validación (`validation_failed`) o consentimiento ausente (`consent_required`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E429": {
+        "description": "Límite de peticiones por minuto superado.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E500": {
+        "description": "Error no previsto; informe el `request_id`.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -685,9 +685,23 @@ function OperationEditor({
               <select
                 className={SELECT_CLASS}
                 value={p.in}
-                onChange={(e) =>
-                  setParam(i, { in: e.target.value as ParamLocation })
-                }
+                onChange={(e) => {
+                  const loc = e.target.value as ParamLocation;
+                  // n13.5: una cabecera es siempre texto obligatorio que
+                  // genera el CRM (UUID); al salir de `header` deja de serlo.
+                  setParam(
+                    i,
+                    loc === 'header'
+                      ? {
+                          in: loc,
+                          type: 'string',
+                          required: true,
+                          auto: 'uuid',
+                          enumText: '',
+                        }
+                      : { in: loc, auto: null }
+                  );
+                }}
               >
                 {PARAM_LOCATIONS.map((loc) => (
                   <option key={loc} value={loc}>
@@ -701,6 +715,7 @@ function OperationEditor({
               <select
                 className={SELECT_CLASS}
                 value={p.type}
+                disabled={p.in === 'header'}
                 onChange={(e) =>
                   setParam(i, { type: e.target.value as ParamType })
                 }
@@ -723,8 +738,8 @@ function OperationEditor({
             <div className="flex items-center gap-1.5 pb-2 sm:col-span-2">
               <Checkbox
                 id={`${prefix}-p${i}-req`}
-                checked={p.in === 'path' || p.required}
-                disabled={p.in === 'path'}
+                checked={p.in === 'path' || p.in === 'header' || p.required}
+                disabled={p.in === 'path' || p.in === 'header'}
                 onCheckedChange={(c) => setParam(i, { required: c === true })}
               />
               <Label htmlFor={`${prefix}-p${i}-req`} className="text-xs">
@@ -753,9 +768,18 @@ function OperationEditor({
                 <Input
                   value={p.enumText}
                   placeholder={t('params.enumHelp')}
+                  disabled={p.in === 'header'}
                   onChange={(e) => setParam(i, { enumText: e.target.value })}
                 />
               </div>
+            ) : null}
+            {p.in === 'header' ? (
+              <p
+                className="text-muted-foreground text-xs sm:col-span-12"
+                data-param-auto={i}
+              >
+                {t('params.autoUuid')}
+              </p>
             ) : null}
           </div>
         ))}

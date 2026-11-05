@@ -21,6 +21,7 @@ import {
   AUTH_SCHEMES,
   HTTP_METHODS,
   OUTPUT_TYPES,
+  PARAM_AUTOS,
   PARAM_LOCATIONS,
   PARAM_TYPES,
   type AuthScheme,
@@ -30,6 +31,7 @@ import {
   type OperationParam,
   type OperationWrite,
   type OutputType,
+  type ParamAuto,
   type ParamLocation,
   type ParamType,
   type Validation,
@@ -52,6 +54,9 @@ export const INTEGRATION_SLUG_RE = /^[a-z][a-z0-9-]{1,39}$/;
 export const OPERATION_KEY_RE = /^[a-z][a-z0-9_]{1,63}$/;
 export const PARAM_NAME_RE = /^[a-z][a-zA-Z0-9_]{0,63}$/;
 export const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,64}$/;
+/** n13.5 (D3): cada parte de un nombre `body` con punto (`consent.accepted`). */
+export const PARAM_SEGMENT_RE = /^[a-z][a-zA-Z0-9_]{0,63}$/;
+export const MAX_PARAM_DEPTH = 3;
 const OUTPUT_PATH_RE = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
 /** Caracteres de una plantilla de ruta: los de segmento de RFC 3986 sin `%`. */
 const PATH_CHARS_RE = /^[A-Za-z0-9\-._~!$&'()*+,;=:@/{}]+$/;
@@ -403,27 +408,72 @@ function validateParams(raw: unknown): Validation<OperationParam[]> {
   }
   const out: OperationParam[] = [];
   const seen = new Set<string>();
+  const headers = new Set<string>();
   for (const [i, item] of raw.entries()) {
     const where = `params[${i}]`;
     if (!isPlainObject(item))
       return fail('params', `${where} must be an object`);
     for (const k of Object.keys(item)) {
       if (
-        !['name', 'in', 'type', 'required', 'description', 'enum'].includes(k)
+        ![
+          'name',
+          'in',
+          'type',
+          'required',
+          'description',
+          'enum',
+          'auto',
+        ].includes(k)
       ) {
         return fail('params', `${where}: unknown field '${k}'`);
       }
     }
-    if (typeof item.name !== 'string' || !PARAM_NAME_RE.test(item.name)) {
+    if (!PARAM_LOCATIONS.includes(item.in as ParamLocation)) {
+      return fail('params', `${where}.in must be path, query, body or header`);
+    }
+    const location = item.in as ParamLocation;
+    const name = item.name;
+    if (typeof name !== 'string') {
       return fail('params', `${where}.name must match ${PARAM_NAME_RE}`);
     }
-    if (seen.has(item.name)) {
-      return fail('params', `${where}.name '${item.name}' is repeated`);
+    if (location === 'header') {
+      // n13.5 (D2): una cabecera nunca lleva valor del llamador; la
+      // genera el ejecutor. Ni la de autenticación ni una reservada.
+      if (
+        !HEADER_NAME_RE.test(name) ||
+        name.toLowerCase() === 'authorization' ||
+        (FORBIDDEN_AUTH_HEADERS as readonly string[]).includes(
+          name.toLowerCase()
+        )
+      ) {
+        return fail(
+          'params',
+          `${where}.name must be 1–64 of A-Z, a-z, 0-9 or - and not a reserved header`
+        );
+      }
+      if (headers.has(name.toLowerCase())) {
+        return fail('params', `${where}.name '${name}' is repeated`);
+      }
+      headers.add(name.toLowerCase());
+    } else if (location === 'body') {
+      // n13.5 (D3): `consent.accepted` viaja como objeto anidado.
+      const segments = name.split('.');
+      if (
+        segments.length > MAX_PARAM_DEPTH ||
+        !segments.every((seg) => PARAM_SEGMENT_RE.test(seg))
+      ) {
+        return fail(
+          'params',
+          `${where}.name must be up to ${MAX_PARAM_DEPTH} dot-separated parts matching ${PARAM_SEGMENT_RE}`
+        );
+      }
+    } else if (!PARAM_NAME_RE.test(name)) {
+      return fail('params', `${where}.name must match ${PARAM_NAME_RE}`);
     }
-    seen.add(item.name);
-    if (!PARAM_LOCATIONS.includes(item.in as ParamLocation)) {
-      return fail('params', `${where}.in must be path, query or body`);
+    if (seen.has(name)) {
+      return fail('params', `${where}.name '${name}' is repeated`);
     }
+    seen.add(name);
     if (!PARAM_TYPES.includes(item.type as ParamType)) {
       return fail(
         'params',
@@ -433,8 +483,28 @@ function validateParams(raw: unknown): Validation<OperationParam[]> {
     if (typeof item.required !== 'boolean') {
       return fail('params', `${where}.required must be a boolean`);
     }
-    if (item.in === 'path' && !item.required) {
+    if (location === 'path' && !item.required) {
       return fail('params', `${where}: a path parameter must be required`);
+    }
+    const hasAuto = 'auto' in item && item.auto !== undefined;
+    if (location === 'header') {
+      if (!hasAuto || !PARAM_AUTOS.includes(item.auto as ParamAuto)) {
+        return fail(
+          'params',
+          `${where}: a header parameter needs auto: 'uuid'`
+        );
+      }
+      if (item.type !== 'string' || item.required !== true) {
+        return fail(
+          'params',
+          `${where}: a header parameter is a required string`
+        );
+      }
+      if ('enum' in item && item.enum !== undefined && item.enum !== null) {
+        return fail('params', `${where}: a header parameter has no enum`);
+      }
+    } else if (hasAuto) {
+      return fail('params', `${where}: auto is only allowed with in: 'header'`);
     }
     const desc =
       typeof item.description === 'string' ? item.description.trim() : '';
@@ -445,8 +515,8 @@ function validateParams(raw: unknown): Validation<OperationParam[]> {
       );
     }
     const param: OperationParam = {
-      name: item.name,
-      in: item.in as ParamLocation,
+      name,
+      in: location,
       type: item.type as ParamType,
       required: item.required,
       description: desc,
@@ -476,7 +546,17 @@ function validateParams(raw: unknown): Validation<OperationParam[]> {
       }
       param.enum = values as string[];
     }
+    // Solo si existe: los params de n13.1 conservan su forma (R18).
+    if (location === 'header') param.auto = item.auto as ParamAuto;
     out.push(param);
+  }
+  // Un nombre no puede ser a la vez valor y objeto (`consent` y
+  // `consent.accepted`): el cuerpo no tendría forma posible.
+  const bodyNames = out.filter((p) => p.in === 'body').map((p) => p.name);
+  for (const n of bodyNames) {
+    if (bodyNames.some((other) => other.startsWith(`${n}.`))) {
+      return fail('params', `'${n}' cannot be both a value and an object`);
+    }
   }
   return { ok: true, value: out };
 }
