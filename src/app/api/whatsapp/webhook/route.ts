@@ -2,8 +2,8 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextResponse, after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { decrypt } from '@/lib/whatsapp/encryption';
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api';
-import { mirrorInboundMedia } from '@/lib/whatsapp/mirror-inbound-media';
+import { downloadMedia } from '@/lib/whatsapp/meta-api';
+import { resolveInboundMediaUrl } from '@/lib/whatsapp/inbound-media-url';
 import { normalizePhone } from '@/lib/whatsapp/phone-utils';
 import {
   findContactByWaUserId,
@@ -1436,54 +1436,23 @@ async function parseMessageContent(
    */
   interactiveReplyId: string | null;
 }> {
-  // getMediaUrl signature is (mediaId, accessToken) — earlier code had
-  // the args swapped, so every verification hit an invalid Meta URL and
-  // fell through to the catch block, leaving mediaUrl as null. That's
-  // why images showed up as empty bubbles in the inbox.
-  //
-  // Beyond verifying, this is where inbound media gets COPIED into the
-  // `chat-media` bucket (issue #466). Meta deletes media ~30 days after
-  // receipt, so the `/api/whatsapp/media/<id>` proxy URL we used to
-  // store is a pointer with an expiry date on it — every inbound
-  // attachment silently became "Photo unavailable" a month later.
-  // Mirroring stores a durable public URL instead.
-  //
-  // The mirror is strictly best-effort. `mirrorInboundMedia` swallows
-  // its own failures and returns null, and we fall back to the proxy
-  // URL — a webhook that throws would have Meta retry the delivery and
-  // re-run everything downstream, which is a far worse outcome than an
-  // attachment that expires.
-  const verifyAndBuildUrl = async (
+  // Verify with Meta, mirror into `chat-media` when the account allows
+  // it (issue #466), fall back to the `/api/whatsapp/media/<id>` proxy,
+  // null when Meta fails. Shared with the coexistence echoes (m14.2);
+  // the reasoning lives in `resolveInboundMediaUrl`.
+  const verifyAndBuildUrl = (
     mediaId: string,
     fileName?: string | null
-  ): Promise<string | null> => {
-    try {
-      const info = await getMediaUrl({ mediaId, accessToken });
-
-      if (mirror) {
-        const mirrored = await mirrorInboundMedia({
-          storage: supabaseAdmin().storage,
-          accountId: mirror.accountId,
-          mediaId,
-          downloadUrl: info.url,
-          accessToken,
-          mimeType: info.mimeType,
-          fileSize: info.fileSize,
-          fileName,
-          messageTimestamp: message.timestamp,
-        });
-        if (mirrored) return mirrored;
-      }
-
-      return `/api/whatsapp/media/${mediaId}`;
-    } catch (error) {
-      console.error(
-        `Failed to verify media ${mediaId} with Meta:`,
-        error instanceof Error ? error.message : error
-      );
-      return null;
-    }
-  };
+  ): Promise<string | null> =>
+    resolveInboundMediaUrl({
+      mediaId,
+      accessToken,
+      mirror: mirror
+        ? { storage: supabaseAdmin().storage, accountId: mirror.accountId }
+        : null,
+      fileName,
+      messageTimestamp: message.timestamp,
+    });
 
   // Default shape — each case overrides only the fields it cares about.
   // Keeps the new `interactiveReplyId` field DRY across every return site.

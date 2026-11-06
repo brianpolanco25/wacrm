@@ -27,6 +27,13 @@ vi.mock('@/lib/whatsapp/message-charges', () => ({
 vi.mock('@/lib/conversations/reopen', () => ({
   reopenClosedConversation: vi.fn(),
 }));
+// Echo media (m14.2): Meta is mocked, and the fetch guard below fails
+// any request that would leave the process.
+vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/whatsapp/meta-api')>()),
+  getMediaUrl: vi.fn(),
+  downloadMedia: vi.fn(),
+}));
 
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import { dispatchInboundToFlows } from '@/lib/flows/engine';
@@ -35,6 +42,7 @@ import { dispatchWebhookEvent } from '@/lib/webhooks/deliver';
 import * as enforce from '@/lib/billing/enforce';
 import { recordMessageCharge } from '@/lib/whatsapp/message-charges';
 import { reopenClosedConversation } from '@/lib/conversations/reopen';
+import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api';
 
 import {
   COEXISTENCE_FIELDS,
@@ -145,6 +153,12 @@ function textEcho(id: string, to = CUSTOMER, iso = '2026-11-02T10:00:00Z') {
 let logs: string[] = [];
 beforeEach(() => {
   logs = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => {
+      throw new Error('network access is forbidden in tests');
+    })
+  );
   for (const level of ['log', 'info', 'warn', 'error'] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
       logs.push(args.map((a) => String(a)).join(' '));
@@ -152,6 +166,7 @@ beforeEach(() => {
   }
 });
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -1016,6 +1031,275 @@ describe('account_update', () => {
           l.includes('WEBHOOK_CONFIG_UPDATED')
       )
     ).toBe(true);
+  });
+});
+
+describe('echo media (m14.2)', () => {
+  const TOKEN = 'tok-del-negocio-5520';
+  const mediaConfig: CoexistenceConfig = {
+    ...config,
+    access_token: encrypt(TOKEN),
+  };
+  const mockGetMediaUrl = vi.mocked(getMediaUrl);
+  const mockDownloadMedia = vi.mocked(downloadMedia);
+
+  beforeEach(() => {
+    mockGetMediaUrl.mockResolvedValue({
+      url: 'https://lookaside.test/media',
+      mimeType: 'image/jpeg',
+      fileSize: 2048,
+    });
+    mockDownloadMedia.mockResolvedValue({
+      buffer: Buffer.alloc(32),
+      contentType: 'image/jpeg',
+    });
+  });
+
+  function mediaEcho(
+    id: string,
+    type: string,
+    inner: Record<string, unknown>,
+    iso = '2026-11-03T10:00:00Z'
+  ) {
+    return {
+      from: BUSINESS,
+      to: CUSTOMER,
+      id,
+      timestamp: ts(iso),
+      type,
+      [type]: inner,
+    };
+  }
+
+  const imageEcho = (id: string) =>
+    mediaEcho(id, 'image', {
+      id: 'media-img-1',
+      mime_type: 'image/jpeg',
+      caption: SECRET_CAPTION,
+    });
+
+  it('parser: an echo media with id carries its descriptor; text and id-less media do not', () => {
+    const { echoes } = parseMessageEchoes(
+      echoValue([
+        imageEcho('w1'),
+        textEcho('w2'),
+        mediaEcho('w3', 'video', { caption: 'sin id' }),
+      ])
+    );
+    const msgs = echoes.map((e) => (e.kind === 'message' ? e.message : null));
+    expect(msgs[0]?.media).toEqual({
+      type: 'image',
+      id: 'media-img-1',
+      mimeType: 'image/jpeg',
+      caption: SECRET_CAPTION,
+      fileName: null,
+      timestamp: ts('2026-11-03T10:00:00Z'),
+    });
+    expect(msgs[0]?.contentText).toBe(`[image] ${SECRET_CAPTION}`);
+    expect(msgs[1]?.media).toBeUndefined();
+    expect(msgs[2]?.media).toBeUndefined();
+  });
+
+  it('mirrored image echo → image row with the bucket URL, caption and mime; summary keeps the marker', async () => {
+    const db = seed();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([imageEcho('wamid.M1')]),
+      mediaConfig
+    );
+    expect(mockGetMediaUrl).toHaveBeenCalledWith({
+      mediaId: 'media-img-1',
+      accessToken: TOKEN,
+    });
+    expect(db.storageObjects).toHaveLength(1);
+    expect(db.storageObjects[0].bucket).toBe('chat-media');
+    expect(db.storageObjects[0].path).toContain(A);
+    const row = db.rows('messages').find((m) => m.message_id === 'wamid.M1');
+    expect(row).toMatchObject({
+      conversation_id: 'conv-1',
+      sender_type: 'agent',
+      status: 'sent',
+      content_type: 'image',
+      content_text: SECRET_CAPTION,
+      media_type: 'image/jpeg',
+      media_url: `https://fake.supabase.co/storage/v1/object/public/chat-media/${db.storageObjects[0].path}`,
+    });
+    const conv = db.rows('conversations')[0];
+    expect(conv.last_message_text).toBe(`[image] ${SECRET_CAPTION}`);
+    expect(conv.unread_count).toBe(3);
+    expect(conv.status).toBe('closed');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(JSON.stringify(db.rows('messages'))).not.toContain(TOKEN);
+    expectNoForbiddenSideEffects(db);
+    expectLogsClean(TOKEN, SECRET_CAPTION, CUSTOMER);
+  });
+
+  it('Meta fails → the marker of today with media_url null, and the webhook goes on', async () => {
+    mockGetMediaUrl.mockRejectedValue(new Error('Media fetch failed: 404'));
+    const db = seed();
+    await expect(
+      handleCoexistenceChange(
+        asDb(db),
+        'smb_message_echoes',
+        echoValue([imageEcho('wamid.M2'), textEcho('wamid.M3')]),
+        mediaConfig
+      )
+    ).resolves.toEqual({ batchIds: [] });
+    const row = db.rows('messages').find((m) => m.message_id === 'wamid.M2');
+    expect(row).toMatchObject({
+      content_type: 'text',
+      content_text: `[image] ${SECRET_CAPTION}`,
+      media_url: null,
+    });
+    expect(
+      db.rows('messages').find((m) => m.message_id === 'wamid.M3')
+    ).toMatchObject({ content_type: 'text', content_text: SECRET_BODY });
+    expect(db.storageObjects).toHaveLength(0);
+    expectLogsClean(TOKEN, SECRET_CAPTION);
+  });
+
+  it('text echo → untouched: text row, no media, Meta never asked', async () => {
+    const db = seed();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([textEcho('wamid.M4')]),
+      mediaConfig
+    );
+    expect(
+      db.rows('messages').find((m) => m.message_id === 'wamid.M4')
+    ).toMatchObject({
+      content_type: 'text',
+      content_text: SECRET_BODY,
+      media_url: null,
+    });
+    expect(mockGetMediaUrl).not.toHaveBeenCalled();
+    expect(db.rows('conversations')[0].last_message_text).toBe(SECRET_BODY);
+  });
+
+  it('mirror_inbound_media = false → proxy URL, nothing uploaded', async () => {
+    const db = seed();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([imageEcho('wamid.M5')]),
+      { ...mediaConfig, mirror_inbound_media: false }
+    );
+    expect(
+      db.rows('messages').find((m) => m.message_id === 'wamid.M5')
+    ).toMatchObject({
+      content_type: 'image',
+      media_url: '/api/whatsapp/media/media-img-1',
+    });
+    expect(db.storageObjects).toHaveLength(0);
+    expect(mockDownloadMedia).not.toHaveBeenCalled();
+  });
+
+  it('sticker → image; document → file name as text; audio without caption → null text', async () => {
+    const db = seed();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([
+        mediaEcho('wamid.S', 'sticker', { id: 'm-s', mime_type: 'image/webp' }),
+        mediaEcho('wamid.D', 'document', {
+          id: 'm-d',
+          mime_type: 'application/pdf',
+          filename: 'factura.pdf',
+        }),
+        mediaEcho('wamid.A', 'audio', { id: 'm-a', mime_type: 'audio/ogg' }),
+      ]),
+      { ...mediaConfig, mirror_inbound_media: false }
+    );
+    const byId = (id: string) =>
+      db.rows('messages').find((m) => m.message_id === id);
+    expect(byId('wamid.S')).toMatchObject({
+      content_type: 'image',
+      content_text: null,
+      media_type: 'image/webp',
+      media_url: '/api/whatsapp/media/m-s',
+    });
+    expect(byId('wamid.D')).toMatchObject({
+      content_type: 'document',
+      content_text: 'factura.pdf',
+      media_type: 'application/pdf',
+    });
+    expect(byId('wamid.A')).toMatchObject({
+      content_type: 'audio',
+      content_text: null,
+      media_type: 'audio/ogg',
+    });
+  });
+
+  it('no access token on the config → marker, Meta never asked', async () => {
+    const db = seed();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([imageEcho('wamid.M6')]),
+      config
+    );
+    expect(mockGetMediaUrl).not.toHaveBeenCalled();
+    expect(
+      db.rows('messages').find((m) => m.message_id === 'wamid.M6')
+    ).toMatchObject({
+      content_type: 'text',
+      content_text: `[image] ${SECRET_CAPTION}`,
+      media_url: null,
+    });
+  });
+
+  it('edit with media keeps the marker; history media stays as markers', async () => {
+    const db = seed();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([
+        {
+          to: CUSTOMER,
+          id: 'wamid.ED',
+          type: 'edit',
+          edit: {
+            original_message_id: 'wamid.ORIG',
+            message: {
+              type: 'image',
+              image: { id: 'm-e', caption: 'nueva' },
+            },
+          },
+        },
+      ]),
+      mediaConfig
+    );
+    expect(
+      db.rows('messages').find((m) => m.message_id === 'wamid.ORIG')
+    ).toMatchObject({ content_type: 'text', content_text: '[image] nueva' });
+    const parsed = parseHistoryThread(
+      {
+        id: CUSTOMER,
+        messages: [
+          {
+            from: CUSTOMER,
+            id: 'h1',
+            timestamp: '1760000000',
+            type: 'media_placeholder',
+          },
+          {
+            from: CUSTOMER,
+            id: 'h2',
+            timestamp: '1760000001',
+            type: 'image',
+            image: { id: 'm-h' },
+          },
+        ],
+      },
+      BUSINESS
+    );
+    expect(parsed?.messages.map((m) => [m.contentText, m.media])).toEqual([
+      ['[media]', undefined],
+      ['[image]', undefined],
+    ]);
+    expect(mockGetMediaUrl).not.toHaveBeenCalled();
   });
 });
 

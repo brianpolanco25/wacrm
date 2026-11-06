@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### WhatsApp coexistence: media sent from the phone shows in the inbox
+
+- No migration. Images, videos, audio, documents and stickers the business sends from the WhatsApp Business app on the phone (coexistence echoes) now appear in the inbox as the attachment itself, copied to storage like inbound media (or through the media proxy when the account turned mirroring off), instead of a «[image]» text bubble. If Meta cannot serve the media, the bubble keeps the old «[image] caption» text. Chat history imported from the phone is unchanged («[media]»: Meta does not deliver those files).
+
 ### Integrations: platform support can set them up for the customer
 
 - No migration. During a support session the platform operator can now activate (paste the credential), test, deactivate and change the AI settings of a customer's integration in Settings → Integrations, which shows a notice that the action is recorded. Each of those writes leaves a row in the support-session trail naming the action and the integration (never the credential). Before, these actions were refused (403) in a support session.

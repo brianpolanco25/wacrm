@@ -38,6 +38,8 @@ import {
   findOrCreateConversation,
 } from '@/lib/whatsapp/inbound-thread';
 import { wabaConfigsSignedBy } from '@/lib/whatsapp/tenant-app-secret';
+import { decrypt } from '@/lib/whatsapp/encryption';
+import { resolveInboundMediaUrl } from '@/lib/whatsapp/inbound-media-url';
 
 export const COEXISTENCE_FIELDS = [
   'smb_message_echoes',
@@ -76,6 +78,14 @@ export interface CoexistenceConfig {
    * sync whose chunks never collide with the old ones (review finding 6).
    */
   coexistence_onboarded_at?: string | null;
+  /**
+   * The row's ENCRYPTED `access_token` (the webhook hands over the whole
+   * `whatsapp_config` row). Decrypted in memory only to verify the media
+   * of an echo with Meta (m14.2) — never persisted, never logged.
+   */
+  access_token?: string | null;
+  /** `whatsapp_config.mirror_inbound_media` (039). Unset counts as ON. */
+  mirror_inbound_media?: boolean | null;
 }
 
 export type CoexistenceMessageStatus =
@@ -87,7 +97,77 @@ export interface CoexistenceMessage {
   createdAt: string;
   senderType: 'customer' | 'agent';
   status: CoexistenceMessageStatus;
+  /**
+   * The text form: the body, or the `[<type>] caption` marker for media.
+   * It is the row's `content_text` unless `media` resolved, and always
+   * the conversation's `last_message_text`.
+   */
   contentText: string;
+  /**
+   * Echo media Meta can still serve by id (m14.2). Set by the parser;
+   * resolved into `stored` by the echo handler.
+   */
+  media?: EchoMedia;
+  /**
+   * The row as an inbound attachment: set only once the media resolved
+   * to a URL. Absent → a text row with `contentText` and no media.
+   */
+  stored?: StoredMedia;
+}
+
+/** Media kinds an echo can carry by id, as Meta names them. */
+export const ECHO_MEDIA_TYPES = [
+  'image',
+  'video',
+  'audio',
+  'document',
+  'sticker',
+] as const;
+export type EchoMediaType = (typeof ECHO_MEDIA_TYPES)[number];
+
+export interface EchoMedia {
+  type: EchoMediaType;
+  id: string;
+  mimeType: string | null;
+  caption: string | null;
+  fileName: string | null;
+  /** Meta's `timestamp` (epoch seconds), for the mirrored file name. */
+  timestamp: string | null;
+}
+
+export interface StoredMedia {
+  contentType: 'image' | 'video' | 'audio' | 'document';
+  contentText: string | null;
+  mediaUrl: string;
+  mediaType: string | null;
+}
+
+/**
+ * `messages.content_type` for an echo's media, mapped as the inbound
+ * webhook maps it (`ALLOWED_CONTENT_TYPES`): a sticker is an image.
+ */
+export function contentTypeForMedia(
+  type: EchoMediaType
+): StoredMedia['contentType'] {
+  return type === 'sticker' ? 'image' : type;
+}
+
+/**
+ * The row of a resolved echo media, equivalent to the inbound one:
+ * `content_text` is the caption (a document falls back to its file
+ * name, which the inbox shows as the attachment's name) or null.
+ */
+export function storedMediaFor(
+  media: EchoMedia,
+  mediaUrl: string
+): StoredMedia {
+  return {
+    contentType: contentTypeForMedia(media.type),
+    contentText:
+      media.caption ?? (media.type === 'document' ? media.fileName : null),
+    mediaUrl,
+    mediaType: media.mimeType,
+  };
 }
 
 // ------------------------------------------------------------------
@@ -180,6 +260,33 @@ export type ParsedEcho =
       contentText: string;
     };
 
+/**
+ * The media of an echo that Meta delivered by id, or null (text, any
+ * other type, or a media object without `id`).
+ */
+export function echoMediaFor(echo: Record<string, unknown>): EchoMedia | null {
+  const msg = asObject(echo) ?? {};
+  const type = asString(msg.type);
+  if (!type || !(ECHO_MEDIA_TYPES as readonly string[]).includes(type)) {
+    return null;
+  }
+  const inner = asObject(msg[type]);
+  const id = asString(inner?.id);
+  if (!id) return null;
+  const timestamp = msg.timestamp;
+  return {
+    type: type as EchoMediaType,
+    id,
+    mimeType: asString(inner?.mime_type),
+    caption: asString(inner?.caption),
+    fileName: asString(inner?.filename),
+    timestamp:
+      typeof timestamp === 'string' || typeof timestamp === 'number'
+        ? String(timestamp)
+        : null,
+  };
+}
+
 /** `value.message_echoes[]` → echoes; `skipped` lists the wamids dropped. */
 export function parseMessageEchoes(value: unknown): {
   echoes: ParsedEcho[];
@@ -218,6 +325,7 @@ export function parseMessageEchoes(value: unknown): {
       }
       continue;
     }
+    const media = echoMediaFor(echo);
     echoes.push({
       kind: 'message',
       phone,
@@ -227,6 +335,7 @@ export function parseMessageEchoes(value: unknown): {
         senderType: 'agent',
         status: 'sent',
         contentText: contentTextFor(echo),
+        ...(media ? { media } : {}),
       },
     });
   }
@@ -391,6 +500,10 @@ export async function storeThreadMessages(
     )
     .filter((m) => (seen.has(m.wamid) ? false : (seen.add(m.wamid), true)));
 
+  // The summary is always the text form (marker + caption for media),
+  // even when the row itself carries the attachment and its caption.
+  const summaryOf = new Map(ordered.map((m) => [m.wamid, m.contentText]));
+
   let inserted = 0;
   let latest: { created_at: string; content_text: string } | null = null;
   let failed = false;
@@ -399,9 +512,10 @@ export async function storeThreadMessages(
       conversation_id: conversationId,
       sender_type: m.senderType,
       sender_id: null,
-      content_type: 'text',
-      content_text: m.contentText,
-      media_url: null,
+      content_type: m.stored?.contentType ?? 'text',
+      content_text: m.stored ? m.stored.contentText : m.contentText,
+      media_url: m.stored?.mediaUrl ?? null,
+      media_type: m.stored?.mediaType ?? null,
       message_id: m.wamid,
       status: m.status,
       created_at: m.createdAt,
@@ -412,7 +526,7 @@ export async function storeThreadMessages(
         onConflict: 'conversation_id,message_id',
         ignoreDuplicates: true,
       })
-      .select('id, created_at, content_text');
+      .select('id, created_at, message_id');
     if (error) {
       console.error(
         '[webhook] coexistence messages insert failed:',
@@ -427,10 +541,15 @@ export async function storeThreadMessages(
     }
     for (const row of (data ?? []) as {
       created_at: string;
-      content_text: string;
+      message_id: string;
     }[]) {
       inserted += 1;
-      if (!latest || row.created_at > latest.created_at) latest = row;
+      if (!latest || row.created_at > latest.created_at) {
+        latest = {
+          created_at: row.created_at,
+          content_text: summaryOf.get(row.message_id) ?? '',
+        };
+      }
     }
   }
 
@@ -511,6 +630,64 @@ async function applyEchoRewrite(
   return updated;
 }
 
+/** The decrypted token for echo media, or null (logged, never thrown). */
+function echoMediaToken(config: CoexistenceConfig): string | null {
+  if (!config.access_token) {
+    console.warn(
+      '[webhook] echo media without access token; kept as marker:',
+      JSON.stringify({ phoneNumberId: config.phone_number_id })
+    );
+    return null;
+  }
+  try {
+    return decrypt(config.access_token);
+  } catch (err) {
+    console.error(
+      '[webhook] echo media token could not be decrypted:',
+      JSON.stringify({
+        phoneNumberId: config.phone_number_id,
+        error: errorMessage(err),
+      })
+    );
+    return null;
+  }
+}
+
+/**
+ * An echo's media → the row of an inbound attachment (m14.2), with the
+ * same verify / mirror / proxy path as the inbound webhook. null when
+ * there is no token or Meta could not verify the id: the echo then
+ * stays the `[<type>] caption` marker. Best effort, never throws.
+ */
+async function resolveEchoMedia(
+  db: SupabaseClient,
+  config: CoexistenceConfig,
+  message: CoexistenceMessage,
+  accessToken: string | null
+): Promise<StoredMedia | null> {
+  const media = message.media;
+  if (!media || !accessToken) return null;
+  try {
+    const mediaUrl = await resolveInboundMediaUrl({
+      mediaId: media.id,
+      accessToken,
+      mirror:
+        config.mirror_inbound_media !== false
+          ? { storage: db.storage, accountId: config.account_id }
+          : null,
+      fileName: media.type === 'document' ? media.fileName : null,
+      messageTimestamp: media.timestamp,
+    });
+    return mediaUrl ? storedMediaFor(media, mediaUrl) : null;
+  } catch (err) {
+    console.error(
+      '[webhook] echo media failed:',
+      JSON.stringify({ wamid: message.wamid, error: errorMessage(err) })
+    );
+    return null;
+  }
+}
+
 async function handleEchoes(
   db: SupabaseClient,
   value: unknown,
@@ -523,10 +700,17 @@ async function handleEchoes(
   let inserted = 0;
   let rewritten = 0;
   let failed = 0;
+  let mediaToken: string | null | undefined;
   for (const echo of echoes) {
     if (echo.kind === 'message') {
+      let message = echo.message;
+      if (message.media) {
+        if (mediaToken === undefined) mediaToken = echoMediaToken(config);
+        const stored = await resolveEchoMedia(db, config, message, mediaToken);
+        if (stored) message = { ...message, stored };
+      }
       const result = await storeThreadMessages(db, config, echo.phone, [
-        echo.message,
+        message,
       ]);
       if (result) inserted += result.inserted;
       else failed += 1;
