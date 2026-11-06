@@ -60,6 +60,21 @@ vi.mock('@/lib/auth/admin-client', () => ({
 import { GET } from './route';
 import { SIGNED_URL_TTL_SECONDS } from '@/lib/media/signed-url';
 
+/**
+ * Paths (as they appear in the stored URL) that start with the target's
+ * folder but that the WHATWG parser in `fetch` would resolve into
+ * `account-other/…` once storage-js interpolated them unencoded.
+ */
+const TRAVERSALS = [
+  `account-${TARGET}/..%5Caccount-other%5Csecret.png`,
+  `account-${TARGET}/%252e%252e/account-other/s.png`,
+  `account-${TARGET}/.%09./account-other/s.png`,
+  `account-${TARGET}/.%0A./account-other/s.png`,
+  `account-${TARGET}/x%3F..%2F..%2Faccount-other%2Fs.png`,
+  `account-${TARGET}/x%23/../../account-other/s.png`,
+  `account-${TARGET}/a%7F.png`,
+];
+
 const obj = (path: string, bucket = 'chat-media', origin = ORIGIN) =>
   `${origin}/storage/v1/object/public/${bucket}/${path}`;
 
@@ -118,6 +133,9 @@ describe('GET /api/media/sign', () => {
       '11111111-1111-4111-8111-111111111111/1-photo.png',
       // Dot segments smuggled in percent-encoded slashes.
       `account-${TARGET}%2F..%2Faccount-other/1-photo.png`,
+      // Round 2: forms storage-js's fetch would normalise AFTER the check
+      // (the path goes into its URL unencoded) into another account.
+      ...TRAVERSALS,
     ]) {
       const res = await sign(obj(path));
       expect(res.status, path).toBe(403);
@@ -154,6 +172,22 @@ describe('GET /api/media/sign', () => {
     expect(body.expiresAt).toBeLessThanOrEqual(
       Date.now() + SIGNED_URL_TTL_SECONDS * 1000
     );
+  });
+
+  it('still signs legitimate names with spaces, accents and dots', async () => {
+    for (const path of [
+      `account-${TARGET}/inbound/wamid_1-Factura%20marzo.pdf`,
+      `account-${TARGET}/1700000000000-foto_ni%C3%B1o.jpeg`,
+      `account-${TARGET}/a.b.c.png`,
+    ]) {
+      const res = await sign(obj(path));
+      expect(res.status, path).toBe(200);
+    }
+    expect(h.signs.map((s) => s.path)).toEqual([
+      `account-${TARGET}/inbound/wamid_1-Factura marzo.pdf`,
+      `account-${TARGET}/1700000000000-foto_niño.jpeg`,
+      `account-${TARGET}/a.b.c.png`,
+    ]);
   });
 
   it('signs flow-media objects too', async () => {

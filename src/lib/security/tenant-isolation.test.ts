@@ -6302,6 +6302,49 @@ describe('/api/media/sign (m14.1, service-role storage signing)', () => {
     expectBUnchanged(beforeB);
   });
 
+  // Round 2: paths that start under A's folder but that storage-js's
+  // fetch (the path goes into its URL unencoded) would normalise into B's.
+  it("no path form under A's folder reaches B's objects through the service role", async () => {
+    openSupportSessionOverA();
+    // Every service-role storage call, through the admin getter (the
+    // support-session lookups use the same getter for their tables).
+    const storageCalls: string[] = [];
+    const realAdmin = Object.getOwnPropertyDescriptor(
+      FakeDatabase.prototype,
+      'admin'
+    )!.get!;
+    vi.spyOn(h.db, 'admin', 'get').mockImplementation(() => {
+      const client = realAdmin.call(h.db) as FakeDatabase['admin'];
+      const from = client.storage.from;
+      Object.assign(client.storage, {
+        from: (bucket: string) => {
+          storageCalls.push(bucket);
+          return from(bucket);
+        },
+      });
+      return client;
+    });
+    const base = 'https://fake.supabase.co/storage/v1/object/public/chat-media';
+    for (const tail of [
+      `..%5Caccount-${B}%5C1-photo.png`,
+      `%252e%252e/account-${B}/1-photo.png`,
+      `.%09./account-${B}/1-photo.png`,
+      `.%0A./account-${B}/1-photo.png`,
+      `x%3F..%2F..%2Faccount-${B}%2F1-photo.png`,
+      `x%23/../../account-${B}/1-photo.png`,
+    ]) {
+      const res = await mediaSign.GET(signReq(`${base}/account-${A}/${tail}`));
+      expect(res.status, tail).toBe(403);
+      expect(JSON.stringify(await res.json())).not.toContain(`account-${B}`);
+    }
+    expect(storageCalls).toEqual([]);
+
+    // The spy does see a legitimate signature of A's object.
+    const ok = await mediaSign.GET(signReq(objectUrl(A)));
+    expect(ok.status).toBe(200);
+    expect(storageCalls).toEqual(['chat-media']);
+  });
+
   it("outside a support session, an actor from A cannot sign B's objects", async () => {
     const res = await mediaSign.GET(signReq(objectUrl(B)));
     expect(res.status).toBe(403);

@@ -304,7 +304,11 @@ reason — Meta fetched outbound media from them at send time.
    (400), requires the path's first segment to be exactly
    `account-<effective account>` with no dot segments — the impersonated
    company in a support session, via `resolveEffectiveAccountId` — (403;
-   legacy `<uid>/…` paths are refused there), and only then signs with
+   legacy `<uid>/…` paths are refused there). Because `storage-js` puts
+   the path into its request URL unencoded and `fetch` normalises it
+   afterwards, the path is also refused if it contains `\`, `%`, `?`,
+   `#` or control characters, and is re-parsed as the signing URL to
+   confirm it is still under that folder, and only then signs with
    the service role for the same 10 minutes. It is a GET, so the support
    middleware lets it through as a read. Leak cases are in
    `src/lib/security/tenant-isolation.test.ts`. Uploading attachments in

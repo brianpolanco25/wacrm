@@ -6,6 +6,70 @@ import { SIGNED_URL_TTL_SECONDS } from '@/lib/media/signed-url';
 import { MEDIA_BUCKETS, parseStorageObjectUrl } from '@/lib/media/storage-url';
 
 /**
+ * Characters refused anywhere in the decoded object path. `storage-js`
+ * interpolates the path into `/object/sign/<bucket>/<path>` WITHOUT
+ * encoding it, and `fetch` then runs the WHATWG URL parser over it — which
+ * turns `\` into `/`, strips tabs and newlines, resolves `%2e%2e` as `..`,
+ * and cuts the path at `?` or `#`. Any of those lets a path that starts
+ * with `account-A/` reach an object of another account (m14.1 review,
+ * round 2). Paths the app writes (`buildMediaPath`) never contain them.
+ */
+function hasUnsafePathChars(path: string): boolean {
+  for (const ch of path) {
+    const code = ch.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f || '\\%?#'.includes(ch)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when `path` is an object of `accountId` in the form storage will
+ * actually see it: no unsafe characters, first segment exactly
+ * `account-<accountId>`, no empty / dot segments, and — re-parsed exactly
+ * as the signing request will be — still under that account's folder.
+ */
+function pathBelongsTo(
+  origin: string,
+  bucket: string,
+  path: string,
+  accountId: string
+): boolean {
+  if (hasUnsafePathChars(path)) return false;
+  const segments = path.split('/');
+  if (
+    segments[0] !== `account-${accountId}` ||
+    segments.some((s) => s === '' || s === '.' || s === '..')
+  ) {
+    return false;
+  }
+
+  const prefix = `/storage/v1/object/sign/${bucket}/account-${accountId}/`;
+  let probe: URL;
+  try {
+    probe = new URL(
+      `${origin.replace(/\/+$/, '')}/storage/v1/object/sign/${bucket}/${path}`
+    );
+  } catch {
+    return false;
+  }
+  if (probe.search || probe.hash || !probe.pathname.startsWith(prefix)) {
+    return false;
+  }
+  return probe.pathname
+    .slice(prefix.length)
+    .split('/')
+    .every((s) => {
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(s);
+      } catch {
+        return false;
+      }
+      return decoded !== '' && decoded !== '.' && decoded !== '..';
+    });
+}
+
+/**
  * GET /api/media/sign?url=<stored media_url>
  *
  * Signs a media-bucket object for the browser when the browser cannot
@@ -55,11 +119,14 @@ export async function GET(request: Request) {
   }
 
   const accountId = await resolveEffectiveAccountId(supabase, user.id);
-  const segments = ref.path.split('/');
   if (
     !accountId ||
-    segments[0] !== `account-${accountId}` ||
-    segments.some((s) => s === '' || s === '.' || s === '..')
+    !pathBelongsTo(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      ref.bucket,
+      ref.path,
+      accountId
+    )
   ) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
