@@ -147,6 +147,9 @@ export async function GET(request: Request) {
     {
       url: data.signedUrl,
       expiresAt: issuedAt + SIGNED_URL_TTL_SECONDS * 1000,
+      // Lifetime in seconds: the browser computes its own deadline from
+      // this, on its own clock, instead of trusting the epoch above.
+      expiresIn: SIGNED_URL_TTL_SECONDS,
     },
     { headers: { 'Cache-Control': 'private, no-store' } }
   );

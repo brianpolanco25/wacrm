@@ -135,7 +135,11 @@ describe('getSignedMediaUrl in a support session', () => {
 
   function fakeFetch(
     reply: () => Response | Promise<Response> = () =>
-      Response.json({ url: SIGNED, expiresAt: 1_000_000 + 600_000 })
+      Response.json({
+        url: SIGNED,
+        expiresAt: 1_000_000 + 600_000,
+        expiresIn: 600,
+      })
   ) {
     const calls: { url: string; init?: RequestInit }[] = [];
     const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -233,16 +237,49 @@ describe('getSignedMediaUrl in a support session', () => {
     expect(c).toEqual(a);
   });
 
-  it("never trusts an expiry later than the browser's own clock allows", async () => {
-    const { impl } = fakeFetch(() =>
-      Response.json({ url: SIGNED, expiresAt: 9_999_999_999 })
+  it('computes the expiry on the browser clock, ignoring a server clock that runs behind', async () => {
+    const NOW = 50_000_000;
+    const { impl, calls } = fakeFetch(() =>
+      Response.json({
+        url: SIGNED,
+        // The server is 10 minutes behind: its epoch deadline is already
+        // in the browser's past.
+        expiresAt: NOW - 10 * 60_000,
+        expiresIn: SIGNED_URL_TTL_SECONDS,
+      })
+    );
+    const opts = { fetch: impl, supportSession: () => true, now: () => NOW };
+    const out = await getSignedMediaUrl(OBJ, opts);
+    expect(out.expiresAt).toBe(NOW + SIGNED_URL_TTL_SECONDS * 1000);
+
+    const again = await getSignedMediaUrl(OBJ, opts);
+    expect(again).toEqual(out);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('never trusts a lifetime longer than the TTL, and defaults to it', async () => {
+    const long = fakeFetch(() =>
+      Response.json({
+        url: SIGNED,
+        expiresAt: 9_999_999_999,
+        expiresIn: 86_400,
+      })
     );
     const out = await getSignedMediaUrl(OBJ, {
-      fetch: impl,
+      fetch: long.impl,
       supportSession: () => true,
       now: () => 1_000_000,
     });
     expect(out.expiresAt).toBe(1_000_000 + SIGNED_URL_TTL_SECONDS * 1000);
+
+    __resetSignedUrlCache();
+    const bare = fakeFetch(() => Response.json({ url: SIGNED }));
+    const fallback = await getSignedMediaUrl(OBJ, {
+      fetch: bare.impl,
+      supportSession: () => true,
+      now: () => 1_000_000,
+    });
+    expect(fallback.expiresAt).toBe(1_000_000 + SIGNED_URL_TTL_SECONDS * 1000);
   });
 
   it('leaves non-bucket URLs alone without calling the route', async () => {

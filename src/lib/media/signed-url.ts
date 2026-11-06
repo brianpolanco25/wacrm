@@ -85,10 +85,12 @@ function defaultSupportSession(): boolean {
 }
 
 /**
- * Ask the server to sign `url` (support sessions). Returns the signed URL
- * and its expiry, never later than `issuedAt + ttl` on THIS clock so a
- * server clock ahead of the browser can't postpone a renewal past the
- * real deadline.
+ * Ask the server to sign `url` (support sessions). The expiry is computed
+ * on THIS clock only — `issuedAt` plus the lifetime the server reports
+ * (`expiresIn`, seconds), never longer than `ttlMs`. The server's epoch
+ * `expiresAt` is ignored on purpose: comparing it with the browser's
+ * `now()` would, on a skewed clock, put every entry inside the refresh
+ * margin and re-sign each attachment every second.
  */
 async function signThroughServer(
   url: string,
@@ -101,16 +103,17 @@ async function signThroughServer(
     { credentials: 'same-origin', cache: 'no-store' }
   );
   if (!res.ok) throw new Error(`${MEDIA_SIGN_ENDPOINT} answered ${res.status}`);
-  const body = (await res.json()) as { url?: unknown; expiresAt?: unknown };
+  const body = (await res.json()) as { url?: unknown; expiresIn?: unknown };
   if (typeof body.url !== 'string' || !body.url) {
     throw new Error(`${MEDIA_SIGN_ENDPOINT} returned no URL`);
   }
-  const local = issuedAt + ttlMs;
-  const expiresAt =
-    typeof body.expiresAt === 'number' && Number.isFinite(body.expiresAt)
-      ? Math.min(body.expiresAt, local)
-      : local;
-  return { url: body.url, expiresAt };
+  const lifetimeMs =
+    typeof body.expiresIn === 'number' &&
+    Number.isFinite(body.expiresIn) &&
+    body.expiresIn > 0
+      ? Math.min(body.expiresIn * 1000, ttlMs)
+      : ttlMs;
+  return { url: body.url, expiresAt: issuedAt + lifetimeMs };
 }
 
 /**

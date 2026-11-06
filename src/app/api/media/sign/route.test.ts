@@ -166,6 +166,7 @@ describe('GET /api/media/sign', () => {
     expect(body.url).toBe(
       `${ORIGIN}/storage/v1/object/sign/chat-media/account-${TARGET}/1-photo.png?token=svc`
     );
+    expect(body.expiresIn).toBe(SIGNED_URL_TTL_SECONDS);
     expect(body.expiresAt).toBeGreaterThanOrEqual(
       before + SIGNED_URL_TTL_SECONDS * 1000
     );

@@ -58,9 +58,11 @@ const WRITE_OPS = new Set(['insert', 'update', 'upsert', 'delete']);
  * Storage operations that only READ, and therefore stay open during a
  * support session.
  *
- * `createSignedUrl(s)` has to be here: it is how this panel resolves every
- * attachment (`src/lib/media/signed-url.ts`), and blocking it would take
- * away the one thing an operator opened the session to look at.
+ * `createSignedUrl(s)` stays here because it only reads, but it is no
+ * longer how attachments render IN a support session: there the operator's
+ * JWT maps to their own company under migration 044's storage policy, so
+ * `src/lib/media/signed-url.ts` asks `GET /api/media/sign` instead (m14.1).
+ * The browser's `createSignedUrl` is the path outside support sessions.
  * `getPublicUrl` builds a string locally and touches nothing.
  *
  * Everything else on a bucket — `upload`, `remove`, `move`, `copy`,
