@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetSignedUrlCache,
   getSignedMediaUrl,
+  MEDIA_SIGN_ENDPOINT,
   msUntilRefresh,
   SIGNED_URL_REFRESH_MARGIN_MS,
   SIGNED_URL_TTL_SECONDS,
@@ -123,6 +124,135 @@ describe('getSignedMediaUrl', () => {
     const out = await getSignedMediaUrl(OBJ, { client: async () => client });
     expect(calls).toHaveLength(1);
     expect(out.expiresAt).not.toBeNull();
+  });
+});
+
+// m14.1 (A2): inside a support session the browser's own JWT is the
+// operator's, which migration 044's policy maps to the operator's company,
+// so signing goes through the server route instead.
+describe('getSignedMediaUrl in a support session', () => {
+  const SIGNED = `${ORIGIN}/storage/v1/object/sign/chat-media/account-a1/1-photo.png?token=srv`;
+
+  function fakeFetch(
+    reply: () => Response | Promise<Response> = () =>
+      Response.json({ url: SIGNED, expiresAt: 1_000_000 + 600_000 })
+  ) {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return reply();
+    }) as typeof fetch;
+    return { impl, calls };
+  }
+
+  it('signs through /api/media/sign with credentials, not the browser client', async () => {
+    const { client, calls: clientCalls } = fakeClient();
+    const { impl, calls } = fakeFetch();
+    const out = await getSignedMediaUrl(OBJ, {
+      client,
+      fetch: impl,
+      supportSession: () => true,
+      now: () => 1_000_000,
+    });
+
+    expect(clientCalls).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(
+      `${MEDIA_SIGN_ENDPOINT}?url=${encodeURIComponent(OBJ)}`
+    );
+    expect(calls[0].init?.credentials).toBe('same-origin');
+    expect(out).toEqual({ url: SIGNED, expiresAt: 1_000_000 + 600_000 });
+  });
+
+  it('outside a support session keeps signing with the browser client', async () => {
+    const { client, calls: clientCalls } = fakeClient();
+    const { impl, calls } = fakeFetch();
+    const out = await getSignedMediaUrl(OBJ, {
+      client,
+      fetch: impl,
+      supportSession: () => false,
+    });
+    expect(calls).toEqual([]);
+    expect(clientCalls).toHaveLength(1);
+    expect(out.url).toMatch(/token=t1$/);
+  });
+
+  it('falls back to the stored URL when the route refuses, without caching the failure', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const refused = fakeFetch(() =>
+      Response.json({ error: 'Forbidden' }, { status: 403 })
+    );
+    const out = await getSignedMediaUrl(OBJ, {
+      fetch: refused.impl,
+      supportSession: () => true,
+    });
+    expect(out).toEqual({ url: OBJ, expiresAt: null });
+    expect(warn).toHaveBeenCalled();
+
+    const ok = fakeFetch();
+    const next = await getSignedMediaUrl(OBJ, {
+      fetch: ok.impl,
+      supportSession: () => true,
+      now: () => 1_000_000,
+    });
+    expect(next.url).toBe(SIGNED);
+  });
+
+  it('falls back when the request itself fails or the body has no URL', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const down = fakeFetch(() => Promise.reject(new TypeError('offline')));
+    expect(
+      await getSignedMediaUrl(OBJ, {
+        fetch: down.impl,
+        supportSession: () => true,
+      })
+    ).toEqual({ url: OBJ, expiresAt: null });
+    const empty = fakeFetch(() => Response.json({}));
+    expect(
+      await getSignedMediaUrl(OBJ, {
+        fetch: empty.impl,
+        supportSession: () => true,
+      })
+    ).toEqual({ url: OBJ, expiresAt: null });
+  });
+
+  it('caches per object and shares the in-flight request', async () => {
+    const { impl, calls } = fakeFetch();
+    const opts = {
+      fetch: impl,
+      supportSession: () => true,
+      now: () => 1_000_000,
+    };
+    const [a, b] = await Promise.all([
+      getSignedMediaUrl(OBJ, opts),
+      getSignedMediaUrl(OBJ, opts),
+    ]);
+    const c = await getSignedMediaUrl(OBJ, opts);
+    expect(calls).toHaveLength(1);
+    expect(a).toEqual(b);
+    expect(c).toEqual(a);
+  });
+
+  it("never trusts an expiry later than the browser's own clock allows", async () => {
+    const { impl } = fakeFetch(() =>
+      Response.json({ url: SIGNED, expiresAt: 9_999_999_999 })
+    );
+    const out = await getSignedMediaUrl(OBJ, {
+      fetch: impl,
+      supportSession: () => true,
+      now: () => 1_000_000,
+    });
+    expect(out.expiresAt).toBe(1_000_000 + SIGNED_URL_TTL_SECONDS * 1000);
+  });
+
+  it('leaves non-bucket URLs alone without calling the route', async () => {
+    const { impl, calls } = fakeFetch();
+    const out = await getSignedMediaUrl(PROXY, {
+      fetch: impl,
+      supportSession: () => true,
+    });
+    expect(out).toEqual({ url: PROXY, expiresAt: null });
+    expect(calls).toEqual([]);
   });
 });
 

@@ -243,6 +243,9 @@ Ninguna nueva. `.env.local.example` no se tocó.
 3. En el navegador siguen rechazados durante la sesión: `rpc()` (filtro por etiquetas en
    contactos, `touch_presence`) y `storage` (adjuntos: ni se ven ni se suben). Enviar un mensaje
    con adjunto desde la bandeja en soporte falla.
+   *Actualización 2026-11-05 (m14.1):* los adjuntos **ya se ven** en soporte (el navegador pide
+   la firma a `GET /api/media/sign`, que firma con la cuenta impersonada); subirlos sigue
+   bloqueado y enviar con adjunto sigue fallando.
 4. El índice legado `message_templates(user_id, name, language)` sigue siendo la raíz del 409 de
    submit (TODO ya anotado en la ruta); la migración que lo cambie a `account_id` lo elimina.
 5. Borrados en cascada de tablas hijas no dejan fila `db` propia (queda la del padre). Operaciones
