@@ -1,3 +1,4 @@
+import { supportFlagValue } from '@/lib/auth/support-cookie';
 import { isMediaBucketUrl, parseStorageObjectUrl } from './storage-url';
 
 /**
@@ -9,17 +10,29 @@ import { isMediaBucketUrl, parseStorageObjectUrl } from './storage-url';
  * 400, so anything that renders an attachment asks here for a URL it can
  * actually load.
  *
- * Why `createSignedUrl` through the user's own Supabase client, rather
- * than a server endpoint that signs with the service role: the storage
- * API checks the bucket's SELECT policy against the caller's JWT before
- * it signs, and migration 044's policy is "members of the account that
- * owns the path". So isolation is enforced by exactly the same rule that
- * governs direct reads, there is no service-role code path to audit, and
- * no new route. A user in account B asking to sign account A's object
- * gets an error, not a URL. It also degrades cleanly: on a still-public
- * bucket signing works the same way, and if signing fails for any reason
- * the caller gets the original URL back (which is all that worked before
- * this module existed).
+ * Two ways to sign, chosen per call:
+ *
+ *   - Normally, `createSignedUrl` through the user's own Supabase client.
+ *     The storage API checks the bucket's SELECT policy against the
+ *     caller's JWT before it signs, and migration 044's policy is
+ *     "members of the account that owns the path", so isolation is the
+ *     same rule that governs direct reads. A user in account B asking to
+ *     sign account A's object gets an error, not a URL.
+ *
+ *   - Inside a support session (the `wacrm_support_active` flag cookie is
+ *     present), that does NOT work: the JWT is the operator's, and 044's
+ *     policy resolves the account through `profiles.user_id = auth.uid()`
+ *     — the operator's own company, not the one being supported — so the
+ *     storage API refuses and every mirrored attachment rendered broken
+ *     (m14.1). There the browser asks `GET /api/media/sign`, which
+ *     resolves the EFFECTIVE account server-side, checks the path sits
+ *     under `account-<that id>/` and signs with the service role. (An
+ *     earlier note claimed the server already signed these with the
+ *     service role; it did not until m14.1.)
+ *
+ * Either way it degrades cleanly: if signing fails for any reason the
+ * caller gets the original URL back (which is all that worked before
+ * this module existed), and the element's own error state reports it.
  *
  * URLs live for {@link SIGNED_URL_TTL_SECONDS} and are cached per object;
  * `getSignedMediaUrl` hands back the expiry so a mounted `<video>` or
@@ -62,6 +75,47 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<SignedMediaUrl>>();
 
+/** The server signer used inside a support session. */
+export const MEDIA_SIGN_ENDPOINT = '/api/media/sign';
+
+/** True when the server has flagged this browser as inside a support session. */
+function defaultSupportSession(): boolean {
+  if (typeof document === 'undefined') return false;
+  return supportFlagValue(document.cookie) !== null;
+}
+
+/**
+ * Ask the server to sign `url` (support sessions). The expiry is computed
+ * on THIS clock only — `issuedAt` plus the lifetime the server reports
+ * (`expiresIn`, seconds), never longer than `ttlMs`. The server's epoch
+ * `expiresAt` is ignored on purpose: comparing it with the browser's
+ * `now()` would, on a skewed clock, put every entry inside the refresh
+ * margin and re-sign each attachment every second.
+ */
+async function signThroughServer(
+  url: string,
+  fetchImpl: typeof fetch,
+  issuedAt: number,
+  ttlMs: number
+): Promise<CacheEntry> {
+  const res = await fetchImpl(
+    `${MEDIA_SIGN_ENDPOINT}?url=${encodeURIComponent(url)}`,
+    { credentials: 'same-origin', cache: 'no-store' }
+  );
+  if (!res.ok) throw new Error(`${MEDIA_SIGN_ENDPOINT} answered ${res.status}`);
+  const body = (await res.json()) as { url?: unknown; expiresIn?: unknown };
+  if (typeof body.url !== 'string' || !body.url) {
+    throw new Error(`${MEDIA_SIGN_ENDPOINT} returned no URL`);
+  }
+  const lifetimeMs =
+    typeof body.expiresIn === 'number' &&
+    Number.isFinite(body.expiresIn) &&
+    body.expiresIn > 0
+      ? Math.min(body.expiresIn * 1000, ttlMs)
+      : ttlMs;
+  return { url: body.url, expiresAt: issuedAt + lifetimeMs };
+}
+
 /**
  * The browser client, resolved lazily so importing this module from a
  * server-rendered component or a test never constructs one.
@@ -82,6 +136,10 @@ export async function getSignedMediaUrl(
     client?: SignedUrlClient | (() => Promise<SignedUrlClient>);
     now?: () => number;
     ttlSeconds?: number;
+    /** Whether the browser is inside a support session. Default: the flag cookie. */
+    supportSession?: () => boolean;
+    /** `fetch` for the server signer. Default: the global one. */
+    fetch?: typeof fetch;
   } = {}
 ): Promise<SignedMediaUrl> {
   if (!isMediaBucketUrl(url)) return { url, expiresAt: null };
@@ -100,6 +158,16 @@ export async function getSignedMediaUrl(
     if (!ref) return { url, expiresAt: null };
     const ttl = opts.ttlSeconds ?? SIGNED_URL_TTL_SECONDS;
     try {
+      if ((opts.supportSession ?? defaultSupportSession)()) {
+        const entry = await signThroughServer(
+          url,
+          opts.fetch ?? fetch,
+          now(),
+          ttl * 1000
+        );
+        cache.set(url, entry);
+        return { url: entry.url, expiresAt: entry.expiresAt };
+      }
       const client =
         typeof opts.client === 'function'
           ? await opts.client()

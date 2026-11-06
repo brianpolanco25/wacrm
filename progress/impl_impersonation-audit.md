@@ -376,7 +376,7 @@ cuenta por su tabla padre: `automation_steps_select` (→ `automations`),
 
 **Fuera del alcance, a propósito:** las dos políticas de `storage.objects` (044).
 Los adjuntos se sirven con URLs firmadas que genera el servidor con el rol de
-servicio, ya acotadas por cuenta, así que la lectura directa del bucket no es la
+servicio[^m141], ya acotadas por cuenta, así que la lectura directa del bucket no es la
 vía por la que el panel pinta media; y mantiene 057 dentro de `public` sin tocar
 políticas de un esquema que administra Supabase. Consecuencia visible: durante
 una sesión de soporte, el media legado que se resolviera por lectura directa del
@@ -1089,3 +1089,13 @@ Las tres rondas anteriores las dejó a medias un agente que se cortó; el WIP
 resumen de cuenta y la red de regresión, que son los cuatro archivos que esta
 sesión termina. Se cierran con `--amend` sobre ese WIP porque no estaba en
 ninguna otra rama.
+
+[^m141]: **Corrección, 2026-11-05 (m14.1).** Esta afirmación era falsa cuando se
+    escribió: `src/lib/media/signed-url.ts` firmaba desde el navegador con el JWT del
+    usuario, y en soporte la política «Members can read chat media» (044) resuelve la
+    cuenta del operador, no la impersonada; la firma fallaba y el panel caía a la URL
+    pública de un bucket privado (400): las imágenes salían rotas. Desde m14.1, en sesión
+    de soporte el navegador pide la firma a `GET /api/media/sign`, que resuelve la cuenta
+    efectiva, exige `account-<cuenta>/` en la ruta del objeto y firma con el rol de
+    servicio. Fuera de soporte sigue firmando el navegador. Ver
+    `progress/impl_support-media-signing.md`.

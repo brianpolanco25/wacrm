@@ -287,10 +287,32 @@ reason — Meta fetched outbound media from them at send time.
    JWT before it signs, and migration 044's policy covers members of the
    account named by the path's first segment (or the account of the legacy
    uploader) —
-   so isolation is enforced by the same rule that gates a direct read,
-   with no service-role code path to audit and no new route. Signing
-   works the same on a still-public bucket; if it fails for any reason
-   the stored URL is used as-is, which is exactly what worked before.
+   so isolation is enforced by the same rule that gates a direct read.
+   Signing works the same on a still-public bucket; if it fails for any
+   reason the stored URL is used as-is, which is exactly what worked
+   before.
+
+   **Exception: support sessions (m14.1).** There the JWT is the
+   platform operator's, and 044's policy resolves the account through
+   `profiles.user_id = auth.uid()` — the operator's own company, not the
+   impersonated one — so the storage API refuses to sign and every
+   attachment rendered broken. When the `wacrm_support_active` flag
+   cookie is present, `signed-url.ts` asks `GET /api/media/sign?url=…`
+   instead (`src/app/api/media/sign/route.ts`). The route requires a
+   user (401), accepts only an object URL of this project
+   (`NEXT_PUBLIC_SUPABASE_URL` origin) in `chat-media` / `flow-media`
+   (400), requires the path's first segment to be exactly
+   `account-<effective account>` with no dot segments — the impersonated
+   company in a support session, via `resolveEffectiveAccountId` — (403;
+   legacy `<uid>/…` paths are refused there). Because `storage-js` puts
+   the path into its request URL unencoded and `fetch` normalises it
+   afterwards, the path is also refused if it contains `\`, `%`, `?`,
+   `#` or control characters, and is re-parsed as the signing URL to
+   confirm it is still under that folder, and only then signs with
+   the service role for the same 10 minutes. It is a GET, so the support
+   middleware lets it through as a read. Leak cases are in
+   `src/lib/security/tenant-isolation.test.ts`. Uploading attachments in
+   a support session is still refused.
 
 3. **Migration 044** sets `public = FALSE` on both buckets, drops the
    two `… is publicly readable` policies and creates `Members can read

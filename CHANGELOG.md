@@ -15,6 +15,10 @@ and polish.
 
 - No migration. Images, videos, audio, documents and stickers the business sends from the WhatsApp Business app on the phone (coexistence echoes) now appear in the inbox as the attachment itself, copied to storage like inbound media (or through the media proxy when the account turned mirroring off), instead of a «[image]» text bubble. If Meta cannot serve the media, the bubble keeps the old «[image] caption» text. Chat history imported from the phone is unchanged («[media]»: Meta does not deliver those files).
 
+### Fix: attachments show during a platform support session
+
+- No migration. In a support session, images, video, audio and documents customers sent (stored in the private `chat-media` bucket) rendered as broken, and downloading them failed. The browser now asks the server (`GET /api/media/sign`) to sign them for the company being supported; outside a support session nothing changes. Uploading attachments in a support session is still blocked.
+
 ### Integrations: platform support can set them up for the customer
 
 - No migration. During a support session the platform operator can now activate (paste the credential), test, deactivate and change the AI settings of a customer's integration in Settings → Integrations, which shows a notice that the action is recorded. Each of those writes leaves a row in the support-session trail naming the action and the integration (never the credential). Before, these actions were refused (403) in a support session.
