@@ -62,8 +62,15 @@ export function buildMediaPath(
   // Only treat the trailing segment as an extension when there's a real
   // one — a bare name like "README" has no extension and falls back to
   // "bin" rather than becoming "readme".
+  //
+  // The extension is the one part of the name that is not otherwise
+  // sanitised, and the path is interpolated unencoded into the Storage
+  // URL: anything but `[a-z0-9]{1,8}` (after lower-casing) — a `/`, `\`,
+  // `%`, `?`, `#`, an accent — falls back to "bin" so the object stays
+  // in the folder it was meant for (m14.3, L1).
   const hasExt = /\.[^.]+$/.test(fileName);
-  const ext = hasExt ? fileName.split(".").pop()!.toLowerCase() : "bin";
+  const rawExt = hasExt ? fileName.split(".").pop()!.toLowerCase() : "bin";
+  const ext = /^[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : "bin";
   const safeBase =
     fileName
       .replace(/\.[^.]+$/, "")

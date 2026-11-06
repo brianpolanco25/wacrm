@@ -32,6 +32,20 @@ describe("buildMediaPath", () => {
     expect(path).toBe(`account-${ACCOUNT}/1700000000000-README.bin`);
   });
 
+  it("whitelists the extension to [a-z0-9]{1,8} and falls back to bin", () => {
+    const at = 1700000000000;
+    // A traversal smuggled in the extension stays inside the account folder.
+    const smuggled = buildMediaPath(ACCOUNT, "x./%2e%2e/%2e%2e/account-b/y", at);
+    expect(smuggled).toBe(`account-${ACCOUNT}/${at}-x.bin`);
+    expect(smuggled.split("/")).toHaveLength(2);
+    for (const bad of ["a.p\\ng", "a.p%6Eg", "a.png?x", "a.png#x", "a.jpé", "a.toolongext"]) {
+      expect(buildMediaPath(ACCOUNT, bad, at)).toMatch(/\.bin$/);
+    }
+    expect(buildMediaPath(ACCOUNT, "a.JPEG", at)).toMatch(/\.jpeg$/);
+    expect(buildMediaPath(ACCOUNT, "a.3gp", at)).toMatch(/\.3gp$/);
+    expect(buildMediaPath(ACCOUNT, "deck.pptx", at)).toMatch(/\.pptx$/);
+  });
+
   it("omits the timestamp when passed null, for callers needing a stable path", () => {
     const path = buildMediaPath(ACCOUNT, "photo.png", null);
     expect(path).toBe(`account-${ACCOUNT}/photo.png`);
