@@ -2,10 +2,12 @@ import { uploadMedia } from './meta-api';
 import type { SendTimeParams } from './template-send-builder';
 import type { MessageTemplate } from '@/types';
 import {
-  accountIdFromPath,
-  legacyOwnerFromPath,
+  assertStoragePathOwnedBy,
+  isOnOrigin,
   MEDIA_BUCKETS,
   parseStorageObjectUrl,
+  StoragePathForbiddenError,
+  type StorageObjectRef,
 } from '@/lib/media/storage-url';
 
 /**
@@ -184,38 +186,43 @@ function mimeTypeFor(blob: Blob, path: string): string {
   return MIME_BY_EXTENSION[ext] ?? 'application/octet-stream';
 }
 
+const FOREIGN_MEDIA_MESSAGE =
+  'media_url points at an attachment that belongs to another account';
+
 /**
- * Confirm the object at `path` belongs to `accountId`. Account-scoped
- * paths are decided by their first segment; legacy uid paths need the
- * uploader's profile to sit in the account.
+ * Confirm the object at `ref` (or a bare path, read as being in
+ * `chat-media`) belongs to `accountId`. The path-only part — canonical
+ * form, `account-<uuid>` exactly — is `assertStoragePathOwnedBy`; legacy
+ * uid paths additionally need the uploader's profile to sit in the
+ * account.
  */
 export async function assertMediaPathOwnedBy(
-  path: string,
+  ref: StorageObjectRef | string,
   accountId: string,
   db?: OutboundMediaDb
 ): Promise<void> {
-  const owner = accountIdFromPath(path);
-  if (owner) {
-    if (owner === accountId) return;
-    throw new OutboundMediaError(
-      'forbidden',
-      'media_url points at an attachment that belongs to another account'
-    );
+  const target =
+    typeof ref === 'string' ? { bucket: 'chat-media', path: ref } : ref;
+  let owner: ReturnType<typeof assertStoragePathOwnedBy>;
+  try {
+    owner = assertStoragePathOwnedBy(target, accountId);
+  } catch (err) {
+    if (err instanceof StoragePathForbiddenError) {
+      throw new OutboundMediaError('forbidden', FOREIGN_MEDIA_MESSAGE);
+    }
+    throw err;
   }
+  if (owner.kind === 'account') return;
 
-  const legacyUid = legacyOwnerFromPath(path);
-  if (legacyUid && db) {
+  if (db) {
     const { data } = await (db.from('profiles') as ProfileLookup)
       .select('user_id')
-      .eq('user_id', legacyUid)
+      .eq('user_id', owner.uid)
       .eq('account_id', accountId)
       .maybeSingle();
     if (data) return;
   }
-  throw new OutboundMediaError(
-    'forbidden',
-    'media_url points at an attachment that belongs to another account'
-  );
+  throw new OutboundMediaError('forbidden', FOREIGN_MEDIA_MESSAGE);
 }
 
 /**
@@ -230,14 +237,22 @@ export async function resolveOutboundMedia(
   const upload = args.upload ?? uploadMedia;
   const now = args.now ?? Date.now;
 
-  const ref = parseStorageObjectUrl(mediaUrl, {
-    origin: process.env.NEXT_PUBLIC_SUPABASE_URL,
-  });
-  if (!ref || !MEDIA_BUCKETS.has(ref.bucket)) {
+  const origin = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const ref = parseStorageObjectUrl(mediaUrl, { origin });
+  if (!ref) {
+    // A URL on our own Supabase origin that does not parse as a canonical
+    // object (`..`, `%2F..`, `\`, `?`…) is an attempt to steer the path,
+    // never an external link to hand Meta.
+    if (isOnOrigin(mediaUrl, origin)) {
+      throw new OutboundMediaError('forbidden', FOREIGN_MEDIA_MESSAGE);
+    }
+    return { link: mediaUrl };
+  }
+  if (!MEDIA_BUCKETS.has(ref.bucket)) {
     return { link: mediaUrl };
   }
 
-  await assertMediaPathOwnedBy(ref.path, accountId, db);
+  await assertMediaPathOwnedBy(ref, accountId, db);
 
   const key = cacheKey(phoneNumberId, ref.bucket, ref.path);
   const cached = cacheGet(key, now());

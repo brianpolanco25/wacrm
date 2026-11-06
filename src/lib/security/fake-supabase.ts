@@ -426,8 +426,12 @@ export class FakeClient {
         },
       }),
       download: async (path: string) => {
+        // Resolve the object the way the real request does: storage-js
+        // interpolates `path` unencoded and fetch normalises the URL, so
+        // `account-a/../account-b/x` reaches B's object here too (m14.3).
+        const target = storageRequestKey(bucket, path);
         const known = this.db.storageObjects.some(
-          (o) => o.bucket === bucket && o.path === path
+          (o) => storageRequestKey(o.bucket, o.path) === target
         );
         return known
           ? { data: new Blob(['bytes'], { type: 'image/png' }), error: null }
@@ -442,6 +446,16 @@ export class FakeClient {
       remove: async () => ({ data: null, error: null }),
     }),
   };
+}
+
+/**
+ * The key a Storage request for `bucket`/`path` actually lands on:
+ * `new URL` resolves `..`, `\\` and stripped tabs/newlines exactly as
+ * `fetch` does after `@supabase/storage-js` builds the URL unencoded.
+ */
+export function storageRequestKey(bucket: string, path: string): string {
+  const url = new URL(`http://x/o/${bucket}/${path.replace(/^\/+/, '')}`);
+  return `${url.pathname}${url.search}`;
 }
 
 type Mutation =

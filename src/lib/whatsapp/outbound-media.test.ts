@@ -12,8 +12,9 @@ import type { MessageTemplate } from '@/types';
 import type { uploadMedia } from './meta-api';
 
 const ORIGIN = 'https://abc.supabase.co';
-const A = 'acct-a';
-const B = 'acct-b';
+// Real UUIDs: an `account-<id>` folder is only recognised when <id> is one.
+const A = 'aaaaaaaa-0000-4000-8000-00000000000a';
+const B = 'bbbbbbbb-0000-4000-8000-00000000000b';
 const OBJ_A = `${ORIGIN}/storage/v1/object/public/chat-media/account-${A}/1-photo.png`;
 const OBJ_B = `${ORIGIN}/storage/v1/object/public/chat-media/account-${B}/1-secret.pdf`;
 const LEGACY_UID = '9f1b2c3d-0000-4000-8000-000000000000';
@@ -247,6 +248,77 @@ describe('resolveOutboundMedia', () => {
       code: 'upload_failed',
       message: expect.stringContaining('131053'),
     });
+  });
+});
+
+// m14.3 (C1): storage-js puts the path into the URL unencoded and fetch
+// normalises it afterwards, so a path that LOOKS like A's after decoding
+// can download B's object, another bucket's, or leave Storage entirely.
+// Every one of these must be refused before any storage or Meta call.
+const TRAVERSALS = [
+  `account-${A}%2F..%2Faccount-${B}%2F1-secret.pdf`,
+  `account-${A}/..%5Caccount-${B}%5C1-secret.pdf`,
+  `account-${A}/%252e%252e/account-${B}/1-secret.pdf`,
+  `account-${A}/.%09./account-${B}/1-secret.pdf`,
+  `account-${A}/%0A..%2Faccount-${B}/1-secret.pdf`,
+  `account-${A}/x%3F/1-secret.pdf`,
+  `account-${A}/x%23/1-secret.pdf`,
+  `account-${A}/%C0%AE%C0%AE/account-${B}/1-secret.pdf`,
+  `account-${A}//account-${B}/1-secret.pdf`,
+  `account-${A}/..%2F..%2Fflow-media%2Faccount-${B}%2F1-secret.pdf`,
+  `account-${A}/..%2F..%2F..%2F..%2F..%2Frest%2Fv1%2Fprofiles%3Fselect%3D*%23`,
+  `${LEGACY_UID}%2F..%2Faccount-${B}%2F1-secret.pdf`,
+];
+
+describe('resolveOutboundMedia — encoded traversal (m14.3)', () => {
+  it.each(TRAVERSALS)('refuses %s with no storage or Meta call', async (v) => {
+    const { storage, downloads } = fakeStorage({
+      [`chat-media/account-${B}/1-secret.pdf`]: { type: 'application/pdf' },
+    });
+    await expect(
+      resolveOutboundMedia({
+        ...BASE,
+        storage,
+        db: fakeDb({ [LEGACY_UID]: A }),
+        mediaUrl: `${ORIGIN}/storage/v1/object/public/chat-media/${v}`,
+      })
+    ).rejects.toMatchObject({
+      name: 'OutboundMediaError',
+      code: 'forbidden',
+      message:
+        'media_url points at an attachment that belongs to another account',
+    });
+    expect(downloads).toEqual([]);
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('refuses a folder that only starts with the account id', async () => {
+    const { storage, downloads } = fakeStorage({});
+    await expect(
+      resolveOutboundMedia({
+        ...BASE,
+        storage,
+        mediaUrl: `${ORIGIN}/storage/v1/object/public/chat-media/account-${A}b/x.png`,
+      })
+    ).rejects.toMatchObject({ code: 'forbidden' });
+    expect(downloads).toEqual([]);
+  });
+
+  it('still sends a legitimate name with spaces, accents and capitals', async () => {
+    const { storage, downloads } = fakeStorage({
+      [`chat-media/account-${A}/inbound/Factura Señor.v2.PDF`]: {
+        type: 'application/pdf',
+      },
+    });
+    const out = await resolveOutboundMedia({
+      ...BASE,
+      storage,
+      mediaUrl: `${ORIGIN}/storage/v1/object/public/chat-media/account-${A}/inbound/Factura%20Se%C3%B1or.v2.PDF`,
+    });
+    expect(out).toEqual({ mediaId: 'MEDIA-1' });
+    expect(downloads).toEqual([
+      `chat-media/account-${A}/inbound/Factura Señor.v2.PDF`,
+    ]);
   });
 });
 

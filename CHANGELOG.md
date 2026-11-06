@@ -19,6 +19,11 @@ and polish.
 
 - No migration. In a support session, images, video, audio and documents customers sent (stored in the private `chat-media` bucket) rendered as broken, and downloading them failed. The browser now asks the server (`GET /api/media/sign`) to sign them for the company being supported; outside a support session nothing changes. Uploading attachments in a support session is still blocked.
 
+### Security: attachment URLs with encoded path traversal
+
+- No migration. A `media_url` (messages API, inbox send, flows, template media headers, broadcasts) or a template `header_media_url` pointing into our own Storage with an encoded traversal — `account-<A>%2F..%2Faccount-<B>/…`, `%5C`, `%252e%252e`, `.%09.`, `%0A`, `%3F`, `%23`, `//` — is now refused as belonging to another account (403 on send, 400 on template submit). Before, the ownership check ran on the decoded path while the service-role download went to the normalised one, so a member of one account could send themselves another account's attachments or header images, reach other buckets, and make service-role requests outside Storage. Stored object paths are now accepted only in canonical form, and `account-<id>` folders only with a full UUID. Legitimate names with spaces, accents, dots and capitals keep working.
+- Uploaded file extensions are now restricted to 1–8 lowercase letters and digits; anything else is stored as `.bin`.
+
 ### Integrations: platform support can set them up for the customer
 
 - No migration. During a support session the platform operator can now activate (paste the credential), test, deactivate and change the AI settings of a customer's integration in Settings → Integrations, which shows a notice that the action is recorded. Each of those writes leaves a row in the support-session trail naming the action and the integration (never the credential). Before, these actions were refused (403) in a support session.

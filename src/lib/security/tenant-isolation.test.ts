@@ -6353,3 +6353,92 @@ describe('/api/media/sign (m14.1, service-role storage signing)', () => {
     expect((await ok.json()).url).toContain(`account-${A}/`);
   });
 });
+
+// ============================================================
+// m14.3 — encoded traversal in Storage paths (C1, H1 of
+// progress/sec_storage-path-normalization.md).
+//
+// storage-js interpolates the decoded object path into the request URL
+// unencoded and fetch normalises it afterwards; the fake reproduces that
+// (`storageRequestKey`). Each vector starts with a folder A owns — A's
+// own legacy `<uid>/` folder, since the suite's account ids are not
+// UUIDs — so a check made on the decoded string alone passes, and the
+// normalised request lands on B's object. A must never read it.
+// ============================================================
+
+const TRAVERSAL_VECTORS = [
+  `${USER_A}%2F..%2F${USER_B}%2Fsecret.png`,
+  `${USER_A}/..%5C${USER_B}%5Csecret.png`,
+  `${USER_A}/.%09./${USER_B}/secret.png`,
+  `${USER_A}/%0A..%2F${USER_B}/secret.png`,
+  `${USER_A}/%252e%252e/${USER_B}/secret.png`,
+  `${USER_A}/%C0%AE%C0%AE/${USER_B}/secret.png`,
+  `${USER_A}/x%3F/secret.png`,
+  `${USER_A}/x%23/secret.png`,
+  `${USER_A}//${USER_B}/secret.png`,
+  `${USER_A}%2F..%2Faccount-${B}%2F1-secret.png`,
+  `${USER_A}/..%2F..%2Fflow-media%2F${USER_B}%2Fsecret.png`,
+  `${USER_A}/..%2F..%2F..%2F..%2F..%2Frest%2Fv1%2Fprofiles%3Fselect%3D*%23`,
+];
+
+function seedBSecrets(): void {
+  h.db.storageObjects.push(
+    { bucket: 'chat-media', path: `${USER_B}/secret.png` },
+    { bucket: 'chat-media', path: `account-${B}/1-secret.png` },
+    { bucket: 'flow-media', path: `${USER_B}/secret.png` }
+  );
+}
+
+describe('Storage paths: encoded traversal never reaches B (m14.3)', () => {
+  it('the fake resolves a traversal the way fetch does', async () => {
+    seedBSecrets();
+    // Guard for the suite itself: without this, every test below would
+    // pass for the wrong reason (an unknown key reads as "not found").
+    const { data } = await h.db.admin.storage
+      .from('chat-media')
+      .download(`${USER_A}/../${USER_B}/secret.png`);
+    expect(data).not.toBeNull();
+  });
+
+  it.each(TRAVERSAL_VECTORS)(
+    'C1: POST /api/v1/messages refuses media_url %s, nothing sent',
+    async (vector) => {
+      seedBSecrets();
+      const before = h.db.snapshot(B);
+      const res = await v1Messages.POST(
+        req(
+          'POST',
+          '/api/v1/messages',
+          { to: SHARED_PHONE, type: 'image', media_url: storageUrl(vector) },
+          asKeyA
+        )
+      );
+      expect(res.status).toBe(403);
+      expect(h.meta.sends).toEqual([]);
+      expectBUnchanged(before);
+    }
+  );
+
+  it.each(TRAVERSAL_VECTORS)(
+    'H1: template submit refuses header %s before calling Meta',
+    async (vector) => {
+      seedBSecrets();
+      const before = h.db.snapshot(B);
+      const res = await waTemplateSubmit.POST(
+        req(
+          'POST',
+          '/api/whatsapp/templates/submit',
+          templatePayload({
+            name: 'stolen_header',
+            header_type: 'image',
+            header_media_url: storageUrl(vector),
+          })
+        )
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/another account/);
+      expect(h.meta.sends).toEqual([]);
+      expectBUnchanged(before);
+    }
+  );
+});

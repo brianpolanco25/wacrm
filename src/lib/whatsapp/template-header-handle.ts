@@ -1,9 +1,10 @@
 import { uploadResumableMedia } from '@/lib/whatsapp/meta-api'
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
-import { MEDIA_BUCKETS, parseStorageObjectUrl } from '@/lib/media/storage-url'
+import { isOnOrigin, MEDIA_BUCKETS, parseStorageObjectUrl } from '@/lib/media/storage-url'
 import {
   assertMediaPathOwnedBy,
+  OutboundMediaError,
   type OutboundMediaDb,
   type OutboundMediaStorage,
 } from '@/lib/whatsapp/outbound-media'
@@ -59,11 +60,18 @@ export async function ensureImageHeaderHandle(
   // One of our own bucket objects: read it through Storage with the
   // service role (after an ownership check) instead of over public HTTP,
   // which stops working when the bucket is private.
-  const ref = parseStorageObjectUrl(payload.header_media_url, {
-    origin: process.env.NEXT_PUBLIC_SUPABASE_URL,
-  })
+  const origin = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const ref = parseStorageObjectUrl(payload.header_media_url, { origin })
+  if (!ref && isOnOrigin(payload.header_media_url, origin)) {
+    // Our own origin but not a canonical object URL (`%2F..`, `\`…):
+    // refuse it rather than fall through to the public fetch below.
+    throw new OutboundMediaError(
+      'forbidden',
+      'media_url points at an attachment that belongs to another account',
+    )
+  }
   if (ref && MEDIA_BUCKETS.has(ref.bucket) && source) {
-    await assertMediaPathOwnedBy(ref.path, source.accountId, source.db)
+    await assertMediaPathOwnedBy(ref, source.accountId, source.db)
     const { data, error } = await source.storage.from(ref.bucket).download(ref.path)
     if (error || !data) {
       throw new Error('Could not read the header image from storage. Upload it again.')
