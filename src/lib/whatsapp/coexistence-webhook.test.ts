@@ -284,6 +284,7 @@ describe('parsers', () => {
         wamid: 'w7',
         originalId: 'wamid.IMG',
         contentText: '[image] nueva',
+        caption: 'nueva',
       },
     ]);
   });
@@ -1248,6 +1249,117 @@ describe('echo media (m14.2)', () => {
       content_text: `[image] ${SECRET_CAPTION}`,
       media_url: null,
     });
+  });
+
+  it('revoke of a mirrored image → text row, [deleted], no media, summary untouched', async () => {
+    const db = seed();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([imageEcho('wamid.R1')]),
+      mediaConfig
+    );
+    const summary = db.rows('conversations')[0].last_message_text;
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([
+        {
+          to: CUSTOMER,
+          id: 'wamid.R2',
+          type: 'revoke',
+          revoke: { original_message_id: 'wamid.R1' },
+        },
+      ]),
+      mediaConfig
+    );
+    expect(
+      db.rows('messages').find((m) => m.message_id === 'wamid.R1')
+    ).toMatchObject({
+      content_type: 'text',
+      content_text: DELETED_MARKER,
+      media_url: null,
+      media_type: null,
+    });
+    expect(
+      db.rows('messages').find((m) => m.message_id === 'wamid.R2')
+    ).toBeUndefined();
+    expect(db.rows('conversations')[0].last_message_text).toBe(summary);
+  });
+
+  it('edit of an attachment row → bare new caption, media intact', async () => {
+    const db = seed();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([
+        mediaEcho('wamid.E1M', 'image', {
+          id: 'media-img-2',
+          mime_type: 'image/jpeg',
+          caption: 'hola',
+        }),
+      ]),
+      mediaConfig
+    );
+    const before = db
+      .rows('messages')
+      .find((m) => m.message_id === 'wamid.E1M');
+    expect(before).toMatchObject({
+      content_type: 'image',
+      content_text: 'hola',
+    });
+    const mediaUrl = before?.media_url;
+    expect(mediaUrl).toBeTruthy();
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      echoValue([
+        {
+          to: CUSTOMER,
+          id: 'wamid.E2M',
+          type: 'edit',
+          edit: {
+            original_message_id: 'wamid.E1M',
+            message: { type: 'image', image: { caption: 'adios' } },
+          },
+        },
+      ]),
+      mediaConfig
+    );
+    expect(
+      db.rows('messages').find((m) => m.message_id === 'wamid.E1M')
+    ).toMatchObject({
+      content_type: 'image',
+      content_text: 'adios',
+      media_url: mediaUrl,
+      media_type: 'image/jpeg',
+    });
+  });
+
+  it('the same media echo delivered twice → one row, no throw, summary unchanged', async () => {
+    const db = seed();
+    const value = echoValue([imageEcho('wamid.RT')]);
+    await handleCoexistenceChange(
+      asDb(db),
+      'smb_message_echoes',
+      value,
+      mediaConfig
+    );
+    const summary = db.rows('conversations')[0].last_message_text;
+    const at = db.rows('conversations')[0].last_message_at;
+    await expect(
+      handleCoexistenceChange(
+        asDb(db),
+        'smb_message_echoes',
+        value,
+        mediaConfig
+      )
+    ).resolves.toEqual({ batchIds: [] });
+    const rows = db.rows('messages').filter((m) => m.message_id === 'wamid.RT');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ content_type: 'image' });
+    expect(db.rows('conversations')[0].last_message_text).toBe(summary);
+    expect(db.rows('conversations')[0].last_message_at).toBe(at);
   });
 
   it('edit with media keeps the marker; history media stays as markers', async () => {

@@ -43,6 +43,11 @@ export const MIRROR_BUCKET = "chat-media";
  * separates "things a customer sent us" from "things we sent". RLS only
  * matches on the FIRST segment (`account-<id>`, migration 023), so an
  * extra level is free.
+ *
+ * Exception (m14.2): media the business sent from the phone in
+ * coexistence (`smb_message_echoes`) is fetched from Meta by id like an
+ * inbound attachment, so it also lands here and follows the same
+ * `mirror_inbound_media` toggle.
  */
 export const MIRROR_FOLDER = "inbound";
 

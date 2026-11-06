@@ -258,6 +258,12 @@ export type ParsedEcho =
       wamid: string;
       originalId: string;
       contentText: string;
+      /**
+       * The new caption when the edited message is media (null without
+       * one). Written as-is when the original row is an attachment, so
+       * its caption never gets the `[<type>]` prefix (m14.2).
+       */
+      caption?: string | null;
     };
 
 /**
@@ -315,12 +321,17 @@ export function parseMessageEchoes(value: unknown): {
       if (type === 'revoke') {
         echoes.push({ kind: 'revoke', phone, wamid, originalId });
       } else {
+        const edited = asObject(inner?.message) ?? {};
+        const editedType = asString(edited.type);
         echoes.push({
           kind: 'edit',
           phone,
           wamid,
           originalId,
-          contentText: contentTextFor(asObject(inner?.message) ?? {}),
+          contentText: contentTextFor(edited),
+          ...(editedType && editedType !== 'text'
+            ? { caption: asString(asObject(edited[editedType])?.caption) }
+            : {}),
         });
       }
       continue;
@@ -578,14 +589,16 @@ export async function storeThreadMessages(
  * `revoke` / `edit` of a message the business deleted or corrected on
  * the phone: rewrite the original row's `content_text`. Lookup only —
  * never creates a contact or a conversation. true when a row changed.
+ *
+ * Since m14.2 an echo can be an attachment row. A revoke turns it back
+ * into a text row (no media left to show); an edit of an attachment
+ * writes the bare caption, while a text row keeps the marker.
  */
 async function applyEchoRewrite(
   db: SupabaseClient,
   config: CoexistenceConfig,
   echo: Extract<ParsedEcho, { kind: 'revoke' | 'edit' }>
 ): Promise<boolean> {
-  const contentText =
-    echo.kind === 'revoke' ? DELETED_MARKER : echo.contentText;
   let updated = false;
   const contact = await findExistingContact(db, config.account_id, echo.phone);
   if (contact) {
@@ -598,9 +611,31 @@ async function applyEchoRewrite(
       .limit(1);
     const conversationId = (convRows as { id: string }[] | null)?.[0]?.id;
     if (conversationId) {
+      let patch: Record<string, unknown> =
+        echo.kind === 'revoke'
+          ? {
+              content_text: DELETED_MARKER,
+              content_type: 'text',
+              media_url: null,
+              media_type: null,
+            }
+          : { content_text: echo.contentText };
+      if (echo.kind === 'edit' && echo.caption !== undefined) {
+        const { data: target } = await db
+          .from('messages')
+          .select('id, content_type')
+          .eq('conversation_id', conversationId)
+          .eq('message_id', echo.originalId)
+          .limit(1);
+        const targetType = (target as { content_type: string }[] | null)?.[0]
+          ?.content_type;
+        if (targetType && targetType !== 'text') {
+          patch = { content_text: echo.caption };
+        }
+      }
       const { data, error } = await db
         .from('messages')
-        .update({ content_text: contentText })
+        .update(patch)
         .eq('conversation_id', conversationId)
         .eq('message_id', echo.originalId)
         .select('id');
@@ -667,25 +702,18 @@ async function resolveEchoMedia(
 ): Promise<StoredMedia | null> {
   const media = message.media;
   if (!media || !accessToken) return null;
-  try {
-    const mediaUrl = await resolveInboundMediaUrl({
-      mediaId: media.id,
-      accessToken,
-      mirror:
-        config.mirror_inbound_media !== false
-          ? { storage: db.storage, accountId: config.account_id }
-          : null,
-      fileName: media.type === 'document' ? media.fileName : null,
-      messageTimestamp: media.timestamp,
-    });
-    return mediaUrl ? storedMediaFor(media, mediaUrl) : null;
-  } catch (err) {
-    console.error(
-      '[webhook] echo media failed:',
-      JSON.stringify({ wamid: message.wamid, error: errorMessage(err) })
-    );
-    return null;
-  }
+  // Never throws: resolveInboundMediaUrl logs and returns null itself.
+  const mediaUrl = await resolveInboundMediaUrl({
+    mediaId: media.id,
+    accessToken,
+    mirror:
+      config.mirror_inbound_media !== false
+        ? { storage: db.storage, accountId: config.account_id }
+        : null,
+    fileName: media.type === 'document' ? media.fileName : null,
+    messageTimestamp: media.timestamp,
+  });
+  return mediaUrl ? storedMediaFor(media, mediaUrl) : null;
 }
 
 async function handleEchoes(
