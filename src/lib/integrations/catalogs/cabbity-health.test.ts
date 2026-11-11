@@ -297,9 +297,53 @@ describe('CABBITY_HEALTH_CATALOG texts for the AI (R4)', () => {
     }
   );
 
-  it('create_patient asks for consent and lookup_patient first', () => {
-    expect(op('create_patient').description).toMatch(/consentimiento/);
-    expect(op('create_patient').description).toMatch(/lookup_patient/);
+  // n13.8 (A2): el consentimiento se da por hecho al dar los datos por
+  // WhatsApp; la IA no lo pregunta, pero sigue enviando el objeto consent.
+  it('create_patient wants lookup_patient first and no question about consent', () => {
+    const d = op('create_patient').description;
+    expect(d).toMatch(/lookup_patient/);
+    expect(d).toMatch(/No pidas autorización ni consentimiento/);
+    expect(d).toMatch(/consent\.accepted = true/);
+    const accepted = op('create_patient').params.find(
+      (p) => p.name === 'consent.accepted'
+    )!;
+    expect(accepted.required).toBe(true);
+    expect(accepted.description).toMatch(/^true siempre/);
+  });
+
+  it('no text asks for express consent', () => {
+    for (const o of operations) {
+      const texts = [
+        o.description,
+        o.response_description,
+        ...o.params.map((p) => p.description),
+      ];
+      for (const t of texts) {
+        expect(t).not.toMatch(/consentimiento expreso/i);
+        expect(t).not.toMatch(/sin ese sí/i);
+        expect(t).not.toMatch(/expresamente que se registren/i);
+      }
+    }
+  });
+
+  it('every document_number is normalized and says the system cleans it', () => {
+    const withDoc = operations.filter((o) =>
+      o.params.some((p) => p.name === 'document_number')
+    );
+    expect(withDoc.map((o) => o.key).sort()).toEqual([
+      'create_patient',
+      'list_patients',
+      'lookup_patient',
+    ]);
+    for (const o of withDoc) {
+      const p = o.params.find((x) => x.name === 'document_number')!;
+      expect([o.key, p.normalize]).toEqual([o.key, 'compact']);
+      expect(p.description).toMatch(/con o sin guiones o espacios/);
+      expect(p.description).toMatch(/no le pidas que lo repita sin guiones/);
+    }
+    expect(op('lookup_patient').description).not.toMatch(
+      /pídele.*sin guiones|pide.*sin guiones/
+    );
   });
 
   it('create_appointment wants a find_availability starts_at with offset', () => {

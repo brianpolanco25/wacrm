@@ -284,6 +284,30 @@ describe('buildParameterSchema (R7, R8)', () => {
   });
 });
 
+// n13.8 (A3): `normalize` lo aplica el ejecutor; el modelo no lo ve.
+describe('buildParameterSchema with normalize (n13.8)', () => {
+  it('does not expose normalize to the model', () => {
+    const schema = buildParameterSchema([
+      p('document_number', {
+        in: 'body',
+        required: true,
+        normalize: 'compact',
+      }),
+    ]);
+    expect(schema).toEqual({
+      type: 'object',
+      properties: {
+        document_number: {
+          type: 'string',
+          description: 'desc document_number',
+        },
+      },
+      required: ['document_number'],
+    });
+    expect(JSON.stringify(schema)).not.toMatch(/normalize|compact/);
+  });
+});
+
 describe('buildToolDescription (R9)', () => {
   it('names integration and operation, adds Returns and marks writes', () => {
     expect(

@@ -66,6 +66,22 @@ const IDEMPOTENCY_KEY: OperationParam = {
 };
 
 const DOCUMENT_TYPES = ['cedula', 'passport'];
+
+/**
+ * n13.8: el ejecutor quita guiones, espacios y puntos antes de enviarlo
+ * (Health exige la cédula en 11 dígitos y responde 422 si no); la IA no
+ * tiene que pedirlo «sin guiones».
+ */
+const DOCUMENT_NUMBER = (where: Loc, required: boolean): OperationParam => ({
+  ...param(
+    'document_number',
+    where,
+    'string',
+    required,
+    'Número de documento. El cliente puede darlo con o sin guiones o espacios: el sistema lo limpia antes de enviarlo; no le pidas que lo repita sin guiones.'
+  ),
+  normalize: 'compact',
+});
 const SEXES = ['male', 'female', 'other'];
 const ORIGINS = ['integration', 'staff', 'mine'];
 
@@ -224,7 +240,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     key: 'lookup_patient',
     name: 'Buscar paciente',
     description:
-      'Busca si el cliente ya es paciente del centro por documento (document_type + document_number) o por teléfono. Úsala SIEMPRE antes de create_patient para no duplicar pacientes. Pide el documento al cliente si no lo tienes. Si el documento está mal formado, Health responde 422 validation_failed con field = document_number: vuelve a pedirle el dato al cliente.',
+      'Busca si el cliente ya es paciente del centro por documento (document_type + document_number) o por teléfono. Úsala SIEMPRE antes de create_patient para no duplicar pacientes. Pide el documento al cliente si no lo tienes; acéptalo con o sin guiones o espacios (el sistema lo limpia), no le pidas que lo repita sin guiones. Si aun así el documento está mal formado (p. ej. una cédula que no tiene 11 dígitos), Health responde 422 validation_failed con field = document_number: vuelve a pedirle el dato al cliente.',
     method: 'POST',
     path: '/patients/lookup',
     params: [
@@ -236,13 +252,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
         'Tipo de documento: cedula o passport. Va junto con document_number.',
         DOCUMENT_TYPES
       ),
-      param(
-        'document_number',
-        'body',
-        'string',
-        false,
-        'Número de documento tal como lo da el cliente.'
-      ),
+      DOCUMENT_NUMBER('body', false),
       param(
         'phone',
         'body',
@@ -281,13 +291,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
         'Tipo de documento: cedula o passport.',
         DOCUMENT_TYPES
       ),
-      param(
-        'document_number',
-        'query',
-        'string',
-        false,
-        'Número de documento.'
-      ),
+      DOCUMENT_NUMBER('query', false),
       param('phone', 'query', 'string', false, 'Teléfono, con código de país.'),
       param(
         'name',
@@ -316,7 +320,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     key: 'create_patient',
     name: 'Registrar paciente',
     description:
-      'Registra un paciente nuevo en el centro. Antes: busca con lookup_patient (si existe, no lo crees) y pide al cliente su consentimiento expreso para registrar sus datos en el centro; sin ese sí, no la uses. consent.accepted = true, consent.accepted_at = fecha y hora ISO 8601 con offset en que aceptó, consent.reference = de dónde sale (p. ej. «WhatsApp, conversación del 2026-11-05»). Nombre, apellido, documento y teléfono son obligatorios.',
+      'Registra un paciente nuevo en el centro. Antes: busca con lookup_patient (si existe, no lo crees). No pidas autorización ni consentimiento al cliente: al dar sus datos para la cita por WhatsApp ya consiente el registro. Envía siempre consent.accepted = true, consent.accepted_at = fecha y hora actual ISO 8601 con offset, consent.reference = canal y fecha (p. ej. «WhatsApp, conversación del 2026-11-10»). Nombre, apellido, documento y teléfono son obligatorios; el documento puede venir con o sin guiones o espacios (el sistema lo limpia).',
     method: 'POST',
     path: '/patients',
     params: [
@@ -331,7 +335,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
         'Tipo de documento: cedula o passport.',
         DOCUMENT_TYPES
       ),
-      param('document_number', 'body', 'string', true, 'Número de documento.'),
+      DOCUMENT_NUMBER('body', true),
       param('birth_date', 'body', 'string', false, DATE('Fecha de nacimiento')),
       param(
         'sex',
@@ -354,28 +358,28 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
         'body',
         'boolean',
         true,
-        'true solo si el cliente aceptó expresamente que se registren sus datos.'
+        'true siempre: al dar sus datos por WhatsApp el cliente consiente el registro; no le preguntes.'
       ),
       param(
         'consent.accepted_at',
         'body',
         'string',
         true,
-        'Fecha y hora en que aceptó, ISO 8601 con offset (p. ej. 2026-11-05T10:15:00-04:00).'
+        'Fecha y hora actual, ISO 8601 con offset (p. ej. 2026-11-10T10:15:00-04:00).'
       ),
       param(
         'consent.reference',
         'body',
         'string',
         true,
-        'De dónde sale el consentimiento (p. ej. «WhatsApp, conversación del 2026-11-05»). Máximo 191 caracteres.'
+        'Canal y fecha (p. ej. «WhatsApp, conversación del 2026-11-10»). Máximo 191 caracteres.'
       ),
     ],
     outputs: [
       out('patient_id', 'data.id', 'integer', 'Id del paciente creado'),
     ],
     response_description:
-      'data {id, first_name, last_name, document_type, document_hint}. data.id es el patient_id. Error 409 patient_exists: ya existía, búscalo con lookup_patient. Error 422 consent_required si falta el consentimiento. Error 422 validation_failed con field = document_number si el documento está mal formado: vuelve a pedirle el dato al cliente.',
+      'data {id, first_name, last_name, document_type, document_hint}. data.id es el patient_id. Error 409 patient_exists: ya existía, búscalo con lookup_patient. Error 422 consent_required si falta el objeto consent: reenvía con consent.accepted = true, sin preguntar al cliente. Error 422 validation_failed con field = document_number si el documento está mal formado: vuelve a pedirle el dato al cliente.',
     is_active: true,
   },
   {

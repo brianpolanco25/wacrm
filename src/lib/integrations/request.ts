@@ -17,6 +17,9 @@
 // `Idempotency-Key`), que nadie manda y el constructor rellena con un
 // UUID nuevo por llamada; y nombres `body` con punto (`consent.accepted`)
 // que viajan como objetos anidados.
+//
+// n13.8: un parámetro con `normalize: 'compact'` (p. ej. el número de
+// documento) se limpia aquí, antes de validar, para cualquier llamador.
 // ============================================================
 
 import {
@@ -124,6 +127,23 @@ function flattenGiven(
   return { ok: true, flat };
 }
 
+/**
+ * n13.8: guiones (ASCII y los Unicode que mete un teclado de móvil o un
+ * autocorrector), espacios de cualquier tipo y puntos.
+ */
+const COMPACT_STRIP_RE = /[\s.\-\u2010-\u2015\u2212]/g;
+
+/** Aplica la normalización declarada; solo toca valores de texto. */
+export function normalizeParamValue(
+  param: Pick<OperationParam, 'normalize'>,
+  raw: unknown
+): unknown {
+  if (param.normalize === 'compact' && typeof raw === 'string') {
+    return raw.replace(COMPACT_STRIP_RE, '');
+  }
+  return raw;
+}
+
 function isAbsent(v: unknown): boolean {
   return v === null || v === undefined || v === '';
 }
@@ -196,9 +216,13 @@ export function validateCallParams(
   }
   const values: Record<string, ParamValue> = {};
   for (const param of accepted) {
-    const raw = Object.prototype.hasOwnProperty.call(input, param.name)
-      ? input[param.name]
-      : undefined;
+    // n13.8: limpiar antes de mirar si falta (`' - '` queda vacío = ausente).
+    const raw = normalizeParamValue(
+      param,
+      Object.prototype.hasOwnProperty.call(input, param.name)
+        ? input[param.name]
+        : undefined
+    );
     if (isAbsent(raw)) {
       if (param.required)
         return { ok: false, problem: 'missing', param: param.name };

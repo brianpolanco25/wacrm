@@ -94,14 +94,18 @@ flow) y `DELETE /appointments/{id}` (alias de `cancel`; duplicarlo confunde a la
   llamada se rechaza con `invalid_params`). `lookup_patient` es un POST de lectura y no la lleva.
 - `consent{accepted, accepted_at, reference}` de `create_patient` se declara con nombres con punto
   (`consent.accepted`, …) y viaja como objeto anidado. Quien llama puede mandarlo con punto o como
-  objeto.
+  objeto. Desde n13.8 la IA no pregunta por el consentimiento: al dar sus datos por WhatsApp el
+  cliente consiente el registro, y las descripciones le dicen que mande siempre `accepted = true`,
+  la hora actual y el canal con la fecha como `reference`.
 - `list_appointments` **no filtra por estado**. Health exige el filtro como lista estilo PHP
   (`status[]=confirmed`); `status=confirmed` responde `422 validation_failed` (`field` = `status`,
   comprobado contra el servicio real el 2026-11-05). El modelo de parámetros no tiene arrays, así que
   el parámetro se quitó: la IA filtra el resultado, que trae `status` en cada cita.
-- `lookup_patient` y `create_patient`: un número de documento con formato inválido responde
-  `422 validation_failed` con `field` = `document_number`. Las descripciones le piden a la IA que
-  vuelva a pedir el dato al cliente.
+- `document_number` (`lookup_patient`, `list_patients`, `create_patient`) se declara con
+  `normalize: 'compact'` (n13.8): el ejecutor le quita guiones, espacios y puntos antes de validar y
+  enviar, así que `001-1234567-8` llega a Health como `00112345678`, venga de la IA, de un flow o de
+  una automatización. Si aun así está mal formado, Health responde `422 validation_failed` con
+  `field` = `document_number` y las descripciones le piden a la IA que vuelva a pedir el dato.
 - Horas: `starts_at` siempre en ISO 8601 con el offset de la zona del centro
   (p. ej. `2026-11-12T10:30:00-04:00`; la zona sale de `get_center`). Fechas de rango: `YYYY-MM-DD`.
 - Paginación: `meta.next_cursor` se pasa como `cursor` hasta que sea `null` (no hay paginación

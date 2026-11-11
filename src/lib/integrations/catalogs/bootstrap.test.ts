@@ -174,6 +174,32 @@ describe('bootstrapIntegrationCatalog (R6): existing rows', () => {
     ).toBe(true);
   });
 
+  // n13.8 (A3): una fila cargada antes de `normalize` recibe los params y
+  // las descripciones nuevas al volver a correr el script.
+  it('syncs params and description into rows loaded before n13.8', async () => {
+    const store = new MemoryStore();
+    await load(store);
+    const old = store.operations.find((o) => o.key === 'create_patient')!;
+    old.params = old.params.map((p) => {
+      if (p.name !== 'document_number') return p;
+      const legacy = { ...p, description: 'Número de documento.' };
+      delete legacy.normalize;
+      return legacy;
+    });
+    old.description = 'Pide al cliente su consentimiento expreso.';
+    store.writes = [];
+    const { report } = await load(store);
+    expect(store.writes).toEqual([
+      'updateOperation create_patient description,params',
+    ]);
+    expect(report.operations.create_patient).toBe('updated');
+    const synced = store.operations.find((o) => o.key === 'create_patient')!;
+    expect(
+      synced.params.find((p) => p.name === 'document_number')?.normalize
+    ).toBe('compact');
+    expect(synced.description).not.toMatch(/consentimiento expreso/);
+  });
+
   it('creates a missing operation and warns about an orphan without writing it', async () => {
     const store = new MemoryStore();
     await load(store);

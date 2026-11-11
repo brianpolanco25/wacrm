@@ -17,6 +17,7 @@ import type {
   OutputType,
   ParamAuto,
   ParamLocation,
+  ParamNormalize,
   ParamType,
 } from '@/lib/integrations/types';
 
@@ -44,6 +45,11 @@ export interface ParamRowForm {
   enumText: string;
   /** n13.5: `uuid` en una cabecera autogenerada; `null` en el resto. */
   auto: ParamAuto | null;
+  /**
+   * n13.8: limpieza que aplica el ejecutor (`compact`); sin control en el
+   * panel, solo se conserva al abrir y guardar. `null` si no hay.
+   */
+  normalize: ParamNormalize | null;
 }
 
 export interface OutputRowForm {
@@ -156,6 +162,7 @@ export function emptyParamRow(): ParamRowForm {
     description: '',
     enumText: '',
     auto: null,
+    normalize: null,
   };
 }
 
@@ -193,6 +200,7 @@ export function operationToForm(row: OperationRow): OperationForm {
       description: p.description,
       enumText: (p.enum ?? []).join(', '),
       auto: p.auto ?? null,
+      normalize: p.normalize ?? null,
     })),
     outputs: row.outputs.map((o) => ({ ...o })),
     responseDescription: row.response_description ?? '',
@@ -250,6 +258,10 @@ export function operationFormToBody(form: OperationForm): FormResult {
       required: row.in === 'path' ? true : row.required,
       description: row.description.trim(),
       ...(row.type === 'string' && values.length > 0 ? { enum: values } : {}),
+      // n13.8: solo un texto la admite; si el tipo cambió, se cae.
+      ...(row.type === 'string' && row.normalize
+        ? { normalize: row.normalize }
+        : {}),
     });
   }
 
