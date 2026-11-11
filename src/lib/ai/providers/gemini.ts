@@ -13,7 +13,7 @@ import type { JsonSchema, ToolCall } from '../tools/types';
 
 // Stable, stateless endpoint (`models/{model}:generateContent`). The newer
 // Interactions API is deliberately not used.
-const GEMINI_BASE_URL =
+export const GEMINI_BASE_URL =
   'https://generativelanguage.googleapis.com/v1beta/models';
 
 interface GeminiContent {

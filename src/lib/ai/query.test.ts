@@ -21,4 +21,18 @@ describe('latestUserMessage', () => {
   it('returns empty string for no messages', () => {
     expect(latestUserMessage([])).toBe('')
   })
+
+  it('strips the voice-note marker from a voice turn (n15.1, R27)', () => {
+    expect(
+      latestUserMessage([
+        { role: 'user', content: '[nota de voz] cita el jueves', voice: true },
+      ]),
+    ).toBe('cita el jueves')
+  })
+
+  it('keeps a typed "[nota de voz]" prefix on a non-voice turn', () => {
+    expect(
+      latestUserMessage([{ role: 'user', content: '[nota de voz] hola' }]),
+    ).toBe('[nota de voz] hola')
+  })
 })

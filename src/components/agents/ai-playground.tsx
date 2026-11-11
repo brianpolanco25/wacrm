@@ -15,6 +15,11 @@ import { Button } from '@/components/ui/button';
 import type { ToolUseRecord } from '@/lib/ai/tools/types';
 import { readToolsUsed, trailFromToolsUsed } from '@/lib/ai/tools/tools-used';
 import { PlaygroundToolsNotice, ToolsUsedLine } from './ai-tools-used';
+import {
+  playgroundRequestMessages,
+  SimulatedVoiceNoteLabel,
+  VoiceNoteToggle,
+} from './ai-voice';
 
 interface Turn {
   role: 'user' | 'assistant';
@@ -23,12 +28,16 @@ interface Turn {
   handoff?: boolean;
   /** assistant-only (n13.3): integration tools the agent ran this turn. */
   toolsUsed?: ToolUseRecord[];
+  /** user-only (n15.1): sent as a simulated voice note. */
+  voice?: boolean;
 }
 
 export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  // n15.1: the next message goes as a simulated voice note.
+  const [asVoice, setAsVoice] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,7 +48,12 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
     const text = input.trim();
     if (!text || sending) return;
 
-    const next: Turn[] = [...turns, { role: 'user', content: text }];
+    const next: Turn[] = [
+      ...turns,
+      asVoice
+        ? { role: 'user', content: text, voice: true }
+        : { role: 'user', content: text },
+    ];
     setTurns(next);
     setInput('');
     setSending(true);
@@ -47,12 +61,13 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
       const res = await fetch('/api/ai/playground', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Send only role+content — the server ignores anything else.
+        // Send only role+content (+ `voice` on simulated voice notes) —
+        // the server ignores anything else.
         // n13.7 R32: plus the successful tool calls of earlier turns, the
         // prior evidence the destructive-operation guard needs (there is
         // no conversation here). Resetting the chat empties it.
         body: JSON.stringify({
-          messages: next.map((t) => ({ role: t.role, content: t.content })),
+          messages: playgroundRequestMessages(next),
           trail: turns.flatMap((t) => trailFromToolsUsed(t.toolsUsed)),
         }),
       });
@@ -165,6 +180,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
                   : 'bg-muted text-foreground rounded-bl-sm'
               )}
             >
+              {t.role === 'user' && t.voice && <SimulatedVoiceNoteLabel />}
               {t.content && <p className="whitespace-pre-wrap">{t.content}</p>}
               {t.role === 'assistant' && t.handoff && (
                 <p
@@ -204,6 +220,11 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
           placeholder="Type a customer message…"
           rows={1}
           className="border-border bg-muted text-foreground placeholder-muted-foreground focus:border-primary/50 flex-1 resize-none rounded-xl border px-4 py-2.5 text-sm outline-none"
+        />
+        <VoiceNoteToggle
+          pressed={asVoice}
+          onToggle={() => setAsVoice((v) => !v)}
+          disabled={sending}
         />
         <Button
           size="sm"

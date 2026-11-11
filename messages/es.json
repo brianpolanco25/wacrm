@@ -291,7 +291,9 @@
       "downloadFailed": "No se pudo descargar el archivo adjunto",
       "viewImage": "Ver la imagen",
       "expandVideo": "Ampliar el vídeo",
-      "imageAlt": "Imagen compartida"
+      "imageAlt": "Imagen compartida",
+      "transcriptLabel": "Transcripción",
+      "transcriptUnavailable": "No se pudo transcribir la nota de voz"
     },
     "mediaViewer": {
       "counter": "{index} de {total}",
@@ -2035,6 +2037,9 @@
       "handoffMessage": "Mensaje al traspasar",
       "handoffMessageDesc": "Se envía al cliente justo antes de que el bot se retire, para que el chat no se quede en silencio. Déjalo vacío para no enviar nada. No cuenta como respuesta de IA.",
       "handoffMessagePlaceholder": "por ejemplo: Gracias por escribirnos. En breve seguirá esta conversación una persona de nuestro equipo.",
+      "voiceFallbackMessage": "Mensaje si no puedo escuchar un audio",
+      "voiceFallbackMessageDesc": "Se envía al cliente cuando no se puede transcribir su nota de voz, para pedirle que escriba. El bot sigue activo. Como máximo uno cada 10 minutos por conversación. Déjalo vacío para no enviar nada. No cuenta como respuesta de IA.",
+      "voiceFallbackMessagePlaceholder": "por ejemplo: No puedo escuchar notas de voz, ¿me lo escribes?",
       "remove": "Quitar",
       "save": "Guardar",
       "missingModel": "Escribe el nombre de un modelo.",
@@ -3276,5 +3281,10 @@
     "failed": "falló",
     "toolBlocked": "bloqueada por la política",
     "playgroundNotice": "Las herramientas activas se ejecutan de verdad contra la integración (por ejemplo, crean citas)."
+  },
+  "AiVoice": {
+    "sendAsVoice": "Como nota de voz",
+    "sendAsVoiceHint": "Simula una nota de voz: el texto se trata como su transcripción",
+    "simulatedVoiceNote": "Nota de voz (simulada)"
   }
 }

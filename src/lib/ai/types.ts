@@ -104,12 +104,20 @@ export interface AiConfig {
   embeddingsApiKey: string | null;
   /** Which API `embeddingsApiKey` belongs to (migration 068). */
   embeddingsProvider: AiEmbeddingsProvider;
+  /** n15.1 (D3): text sent when a voice note can't be transcribed, asking
+   *  the customer to type. Optional so existing `AiConfig` literals keep
+   *  compiling; absent/null/empty → nothing is sent. */
+  voiceFallbackMessage?: string | null;
 }
 
 /** A single conversation turn; each adapter maps it to its provider's shape. */
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** n15.1: a `user` turn that is the transcript of a voice note; its
+   *  content starts with `[nota de voz]`. Adapters ignore it (they copy
+   *  only `role`/`content`). */
+  voice?: boolean;
 }
 
 /**

@@ -23,10 +23,12 @@ interface AiConfigRow {
   embeddings_api_key: string | null;
   /** Null only in a read mocked without migration 068; treated as openai. */
   embeddings_provider: AiEmbeddingsProvider | null;
+  /** n15.1 (migration 096). Absent in reads mocked before it. */
+  voice_fallback_message?: string | null;
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, embeddings_api_key, embeddings_provider';
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, embeddings_api_key, embeddings_provider, voice_fallback_message';
 
 /**
  * Rows written before migration 068 carry no provider: every embeddings
@@ -113,6 +115,8 @@ export async function loadAiConfig(
     handoffMessage: row.handoff_message ?? null,
     embeddingsApiKey,
     embeddingsProvider: embeddingsProviderOf(row.embeddings_provider),
+    // n15.1 (D3): '' is a deliberate opt-out, kept as-is like handoffMessage.
+    voiceFallbackMessage: row.voice_fallback_message ?? null,
   };
 }
 

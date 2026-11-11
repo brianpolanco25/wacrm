@@ -24,6 +24,10 @@ import { AiError, type AiConfig } from './types';
 import type { Entitlements } from '@/lib/billing/entitlements';
 import { loadAiToolset } from './tools/load';
 import { loadLiveData } from './tools/live';
+import { ensureVoiceTranscript } from './voice/ensure-transcript';
+import { sendVoiceFallback } from './voice/fallback';
+import { withVoiceTurn } from './voice/config';
+import type { VoiceNoteSource } from './voice/types';
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -37,6 +41,10 @@ interface DispatchArgs {
   /** The account's WhatsApp config owner, used for the outbound send's
    *  audit columns (mirrors how the flow runner passes it through). */
   configOwnerUserId: string;
+  /** n15.1: set when the inbound is a voice note (content_type 'audio').
+   *  It is transcribed after the reservation below; without a transcript
+   *  the bot sends the account's fallback text and stops (D3). */
+  voiceNote?: VoiceNoteSource;
 }
 
 /**
@@ -197,14 +205,49 @@ export async function dispatchInboundToAiReply(
     });
     if (!won) return;
 
+    // n15.1 (D1, D3). A voice note is transcribed only now: every cheap
+    // gate and the reservation above already passed, so we never pay for
+    // a transcript nobody will use. No transcript → the account's fallback
+    // text asking the customer to type, and the turn ends here: no model
+    // call, no reply slot, no `ai_replies`, and `conversations` is not
+    // touched — the AI stays on for the next message. Both helpers never
+    // throw.
+    let voiceTranscript: string | null = null;
+    if (args.voiceNote) {
+      const outcome = await ensureVoiceTranscript({
+        db,
+        accountId,
+        conversationId,
+        messageId: args.inboundMessageId,
+        config,
+        source: args.voiceNote,
+      });
+      if (outcome.status !== 'done') {
+        await sendVoiceFallback({
+          db,
+          accountId,
+          conversationId,
+          contactId,
+          userId: configOwnerUserId,
+          messageId: args.inboundMessageId,
+          text: config.voiceFallbackMessage,
+        });
+        return;
+      }
+      voiceTranscript = outcome.text;
+    }
+
     // The bot's own hand-off notices are stored as bot messages, so they
     // would come back as `assistant` turns. Once a human hands the thread
     // back, a transcript in which "we" promised a person would follow up
     // makes the model repeat the promise — i.e. hand off again on every
     // «hola». Strip them, and remember that we did: the prompt below
     // tells the model to resume instead.
+    const context = await buildConversationContext(db, conversationId);
     const { messages, resumedAfterHandoff } = stripHandoffNotices(
-      await buildConversationContext(db, conversationId),
+      voiceTranscript === null
+        ? context
+        : withVoiceTurn(context, voiceTranscript),
       config.handoffMessage
     );
     if (messages.length === 0) return;
@@ -262,6 +305,7 @@ export async function dispatchInboundToAiReply(
       tools: toolset,
       now: turnNow,
       liveData,
+      voiceNotes: messages.some((m) => m.voice),
     });
 
     const { text, handoff, usage } = await generateReply(

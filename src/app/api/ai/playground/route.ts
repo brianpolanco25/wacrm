@@ -17,6 +17,7 @@ import { loadAiToolset } from '@/lib/ai/tools/load';
 import { loadLiveData } from '@/lib/ai/tools/live';
 import { readTrail } from '@/lib/ai/tools/tools-used';
 import { EMPTY_TOOLSET, type LiveDataBlock } from '@/lib/ai/tools/types';
+import { formatVoiceNote } from '@/lib/ai/voice/config';
 
 // Keep the tested transcript bounded, mirroring the live context window.
 const MAX_TURNS = 20;
@@ -63,6 +64,19 @@ export async function POST(request: Request) {
             (m as ChatMessage).role === 'assistant') &&
           typeof (m as ChatMessage).content === 'string' &&
           (m as ChatMessage).content.trim().length > 0
+      )
+      // n15.1 (R36): a `user` turn with `voice: true` simulates a voice
+      // note — its text is taken as the transcript, exactly as the bot
+      // would see it. Nothing is transcribed or billed as `transcription`.
+      // `voice` on an assistant turn, or not a boolean, is ignored.
+      .map((m: ChatMessage): ChatMessage =>
+        m.role === 'user' && m.voice === true
+          ? {
+              role: 'user',
+              content: formatVoiceNote(m.content.trim()),
+              voice: true,
+            }
+          : { role: m.role, content: m.content }
       )
       .slice(-MAX_TURNS);
 
@@ -132,6 +146,7 @@ export async function POST(request: Request) {
       tools: toolset,
       now: turnNow,
       liveData,
+      voiceNotes: messages.some((m) => m.voice),
     });
 
     const { text, handoff, usage, toolsUsed, grounding } = await generateReply(

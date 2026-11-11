@@ -41,6 +41,7 @@ import {
   DEFAULT_HANDOFF_MESSAGE,
   handoffMessagePayload,
 } from '@/lib/ai/handoff-message';
+import { DEFAULT_VOICE_FALLBACK_MESSAGE } from '@/lib/ai/voice/fallback-message';
 import { overlappingAutomations } from '@/lib/ai/automation-overlap';
 import {
   secretFieldCleared,
@@ -141,6 +142,14 @@ export function AiConfig() {
   // Only a field the admin actually edited is sent: an untouched textarea
   // must not overwrite the seeded default with '' on a first save.
   const [handoffMessageEdited, setHandoffMessageEdited] = useState(false);
+  // n15.1 (D3): what the bot sends when it can't transcribe a voice note.
+  // Same rules as the handoff message: seeded with migration 096's default,
+  // sent only when edited, '' = say nothing.
+  const [voiceFallbackMessage, setVoiceFallbackMessage] = useState(
+    DEFAULT_VOICE_FALLBACK_MESSAGE
+  );
+  const [voiceFallbackMessageEdited, setVoiceFallbackMessageEdited] =
+    useState(false);
   const [members, setMembers] = useState<AccountMember[]>([]);
   // Safety net for the per-message guard (fase 1, §4). An automation
   // that answers on message content pre-empts the bot for the messages
@@ -185,6 +194,8 @@ export function AiConfig() {
         );
         setHandoffMessage(data.handoff_message ?? '');
         setHandoffMessageEdited(false);
+        setVoiceFallbackMessage(data.voice_fallback_message ?? '');
+        setVoiceFallbackMessageEdited(false);
         setHasStoredKey(Boolean(data.has_key));
         setKeyField(secretFieldLoaded(Boolean(data.has_key)));
         setHasStoredEmbeddingsKey(Boolean(data.has_embeddings_key));
@@ -255,6 +266,10 @@ export function AiConfig() {
     handoff_message: handoffMessagePayload({
       edited: handoffMessageEdited,
       value: handoffMessage,
+    }),
+    voice_fallback_message: handoffMessagePayload({
+      edited: voiceFallbackMessageEdited,
+      value: voiceFallbackMessage,
     }),
   });
 
@@ -345,6 +360,8 @@ export function AiConfig() {
         setHandoffAgentId('');
         setHandoffMessage(DEFAULT_HANDOFF_MESSAGE);
         setHandoffMessageEdited(false);
+        setVoiceFallbackMessage(DEFAULT_VOICE_FALLBACK_MESSAGE);
+        setVoiceFallbackMessageEdited(false);
       } else {
         const data = await res.json();
         toast.error(data.error ?? t('removeFailed'));
@@ -767,6 +784,27 @@ export function AiConfig() {
                   setHandoffMessageEdited(true);
                 }}
                 placeholder={t('handoffMessagePlaceholder')}
+                rows={2}
+                maxLength={1000}
+                disabled={disabled || !autoReplyEnabled}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ai-voice-fallback-message">
+                {t('voiceFallbackMessage')}
+              </Label>
+              <p className="text-muted-foreground text-xs">
+                {t('voiceFallbackMessageDesc')}
+              </p>
+              <Textarea
+                id="ai-voice-fallback-message"
+                value={voiceFallbackMessage}
+                onChange={(e) => {
+                  setVoiceFallbackMessage(e.target.value);
+                  setVoiceFallbackMessageEdited(true);
+                }}
+                placeholder={t('voiceFallbackMessagePlaceholder')}
                 rows={2}
                 maxLength={1000}
                 disabled={disabled || !autoReplyEnabled}

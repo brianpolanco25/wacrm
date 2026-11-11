@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import type { Message } from "@/types";
 import { downloadMediaMessage } from "@/lib/media/download";
 import { useMediaBlobUrl, useMediaSrc } from "@/hooks/use-media-blob-url";
+import { VoiceTranscript } from "./voice-transcript";
 
 /**
  * The media renderers behind `<MessageBubble>`'s image / video / audio /
@@ -235,13 +236,19 @@ export function MediaAudioBubble({
   const { src } = useMediaSrc(message.media_url);
 
   return (
-    <div className="flex items-center gap-2">
-      <audio src={src ?? undefined} controls className="max-w-60" />
-      <MediaActionButton
-        icon={Download}
-        label={t("download")}
-        onClick={download}
-        busy={downloading}
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <audio src={src ?? undefined} controls className="max-w-60" />
+        <MediaActionButton
+          icon={Download}
+          label={t("download")}
+          onClick={download}
+          busy={downloading}
+        />
+      </div>
+      <VoiceTranscript
+        transcript={message.transcript}
+        status={message.transcript_status}
       />
     </div>
   );

@@ -40,6 +40,7 @@ import {
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import { dispatchInboundToFlows } from '@/lib/flows/engine';
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply';
+import { aiReplyDispatchPlan } from '@/lib/ai/voice/dispatch-gate';
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver';
 import {
   parseStatusPricing,
@@ -1391,13 +1392,26 @@ async function processMessage(
   // from a `wait` half an hour later included — is the only one that
   // sends. Swapping these two calls would change who usually answers,
   // never how many replies the customer gets.
-  if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
+  //
+  // n15.1: a voice note (audio with a Meta media id) passes the same
+  // gates as a text and carries what the dispatcher needs to fetch and
+  // transcribe it (`aiReplyDispatchPlan`).
+  const aiPlan = aiReplyDispatchPlan({
+    flowConsumed,
+    interactiveReplyId,
+    inboundText,
+    contentType,
+    audioMediaId: message.audio?.id,
+    accessToken,
+  });
+  if (aiPlan.dispatch) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
       contactId: contactRecord.id,
       inboundMessageId,
       configOwnerUserId,
+      ...(aiPlan.voiceNote ? { voiceNote: aiPlan.voiceNote } : {}),
     });
   }
 

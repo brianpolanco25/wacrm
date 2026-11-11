@@ -28,6 +28,13 @@ describe("extensionForMime", () => {
     ).toBe("xlsx");
   });
 
+  it("maps the audio types the OpenAI transcriber accepts", () => {
+    expect(extensionForMime("audio/m4a")).toBe("m4a");
+    expect(extensionForMime("audio/wav")).toBe("wav");
+    expect(extensionForMime("audio/webm")).toBe("webm");
+    expect(extensionForMime("audio/flac")).toBe("flac");
+  });
+
   it("ignores parameters and case", () => {
     expect(extensionForMime("IMAGE/JPEG; charset=binary")).toBe("jpg");
   });
