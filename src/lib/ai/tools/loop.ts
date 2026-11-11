@@ -187,6 +187,10 @@ export async function runToolLoop(
       ...(blocked ? { blocked } : {}),
     });
   };
+  // n13.9: zona de cada integración, para los campos `_local` del resultado.
+  const timeZoneOf = new Map<string, string | null>(
+    args.toolset.integrations.map((i) => [i.slug, i.timezone])
+  );
   const toolNameOf = (slug: string, key: string) =>
     args.toolset.tools.find(
       (t) => t.integrationSlug === slug && t.operationKey === key
@@ -312,7 +316,12 @@ export async function runToolLoop(
               ? { conversationId: args.conversationId }
               : {}),
           });
-          outcome = toolResultPayload(res, tool.declaredParams, flat);
+          outcome = toolResultPayload(
+            res,
+            tool.declaredParams,
+            flat,
+            timeZoneOf.get(tool.integrationSlug) ?? null
+          );
           record(tool, res.ok);
           if (res.ok) {
             if (groundsSchedule(tool.policy)) grounded = true;
