@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
+import { autoReplyControls } from './ai-config-state';
 import { AiKnowledgeCard } from './ai-knowledge';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
 import {
@@ -384,6 +385,11 @@ export function AiConfig() {
   }
 
   const disabled = !canEdit || saving;
+  const autoReplyState = autoReplyControls({
+    canEdit,
+    saving,
+    autoReplyEnabled,
+  });
 
   return (
     <div>
@@ -692,7 +698,7 @@ export function AiConfig() {
               <Switch
                 checked={autoReplyEnabled}
                 onCheckedChange={setAutoReplyEnabled}
-                disabled={disabled || !isActive}
+                disabled={autoReplyState.switchDisabled}
               />
             </div>
 
@@ -714,7 +720,7 @@ export function AiConfig() {
                     Math.min(20, Math.max(1, Number(e.target.value) || 1))
                   )
                 }
-                disabled={disabled || !autoReplyEnabled}
+                disabled={autoReplyState.maxPerConversationDisabled}
                 className="w-20"
               />
             </div>

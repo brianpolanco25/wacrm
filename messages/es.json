@@ -2020,7 +2020,7 @@
       "enableAssistant": "Activar el asistente de IA",
       "enableAssistantDesc": "Interruptor principal. Activa el botón «Redactar con IA» de la bandeja.",
       "autoReply": "Responder automáticamente a los mensajes entrantes",
-      "autoReplyDesc": "El bot contesta solo a los mensajes entrantes nuevos (solo cuando ningún flujo los atiende y no hay ningún operador asignado). Cuando no puede ayudar, pasa la conversación a una persona.",
+      "autoReplyDesc": "El bot contesta solo a los mensajes entrantes nuevos (solo cuando ningún flujo los atiende y no hay ningún operador asignado). Cuando no puede ayudar, pasa la conversación a una persona. Solo tiene efecto con el asistente activo.",
       "overlapTitle": "{count} {count, plural, =1 {automatización puede responder} other {automatizaciones pueden responder}} a los mismos mensajes",
       "overlapBody": "El bot se calla solo en los mensajes que una automatización responde de verdad, nunca en el resto de tus chats. Comprueba que no se solapan más de lo que querías.",
       "overlapLink": "Revisar las automatizaciones",
