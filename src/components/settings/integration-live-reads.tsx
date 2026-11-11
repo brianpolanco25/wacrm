@@ -234,6 +234,11 @@ export function IntegrationLiveReads({
                 <Trash2 className="size-4" aria-hidden />
               </Button>
             </div>
+            {op ? null : (
+              <p className="text-destructive text-xs" data-live-stale>
+                {t('aiLiveStale')}
+              </p>
+            )}
             {op && op.params.length > 0 ? (
               <div className="grid gap-2 sm:grid-cols-2">
                 {op.params.map((param) => (

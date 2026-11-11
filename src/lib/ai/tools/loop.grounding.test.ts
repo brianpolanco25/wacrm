@@ -409,6 +409,30 @@ describe('final text guard (R35–R41)', () => {
     expect(r.grounding).toBeUndefined();
   });
 
+  it.each([
+    'Estamos en la Av. Churchill, Santo Domingo. La consulta cuesta RD$ 15.00.',
+    'Nuestra sede está en Santo Domingo Este; atendemos a las 3 personas del grupo.',
+  ])(
+    'ronda 2: no schedule claim without data → no extra round (%s)',
+    async (text) => {
+      const { s, d } = deps([round([], text)]);
+      const r = await run(d);
+      expect(s.seen).toHaveLength(1);
+      expect(r.text).toBe(text);
+      expect(r.grounding).toBeUndefined();
+    }
+  );
+
+  it('ronda 2: «a las 4 de la tarde» without data → one extra round', async () => {
+    const { s, d } = deps([
+      round([], 'Le agendo mañana a las 4 de la tarde.'),
+      round([], 'Déjeme consultar la agenda.'),
+    ]);
+    const r = await run(d);
+    expect(s.seen).toHaveLength(2);
+    expect(r.grounding).toBe('retried');
+  });
+
   it('a failed live read does not ground', async () => {
     const { s, d } = deps([
       round([], 'El jueves a las 10:00.'),

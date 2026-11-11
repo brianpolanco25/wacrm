@@ -109,9 +109,16 @@ export async function loadAiToolset(
 
     const byId = new Map(integrations.map((i) => [i.id, i]));
     const rows: ToolSourceRow[] = [];
+    // n13.7: lecturas en vivo ejecutables HOY = operación activa y `GET`.
+    // `validateLiveReads` solo lo comprueba al guardar; si el catálogo la
+    // cambió después (otro método, desactivada), la lectura se omite.
+    const liveReadable = new Set<string>();
     for (const op of (ops ?? []) as OperationRow[]) {
       const integration = byId.get(op.integration_id);
       if (!integration || !op.is_active) continue;
+      if (op.method === 'GET') {
+        liveReadable.add(`${op.integration_id}\u0000${op.key}`);
+      }
       rows.push({
         integration: {
           slug: integration.slug,
@@ -141,7 +148,19 @@ export async function loadAiToolset(
         const act = activationOf.get(i.id);
         const timezone = act?.ai_timezone ?? null;
         // n13.7 R15: forma inválida → sin lecturas (y sin la clave).
-        const liveReads = readStoredLiveReads(act?.ai_live_reads);
+        const liveReads = readStoredLiveReads(act?.ai_live_reads).filter(
+          (read) => {
+            if (liveReadable.has(`${i.id}\u0000${read.operation}`)) return true;
+            console.warn(
+              '[ai live]',
+              accountId,
+              i.slug,
+              read.operation,
+              'skipped_not_get_or_inactive'
+            );
+            return false;
+          }
+        );
         return {
           slug: i.slug,
           name: i.name,

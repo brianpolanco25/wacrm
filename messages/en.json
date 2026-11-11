@@ -1967,7 +1967,8 @@
       "aiLiveRemove": "Remove read",
       "aiLiveMax": "Up to {max} reads.",
       "aiLiveEmpty": "No live reads: the AI only looks things up when it decides to call a tool.",
-      "aiLiveInvalid": "Check the live data: {error}"
+      "aiLiveInvalid": "Check the live data: {error}",
+      "aiLiveStale": "This operation can no longer be read live (it was disabled or is no longer a read). The AI skips it; remove it to save."
     },
     "deals": {
       "title": "Deals & currency",

@@ -124,6 +124,15 @@ describe('IntegrationLiveReads (R7)', () => {
     expect(html).toContain('bad read');
   });
 
+  it('a stored read whose operation is no longer readable is marked stale', () => {
+    const html = render({
+      value: [READ, { operation: 'create_appointment', params: {} }],
+    });
+    expect(html.match(/data-live-stale/g)).toHaveLength(1);
+    expect(html).toContain(es.Settings.integrations.aiLiveStale);
+    expect(render({ value: [READ] })).not.toContain('data-live-stale');
+  });
+
   it('is translated in en', () => {
     const html = render({}, 'en');
     expect(html).toContain(en.Settings.integrations.aiLiveTitle);

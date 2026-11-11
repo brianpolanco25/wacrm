@@ -24,6 +24,24 @@ describe('mentionsSchedule (R35)', () => {
     'November 12 works',
     'el 12 nov',
     'on Nov. 12',
+    // ronda 2: horas españolas sin minutos
+    'Le agendo mañana a las 4 de la tarde',
+    'a las 4',
+    'Puede venir a las 4?',
+    'a las 10 de la mañana',
+    'a las 10 de la manana le va bien',
+    'a la 1',
+    'a la 1 en punto',
+    'a las 3 y media',
+    'a las 4 le esperamos',
+    'a las 8 o a las 9',
+    'nos vemos a las 4, ¿le parece?',
+    '3 de la tarde',
+    'quedamos 9 de la noche',
+    'a las 12 del mediodía',
+    'el 4 de noviembre',
+    // un día real junto a la ciudad sigue contando
+    'el domingo en Santo Domingo',
   ])('positive: %s', (text) => expect(mentionsSchedule(text)).toBe(true));
 
   it.each([
@@ -37,6 +55,26 @@ describe('mentionsSchedule (R35)', () => {
     'el precio es RD$1,500.00',
     'llame al 809 555 1234',
     '',
+    // ronda 2: «Santo Domingo» no es un día
+    'Estamos en la Av. Churchill, Santo Domingo.',
+    'Sucursal en Santo Domingo Este',
+    'SANTO DOMINGO NORTE',
+    'Santo Domingo Oeste, frente al parque',
+    'Sto. Domingo',
+    // ronda 2: precios con moneda, con o sin espacio
+    'La consulta cuesta RD$ 15.00',
+    'Cuesta US$ 2.50',
+    'son $ 3.50',
+    'son $3.50',
+    'USD 15.00 por sesión',
+    'RD$15.00',
+    'DOP 12.30',
+    '€ 10.30',
+    // ronda 2: números que no son horas
+    'atendemos a las 3 personas',
+    'a las 2 mascotas',
+    'tiene 2 de 3 citas',
+    'le quedan 4 de 10 sesiones',
   ])('negative: %s', (text) => expect(mentionsSchedule(text)).toBe(false));
 });
 

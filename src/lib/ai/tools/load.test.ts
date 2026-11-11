@@ -13,6 +13,7 @@ import {
 } from '@/lib/integrations/integrations.test-support';
 import type { Entitlements } from '@/lib/billing/entitlements';
 
+import { __resetLiveCacheForTests, loadLiveData } from './live';
 import { loadAiToolset } from './load';
 
 // n13.3 R1–R5, R28 (carga): qué herramientas ve la IA de una cuenta.
@@ -70,6 +71,7 @@ const actA = () =>
   db.rows('account_integrations').find((r) => r.id === 'ai-a-health') as Row;
 
 beforeEach(() => {
+  __resetLiveCacheForTests();
   db = seed();
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -252,6 +254,68 @@ describe('loadAiToolset — n13.7 live reads and ai_policy', () => {
         { column: 'account_id', op: 'eq', value: ACCOUNT_A },
       ])
     );
+  });
+
+  it.each([
+    ['an operation that is POST today', 'create_appointment'],
+    ['an inactive operation', 'old_op'],
+    ['an operation that no longer exists', 'gone_op'],
+  ])(
+    'a stored live read over %s is skipped and execute is never called',
+    async (_label, operation) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      actA().ai_live_reads = [
+        { operation, params: {} },
+        { operation: 'list_doctors', params: {} },
+      ];
+      const set = await load();
+      expect(set.integrations[0].liveReads).toEqual([
+        { operation: 'list_doctors', params: {} },
+      ]);
+      const execute = vi.fn(async () => ({ ok: true as const, data: [] }));
+      await loadLiveData(
+        client(),
+        {
+          accountId: ACCOUNT_A,
+          toolset: set,
+          conversationId: null,
+          now: new Date('2026-11-11T12:00:00Z'),
+        },
+        { execute: execute as never }
+      );
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operationKey: operation })
+      );
+      expect(warn).toHaveBeenCalledWith(
+        '[ai live]',
+        ACCOUNT_A,
+        'health',
+        operation,
+        'skipped_not_get_or_inactive'
+      );
+    }
+  );
+
+  it('a stored live read whose only operation is POST today → no live reads at all', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    actA().ai_live_reads = [{ operation: 'create_appointment', params: {} }];
+    const set = await load();
+    expect(set.integrations[0].liveReads).toBeUndefined();
+    const execute = vi.fn();
+    const blocks = await loadLiveData(
+      client(),
+      {
+        accountId: ACCOUNT_A,
+        toolset: set,
+        conversationId: null,
+        now: new Date('2026-11-11T12:00:00Z'),
+      },
+      { execute: execute as never }
+    );
+    expect(blocks).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('a garbage ai_live_reads → no live reads', async () => {

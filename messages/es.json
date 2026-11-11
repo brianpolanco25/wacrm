@@ -1967,7 +1967,8 @@
       "aiLiveRemove": "Quitar lectura",
       "aiLiveMax": "Máximo {max} lecturas.",
       "aiLiveEmpty": "Sin lecturas en vivo: la IA solo consulta cuando decide llamar a una herramienta.",
-      "aiLiveInvalid": "Revisa los datos en vivo: {error}"
+      "aiLiveInvalid": "Revisa los datos en vivo: {error}",
+      "aiLiveStale": "Esta operación ya no se puede leer en vivo (se desactivó o ya no es de consulta). La IA la omite; quítala para poder guardar."
     },
     "deals": {
       "title": "Oportunidades y moneda",
