@@ -3,6 +3,7 @@ import {
   __resetRateLimitForTests,
   checkRateLimit,
   rateLimitResponse,
+  releaseRateLimit,
 } from "./rate-limit";
 
 const OPTS = { limit: 3, windowMs: 60_000 };
@@ -115,4 +116,26 @@ describe("RATE_LIMITS presets", () => {
 
 afterEach(() => {
   __resetRateLimitForTests();
+});
+
+describe("releaseRateLimit", () => {
+  beforeEach(() => {
+    __resetRateLimitForTests();
+  });
+
+  it("gives back one request taken under the key", () => {
+    const opts = { limit: 1, windowMs: 60_000 };
+    expect(checkRateLimit("k", opts).success).toBe(true);
+    expect(checkRateLimit("k", opts).success).toBe(false);
+    releaseRateLimit("k");
+    expect(checkRateLimit("k", opts).success).toBe(true);
+  });
+
+  it("decrements only one of several and ignores unknown keys", () => {
+    checkRateLimit("k", OPTS);
+    checkRateLimit("k", OPTS);
+    releaseRateLimit("k");
+    releaseRateLimit("missing");
+    expect(checkRateLimit("k", OPTS).remaining).toBe(1);
+  });
 });

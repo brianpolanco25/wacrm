@@ -95,6 +95,21 @@ export function checkRateLimit(
 }
 
 /**
+ * Give back one request taken by `checkRateLimit` under `key` — for a
+ * caller that claimed a slot and then failed before doing the work the
+ * slot guards. No-op when the bucket is gone or already expired.
+ */
+export function releaseRateLimit(key: string): void {
+  const entry = buckets.get(key);
+  if (!entry) return;
+  if (entry.resetAt <= Date.now() || entry.count <= 1) {
+    buckets.delete(key);
+    return;
+  }
+  entry.count -= 1;
+}
+
+/**
  * Standard 429 response with the headers clients expect (RFC 6585 +
  * draft-ietf-httpapi-ratelimit-headers). Callers just `return` this.
  */

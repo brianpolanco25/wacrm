@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { engineSendText } from '@/lib/flows/meta-send';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { checkRateLimit, releaseRateLimit } from '@/lib/rate-limit';
 import { fitWhatsAppText } from '@/lib/whatsapp/text-limit';
 import { aiVoiceFallbackCooldownMs } from './config';
 
@@ -23,6 +23,7 @@ export interface SendVoiceFallbackArgs {
   deps?: {
     send?: typeof engineSendText;
     limiter?: typeof checkRateLimit;
+    release?: typeof releaseRateLimit;
     now?: () => number;
   };
 }
@@ -44,6 +45,7 @@ export async function sendVoiceFallback(
   const { db, accountId, conversationId, contactId, userId, messageId } = args;
   const send = args.deps?.send ?? engineSendText;
   const limiter = args.deps?.limiter ?? checkRateLimit;
+  const release = args.deps?.release ?? releaseRateLimit;
   const now = args.deps?.now ?? Date.now;
 
   const done = (result: VoiceFallbackResult) => {
@@ -78,8 +80,11 @@ export async function sendVoiceFallback(
       // fail open
     }
 
-    // In-process anti-loop: two simultaneous voice notes.
-    const slot = limiter(`ai-voice-fallback:${conversationId}`, {
+    // In-process anti-loop: two simultaneous voice notes. The slot is
+    // claimed before sending (so the race stays closed) and given back if
+    // the send fails: a failed text must not silence the next 10 min.
+    const slotKey = `ai-voice-fallback:${conversationId}`;
+    const slot = limiter(slotKey, {
       limit: 1,
       windowMs: cooldownMs,
     });
@@ -95,6 +100,7 @@ export async function sendVoiceFallback(
         aiGenerated: true,
       });
     } catch (err) {
+      release(slotKey);
       console.error(
         `[ai voice] message ${messageId} fallback send failed: ${err instanceof Error ? err.name : 'unknown error'}`
       );

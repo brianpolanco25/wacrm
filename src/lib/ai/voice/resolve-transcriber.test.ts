@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AI_PROVIDER_DEFAULT_MODEL } from '../defaults';
 import type { AiConfig } from '../types';
+import { extensionForMime } from '@/lib/media/filename';
 import { resolveTranscriber, TRANSCRIBE_MIME } from './resolve-transcriber';
 
 function cfg(over: Partial<AiConfig>): AiConfig {
@@ -104,5 +105,13 @@ describe('TRANSCRIBE_MIME (R16)', () => {
     expect(TRANSCRIBE_MIME.gemini.has('audio/ogg')).toBe(true);
     expect(TRANSCRIBE_MIME.openai.has('audio/amr')).toBe(false);
     expect(TRANSCRIBE_MIME.gemini.has('audio/amr')).toBe(false);
+  });
+});
+
+describe('TRANSCRIBE_MIME.openai ↔ extensionForMime', () => {
+  it('every MIME OpenAI accepts uploads with a real extension, never .bin', () => {
+    for (const mime of TRANSCRIBE_MIME.openai) {
+      expect(extensionForMime(mime), mime).not.toBe('bin');
+    }
   });
 });
