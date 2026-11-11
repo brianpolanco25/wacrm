@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import type { IntegrationCallResult } from '@/lib/integrations/execute';
 import type { OperationParam } from '@/lib/integrations/types';
 
-import { errorPayload, OUTCOME_HINTS, toolResultPayload } from './result';
+import {
+  annotateLocalDates,
+  errorPayload,
+  OUTCOME_HINTS,
+  toolResultPayload,
+} from './result';
 
 // n13.3 R17, R18, R21, R23, R24: lo que ve el modelo.
 
@@ -67,6 +72,144 @@ describe('toolResultPayload — success (R23)', () => {
     expect(JSON.stringify(data).startsWith(text)).toBe(true);
     expect(text).not.toMatch(/[\ud800-\udbff]$/);
     expect(text).not.toContain('�');
+  });
+});
+
+describe('toolResultPayload — weekday of dates (n13.9)', () => {
+  const SD = 'America/Santo_Domingo';
+  const ok = (data: unknown) =>
+    ({ ok: true, status: 200, data, latencyMs: 3 }) as IntegrationCallResult;
+
+  it('adds <key>_local next to an ISO date, leaving the value intact', () => {
+    const r = toolResultPayload(
+      ok({ slots: [{ starts_at: '2026-11-13T14:00:00-04:00', doctor: 'A' }] }),
+      declared,
+      {},
+      SD
+    );
+    expect(r.payload).toEqual({
+      ok: true,
+      status: 200,
+      data: {
+        slots: [
+          {
+            starts_at: '2026-11-13T14:00:00-04:00',
+            starts_at_local: 'Friday 2026-11-13 14:00 (-04:00)',
+            doctor: 'A',
+          },
+        ],
+      },
+    });
+  });
+
+  it('uses the integration zone, crossing midnight', () => {
+    const r = toolResultPayload(
+      ok({ at: '2026-11-13T23:30:00-04:00' }),
+      declared,
+      {},
+      'Europe/Madrid'
+    );
+    expect(r.payload.data).toEqual({
+      at: '2026-11-13T23:30:00-04:00',
+      at_local: 'Saturday 2026-11-14 04:30 (+01:00)',
+    });
+  });
+
+  it('without a zone, uses the offset of the value (old call sites)', () => {
+    const r = toolResultPayload(
+      ok({ at: '2026-11-13T23:30:00-04:00' }),
+      declared,
+      {}
+    );
+    expect(r.payload.data).toEqual({
+      at: '2026-11-13T23:30:00-04:00',
+      at_local: 'Friday 2026-11-13 23:30 (-04:00)',
+    });
+  });
+
+  it('never overwrites an existing <key>_local', () => {
+    const r = toolResultPayload(
+      ok({ starts_at: '2026-11-13T14:00:00-04:00', starts_at_local: 'X' }),
+      declared,
+      {},
+      SD
+    );
+    expect(r.payload.data).toEqual({
+      starts_at: '2026-11-13T14:00:00-04:00',
+      starts_at_local: 'X',
+    });
+  });
+
+  it('walks nested arrays and objects; leaves non-ISO strings and the input alone', () => {
+    const data = {
+      days: [
+        [{ starts_at: '2026-11-13T14:00:00-04:00' }],
+        [{ slot: { ends_at: '2026-11-14T09:00:00-04:00' } }],
+      ],
+      date: '2026-11-13',
+      note: 'viernes',
+      list: ['2026-11-13T14:00:00-04:00'],
+    };
+    const before = JSON.stringify(data);
+    const r = toolResultPayload(ok(data), declared, {}, SD);
+    expect(r.payload.data).toEqual({
+      days: [
+        [
+          {
+            starts_at: '2026-11-13T14:00:00-04:00',
+            starts_at_local: 'Friday 2026-11-13 14:00 (-04:00)',
+          },
+        ],
+        [
+          {
+            slot: {
+              ends_at: '2026-11-14T09:00:00-04:00',
+              ends_at_local: 'Saturday 2026-11-14 09:00 (-04:00)',
+            },
+          },
+        ],
+      ],
+      date: '2026-11-13',
+      note: 'viernes',
+      // A bare string in an array has no key: nothing to put next to it.
+      list: ['2026-11-13T14:00:00-04:00'],
+    });
+    expect(JSON.stringify(data)).toBe(before);
+  });
+
+  it('stops at the depth cap', () => {
+    let deep: Record<string, unknown> = { at: '2026-11-13T14:00:00-04:00' };
+    for (let i = 0; i < 10; i++) deep = { n: deep };
+    const out = JSON.stringify(annotateLocalDates(deep, SD));
+    expect(out).not.toContain('at_local');
+    expect(out).toContain('2026-11-13T14:00:00-04:00');
+  });
+
+  it('stops at the item cap', () => {
+    const data = Array.from({ length: 2000 }, () => ({
+      at: '2026-11-13T14:00:00-04:00',
+    }));
+    const out = annotateLocalDates(data, SD) as Record<string, unknown>[];
+    expect(out).toHaveLength(2000);
+    expect(out[0].at_local).toBe('Friday 2026-11-13 14:00 (-04:00)');
+    expect(out[1999]).toEqual({ at: '2026-11-13T14:00:00-04:00' });
+    const annotated = out.filter((o) => 'at_local' in o).length;
+    expect(annotated).toBeGreaterThan(0);
+    expect(annotated).toBeLessThanOrEqual(500);
+  });
+
+  it('annotates before truncating, and still fits in 8192 bytes', () => {
+    const data = Array.from({ length: 300 }, (_, i) => ({
+      i,
+      starts_at: '2026-11-13T14:00:00-04:00',
+    }));
+    const r = toolResultPayload(ok(data), declared, {}, SD);
+    expect(r.payload).toMatchObject({ ok: true, status: 200, truncated: true });
+    expect(bytes(r.payload)).toBeLessThanOrEqual(8192);
+    const text = r.payload.data_text as string;
+    expect(text).toContain(
+      '"starts_at":"2026-11-13T14:00:00-04:00","starts_at_local":"Friday 2026-11-13 14:00 (-04:00)"'
+    );
   });
 });
 

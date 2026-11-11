@@ -12,6 +12,7 @@ import type { IntegrationCallResult } from '@/lib/integrations/execute';
 import { validateCallParams } from '@/lib/integrations/request';
 import type { OperationParam, RemoteError } from '@/lib/integrations/types';
 
+import { localLabel } from './local-time';
 import { AI_TOOL_RESULT_MAX_BYTES } from './types';
 
 export type LoopErrorCode =
@@ -60,6 +61,54 @@ function hintFor(outcome: string, status: number | null): string {
     }
   }
   return OUTCOME_HINTS[outcome] ?? OUTCOME_HINTS.error;
+}
+
+const ANNOTATE_MAX_DEPTH = 6;
+const ANNOTATE_MAX_ITEMS = 500;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * n13.9: copia de `data` donde cada valor ISO 8601 con offset de un objeto
+ * gana un hermano `<clave>_local` (`Friday 2026-11-13 14:00 (-04:00)`, en
+ * `timeZone` o, si no vale, en el offset del propio valor). El valor
+ * original no se toca y una clave `<clave>_local` existente gana. Tope de
+ * profundidad y de elementos visitados; lo que pasa del tope va tal cual.
+ */
+export function annotateLocalDates(
+  data: unknown,
+  timeZone: string | null
+): unknown {
+  let budget = ANNOTATE_MAX_ITEMS;
+  const walk = (value: unknown, depth: number): unknown => {
+    if (depth > ANNOTATE_MAX_DEPTH || budget <= 0) return value;
+    if (Array.isArray(value)) {
+      return value.map((item) => {
+        if (budget <= 0) return item;
+        budget -= 1;
+        return walk(item, depth + 1);
+      });
+    }
+    if (!isPlainObject(value)) return value;
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (budget <= 0) {
+        out[key] = item;
+        continue;
+      }
+      budget -= 1;
+      out[key] = walk(item, depth + 1);
+      if (typeof item !== 'string') continue;
+      const localKey = `${key}_local`;
+      if (Object.prototype.hasOwnProperty.call(value, localKey)) continue;
+      const label = localLabel(item, timeZone);
+      if (label !== null) out[localKey] = label;
+    }
+    return out;
+  };
+  return walk(data, 0);
 }
 
 /**
@@ -122,12 +171,18 @@ function remoteErrorOf(
 export function toolResultPayload(
   result: IntegrationCallResult,
   declaredParams: OperationParam[],
-  flatArgs: Record<string, unknown>
+  flatArgs: Record<string, unknown>,
+  /** n13.9: zona IANA de la integración para los campos `_local`. */
+  timeZone: string | null = null
 ): { isError: boolean; payload: Record<string, unknown> } {
   if (result.ok) {
     return {
       isError: false,
-      payload: successPayload(result.status, result.data),
+      // n13.9: se anota antes de medir/truncar contra los 8 KiB.
+      payload: successPayload(
+        result.status,
+        annotateLocalDates(result.data, timeZone)
+      ),
     };
   }
   const payload: Record<string, unknown> = {

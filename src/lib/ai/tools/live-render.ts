@@ -11,28 +11,15 @@
 import { HANDOFF_SENTINEL } from '../defaults';
 import {
   formatNowInZone,
-  isValidTimeZone,
-  offsetLabel,
-  wallClockInZone,
-} from './prompt';
+  isIsoWithOffset,
+  localTime,
+  type LocalTime,
+} from './local-time';
 import { AI_LIVE_DATA_MAX_BYTES, type LiveDataBlock } from './types';
 
-const ISO_WITH_OFFSET_RE =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const VALUE_MAX_CHARS = 80;
-const WEEKDAYS = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-];
-
 const encoder = new TextEncoder();
 const byteLength = (text: string) => encoder.encode(text).length;
-const pad = (n: number) => String(n).padStart(2, '0');
 
 const CUT_NOTE =
   '(More results than shown here: call the tool with a narrower range to see the rest.)';
@@ -42,51 +29,6 @@ const EMPTY_NOTE = 'No results in this range.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isIsoWithOffset(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    ISO_WITH_OFFSET_RE.test(value) &&
-    !Number.isNaN(Date.parse(value))
-  );
-}
-
-interface LocalTime {
-  date: string; // YYYY-MM-DD
-  weekday: string;
-  time: string; // HH:MM
-  offset: string; // +HH:MM
-  epoch: number;
-}
-
-/** Día y hora local del instante en la zona (o en el offset del propio valor). */
-function localTime(value: string, timeZone: string | null): LocalTime | null {
-  const epoch = Date.parse(value);
-  if (Number.isNaN(epoch)) return null;
-  if (timeZone && isValidTimeZone(timeZone)) {
-    const w = wallClockInZone(new Date(epoch), timeZone);
-    if (!w) return null;
-    const date = `${w.year}-${pad(w.month)}-${pad(w.day)}`;
-    return {
-      date,
-      weekday:
-        WEEKDAYS[new Date(Date.UTC(w.year, w.month - 1, w.day)).getUTCDay()],
-      time: `${pad(w.hour)}:${pad(w.minute)}`,
-      offset: offsetLabel(w.offsetMinutes),
-      epoch,
-    };
-  }
-  const m = ISO_WITH_OFFSET_RE.exec(value);
-  if (!m) return null;
-  const [, y, mo, d, h, mi, off] = m;
-  return {
-    date: `${y}-${mo}-${d}`,
-    weekday: WEEKDAYS[new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDay()],
-    time: `${h}:${mi}`,
-    offset: off === 'Z' ? '+00:00' : off,
-    epoch,
-  };
 }
 
 /** `starts_at` si es ISO con offset; si no, el primer campo escalar que lo sea. */

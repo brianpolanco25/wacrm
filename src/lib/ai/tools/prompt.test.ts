@@ -78,11 +78,36 @@ describe('buildToolsPromptSection', () => {
   });
 
   it('states UTC and the local time of each integration with a zone', () => {
-    expect(section).toContain('2026-11-05T14:31:00Z (UTC)');
     expect(section).toContain(
-      'Cabbity Health: local time is 2026-11-05T10:31:00-04:00 (America/Santo_Domingo)'
+      'Current date and time: Thursday 2026-11-05T14:31:00Z (UTC).'
+    );
+    expect(section).toContain(
+      'Cabbity Health: local time is Thursday 2026-11-05T10:31:00-04:00 (America/Santo_Domingo)'
     );
     expect(section).not.toContain('Sin Zona: local time');
+  });
+
+  it('n13.9: the weekday is the local one when the zone is on another day', () => {
+    const late = buildToolsPromptSection(toolset, {
+      now: new Date('2026-11-14T02:30:00Z'),
+      mode: 'draft',
+    });
+    expect(late).toContain(
+      'Current date and time: Saturday 2026-11-14T02:30:00Z (UTC).'
+    );
+    expect(late).toContain(
+      'Cabbity Health: local time is Friday 2026-11-13T22:30:00-04:00 (America/Santo_Domingo).'
+    );
+  });
+
+  it('n13.9: tells the model to use the given weekday names, right after the ISO rule', () => {
+    const lines = section.split('\n');
+    const iso = lines.findIndex((l) =>
+      l.includes('ISO 8601 with the UTC offset')
+    );
+    expect(lines[iso + 1]).toMatch(/^- Weekday names come with every date/);
+    expect(lines[iso + 1]).toContain('_local');
+    expect(lines[iso + 1]).toContain('never work out a weekday yourself');
   });
 
   it('carries the rules', () => {

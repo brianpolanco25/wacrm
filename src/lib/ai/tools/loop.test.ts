@@ -430,6 +430,29 @@ describe('runToolLoop', () => {
   });
 });
 
+describe('runToolLoop — weekday of dates (n13.9)', () => {
+  it('annotates tool results in the time zone of the integration', async () => {
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      status: 200,
+      data: [{ starts_at: '2026-11-13T23:30:00-04:00' }],
+      latencyMs: 1,
+    }));
+    const { fn, seen } = scripted([round([call('c1')]), round([], 'x')]);
+    const madrid: AiToolset = {
+      ...toolset,
+      integrations: [{ ...toolset.integrations[0], timezone: 'Europe/Madrid' }],
+    };
+    await run({ callProvider: fn, execute: execute as never }, madrid);
+    expect(seen[1].steps[0].results[0].payload.data).toEqual([
+      {
+        starts_at: '2026-11-13T23:30:00-04:00',
+        starts_at_local: 'Saturday 2026-11-14 04:30 (+01:00)',
+      },
+    ]);
+  });
+});
+
 describe('generateReply with tools', () => {
   function openAi(json: unknown): Response {
     return {

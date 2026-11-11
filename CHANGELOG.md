@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Fix: the AI no longer gets the weekday of a date wrong
+
+- No migration. The AI offered «Thursday 13 November» when 13 November 2026 is a Friday: it worked the weekday out by itself from the raw date. Now every date carries its weekday already computed: the current date and time in the AI's tool instructions (UTC and each integration's local time), and every date-time a tool returns (e.g. `starts_at` from `find_availability`) gains a `starts_at_local` field such as `Friday 2026-11-13 14:00 (-04:00)` in the integration's time zone. The original value is unchanged, so bookings still send it as is, and the AI is told to use those weekday names instead of working them out.
+
 ### AI: appointment days and times come from the integration, not from memory
 
 - **Migration required: `095_ai_grounding.sql`.** Then re-run `node --env-file=.env.local scripts/integrations-bootstrap-catalog.ts cabbity-health` to load the new `ai_policy` of the Cabbity Health operations.
