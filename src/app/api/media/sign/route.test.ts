@@ -125,12 +125,26 @@ describe('GET /api/media/sign', () => {
   });
 
   it("403s an object of another account — including the operator's own company in a support session", async () => {
+    // Canonical paths: well-formed, but the folder is not the effective
+    // account's — the ownership check answers 403.
     for (const path of [
       `account-${OWN}/1-photo.png`,
       `account-other/1-photo.png`,
       `account-${TARGET}x/1-photo.png`,
       // Legacy pre-020 `<uid>/…` paths are never interpreted here.
       '11111111-1111-4111-8111-111111111111/1-photo.png',
+    ]) {
+      const res = await sign(obj(path));
+      expect(res.status, path).toBe(403);
+      expect(JSON.stringify(await res.json()), path).not.toContain('token=');
+    }
+    expect(h.signs).toEqual([]);
+  });
+
+  it('rejects non-canonical paths (traversal, encoded, backslash) before ownership, signing nothing', async () => {
+    // m14.3 rejects a non-canonical object path with 400 before the
+    // ownership check; any that reach it still get 403. Never a signature.
+    for (const path of [
       // Dot segments smuggled in percent-encoded slashes.
       `account-${TARGET}%2F..%2Faccount-other/1-photo.png`,
       // Round 2: forms storage-js's fetch would normalise AFTER the check
@@ -138,7 +152,8 @@ describe('GET /api/media/sign', () => {
       ...TRAVERSALS,
     ]) {
       const res = await sign(obj(path));
-      expect(res.status, path).toBe(403);
+      expect([400, 403], path).toContain(res.status);
+      expect(JSON.stringify(await res.json()), path).not.toContain('token=');
     }
     expect(h.signs).toEqual([]);
   });
