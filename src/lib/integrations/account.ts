@@ -13,18 +13,22 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { readStoredLiveReads } from '@/lib/ai/tools/live-templates';
 import { isValidTimeZone } from '@/lib/ai/tools/prompt';
 import {
   AI_INSTRUCTIONS_MAX,
   type AccountIntegrationAiFields,
+  type AiReadOperation,
 } from '@/lib/ai/tools/types';
 import { encrypt } from '@/lib/whatsapp/encryption';
 
+import { callerParams } from './request';
 import type {
   AccountIntegrationView,
   AuthScheme,
   HttpMethod,
   IntegrationTestStatus,
+  OperationParam,
 } from './types';
 
 export const CREDENTIAL_MAX = 4096;
@@ -79,6 +83,7 @@ interface ActivationRow {
   ai_enabled?: boolean | null;
   ai_instructions?: string | null;
   ai_timezone?: string | null;
+  ai_live_reads?: unknown;
 }
 
 /** La vista de Ajustes con los campos de IA de n13.3 (R33). */
@@ -93,13 +98,14 @@ interface OperationSummaryRow {
   method: HttpMethod;
   is_active: boolean;
   sort_order: number;
+  params?: OperationParam[] | null;
 }
 
 const CATALOG_COLUMNS =
   'id, slug, name, description, logo_url, auth_scheme, auth_header_name, credential_help, is_active, sort_order';
 // Sin `credential`: ni el cifrado sale de aquí.
 const ACTIVATION_COLUMNS =
-  'integration_id, is_enabled, credential_last4, enabled_at, last_tested_at, last_test_status, ai_enabled, ai_instructions, ai_timezone';
+  'integration_id, is_enabled, credential_last4, enabled_at, last_tested_at, last_test_status, ai_enabled, ai_instructions, ai_timezone, ai_live_reads';
 
 /**
  * R14: integraciones activas del catálogo con sus operaciones activas, y
@@ -135,7 +141,7 @@ export async function loadAccountIntegrations(
   const { data: ops, error: opsError } = await db
     .from('integration_operations')
     .select(
-      'integration_id, key, name, description, method, is_active, sort_order'
+      'integration_id, key, name, description, method, is_active, sort_order, params'
     )
     .in(
       'integration_id',
@@ -179,8 +185,79 @@ export async function loadAccountIntegrations(
       aiEnabled: enabled ? act?.ai_enabled === true : false,
       aiInstructions: enabled ? (act?.ai_instructions ?? null) : null,
       aiTimezone: enabled ? (act?.ai_timezone ?? null) : null,
+      // n13.7 (R6): lecturas en vivo y operaciones que pueden serlo.
+      aiLiveReads: enabled ? readStoredLiveReads(act?.ai_live_reads) : [],
+      aiReadOperations: enabled
+        ? readOperationsOf(opsBy.get(row.id) ?? [])
+        : [],
     };
   });
+}
+
+/** n13.7 R6: operaciones `GET` activas con sus parámetros de llamada. */
+function readOperationsOf(ops: OperationSummaryRow[]): AiReadOperation[] {
+  return ops
+    .filter((op) => op.method === 'GET')
+    .map((op) => ({
+      key: op.key,
+      name: op.name,
+      params: callerParams(Array.isArray(op.params) ? op.params : []).map(
+        (p) => ({
+          name: p.name,
+          type: p.type,
+          required: p.required === true,
+          description: p.description ?? '',
+          ...(Array.isArray(p.enum) && p.enum.length > 0
+            ? { enum: [...p.enum] }
+            : {}),
+        })
+      ),
+    }));
+}
+
+/**
+ * n13.7 R2: las operaciones de una integración (catálogo global por id,
+ * sin `account_id`: waiver de n13.1) para validar las lecturas en vivo.
+ */
+export async function loadIntegrationOperationsForLiveReads(
+  db: SupabaseClient,
+  integrationId: string
+): Promise<
+  {
+    key: string;
+    method: HttpMethod;
+    is_active: boolean;
+    params: OperationParam[] | null;
+  }[]
+> {
+  const { data, error } = await db
+    .from('integration_operations')
+    .select('key, method, is_active, params')
+    .eq('integration_id', integrationId);
+  if (error) throw error;
+  return (data ?? []) as {
+    key: string;
+    method: HttpMethod;
+    is_active: boolean;
+    params: OperationParam[] | null;
+  }[];
+}
+
+/** n13.7 R2: la zona guardada en la fila de ESTA cuenta. */
+export async function loadAccountIntegrationTimezone(
+  db: SupabaseClient,
+  accountId: string,
+  integrationId: string
+): Promise<string | null> {
+  const { data, error } = await db
+    .from('account_integrations')
+    .select('ai_timezone')
+    .eq('account_id', accountId)
+    .eq('integration_id', integrationId)
+    .maybeSingle();
+  if (error) throw error;
+  const tz = (data as { ai_timezone: string | null } | null)?.ai_timezone;
+  return tz && isValidTimeZone(tz) ? tz : null;
 }
 
 /** La integración del catálogo si existe y está activa (para activar). */
@@ -270,13 +347,19 @@ export interface AiSettingsPatch {
   ai_enabled?: boolean;
   ai_instructions?: string | null;
   ai_timezone?: string | null;
+  /**
+   * n13.7: aquí solo con forma superficial (array o `null` → `[]`); la
+   * ruta la valida contra las operaciones antes de guardar.
+   */
+  ai_live_reads?: unknown[];
 }
 
 export type AiSettingsValidation =
   | { ok: true; value: AiSettingsPatch }
   | {
       ok: false;
-      field: 'aiEnabled' | 'aiInstructions' | 'aiTimezone' | 'body';
+      field:
+        'aiEnabled' | 'aiInstructions' | 'aiTimezone' | 'aiLiveReads' | 'body';
       error: string;
     };
 
@@ -339,11 +422,26 @@ export function validateAiSettings(body: unknown): AiSettingsValidation {
       value.ai_timezone = raw;
     }
   }
+  if (has('aiLiveReads')) {
+    const raw = input.aiLiveReads;
+    if (raw === null) {
+      value.ai_live_reads = [];
+    } else if (!Array.isArray(raw)) {
+      return {
+        ok: false,
+        field: 'aiLiveReads',
+        error: "'aiLiveReads' must be a list or null",
+      };
+    } else {
+      value.ai_live_reads = raw;
+    }
+  }
   if (Object.keys(value).length === 0) {
     return {
       ok: false,
       field: 'body',
-      error: "Send at least one of 'aiEnabled', 'aiInstructions', 'aiTimezone'",
+      error:
+        "Send at least one of 'aiEnabled', 'aiInstructions', 'aiTimezone', 'aiLiveReads'",
     };
   }
   return { ok: true, value };

@@ -55,3 +55,25 @@ describe.each(['es', 'en'] as const)('[%s]', (locale) => {
     expect(html).toContain('role="note"');
   });
 });
+
+describe('ToolsUsedLine — blocked by policy (n13.7, R30)', () => {
+  it.each(['es', 'en'] as const)('marks a blocked call in %s', (locale) => {
+    const html = render(
+      <ToolsUsedLine
+        toolsUsed={[
+          {
+            integration: 'Health',
+            operation: 'cancel_appointment',
+            ok: false,
+            blocked: 'policy',
+          },
+        ]}
+      />,
+      locale
+    );
+    const blocked = (locale === 'es' ? es : en).AiTools.toolBlocked;
+    expect(html).toContain('data-tool-blocked="true"');
+    expect(html).toContain(`(${blocked})`);
+    expect(html).toContain(`Health · cancel_appointment ${blocked}`);
+  });
+});

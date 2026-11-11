@@ -7,8 +7,9 @@
 //           permite sin el plan, para que una cuenta que bajó de plan
 //           pueda limpiar.
 //   PATCH   ajustes de IA de la integración activada (n13.3, R32):
-//           `aiEnabled`, `aiInstructions`, `aiTimezone`. Admin+ y con el
-//           plan.
+//           `aiEnabled`, `aiInstructions`, `aiTimezone` y, desde n13.7,
+//           `aiLiveReads` (validadas contra las operaciones de ESTA
+//           integración, R2). Admin+ y con el plan.
 //
 // n13.6 (D3 revertida): en sesión de soporte las tres se permiten (rol
 // efectivo `admin`) y cada una deja su fila en `impersonation_actions`
@@ -28,11 +29,14 @@ import {
   disableAccountIntegration,
   enableAccountIntegration,
   findActiveIntegration,
+  loadAccountIntegrationTimezone,
   loadAccountIntegrations,
+  loadIntegrationOperationsForLiveReads,
   updateAccountIntegrationAi,
   validateAiSettings,
   validateCredential,
 } from '@/lib/integrations/account';
+import { validateLiveReads } from '@/lib/ai/tools/live-templates';
 import { traceIntegrationSupportAction } from '@/lib/integrations/support-trace';
 import { UUID_RE } from '@/lib/platform/integrations';
 import {
@@ -158,6 +162,30 @@ export async function PATCH(request: Request, { params }: Context) {
     }
 
     const db = supabaseAdmin();
+    // n13.7 R2: las lecturas en vivo, contra las operaciones de ESTA
+    // integración y con la zona del cuerpo o de la fila de ESTA cuenta.
+    if (check.value.ai_live_reads !== undefined) {
+      const timeZone =
+        check.value.ai_timezone !== undefined
+          ? check.value.ai_timezone
+          : await loadAccountIntegrationTimezone(
+              db,
+              ctx.accountId,
+              integrationId
+            );
+      const reads = validateLiveReads(
+        check.value.ai_live_reads,
+        await loadIntegrationOperationsForLiveReads(db, integrationId),
+        { now: new Date(), timeZone }
+      );
+      if (!reads.ok) {
+        return NextResponse.json(
+          { error: reads.error, field: 'aiLiveReads' },
+          { status: 400 }
+        );
+      }
+      check.value.ai_live_reads = reads.value;
+    }
     const traced = await traceIntegrationSupportAction(ctx, db, {
       integrationId,
       action: 'integration.ai_settings',

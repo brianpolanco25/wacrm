@@ -15,7 +15,8 @@ import { logAiUsage } from '@/lib/ai/usage';
 import { supabaseAdmin } from '@/lib/ai/admin-client';
 import { AiError } from '@/lib/ai/types';
 import { loadAiToolset } from '@/lib/ai/tools/load';
-import { EMPTY_TOOLSET } from '@/lib/ai/tools/types';
+import { loadLiveData } from '@/lib/ai/tools/live';
+import { EMPTY_TOOLSET, type LiveDataBlock } from '@/lib/ai/tools/types';
 
 /**
  * POST /api/ai/draft  (agent+)
@@ -127,11 +128,26 @@ export async function POST(request: Request) {
       toolset = await loadAiToolset(admin, accountId, { mode: 'draft' });
     }
 
+    // n13.7 R9: live reads in the prompt too (no text guard in drafts,
+    // R39: an agent reviews them before sending).
+    const turnNow = new Date();
+    let liveData: LiveDataBlock[] = [];
+    if (admin && toolset.tools.length > 0) {
+      liveData = await loadLiveData(admin, {
+        accountId,
+        toolset,
+        conversationId: null,
+        now: turnNow,
+      });
+    }
+
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,
       mode: 'draft',
       knowledge,
       tools: toolset,
+      now: turnNow,
+      liveData,
     });
 
     const { text, usage, toolsUsed } = await generateReply(
@@ -141,6 +157,7 @@ export async function POST(request: Request) {
             systemPrompt,
             messages,
             tools: { toolset, db: admin, accountId },
+            grounding: { mode: 'draft', liveData },
           }
         : { config, systemPrompt, messages }
     ).catch((err: unknown) => {

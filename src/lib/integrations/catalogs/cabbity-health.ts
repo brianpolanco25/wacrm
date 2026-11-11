@@ -19,7 +19,11 @@
 // La clave de Health nunca aparece aquí: la pega cada cliente en Ajustes.
 // ============================================================
 
-import type { OperationOutput, OperationParam } from '../types.ts';
+import type {
+  OperationAiPolicy,
+  OperationOutput,
+  OperationParam,
+} from '../types.ts';
 import type {
   CatalogOperation,
   IntegrationCatalogDefinition,
@@ -93,6 +97,9 @@ const STARTS_AT =
   'Inicio de la cita en ISO 8601 con el offset de la zona del centro (p. ej. 2026-11-12T10:30:00-04:00). Debe ser un starts_at devuelto por find_availability.';
 const CURSOR =
   'Cursor de paginación: el meta.next_cursor de la página anterior. Omítelo en la primera página.';
+
+/** n13.7 R24: operaciones que fundamentan afirmaciones de agenda. */
+const SCHEDULE: OperationAiPolicy = { grounds: ['schedule'] };
 
 const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
   {
@@ -235,6 +242,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data[] {membership_id, practitioner_name, location_id, starts_at, ends_at}, con las horas en ISO 8601 con offset; meta.truncated es true si hay más huecos de los devueltos (acorta el rango o filtra por profesional). Error 422 validation_failed si el rango pasa de 13 días.',
     is_active: true,
+    ai_policy: SCHEDULE,
   },
   {
     key: 'lookup_patient',
@@ -449,6 +457,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data[] {id, status, status_label, starts_at, ends_at, practitioner, location, …}; meta.next_cursor: pásalo como cursor para la página siguiente hasta que sea null.',
     is_active: true,
+    ai_policy: SCHEDULE,
   },
   {
     key: 'create_appointment',
@@ -504,6 +513,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data: la cita creada {id, status, starts_at, ends_at, practitioner, location}. Errores: 409 slot_unavailable (el hueco se ocupó: vuelve a find_availability), 409 too_many_upcoming_appointments (ya tiene 3 citas futuras), 422 validation_failed.',
     is_active: true,
+    ai_policy: SCHEDULE,
   },
   {
     key: 'get_appointment',
@@ -519,6 +529,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data {id, status, status_label, starts_at, ends_at, practitioner, location}.',
     is_active: true,
+    ai_policy: SCHEDULE,
   },
   {
     key: 'reschedule_appointment',
@@ -553,6 +564,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data: la cita con el nuevo horario. 409 appointment_not_changeable si ya no se puede mover (pasada, atendida o cancelada); 409 slot_unavailable si el hueco se ocupó.',
     is_active: true,
+    ai_policy: SCHEDULE,
   },
   {
     key: 'confirm_appointment',
@@ -566,12 +578,13 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data: la cita con status confirmed. 409 appointment_not_changeable si ya no se puede confirmar.',
     is_active: true,
+    ai_policy: SCHEDULE,
   },
   {
     key: 'cancel_appointment',
     name: 'Cancelar cita',
     description:
-      'Cancela una cita cuando el cliente lo pide expresamente. reason es opcional (motivo breve).',
+      'Cancela una cita cuando el cliente lo pide expresamente. reason es opcional (motivo breve). Antes, en un mensaje anterior, localiza la cita y consulta find_availability para ofrecer otra fecha; el sistema bloquea la cancelación si no.',
     method: 'POST',
     path: '/appointments/{id}/cancel',
     params: [
@@ -589,6 +602,12 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data: la cita con status cancelled. 409 appointment_not_changeable si ya no se puede cancelar.',
     is_active: true,
+    ai_policy: {
+      requires_prior: [
+        ['list_appointments', 'get_appointment'],
+        ['find_availability'],
+      ],
+    },
   },
 ];
 

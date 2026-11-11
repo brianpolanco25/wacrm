@@ -105,6 +105,10 @@ async function recordIntegrationCall(
     outcome: IntegrationCallOutcome;
     statusCode: number | null;
     latencyMs: number;
+    /** n13.7 R27: conversación de una llamada de IA en `auto_reply`. */
+    conversationId?: string | null;
+    /** n13.7 R27: lectura en vivo (nunca cuenta como evidencia). */
+    preload?: boolean;
   }
 ): Promise<void> {
   try {
@@ -116,6 +120,9 @@ async function recordIntegrationCall(
       outcome: row.outcome,
       status_code: row.statusCode,
       latency_ms: row.latencyMs,
+      // Omitidos, la fila es la de antes de n13.7 (defaults null / false).
+      ...(row.conversationId ? { conversation_id: row.conversationId } : {}),
+      ...(row.preload ? { ai_preload: true } : {}),
     });
     if (error) {
       console.error(
@@ -156,6 +163,10 @@ export async function executeIntegrationOperation(
     operationKey: string;
     params: Record<string, unknown>;
     source: Exclude<IntegrationCallSource, 'test'>;
+    /** n13.7 R27: se guarda en `integration_calls.conversation_id`. */
+    conversationId?: string | null;
+    /** n13.7 R27: lectura en vivo → `integration_calls.ai_preload`. */
+    preload?: boolean;
   },
   deps: ExecuteDeps = {}
 ): Promise<IntegrationCallResult> {
@@ -180,6 +191,8 @@ export async function executeIntegrationOperation(
         outcome,
         statusCode: status,
         latencyMs,
+        conversationId: input.conversationId,
+        preload: input.preload,
       });
     }
     if (outcome === 'ok' && status !== null) {

@@ -190,9 +190,10 @@ playground and the draft (read-only operations only) can call that
 integration's operations as tools. A single reply may take several
 provider calls; the `ai_usage_log` row of that reply carries their sum.
 
-| Variable            | Default | What it does                                                                                                                                                                       |
-| ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AI_TOOL_BUDGET_MS` | `40000` | Time budget of one reply that uses tools. Once spent, the next provider call is the last one and may not call tools. Each provider call still has its own `AI_REQUEST_TIMEOUT_MS`. |
+| Variable              | Default | What it does                                                                                                                                                                                    |
+| --------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AI_TOOL_BUDGET_MS`   | `40000` | Time budget of one reply that uses tools. Once spent, the next provider call is the last one and may not call tools. Each provider call still has its own `AI_REQUEST_TIMEOUT_MS`.              |
+| `AI_LIVE_DATA_TTL_MS` | `60000` | How long the result of an integration «live read» (run before every AI reply, n13.7) is reused for the same account, operation and parameters. A failed read is remembered for 10 s regardless. |
 
 ## PayPal catalogue (optional until billing is enabled)
 

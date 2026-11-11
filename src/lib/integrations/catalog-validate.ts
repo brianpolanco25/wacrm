@@ -15,6 +15,7 @@
 
 import { isIP } from 'node:net';
 
+import { policyProblem } from '@/lib/ai/tools/policy';
 import { isPrivateOrReservedIp } from '@/lib/webhooks/ssrf';
 
 import {
@@ -118,6 +119,7 @@ const OPERATION_FIELDS = [
   'response_description',
   'is_active',
   'sort_order',
+  'ai_policy',
 ] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -723,6 +725,14 @@ export function validateOperationInput(
   const order = sortOrder(body);
   if (order && !order.ok) return order;
   if (order) value.sort_order = order.value;
+
+  // n13.7 R23: política de IA (ausente, null o {grounds?, requires_prior?}).
+  if ('ai_policy' in body) {
+    const problem = policyProblem(body.ai_policy);
+    if (problem) return fail('ai_policy', problem);
+    value.ai_policy =
+      (body.ai_policy as OperationWrite['ai_policy'] | undefined) ?? null;
+  }
 
   if (mode === 'update' && Object.keys(value).length === 0) {
     return fail('body', 'nothing to update');

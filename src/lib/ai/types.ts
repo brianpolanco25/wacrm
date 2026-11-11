@@ -140,7 +140,17 @@ export interface GenerateResult {
   usage: AiUsage | null;
   /** n13.3: integration tools the model ran this turn. Present only when
    *  tools were offered (R35/R36); absent on the plain path (R14). */
-  toolsUsed?: { integration: string; operation: string; ok: boolean }[];
+  toolsUsed?: {
+    integration: string;
+    operation: string;
+    ok: boolean;
+    /** n13.7 R32: slug, cuando el turno tiene herramientas con política. */
+    slug?: string;
+    /** n13.7 R30: bloqueada por la guardia de política. */
+    blocked?: 'policy';
+  }[];
+  /** n13.7 R37/R38: la guardia del texto final actuó en este turno. */
+  grounding?: 'retried' | 'handoff';
 }
 
 /**

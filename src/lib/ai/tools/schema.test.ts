@@ -343,3 +343,71 @@ describe('buildToolDescription (R9)', () => {
     expect(text.length).toBeLessThanOrEqual(1024);
   });
 });
+
+// n13.7 R26: la política no llega al modelo salvo la frase de requires_prior.
+describe('buildAiTools — n13.7 ai_policy', () => {
+  const withPolicy = (
+    key: string,
+    aiPolicy: unknown,
+    method: HttpMethod = 'GET'
+  ) => {
+    const r = row(key, { slug: 'cabbity-health', method });
+    r.operation.aiPolicy = aiPolicy;
+    return r;
+  };
+
+  it('keeps the policy on the tool, never in the JSON schema, and appends the requires_prior sentence', () => {
+    const tools = buildAiTools(
+      [
+        withPolicy('find_availability', { grounds: ['schedule'] }),
+        withPolicy('list_appointments', { grounds: ['schedule'] }),
+        withPolicy(
+          'cancel_appointment',
+          {
+            requires_prior: [
+              ['list_appointments', 'get_appointment'],
+              ['find_availability'],
+            ],
+          },
+          'POST'
+        ),
+      ],
+      { mode: 'auto_reply' }
+    );
+    const cancel = tools.find((t) => t.operationKey === 'cancel_appointment')!;
+    expect(cancel.policy).toEqual({
+      requires_prior: [
+        ['list_appointments', 'get_appointment'],
+        ['find_availability'],
+      ],
+    });
+    expect(cancel.description).toMatch(
+      / Requires a previous call \(in an earlier message\) to: cabbity_health__list_appointments or get_appointment, then cabbity_health__find_availability\.$/
+    );
+    expect(cancel.description.length).toBeLessThanOrEqual(1024);
+    const schemas = JSON.stringify(tools.map((t) => t.parameters));
+    expect(schemas).not.toContain('ai_policy');
+    expect(schemas).not.toContain('requires_prior');
+    const find = tools.find((t) => t.operationKey === 'find_availability')!;
+    expect(find.description).not.toContain('Requires a previous call');
+  });
+
+  it('a long description is cut before the sentence, which always survives within 1024', () => {
+    const r = withPolicy('cancel_appointment', {
+      requires_prior: [['find_availability']],
+    });
+    r.operation.description = 'x'.repeat(2000);
+    const [t] = buildAiTools([r], { mode: 'auto_reply' });
+    expect(t.description.length).toBeLessThanOrEqual(1024);
+    expect(t.description).toMatch(/to: find_availability\.$/);
+  });
+
+  it('no or invalid policy → no policy field (tools unchanged)', () => {
+    const [a, b] = buildAiTools(
+      [row('a_op'), withPolicy('b_op', { grounds: ['nope'] })],
+      { mode: 'auto_reply' }
+    );
+    expect('policy' in a).toBe(false);
+    expect('policy' in b).toBe(false);
+  });
+});

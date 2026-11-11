@@ -7,7 +7,12 @@
 // solo `import type` (se borran al ejecutar).
 // ============================================================
 
-import type { HttpMethod, OperationOutput, OperationParam } from '../types.ts';
+import type {
+  HttpMethod,
+  OperationAiPolicy,
+  OperationOutput,
+  OperationParam,
+} from '../types.ts';
 
 /** Fila de `integrations` tal como la escribe el script de carga. */
 export interface CatalogIntegration {
@@ -36,6 +41,8 @@ export interface CatalogOperation {
   /** Solo al crear la fila; el script no lo vuelve a tocar. */
   is_active: boolean;
   sort_order: number;
+  /** n13.7: política de IA; ausente = `null` en la base. */
+  ai_policy?: OperationAiPolicy | null;
 }
 
 export interface IntegrationCatalogDefinition {

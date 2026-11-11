@@ -14,10 +14,11 @@ import type { ToolUseRecord } from '@/lib/ai/tools/types';
 export function ToolsUsedLine({ toolsUsed }: { toolsUsed: ToolUseRecord[] }) {
   const t = useTranslations('AiTools');
   if (toolsUsed.length === 0) return null;
+  // n13.7 R30: una llamada bloqueada por la guardia de política lo dice.
+  const status = (u: ToolUseRecord) =>
+    u.blocked ? t('toolBlocked') : u.ok ? t('ok') : t('failed');
   const label = `${t('used')} ${toolsUsed
-    .map(
-      (u) => `${u.integration} · ${u.operation} ${u.ok ? t('ok') : t('failed')}`
-    )
+    .map((u) => `${u.integration} · ${u.operation} ${status(u)}`)
     .join(', ')}`;
   return (
     <p
@@ -32,9 +33,11 @@ export function ToolsUsedLine({ toolsUsed }: { toolsUsed: ToolUseRecord[] }) {
           key={`${u.integration}-${u.operation}-${i}`}
           aria-hidden
           data-tool-ok={u.ok ? 'true' : 'false'}
+          data-tool-blocked={u.blocked ? 'true' : undefined}
           className={u.ok ? undefined : 'text-destructive'}
         >
           {u.integration} · {u.operation} {u.ok ? '✓' : '✗'}
+          {u.blocked ? ` (${t('toolBlocked')})` : ''}
           {i < toolsUsed.length - 1 ? ',' : ''}
         </span>
       ))}

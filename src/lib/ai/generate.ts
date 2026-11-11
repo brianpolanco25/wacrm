@@ -10,7 +10,12 @@ import { generateOpenAi } from './providers/openai';
 import { generateAnthropic } from './providers/anthropic';
 import { generateGemini } from './providers/gemini';
 import { runToolLoop } from './tools/loop';
-import type { AiToolset } from './tools/types';
+import type {
+  AiToolMode,
+  AiToolset,
+  LiveDataBlock,
+  PriorEvidence,
+} from './tools/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface GenerateArgs {
@@ -22,6 +27,14 @@ export interface GenerateArgs {
   /** n13.3: integration tools for this turn. Without it, or with an empty
    *  toolset, the path is exactly the one before n13.3 (R14). */
   tools?: { toolset: AiToolset; db: SupabaseClient; accountId: string };
+  /** n13.7: guardias del turno con herramientas (modo, lecturas en vivo,
+   *  evidencia previa del playground, conversación). Solo con `tools`. */
+  grounding?: {
+    mode: AiToolMode;
+    liveData?: LiveDataBlock[];
+    priorEvidence?: PriorEvidence[];
+    conversationId?: string | null;
+  };
 }
 
 /**
@@ -42,10 +55,12 @@ export async function generateReply(
       toolset: args.tools.toolset,
       db: args.tools.db,
       accountId: args.tools.accountId,
+      ...(args.grounding ?? {}),
     });
     return {
       ...parseGeneration(looped.text, looped.usage),
       toolsUsed: looped.toolsUsed,
+      ...(looped.grounding ? { grounding: looped.grounding } : {}),
     };
   }
 

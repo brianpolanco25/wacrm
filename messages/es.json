@@ -1958,7 +1958,16 @@
       "aiTimezoneHint": "La IA la usa para enviar fechas y horas con la hora local correcta.",
       "aiTimezoneNone": "Sin zona",
       "aiSaved": "Guardado.",
-      "aiSaveFailed": "No se pudo guardar."
+      "aiSaveFailed": "No se pudo guardar.",
+      "aiLiveTitle": "Datos en vivo antes de responder",
+      "aiLiveHint": "La IA consulta estas operaciones antes de cada respuesta y solo puede ofrecer lo que devuelven (por ejemplo, los huecos libres de los próximos 14 días).",
+      "aiLiveTemplatesHelp": "En las fechas puedes usar '{{today}}' (hoy) y '{{today+13d}}' (dentro de 13 días; de 1 a 60), en la zona horaria de arriba.",
+      "aiLiveOperation": "Operación",
+      "aiLiveAdd": "Añadir lectura",
+      "aiLiveRemove": "Quitar lectura",
+      "aiLiveMax": "Máximo {max} lecturas.",
+      "aiLiveEmpty": "Sin lecturas en vivo: la IA solo consulta cuando decide llamar a una herramienta.",
+      "aiLiveInvalid": "Revisa los datos en vivo: {error}"
     },
     "deals": {
       "title": "Oportunidades y moneda",
@@ -3264,6 +3273,7 @@
     "used": "Usó:",
     "ok": "correcto",
     "failed": "falló",
+    "toolBlocked": "bloqueada por la política",
     "playgroundNotice": "Las herramientas activas se ejecutan de verdad contra la integración (por ejemplo, crean citas)."
   }
 }

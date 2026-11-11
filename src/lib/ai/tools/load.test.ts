@@ -229,3 +229,50 @@ describe('loadAiToolset', () => {
     expect(JSON.stringify(calls)).not.toContain('secret_xyz');
   });
 });
+
+// n13.7 R9, R15, R26: lecturas en vivo y política desde la base.
+describe('loadAiToolset — n13.7 live reads and ai_policy', () => {
+  const load = () =>
+    loadAiToolset(client(), ACCOUNT_A, {
+      mode: 'auto_reply',
+      entitlements: ents(['integrations']),
+    });
+
+  it('carries ai_live_reads of THIS account row and keeps the account filter', async () => {
+    actA().ai_live_reads = [
+      { operation: 'list_doctors', params: { specialty: '{{today}}' } },
+    ];
+    const set = await load();
+    expect(set.integrations[0].liveReads).toEqual([
+      { operation: 'list_doctors', params: { specialty: '{{today}}' } },
+    ]);
+    const entry = db.log.find((e) => e.table === 'account_integrations')!;
+    expect(entry.filters).toEqual(
+      expect.arrayContaining([
+        { column: 'account_id', op: 'eq', value: ACCOUNT_A },
+      ])
+    );
+  });
+
+  it('a garbage ai_live_reads → no live reads', async () => {
+    actA().ai_live_reads = 'garbage';
+    const set = await load();
+    expect(set.integrations[0].liveReads).toBeUndefined();
+  });
+
+  it('propagates a valid ai_policy and drops an invalid one', async () => {
+    const ops = db.rows('integration_operations');
+    ops.find((o) => o.key === 'list_doctors')!.ai_policy = {
+      grounds: ['schedule'],
+    };
+    ops.find((o) => o.key === 'create_appointment')!.ai_policy = {
+      grounds: ['price'],
+    };
+    const set = await load();
+    const byKey = new Map(set.tools.map((t) => [t.operationKey, t]));
+    expect(byKey.get('list_doctors')!.policy).toEqual({
+      grounds: ['schedule'],
+    });
+    expect(byKey.get('create_appointment')!.policy).toBeUndefined();
+  });
+});

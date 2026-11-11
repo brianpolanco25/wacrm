@@ -11,6 +11,7 @@
 import { callerParams } from '@/lib/integrations/request';
 
 import { MAX_ARG_DEPTH } from './args';
+import { sanitizePolicy } from './policy';
 import type { HttpMethod, OperationParam } from '@/lib/integrations/types';
 
 import {
@@ -35,6 +36,8 @@ export interface ToolSourceRow {
     params: OperationParam[] | null;
     responseDescription: string | null;
     sortOrder: number;
+    /** n13.7: `integration_operations.ai_policy` tal cual (se sanea). */
+    aiPolicy?: unknown;
   };
 }
 
@@ -209,7 +212,37 @@ export function buildAiTools(
       }),
       parameters,
       declaredParams: callerParams(row.operation.params ?? []),
+      ...policyField(row.operation.aiPolicy),
     });
   }
+  // n13.7 R26: la frase de `requires_prior`, con los nombres ya asignados.
+  for (const tool of tools) {
+    const steps = tool.policy?.requires_prior;
+    if (!steps || steps.length === 0) continue;
+    const nameOf = (key: string) =>
+      tools.find(
+        (t) =>
+          t.integrationSlug === tool.integrationSlug && t.operationKey === key
+      )?.name ?? key;
+    const suffix = ` Requires a previous call (in an earlier message) to: ${steps
+      .map((step) => step.map(nameOf).join(' or '))
+      .join(', then ')}.`;
+    tool.description = withSuffix(tool.description, suffix);
+  }
   return tools;
+}
+
+/** La política saneada, solo si hay (las herramientas sin ella no cambian). */
+function policyField(raw: unknown): Pick<AiTool, 'policy'> {
+  const policy = sanitizePolicy(raw);
+  return policy ? { policy } : {};
+}
+
+/** Añade `suffix` sin pasar de DESCRIPTION_MAX: se corta la parte anterior. */
+function withSuffix(description: string, suffix: string): string {
+  if (description.length + suffix.length <= DESCRIPTION_MAX) {
+    return description + suffix;
+  }
+  const room = Math.max(0, DESCRIPTION_MAX - suffix.length - 1);
+  return description.slice(0, room) + '…' + suffix;
 }

@@ -467,3 +467,147 @@ describe('DELETE — deactivate (R17, D5)', () => {
     expect(trail()).toHaveLength(0);
   });
 });
+
+describe('PATCH — live reads (n13.7, R2, R3, R5, R6)', () => {
+  beforeEach(async () => {
+    await put(HEALTH_ID, { credential: 'sanctum-token-ABCDEFGH-1234' });
+    h.db.rows('integration_operations').push({
+      id: 'op-find',
+      integration_id: HEALTH_ID,
+      key: 'find_availability',
+      name: 'Disponibilidad',
+      description: 'Huecos',
+      method: 'GET',
+      path: '/availability',
+      params: [
+        {
+          name: 'location_id',
+          in: 'query',
+          type: 'integer',
+          required: true,
+          description: 'Sede',
+        },
+        {
+          name: 'from',
+          in: 'query',
+          type: 'string',
+          required: true,
+          description: 'Desde',
+        },
+        {
+          name: 'to',
+          in: 'query',
+          type: 'string',
+          required: true,
+          description: 'Hasta',
+        },
+        {
+          name: 'mode',
+          in: 'query',
+          type: 'string',
+          required: false,
+          description: 'Modo',
+          enum: ['fast', 'full'],
+        },
+      ],
+      outputs: [],
+      response_description: null,
+      is_active: true,
+      sort_order: 4,
+    });
+  });
+
+  const READ = {
+    operation: 'find_availability',
+    params: { location_id: 3, from: '{{today}}', to: '{{today+13d}}' },
+  };
+
+  it('stores a valid list unresolved and answers aiLiveReads and aiReadOperations', async () => {
+    const res = await patch(HEALTH_ID, { aiLiveReads: [READ] });
+    expect(res.status).toBe(200);
+    const view = (await res.json()).integration;
+    expect(view.aiLiveReads).toEqual([READ]);
+    expect(view.aiReadOperations.map((o: { key: string }) => o.key)).toEqual([
+      'list_doctors',
+      'find_availability',
+    ]);
+    expect(
+      view.aiReadOperations.find(
+        (o: { key: string }) => o.key === 'find_availability'
+      ).params[3]
+    ).toEqual({
+      name: 'mode',
+      type: 'string',
+      required: false,
+      description: 'Modo',
+      enum: ['fast', 'full'],
+    });
+    expect(rowsA()[0].ai_live_reads).toEqual([READ]);
+  });
+
+  it('R5: null and [] store []', async () => {
+    await patch(HEALTH_ID, { aiLiveReads: [READ] });
+    expect((await patch(HEALTH_ID, { aiLiveReads: null })).status).toBe(200);
+    expect(rowsA()[0].ai_live_reads).toEqual([]);
+    await patch(HEALTH_ID, { aiLiveReads: [READ] });
+    await patch(HEALTH_ID, { aiLiveReads: [] });
+    expect(rowsA()[0].ai_live_reads).toEqual([]);
+  });
+
+  it.each([
+    ['not a list', { operation: 'find_availability' }],
+    ['4 entries', [READ, READ, READ, READ]],
+    ['no operation', [{ params: {} }]],
+    ['an unknown operation', [{ operation: 'nope', params: {} }]],
+    ['an inactive operation', [{ operation: 'old_op', params: {} }]],
+    ['a POST operation', [{ operation: 'create_appointment', params: {} }]],
+    ['an undeclared param', [{ ...READ, params: { ...READ.params, x: 1 } }]],
+    [
+      'a missing required param',
+      [
+        {
+          operation: 'find_availability',
+          params: { from: '{{today}}', to: '{{today}}' },
+        },
+      ],
+    ],
+    [
+      'a wrong type',
+      [{ ...READ, params: { ...READ.params, location_id: 'abc' } }],
+    ],
+    [
+      'an unknown template',
+      [{ ...READ, params: { ...READ.params, from: '{{now}}' } }],
+    ],
+    [
+      'N out of range',
+      [{ ...READ, params: { ...READ.params, to: '{{today+61d}}' } }],
+    ],
+  ])(
+    '400 field aiLiveReads for %s, nothing stored',
+    async (_label, aiLiveReads) => {
+      const before = { ...rowsA()[0] };
+      const res = await patch(HEALTH_ID, { aiLiveReads });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ field: 'aiLiveReads' });
+      expect(rowsA()[0]).toEqual(before);
+    }
+  );
+
+  it('validates with the zone of THIS account row when the body has none', async () => {
+    h.db.log.length = 0;
+    expect((await patch(HEALTH_ID, { aiLiveReads: [READ] })).status).toBe(200);
+    const tzRead = h.db.log.find(
+      (e) =>
+        e.table === 'account_integrations' &&
+        e.op === 'select' &&
+        e.filters.some((f) => f.column === 'account_id')
+    )!;
+    expect(tzRead.filters).toEqual(
+      expect.arrayContaining([
+        { column: 'account_id', op: 'eq', value: ACCOUNT_A },
+        { column: 'integration_id', op: 'eq', value: HEALTH_ID },
+      ])
+    );
+  });
+});

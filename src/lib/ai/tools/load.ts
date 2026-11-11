@@ -17,6 +17,7 @@ import {
 } from '@/lib/billing/entitlements';
 import type { HttpMethod, OperationParam } from '@/lib/integrations/types';
 
+import { readStoredLiveReads } from './live-templates';
 import { isValidTimeZone } from './prompt';
 import { buildAiTools, type ToolSourceRow } from './schema';
 import {
@@ -30,6 +31,8 @@ interface ActivationRow {
   integration_id: string;
   ai_instructions: string | null;
   ai_timezone: string | null;
+  /** n13.7 (095). */
+  ai_live_reads?: unknown;
 }
 
 interface IntegrationRow {
@@ -50,6 +53,8 @@ interface OperationRow {
   response_description: string | null;
   sort_order: number | null;
   is_active: boolean;
+  /** n13.7 (095). */
+  ai_policy?: unknown;
 }
 
 export async function loadAiToolset(
@@ -66,7 +71,7 @@ export async function loadAiToolset(
 
     const { data: acts, error: actsError } = await db
       .from('account_integrations')
-      .select('integration_id, ai_instructions, ai_timezone')
+      .select('integration_id, ai_instructions, ai_timezone, ai_live_reads')
       .eq('account_id', accountId)
       .eq('is_enabled', true)
       .eq('ai_enabled', true)
@@ -93,7 +98,7 @@ export async function loadAiToolset(
     const { data: ops, error: opsError } = await db
       .from('integration_operations')
       .select(
-        'integration_id, key, name, description, method, params, response_description, sort_order, is_active'
+        'integration_id, key, name, description, method, params, response_description, sort_order, is_active, ai_policy'
       )
       .in(
         'integration_id',
@@ -121,6 +126,7 @@ export async function loadAiToolset(
           params: Array.isArray(op.params) ? op.params : [],
           responseDescription: op.response_description ?? null,
           sortOrder: op.sort_order ?? 0,
+          aiPolicy: op.ai_policy ?? null,
         },
       });
     }
@@ -134,11 +140,14 @@ export async function loadAiToolset(
       .map((i) => {
         const act = activationOf.get(i.id);
         const timezone = act?.ai_timezone ?? null;
+        // n13.7 R15: forma inválida → sin lecturas (y sin la clave).
+        const liveReads = readStoredLiveReads(act?.ai_live_reads);
         return {
           slug: i.slug,
           name: i.name,
           instructions: act?.ai_instructions?.trim() || null,
           timezone: timezone && isValidTimeZone(timezone) ? timezone : null,
+          ...(liveReads.length > 0 ? { liveReads } : {}),
         };
       });
     return { tools, integrations: toolIntegrations };

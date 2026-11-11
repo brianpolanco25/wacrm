@@ -51,6 +51,23 @@ export const OUTPUT_TYPES: readonly OutputType[] = [
   'array',
 ];
 
+/**
+ * n13.7: afirmaciones que una operación fundamenta. `schedule` = días,
+ * fechas u horas de agenda (la guardia del texto final las exige).
+ */
+export type AiGroundClaim = 'schedule';
+export const AI_GROUND_CLAIMS: readonly AiGroundClaim[] = ['schedule'];
+
+/** n13.7: política de IA de una operación (`integration_operations.ai_policy`). */
+export interface OperationAiPolicy {
+  grounds?: AiGroundClaim[];
+  /**
+   * Pasos en orden; cada paso, keys alternativas de la MISMA integración
+   * que la IA tuvo que llamar con éxito en un mensaje anterior.
+   */
+  requires_prior?: string[][];
+}
+
 export interface OperationParam {
   name: string;
   in: ParamLocation;
@@ -117,6 +134,8 @@ export interface OperationWrite {
   response_description?: string | null;
   is_active?: boolean;
   sort_order?: number;
+  /** n13.7. */
+  ai_policy?: OperationAiPolicy | null;
 }
 
 export type Validation<T> =
@@ -154,6 +173,8 @@ export interface OperationRow {
   response_description: string | null;
   is_active: boolean;
   sort_order: number;
+  /** n13.7 (095). Ausente en filas de antes de la migración. */
+  ai_policy?: OperationAiPolicy | null;
 }
 
 /** D6: una llamada que tarde más se aborta (`timeout`). */

@@ -11,6 +11,13 @@ and polish.
 
 ## [Unreleased]
 
+### AI: appointment days and times come from the integration, not from memory
+
+- **Migration required: `095_ai_grounding.sql`.** Then re-run `node --env-file=.env.local scripts/integrations-bootstrap-catalog.ts cabbity-health` to load the new `ai_policy` of the Cabbity Health operations.
+- Settings → Integrations → «AI instructions» gains «Live data before replying»: up to 3 read operations of the integration, with fixed parameters and the date templates `{{today}}` / `{{today+Nd}}` (in the integration's time zone), that run before every AI reply (auto-reply, playground and draft). Their result goes into the AI's instructions as a dated block grouped by local day, and the AI is told those are the only slots it may offer; if the read fails, it is told not to state any day or time. Results are cached per account for 60 s (`AI_LIVE_DATA_TTL_MS`), 10 s after a failure.
+- When an integration operation grounds schedule claims (`find_availability`, appointments), an AI reply that mentions a day, date or time without any schedule data in that turn gets one corrective round; if it insists, the conversation is handed to a human (auto-reply and playground; drafts are not guarded).
+- Cabbity Health's `cancel_appointment` now only runs after the AI, in an earlier message, located the appointment and checked `find_availability`; otherwise the AI is told to offer other slots first. The playground marks the blocked call.
+
 ### Cabbity Health: the AI accepts the cédula with dashes and no longer asks for consent
 
 - No migration. Re-run `node --env-file=.env.local scripts/integrations-bootstrap-catalog.ts cabbity-health` to sync the catalogue. An integration parameter can now declare `normalize: 'compact'`: the executor strips dashes, spaces and dots from the value before validating and sending it, for every caller (AI, flows, automations). Cabbity Health's `document_number` uses it, so `001-1234567-8` reaches Health as `00112345678` and the AI no longer asks the customer to repeat it without dashes. `create_patient` no longer tells the AI to ask the customer for consent: giving their details over WhatsApp counts as consent, and the AI always sends `consent.accepted = true` with the current time and the channel.

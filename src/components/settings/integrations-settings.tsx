@@ -16,6 +16,8 @@
 //
 // n13.3: con la integración activada, «Usar en IA» (PATCH inmediato) y un
 // diálogo con instrucciones para la IA y zona horaria.
+// n13.7: el diálogo gana «Datos en vivo antes de responder»
+// (`integration-live-reads.tsx`), que viaja en el mismo PATCH.
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -38,11 +40,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { AI_INSTRUCTIONS_MAX } from '@/lib/ai/tools/types';
+import { AI_INSTRUCTIONS_MAX, type AiLiveRead } from '@/lib/ai/tools/types';
 import {
   IntegrationAiControls,
   type IntegrationViewWithAi,
 } from './integration-ai-controls';
+import { IntegrationLiveReads } from './integration-live-reads';
 import {
   activateAndTest,
   cardStatus,
@@ -70,6 +73,29 @@ function timeZoneOptions(current: string | null): string[] {
   }
   if (current && !zones.includes(current)) zones = [current, ...zones];
   return zones;
+}
+
+/** n13.7 R7: el cuerpo del PATCH del diálogo «Instrucciones para la IA». */
+export function aiSettingsBody(input: {
+  instructions: string;
+  timezone: string;
+  liveReads: AiLiveRead[];
+}): Record<string, unknown> {
+  return {
+    aiInstructions: input.instructions,
+    aiTimezone: input.timezone || null,
+    aiLiveReads: input.liveReads,
+  };
+}
+
+/** n13.7 R7: el error de las lecturas en vivo de una respuesta 400. */
+export function liveReadsErrorOf(
+  status: number,
+  body: { error?: string; field?: string } | null
+): string | null {
+  return status === 400 && body?.field === 'aiLiveReads'
+    ? (body.error ?? '')
+    : null;
 }
 
 export interface IntegrationsPayload {
@@ -113,6 +139,8 @@ export function IntegrationsSettings({
   const [aiInstructions, setAiInstructions] = useState('');
   const [aiTimezone, setAiTimezone] = useState('');
   const [aiSaving, setAiSaving] = useState(false);
+  const [aiLiveReads, setAiLiveReads] = useState<AiLiveRead[]>([]);
+  const [aiLiveError, setAiLiveError] = useState<string | null>(null);
   const zones = useMemo(
     () => (aiEditing ? timeZoneOptions(aiEditing.aiTimezone ?? null) : []),
     [aiEditing]
@@ -220,6 +248,8 @@ export function IntegrationsSettings({
         aiEnabled: false,
         aiInstructions: null,
         aiTimezone: null,
+        aiLiveReads: [],
+        aiReadOperations: [],
       });
       setConfirming(null);
       toast.success(t('deactivated'));
@@ -233,7 +263,8 @@ export function IntegrationsSettings({
   /** PATCH de los ajustes de IA (n13.3, R32). */
   async function patchAi(
     view: AccountIntegrationView,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    onLiveError?: (error: string) => void
   ): Promise<boolean> {
     try {
       const res = await fetch(
@@ -247,8 +278,15 @@ export function IntegrationsSettings({
       const data = (await res.json().catch(() => null)) as {
         integration?: AccountIntegrationView | null;
         error?: string;
+        field?: string;
       } | null;
       if (!res.ok) {
+        // n13.7 R7: el error de las lecturas se enseña en el diálogo.
+        const liveError = liveReadsErrorOf(res.status, data);
+        if (liveError !== null && onLiveError) {
+          onLiveError(liveError);
+          return false;
+        }
         toast.error(data?.error ?? t('aiSaveFailed'));
         return false;
       }
@@ -270,10 +308,16 @@ export function IntegrationsSettings({
   async function saveAiSettings() {
     if (!aiEditing) return;
     setAiSaving(true);
-    const ok = await patchAi(aiEditing, {
-      aiInstructions,
-      aiTimezone: aiTimezone || null,
-    });
+    setAiLiveError(null);
+    const ok = await patchAi(
+      aiEditing,
+      aiSettingsBody({
+        instructions: aiInstructions,
+        timezone: aiTimezone,
+        liveReads: aiLiveReads,
+      }),
+      setAiLiveError
+    );
     setAiSaving(false);
     if (ok) setAiEditing(null);
   }
@@ -341,6 +385,8 @@ export function IntegrationsSettings({
               onEditAi={() => {
                 setAiInstructions(view.aiInstructions ?? '');
                 setAiTimezone(view.aiTimezone ?? '');
+                setAiLiveReads(view.aiLiveReads ?? []);
+                setAiLiveError(null);
                 setAiEditing(view);
               }}
             />
@@ -418,7 +464,7 @@ export function IntegrationsSettings({
           if (!next && !aiSaving) setAiEditing(null);
         }}
       >
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
               {aiEditing
@@ -475,6 +521,13 @@ export function IntegrationsSettings({
                 {t('aiTimezoneHint')}
               </p>
             </div>
+            <IntegrationLiveReads
+              operations={aiEditing?.aiReadOperations ?? []}
+              value={aiLiveReads}
+              onChange={setAiLiveReads}
+              disabled={aiSaving}
+              error={aiLiveError}
+            />
           </form>
           <DialogFooter>
             <Button

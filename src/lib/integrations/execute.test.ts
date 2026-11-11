@@ -608,3 +608,45 @@ describe('testIntegrationConnection with a Health 401 (n13.5, R21)', () => {
     expect(rowA()).toMatchObject({ last_test_status: 'auth_failed' });
   });
 });
+
+describe('executeIntegrationOperation: n13.7 (R27, R33)', () => {
+  it('records conversation_id and ai_preload when given', async () => {
+    db.rows('conversations').push({ id: 'conv-1', account_id: ACCOUNT_A });
+    await executeIntegrationOperation(
+      client(),
+      {
+        accountId: ACCOUNT_A,
+        integrationSlug: 'health',
+        operationKey: 'list_doctors',
+        params: {},
+        source: 'ai',
+        conversationId: 'conv-1',
+        preload: true,
+      },
+      deps()
+    );
+    expect(calls()).toHaveLength(1);
+    expect(calls()[0]).toMatchObject({
+      source: 'ai',
+      outcome: 'ok',
+      conversation_id: 'conv-1',
+      ai_preload: true,
+    });
+  });
+
+  it('without them the row is the one of before (no new keys)', async () => {
+    await run();
+    expect('conversation_id' in calls()[0]).toBe(false);
+    expect('ai_preload' in calls()[0]).toBe(false);
+  });
+
+  it('R33: a flow runs an operation with ai_policy.requires_prior (the guard is AI-only)', async () => {
+    const op = db
+      .rows('integration_operations')
+      .find((o) => o.key === 'list_doctors')!;
+    op.ai_policy = { requires_prior: [['find_availability']] };
+    const r = await run();
+    expect(r.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});

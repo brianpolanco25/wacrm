@@ -804,3 +804,58 @@ describe('validateOperationInput: normalize (n13.8, A3)', () => {
     expect(paramsError([param])).toMatch(/^params: .*normalize/);
   });
 });
+
+describe('validateOperationInput: ai_policy (n13.7, R23)', () => {
+  const BASE = {
+    key: 'cancel_appointment',
+    name: 'Cancelar',
+    description: 'Cancela una cita',
+    method: 'POST',
+    path: '/appointments',
+  };
+  const check = (ai_policy: unknown) =>
+    validateOperationInput({ ...BASE, ai_policy }, 'create');
+
+  it('absent → no key; null → null; a valid policy is kept', () => {
+    const absent = validateOperationInput(BASE, 'create');
+    expect(absent.ok && 'ai_policy' in absent.value).toBe(false);
+    const nul = check(null);
+    expect(nul.ok && nul.value.ai_policy).toBeNull();
+    const policy = {
+      grounds: ['schedule'],
+      requires_prior: [
+        ['list_appointments', 'get_appointment'],
+        ['find_availability'],
+      ],
+    };
+    const ok = check(policy);
+    expect(ok.ok && ok.value.ai_policy).toEqual(policy);
+  });
+
+  it('an update with only ai_policy is accepted', () => {
+    const r = validateOperationInput(
+      { ai_policy: { grounds: ['schedule'] } },
+      'update',
+      {
+        method: 'GET',
+        path: '/x',
+        params: [],
+      }
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it.each([
+    ['an unknown key', { grounds: ['schedule'], extra: true }],
+    ['grounds outside the list', { grounds: ['price'] }],
+    ['4 steps', { requires_prior: [['aa'], ['bb'], ['cc'], ['dd']] }],
+    ['an empty step', { requires_prior: [[]] }],
+    ['5 keys', { requires_prior: [['aa', 'bb', 'cc', 'dd', 'ee']] }],
+    ['a bad key', { requires_prior: [['Bad-Key']] }],
+    ['a string', 'schedule'],
+  ])('rejects %s with field ai_policy', (_label, policy) => {
+    const r = check(policy);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.field).toBe('ai_policy');
+  });
+});

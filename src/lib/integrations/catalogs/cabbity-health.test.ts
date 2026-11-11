@@ -400,3 +400,57 @@ describe('a malformed document is a 422 the AI should ask again for (§M1)', () 
     expect(text).toMatch(/document_number/);
   });
 });
+
+describe('CABBITY_HEALTH_CATALOG ai_policy (n13.7, R24)', () => {
+  const byKey = new Map(
+    CABBITY_HEALTH_CATALOG.operations.map((op) => [op.key, op])
+  );
+
+  it('the six schedule operations ground schedule claims', () => {
+    const grounded = CABBITY_HEALTH_CATALOG.operations
+      .filter((op) => op.ai_policy?.grounds?.includes('schedule'))
+      .map((op) => op.key)
+      .sort();
+    expect(grounded).toEqual(
+      [
+        'confirm_appointment',
+        'create_appointment',
+        'find_availability',
+        'get_appointment',
+        'list_appointments',
+        'reschedule_appointment',
+      ].sort()
+    );
+  });
+
+  it('cancel_appointment requires the appointment and then find_availability', () => {
+    expect(byKey.get('cancel_appointment')!.ai_policy).toEqual({
+      requires_prior: [
+        ['list_appointments', 'get_appointment'],
+        ['find_availability'],
+      ],
+    });
+    expect(byKey.get('cancel_appointment')!.description).toMatch(
+      /el sistema bloquea la cancelación si no\.$/
+    );
+  });
+
+  it('every policy passes validateOperationInput', () => {
+    for (const op of CABBITY_HEALTH_CATALOG.operations) {
+      if (!op.ai_policy) continue;
+      const r = validateOperationInput(
+        {
+          key: op.key,
+          name: op.name,
+          description: op.description,
+          method: op.method,
+          path: op.path,
+          params: op.params,
+          ai_policy: op.ai_policy,
+        },
+        'create'
+      );
+      expect(r.ok, op.key).toBe(true);
+    }
+  });
+});

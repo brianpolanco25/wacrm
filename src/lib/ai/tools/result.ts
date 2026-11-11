@@ -15,7 +15,11 @@ import type { OperationParam, RemoteError } from '@/lib/integrations/types';
 import { AI_TOOL_RESULT_MAX_BYTES } from './types';
 
 export type LoopErrorCode =
-  'unknown_tool' | 'invalid_arguments' | 'limit_reached' | 'error';
+  | 'unknown_tool'
+  | 'invalid_arguments'
+  | 'limit_reached'
+  | 'error'
+  | 'policy_requires_prior';
 
 export const OUTCOME_HINTS: Record<string, string> = {
   invalid_params:
@@ -36,6 +40,9 @@ export const OUTCOME_HINTS: Record<string, string> = {
     'The arguments were not valid JSON; send a JSON object that matches the schema.',
   limit_reached:
     'Too many tool calls in this reply; answer with what you already have.',
+  // n13.7 R30: `{tools}` se sustituye por los nombres de las que faltan.
+  policy_requires_prior:
+    'This action is not allowed yet. First call: {tools}, and offer the customer the alternatives in this message. The action can only be done in a later message, after the customer has seen them.',
 };
 
 const REMOTE_TEXT_MAX = 300;
@@ -153,6 +160,29 @@ export function errorPayload(code: LoopErrorCode): {
       outcome: code,
       status: null,
       hint: OUTCOME_HINTS[code],
+    },
+  };
+}
+
+/**
+ * n13.7 R30: la guardia de política bloqueó la llamada. `required` = un
+ * texto por paso que falta (alternativas unidas por « or »).
+ */
+export function policyPayload(required: string[]): {
+  isError: true;
+  payload: Record<string, unknown>;
+} {
+  const base = errorPayload('policy_requires_prior');
+  return {
+    isError: true,
+    payload: {
+      ...base.payload,
+      error: 'policy_requires_prior',
+      required,
+      hint: OUTCOME_HINTS.policy_requires_prior.replace(
+        '{tools}',
+        required.join(', then ')
+      ),
     },
   };
 }

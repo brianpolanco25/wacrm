@@ -1958,7 +1958,16 @@
       "aiTimezoneHint": "The AI uses it to send dates and times in the right local time.",
       "aiTimezoneNone": "No time zone",
       "aiSaved": "Saved.",
-      "aiSaveFailed": "Could not save."
+      "aiSaveFailed": "Could not save.",
+      "aiLiveTitle": "Live data before replying",
+      "aiLiveHint": "The AI runs these operations before every reply and may only offer what they return (for example, the free slots of the next 14 days).",
+      "aiLiveTemplatesHelp": "In dates you can use '{{today}}' (today) and '{{today+13d}}' (13 days from now; 1 to 60), in the time zone above.",
+      "aiLiveOperation": "Operation",
+      "aiLiveAdd": "Add read",
+      "aiLiveRemove": "Remove read",
+      "aiLiveMax": "Up to {max} reads.",
+      "aiLiveEmpty": "No live reads: the AI only looks things up when it decides to call a tool.",
+      "aiLiveInvalid": "Check the live data: {error}"
     },
     "deals": {
       "title": "Deals & currency",
@@ -3264,6 +3273,7 @@
     "used": "Used:",
     "ok": "ok",
     "failed": "failed",
+    "toolBlocked": "blocked by policy",
     "playgroundNotice": "Active tools really run against the integration (for example, they create appointments)."
   }
 }

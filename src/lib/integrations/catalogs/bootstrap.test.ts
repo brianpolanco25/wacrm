@@ -317,3 +317,48 @@ describe('docs/integrations/cabbity-health.md (R8, R26)', () => {
     expect(doc).not.toMatch(KEY_RE);
   });
 });
+
+// n13.7 R25: `ai_policy` se sincroniza en filas existentes.
+describe('bootstrapIntegrationCatalog: ai_policy (n13.7, R25)', () => {
+  it('a row loaded before n13.7 (ai_policy null) gets the policy', async () => {
+    const store = new MemoryStore();
+    await load(store);
+    const cancel = store.operations.find(
+      (o) => o.key === 'cancel_appointment'
+    )!;
+    cancel.ai_policy = null;
+    store.writes = [];
+    const { report } = await load(store);
+    expect(store.writes).toEqual([
+      'updateOperation cancel_appointment ai_policy',
+    ]);
+    expect(report.operations.cancel_appointment).toBe('updated');
+    expect(cancel.ai_policy).toEqual({
+      requires_prior: [
+        ['list_appointments', 'get_appointment'],
+        ['find_availability'],
+      ],
+    });
+  });
+
+  it('an equal policy (keys reordered by jsonb) is unchanged', async () => {
+    const store = new MemoryStore();
+    await load(store);
+    store.writes = [];
+    const { report } = await load(store);
+    expect(store.writes).toEqual([]);
+    expect(report.operations.find_availability).toBe('unchanged');
+  });
+
+  it('an operation without policy in the definition clears a stored one (null)', async () => {
+    const store = new MemoryStore();
+    await load(store);
+    const center = store.operations.find((o) => o.key === 'get_center')!;
+    expect(center.ai_policy).toBeNull();
+    center.ai_policy = { grounds: ['schedule'] };
+    store.writes = [];
+    await load(store);
+    expect(store.writes).toEqual(['updateOperation get_center ai_policy']);
+    expect(center.ai_policy).toBeNull();
+  });
+});

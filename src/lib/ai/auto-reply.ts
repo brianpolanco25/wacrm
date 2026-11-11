@@ -23,6 +23,7 @@ import { isAiPausedByServiceCap } from '@/lib/billing/service-cap';
 import { AiError, type AiConfig } from './types';
 import type { Entitlements } from '@/lib/billing/entitlements';
 import { loadAiToolset } from './tools/load';
+import { loadLiveData } from './tools/live';
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -240,12 +241,27 @@ export async function dispatchInboundToAiReply(
       entitlements,
     });
 
+    // n13.7 R9/R10: live reads run only here, after the claim and the
+    // per-account limit — a turn that won't be answered calls nothing.
+    const turnNow = new Date();
+    const liveData =
+      toolset.tools.length > 0
+        ? await loadLiveData(db, {
+            accountId,
+            toolset,
+            conversationId,
+            now: turnNow,
+          })
+        : [];
+
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
       resumedAfterHandoff,
       tools: toolset,
+      now: turnNow,
+      liveData,
     });
 
     const { text, handoff, usage } = await generateReply(
@@ -255,6 +271,7 @@ export async function dispatchInboundToAiReply(
             systemPrompt,
             messages,
             tools: { toolset, db, accountId },
+            grounding: { mode: 'auto_reply', liveData, conversationId },
           }
         : { config, systemPrompt, messages }
     ).catch((err: unknown) => {

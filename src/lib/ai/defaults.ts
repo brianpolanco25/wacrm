@@ -1,6 +1,7 @@
 import type { AiProvider } from './types';
 import { buildToolsPromptSection } from './tools/prompt';
-import type { AiToolset } from './tools/types';
+import { buildLiveDataSection } from './tools/live-render';
+import type { AiToolset, LiveDataBlock } from './tools/types';
 
 // ============================================================
 // Tunables + prompt scaffold for the AI reply assistant.
@@ -68,6 +69,9 @@ export function buildSystemPrompt(args: {
   tools?: AiToolset;
   /** Clock for the tools section (tests). */
   now?: Date;
+  /** n13.7: live reads loaded before this turn. Without it (or with
+   *  none) the prompt is byte-for-byte the one before n13.7 (R16). */
+  liveData?: LiveDataBlock[];
 }): string {
   const { userPrompt, mode, knowledge, resumedAfterHandoff, tools, now } = args;
   const parts: string[] = [
@@ -101,6 +105,10 @@ export function buildSystemPrompt(args: {
     parts.push(
       buildToolsPromptSection(tools, { now: now ?? new Date(), mode })
     );
+  }
+
+  if (args.liveData && args.liveData.length > 0) {
+    parts.push(buildLiveDataSection(args.liveData, { mode }));
   }
 
   if (knowledge && knowledge.length > 0) {

@@ -133,6 +133,23 @@ describe('GET /api/account/integrations', () => {
           aiEnabled: false,
           aiInstructions: null,
           aiTimezone: null,
+          // n13.7 (R6): default of migration 095 and the active GET
+          // operations with their caller parameters.
+          aiLiveReads: [],
+          aiReadOperations: [
+            {
+              key: 'list_doctors',
+              name: 'Listar doctores',
+              params: [
+                {
+                  name: 'specialty',
+                  type: 'string',
+                  required: false,
+                  description: 'Especialidad',
+                },
+              ],
+            },
+          ],
         },
       ],
     });

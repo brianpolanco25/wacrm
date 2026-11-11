@@ -13,7 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import type { ToolUseRecord } from '@/lib/ai/tools/types';
-import { readToolsUsed } from '@/lib/ai/tools/tools-used';
+import { readToolsUsed, trailFromToolsUsed } from '@/lib/ai/tools/tools-used';
 import { PlaygroundToolsNotice, ToolsUsedLine } from './ai-tools-used';
 
 interface Turn {
@@ -48,8 +48,12 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // Send only role+content — the server ignores anything else.
+        // n13.7 R32: plus the successful tool calls of earlier turns, the
+        // prior evidence the destructive-operation guard needs (there is
+        // no conversation here). Resetting the chat empties it.
         body: JSON.stringify({
           messages: next.map((t) => ({ role: t.role, content: t.content })),
+          trail: turns.flatMap((t) => trailFromToolsUsed(t.toolsUsed)),
         }),
       });
       const data = await res.json().catch(() => ({}));

@@ -14,7 +14,9 @@ import { logAiUsage } from '@/lib/ai/usage';
 import { supabaseAdmin } from '@/lib/ai/admin-client';
 import { AiError, type ChatMessage } from '@/lib/ai/types';
 import { loadAiToolset } from '@/lib/ai/tools/load';
-import { EMPTY_TOOLSET } from '@/lib/ai/tools/types';
+import { loadLiveData } from '@/lib/ai/tools/live';
+import { readTrail } from '@/lib/ai/tools/tools-used';
+import { EMPTY_TOOLSET, type LiveDataBlock } from '@/lib/ai/tools/types';
 
 // Keep the tested transcript bounded, mirroring the live context window.
 const MAX_TURNS = 20;
@@ -111,20 +113,41 @@ export async function POST(request: Request) {
       toolset = await loadAiToolset(admin, accountId, { mode: 'playground' });
     }
 
+    // n13.7 R9: the same live reads the bot would get, at this instant.
+    const turnNow = new Date();
+    let liveData: LiveDataBlock[] = [];
+    if (admin && toolset.tools.length > 0) {
+      liveData = await loadLiveData(admin, {
+        accountId,
+        toolset,
+        conversationId: null,
+        now: turnNow,
+      });
+    }
+
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,
       mode: 'auto_reply',
       knowledge,
       tools: toolset,
+      now: turnNow,
+      liveData,
     });
 
-    const { text, handoff, usage, toolsUsed } = await generateReply(
+    const { text, handoff, usage, toolsUsed, grounding } = await generateReply(
       admin && toolset.tools.length > 0
         ? {
             config,
             systemPrompt,
             messages,
             tools: { toolset, db: admin, accountId },
+            // R32: no conversation here — the prior evidence is the
+            // session trail the client accumulates.
+            grounding: {
+              mode: 'playground',
+              liveData,
+              priorEvidence: readTrail(body?.trail),
+            },
           }
         : { config, systemPrompt, messages }
     ).catch((err: unknown) => {
@@ -167,6 +190,7 @@ export async function POST(request: Request) {
       reply: text,
       handoff,
       ...(toolsUsed ? { toolsUsed } : {}),
+      ...(grounding ? { grounding } : {}),
     });
   } catch (err) {
     if (err instanceof AiError) {

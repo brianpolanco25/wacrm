@@ -25,8 +25,29 @@ export function isValidTimeZone(tz: string): boolean {
 
 const pad = (n: number, width = 2) => String(Math.abs(n)).padStart(width, '0');
 
-/** `2026-11-05T10:31:00-04:00`; `null` si la zona no vale. */
-export function formatNowInZone(now: Date, timeZone: string): string | null {
+/** n13.7: `+HH:MM` / `-HH:MM` de un offset en minutos. */
+export function offsetLabel(offsetMinutes: number): string {
+  const sign = offsetMinutes < 0 ? '-' : '+';
+  return `${sign}${pad(Math.floor(Math.abs(offsetMinutes) / 60))}:${pad(Math.abs(offsetMinutes) % 60)}`;
+}
+
+/**
+ * La fecha y hora de pared de `now` en `timeZone` y su offset en minutos;
+ * `null` si la zona no vale. La comparten `formatNowInZone` y el render
+ * de datos en vivo (n13.7).
+ */
+export function wallClockInZone(
+  now: Date,
+  timeZone: string
+): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  offsetMinutes: number;
+} | null {
   if (!isValidTimeZone(timeZone) || Number.isNaN(now.getTime())) return null;
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -49,9 +70,14 @@ export function formatNowInZone(now: Date, timeZone: string): string | null {
   const wallAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
   const nowSeconds = Math.floor(now.getTime() / 1000) * 1000;
   const offsetMinutes = Math.round((wallAsUtc - nowSeconds) / 60_000);
-  const sign = offsetMinutes < 0 ? '-' : '+';
-  const offset = `${sign}${pad(Math.floor(Math.abs(offsetMinutes) / 60))}:${pad(Math.abs(offsetMinutes) % 60)}`;
-  return `${pad(year, 4)}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}${offset}`;
+  return { year, month, day, hour, minute, second, offsetMinutes };
+}
+
+/** `2026-11-05T10:31:00-04:00`; `null` si la zona no vale. */
+export function formatNowInZone(now: Date, timeZone: string): string | null {
+  const w = wallClockInZone(now, timeZone);
+  if (!w) return null;
+  return `${pad(w.year, 4)}-${pad(w.month)}-${pad(w.day)}T${pad(w.hour)}:${pad(w.minute)}:${pad(w.second)}${offsetLabel(w.offsetMinutes)}`;
 }
 
 /** R25/R26: la sección que se añade al system prompt cuando hay herramientas. */

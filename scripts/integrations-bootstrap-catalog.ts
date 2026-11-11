@@ -91,6 +91,7 @@ const OPERATION_SYNCED = [
   'outputs',
   'response_description',
   'sort_order',
+  'ai_policy',
 ] as const satisfies readonly (keyof CatalogOperation)[];
 
 /** The definition for `slug`; throws listing the valid slugs. */
@@ -201,7 +202,12 @@ export async function bootstrapIntegrationCatalog({
 
   const current = await store.listOperations(integrationId);
   const currentByKey = new Map(current.map((op) => [op.key, op]));
-  for (const op of definition.operations) {
+  for (const defined of definition.operations) {
+    // n13.7: sin política = `null` en la base, para poder quitarla.
+    const op: CatalogOperation = {
+      ...defined,
+      ai_policy: defined.ai_policy ?? null,
+    };
     const row = currentByKey.get(op.key);
     if (!row) {
       await store.insertOperation(integrationId, op);
