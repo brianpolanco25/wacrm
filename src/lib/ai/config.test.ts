@@ -154,3 +154,32 @@ describe('loadAiConfig handoff columns (fase 1)', () => {
     expect(fixed!.handoffMessage).toBeNull();
   });
 });
+
+describe('loadAiConfig voice fallback message (n15.1, R45)', () => {
+  const ACTIVE = { ...ROW, is_active: true };
+
+  it('selects voice_fallback_message', async () => {
+    await loadAiConfig(dbReturning(ACTIVE), 'acct');
+    const columns = selectedColumns.split(',').map((c) => c.trim());
+    expect(columns).toContain('voice_fallback_message');
+  });
+
+  it('maps text, empty string and null as-is', async () => {
+    for (const [value, expected] of [
+      ['Escríbeme, por favor.', 'Escríbeme, por favor.'],
+      ['', ''],
+      [null, null],
+    ] as const) {
+      const config = await loadAiConfig(
+        dbReturning({ ...ACTIVE, voice_fallback_message: value }),
+        'acct'
+      );
+      expect(config!.voiceFallbackMessage).toBe(expected);
+    }
+  });
+
+  it('is null on a row read without the column', async () => {
+    const config = await loadAiConfig(dbReturning(ACTIVE), 'acct');
+    expect(config!.voiceFallbackMessage).toBeNull();
+  });
+});

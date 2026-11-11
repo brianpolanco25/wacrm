@@ -132,6 +132,9 @@ export async function POST(request: Request) {
       mode: 'draft',
       knowledge,
       tools: toolset,
+      // n15.1 (R26): voice notes the bot already transcribed are in the
+      // context; nothing new is transcribed for a draft.
+      voiceNotes: messages.some((m) => m.voice),
     });
 
     const { text, usage, toolsUsed } = await generateReply(
