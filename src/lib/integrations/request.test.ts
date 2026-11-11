@@ -445,3 +445,65 @@ describe('withAuthHeader (n13.5, R12)', () => {
     ).toEqual({ Accept: 'a', Authorization: 'Bearer t' });
   });
 });
+
+// ---- n13.8 (A1): normalización declarativa por parámetro ----
+describe('validateCallParams with normalize: compact (n13.8, A1)', () => {
+  const declared = [
+    P({
+      name: 'document_number',
+      in: 'body',
+      required: true,
+      normalize: 'compact',
+    }),
+    P({ name: 'note', in: 'body' }),
+  ];
+  const doc = (value: unknown) => {
+    const r = validateCallParams(declared, { document_number: value });
+    return r.ok ? r.values.document_number : r;
+  };
+
+  it.each([
+    ['001-1234567-8', '00112345678'],
+    ['001 1234567 8', '00112345678'],
+    ['001.1234567.8', '00112345678'],
+    [' 001‑1234567–8 ', '00112345678'],
+    ['AB 123456', 'AB123456'],
+    ['00112345678', '00112345678'],
+  ])('%j → %j', (given, expected) => {
+    expect(doc(given)).toBe(expected);
+  });
+
+  it('a parameter without normalize is not touched', () => {
+    const r = validateCallParams(declared, {
+      document_number: '1',
+      note: '001-1234567-8 a las 10.30',
+    });
+    expect(r.ok && r.values.note).toBe('001-1234567-8 a las 10.30');
+  });
+
+  it('a value that is only separators counts as missing', () => {
+    expect(doc(' - . ')).toEqual({
+      ok: false,
+      problem: 'missing',
+      param: 'document_number',
+    });
+  });
+
+  it('a number is coerced to text as before', () => {
+    expect(doc(12345)).toBe('12345');
+  });
+
+  it('the cleaned value is what travels in the body', () => {
+    const r = validateCallParams(declared, {
+      document_number: '001-1234567-8',
+    });
+    if (!r.ok) throw new Error('expected ok');
+    const built = buildIntegrationRequest(
+      { base_url: 'https://health.example.com/api/v1' },
+      { method: 'POST', path: '/patients/lookup', params: declared },
+      r.values
+    );
+    if ('blocked' in built) throw new Error('blocked');
+    expect(JSON.parse(built.body!)).toEqual({ document_number: '00112345678' });
+  });
+});

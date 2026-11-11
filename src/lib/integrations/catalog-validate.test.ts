@@ -768,3 +768,39 @@ describe('validateOperationInput: dotted body names (n13.5, R13)', () => {
     ).toBe(true);
   });
 });
+
+// ---- n13.8 (A3): normalize ----
+
+describe('validateOperationInput: normalize (n13.8, A3)', () => {
+  const DOC = {
+    name: 'document_number',
+    in: 'body',
+    type: 'string',
+    required: true,
+    description: 'Número de documento.',
+  };
+
+  it('accepts normalize: compact on a string and keeps it in the output', () => {
+    const r = withParams([{ ...DOC, normalize: 'compact' }]);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.value.params?.[0]).toEqual({
+      ...DOC,
+      normalize: 'compact',
+    });
+  });
+
+  it('a param without normalize keeps its shape (no key added)', () => {
+    const r = withParams([DOC]);
+    expect(r.ok && 'normalize' in r.value.params![0]).toBe(false);
+  });
+
+  it.each([
+    ['an unknown value', { ...DOC, normalize: 'digits' }],
+    ['a non-string value', { ...DOC, normalize: true }],
+    ['null', { ...DOC, normalize: null }],
+    ['an integer param', { ...DOC, type: 'integer', normalize: 'compact' }],
+    ['a header', { ...IK, normalize: 'compact' }],
+  ])('rejects normalize with %s', (_label, param) => {
+    expect(paramsError([param])).toMatch(/^params: .*normalize/);
+  });
+});

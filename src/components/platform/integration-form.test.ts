@@ -287,3 +287,40 @@ describe('operationFormToBody with an auto header (n13.5)', () => {
     ]);
   });
 });
+
+// n13.8: el panel no tiene control para `normalize`, pero no lo borra.
+describe('operationFormToBody with normalize (n13.8)', () => {
+  const DOC = {
+    name: 'document_number',
+    in: 'body' as const,
+    type: 'string' as const,
+    required: true,
+    description: 'Número de documento',
+    normalize: 'compact' as const,
+  };
+
+  it('round-trips normalize: compact unchanged', () => {
+    const op: OperationRow = { ...OP, params: [...OP.params, DOC] };
+    const form = operationToForm(op);
+    expect(form.params.at(-1)?.normalize).toBe('compact');
+    expect(form.params[0].normalize).toBeNull();
+    const r = operationFormToBody(form);
+    expect(r.ok && r.body.params).toEqual(op.params);
+  });
+
+  it('drops normalize if the row stops being text', () => {
+    const form = operationToForm({ ...OP, params: [DOC] });
+    form.params[0] = { ...form.params[0], type: 'integer' };
+    const r = operationFormToBody(form);
+    if (!r.ok) throw new Error('expected ok');
+    expect(r.body.params).toEqual([
+      {
+        name: 'document_number',
+        in: 'body',
+        type: 'integer',
+        required: true,
+        description: 'Número de documento',
+      },
+    ]);
+  });
+});

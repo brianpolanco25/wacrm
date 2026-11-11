@@ -23,6 +23,7 @@ import {
   OUTPUT_TYPES,
   PARAM_AUTOS,
   PARAM_LOCATIONS,
+  PARAM_NORMALIZES,
   PARAM_TYPES,
   type AuthScheme,
   type HttpMethod,
@@ -33,6 +34,7 @@ import {
   type OutputType,
   type ParamAuto,
   type ParamLocation,
+  type ParamNormalize,
   type ParamType,
   type Validation,
 } from './types';
@@ -423,6 +425,7 @@ function validateParams(raw: unknown): Validation<OperationParam[]> {
           'description',
           'enum',
           'auto',
+          'normalize',
         ].includes(k)
       ) {
         return fail('params', `${where}: unknown field '${k}'`);
@@ -506,6 +509,20 @@ function validateParams(raw: unknown): Validation<OperationParam[]> {
     } else if (hasAuto) {
       return fail('params', `${where}: auto is only allowed with in: 'header'`);
     }
+    // n13.8: limpieza de texto que aplica el ejecutor; solo en texto que
+    // manda el llamador.
+    const hasNormalize = 'normalize' in item && item.normalize !== undefined;
+    if (hasNormalize) {
+      if (!PARAM_NORMALIZES.includes(item.normalize as ParamNormalize)) {
+        return fail('params', `${where}.normalize must be 'compact'`);
+      }
+      if (location === 'header' || item.type !== 'string') {
+        return fail(
+          'params',
+          `${where}: normalize is only allowed on a string parameter that is not a header`
+        );
+      }
+    }
     const desc =
       typeof item.description === 'string' ? item.description.trim() : '';
     if (!desc || desc.length > DESCRIPTION_MAX) {
@@ -548,6 +565,7 @@ function validateParams(raw: unknown): Validation<OperationParam[]> {
     }
     // Solo si existe: los params de n13.1 conservan su forma (R18).
     if (location === 'header') param.auto = item.auto as ParamAuto;
+    if (hasNormalize) param.normalize = item.normalize as ParamNormalize;
     out.push(param);
   }
   // Un nombre no puede ser a la vez valor y objeto (`consent` y

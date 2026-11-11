@@ -131,6 +131,41 @@ describe('Cabbity Health requests with a simulated fetch (R22)', () => {
     expect(r.headers['Idempotency-Key']).toBeUndefined();
   });
 
+  // n13.8 (A1/A2): la cédula como la escribe el paciente llega limpia.
+  it('lookup_patient: a cédula with dashes travels as 11 digits', async () => {
+    const r = await call('lookup_patient', {
+      document_type: 'cedula',
+      document_number: '001-1234567-8',
+    });
+    expect(r.body).toEqual({
+      document_type: 'cedula',
+      document_number: '00112345678',
+    });
+  });
+
+  it('list_patients: the document filter is cleaned too', async () => {
+    const r = await call('list_patients', { document_number: '001 1234567 8' });
+    expect(r.url).toBe(`${BASE}/patients?document_number=00112345678`);
+  });
+
+  it('create_patient: a cédula with dashes travels as 11 digits', async () => {
+    const r = await call('create_patient', {
+      first_name: 'Ana',
+      last_name: 'Pérez',
+      document_type: 'cedula',
+      document_number: '001-1234567-8',
+      phone: '+18095550000',
+      consent: {
+        accepted: true,
+        accepted_at: '2026-11-10T10:15:00-04:00',
+        reference: 'WhatsApp, conversación del 2026-11-10',
+      },
+    });
+    expect((r.body as { document_number: string }).document_number).toBe(
+      '00112345678'
+    );
+  });
+
   it('create_patient: nested consent and an Idempotency-Key', async () => {
     const r = await call('create_patient', {
       first_name: 'Ana',

@@ -14,6 +14,12 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export type ParamLocation = 'path' | 'query' | 'body' | 'header';
 /** n13.5 (D2): cómo genera el ejecutor el valor de una cabecera. */
 export type ParamAuto = 'uuid';
+/**
+ * n13.8: limpieza que hace el ejecutor sobre un valor de texto antes de
+ * validarlo y enviarlo. `compact` quita guiones, espacios y puntos
+ * (`001-1234567-8` → `00112345678`).
+ */
+export type ParamNormalize = 'compact';
 export type ParamType = 'string' | 'integer' | 'number' | 'boolean';
 export type OutputType = ParamType | 'object' | 'array';
 
@@ -32,6 +38,7 @@ export const PARAM_LOCATIONS: readonly ParamLocation[] = [
   'header',
 ];
 export const PARAM_AUTOS: readonly ParamAuto[] = ['uuid'];
+export const PARAM_NORMALIZES: readonly ParamNormalize[] = ['compact'];
 export const PARAM_TYPES: readonly ParamType[] = [
   'string',
   'integer',
@@ -56,6 +63,12 @@ export interface OperationParam {
    * cada llamada; nadie (flow, IA, automatización) lo manda.
    */
   auto?: ParamAuto;
+  /**
+   * Solo con `type: 'string'` (n13.8): el ejecutor limpia el valor antes
+   * de validarlo y enviarlo, venga de quien venga (IA, flow,
+   * automatización). Nunca se expone al modelo.
+   */
+  normalize?: ParamNormalize;
 }
 
 /**

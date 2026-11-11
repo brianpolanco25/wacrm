@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Cabbity Health: the AI accepts the cédula with dashes and no longer asks for consent
+
+- No migration. Re-run `node --env-file=.env.local scripts/integrations-bootstrap-catalog.ts cabbity-health` to sync the catalogue. An integration parameter can now declare `normalize: 'compact'`: the executor strips dashes, spaces and dots from the value before validating and sending it, for every caller (AI, flows, automations). Cabbity Health's `document_number` uses it, so `001-1234567-8` reaches Health as `00112345678` and the AI no longer asks the customer to repeat it without dashes. `create_patient` no longer tells the AI to ask the customer for consent: giving their details over WhatsApp counts as consent, and the AI always sends `consent.accepted = true` with the current time and the channel.
+
 ### WhatsApp coexistence: media sent from the phone shows in the inbox
 
 - No migration. Images, videos, audio, documents and stickers the business sends from the WhatsApp Business app on the phone (coexistence echoes) now appear in the inbox as the attachment itself, copied to storage like inbound media (or through the media proxy when the account turned mirroring off), instead of a «[image]» text bubble. If Meta cannot serve the media, the bubble keeps the old «[image] caption» text. Chat history imported from the phone is unchanged («[media]»: Meta does not deliver those files).
