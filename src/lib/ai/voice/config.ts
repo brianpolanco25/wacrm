@@ -76,8 +76,10 @@ export function formatVoiceNote(text: string): string {
  * The turn's context with this voice note's transcript in it (R22): when
  * the transcript UPDATE failed, the context read from the database lacks
  * it, and the turn must still answer what the customer said. Appends it
- * as the latest `user` turn unless an identical voice turn is already
- * there. Pure; returns a new array.
+ * as the latest `user` turn unless the context's LAST turn already is
+ * this same voice note. Only the last one counts: an older voice turn
+ * with the same text («sí») is a previous note, not this one. Pure;
+ * returns a new array.
  */
 export function withVoiceTurn<
   T extends { role: string; content: string; voice?: boolean },
@@ -86,7 +88,8 @@ export function withVoiceTurn<
   transcript: string
 ): (T | { role: 'user'; content: string; voice: true })[] {
   const content = formatVoiceNote(transcript);
-  if (messages.some((m) => m.voice && m.content === content)) {
+  const last = messages[messages.length - 1];
+  if (last && last.voice && last.content === content) {
     return [...messages];
   }
   return [...messages, { role: 'user', content, voice: true }];

@@ -25,7 +25,9 @@ import type { ContentType } from "@/types";
 /**
  * Extension per MIME type. Covers the `chat-media` bucket's allow-list
  * (migration 023) plus the inbound-only types Meta can hand us (notably
- * `image/webp` stickers and `audio/ogg` voice notes).
+ * `image/webp` stickers and `audio/ogg` voice notes), plus every audio
+ * type the OpenAI transcriber accepts (`TRANSCRIBE_MIME`), whose API
+ * picks the decoder from the upload's extension.
  */
 const EXTENSION_BY_MIME: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -40,8 +42,12 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "audio/opus": "opus",
   "audio/mpeg": "mp3",
   "audio/mp4": "m4a",
+  "audio/m4a": "m4a",
   "audio/aac": "aac",
   "audio/amr": "amr",
+  "audio/wav": "wav",
+  "audio/webm": "webm",
+  "audio/flac": "flac",
   "application/pdf": "pdf",
   "application/msword": "doc",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document":

@@ -11,6 +11,7 @@ import {
   TRANSCRIBE_RETRY_DELAY_MS,
   TRANSCRIPT_MAX_CHARS,
   VOICE_NOTE_MARKER,
+  withVoiceTurn,
 } from './config';
 
 afterEach(() => {
@@ -85,5 +86,42 @@ describe('formatVoiceNote / stripVoiceNoteMarker', () => {
     expect(VOICE_NOTE_MARKER).toBe('[nota de voz]');
     expect(stripVoiceNoteMarker(formatted)).toBe('tienen cita');
     expect(stripVoiceNoteMarker('sin marca')).toBe('sin marca');
+  });
+});
+
+describe('withVoiceTurn (R22)', () => {
+  const voice = (t: string) => ({
+    role: 'user',
+    content: formatVoiceNote(t),
+    voice: true,
+  });
+
+  it('appends the voice turn when the context lacks it', () => {
+    const ctx = [{ role: 'assistant', content: 'hola' }];
+    expect(withVoiceTurn(ctx, 'sí')).toEqual([
+      ...ctx,
+      { role: 'user', content: formatVoiceNote('sí'), voice: true },
+    ]);
+  });
+
+  it('does not duplicate it when it already is the last turn', () => {
+    const ctx = [{ role: 'assistant', content: 'hola' }, voice('sí')];
+    const out = withVoiceTurn(ctx, 'sí');
+    expect(out).toEqual(ctx);
+    expect(out).not.toBe(ctx);
+  });
+
+  it('an OLDER voice turn with the same text does not count: appends', () => {
+    const ctx = [
+      voice('sí'),
+      { role: 'assistant', content: '¿confirmo la cita?' },
+    ];
+    const out = withVoiceTurn(ctx, 'sí');
+    expect(out).toHaveLength(3);
+    expect(out[2]).toEqual({
+      role: 'user',
+      content: formatVoiceNote('sí'),
+      voice: true,
+    });
   });
 });

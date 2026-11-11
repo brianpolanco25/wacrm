@@ -149,4 +149,28 @@ describe('sendVoiceFallback — send failure (R42)', () => {
     await expect(t.run()).resolves.toBe('send_failed');
     expect(JSON.stringify(logs)).not.toContain(TEXT);
   });
+
+  it('a failed send gives the slot back: the next voice note is answered', async () => {
+    const t = setup();
+    const deps = { send: t.send, limiter: checkRateLimit, now: () => NOW };
+    t.send.mockRejectedValueOnce(new Error('meta down'));
+    expect(await t.run({ deps })).toBe('send_failed');
+    expect(await t.run({ deps })).toBe('sent');
+    expect(await t.run({ deps })).toBe('cooldown');
+    expect(t.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases the same key it claimed, only when the send fails', async () => {
+    const t = setup();
+    const release = vi.fn();
+    expect(
+      await t.run({ deps: { send: t.send, limiter: t.limiter, release } })
+    ).toBe('sent');
+    expect(release).not.toHaveBeenCalled();
+    t.send.mockRejectedValueOnce(new Error('meta down'));
+    expect(
+      await t.run({ deps: { send: t.send, limiter: t.limiter, release } })
+    ).toBe('send_failed');
+    expect(release).toHaveBeenCalledWith(`ai-voice-fallback:${t.conv}`);
+  });
 });
