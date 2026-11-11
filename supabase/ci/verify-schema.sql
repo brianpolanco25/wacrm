@@ -2610,6 +2610,51 @@ BEGIN
   END IF;
   -- /094 -----------------------------------------------------------
 
+  -- 095 — IA con disponibilidad fundamentada (n13.7) -----------------
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'account_integrations'
+                   AND column_name = 'ai_live_reads' AND data_type = 'jsonb'
+                   AND is_nullable = 'NO'
+                   AND column_default LIKE '''[]''::jsonb%') THEN
+    RAISE EXCEPTION 'account_integrations.ai_live_reads must be jsonb NOT NULL DEFAULT [] (migration 095)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'integration_operations'
+                   AND column_name = 'ai_policy' AND data_type = 'jsonb'
+                   AND is_nullable = 'YES') THEN
+    RAISE EXCEPTION 'integration_operations.ai_policy (jsonb, nullable) is missing (migration 095)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'integration_calls'
+                   AND column_name = 'conversation_id' AND data_type = 'uuid'
+                   AND is_nullable = 'YES') THEN
+    RAISE EXCEPTION 'integration_calls.conversation_id is missing (migration 095)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'integration_calls'
+                   AND column_name = 'ai_preload' AND is_nullable = 'NO'
+                   AND column_default = 'false') THEN
+    RAISE EXCEPTION 'integration_calls.ai_preload must be NOT NULL DEFAULT false (migration 095)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conrelid = 'public.integration_calls'::regclass
+                   AND contype = 'f' AND confrelid = 'public.conversations'::regclass
+                   AND confdeltype = 'n') THEN
+    RAISE EXCEPTION 'integration_calls.conversation_id FK must be ON DELETE SET NULL (migration 095)';
+  END IF;
+  IF (SELECT count(*) FROM pg_constraint
+      WHERE conname IN ('account_integrations_ai_live_reads_shape',
+                        'integration_operations_ai_policy_shape')
+        AND contype = 'c') <> 2 THEN
+    RAISE EXCEPTION 'ai_live_reads / ai_policy shape checks are missing (migration 095)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                 WHERE schemaname = 'public'
+                   AND indexname = 'integration_calls_conversation_idx') THEN
+    RAISE EXCEPTION 'integration_calls_conversation_idx is missing (migration 095)';
+  END IF;
+  -- /095 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
