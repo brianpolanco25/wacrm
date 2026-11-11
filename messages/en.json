@@ -2020,7 +2020,7 @@
       "enableAssistant": "Enable AI assistant",
       "enableAssistantDesc": "Master switch. Turns on the “Draft with AI” button in the inbox.",
       "autoReply": "Auto-reply to inbound messages",
-      "autoReplyDesc": "The bot answers new inbound messages automatically (only when no flow handles them and no agent is assigned). Hands off to a human when it can’t help.",
+      "autoReplyDesc": "The bot answers new inbound messages automatically (only when no flow handles them and no agent is assigned). Hands off to a human when it can’t help. Only takes effect while the assistant is active.",
       "overlapTitle": "{count} {count, plural, =1 {automation} other {automations}} can answer the same messages",
       "overlapBody": "The bot stays quiet only on the messages an automation actually answers — never on the rest of your chats. Check they do not overlap more than you intended.",
       "overlapLink": "Review automations",

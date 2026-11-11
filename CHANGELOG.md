@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Fix: the AI auto-reply switch can be turned off while the assistant is off
+
+- No migration. In Settings → AI, «Auto-reply to inbound messages» was locked whenever «Assistant active» was off, yet still showed as on, so it could not be turned off and the bot started replying on its own as soon as the assistant was switched back on. The switch is now editable whenever your role can edit settings, and its description says it only takes effect while the assistant is active.
+
 ### Fix: the AI no longer gets the weekday of a date wrong
 
 - No migration. The AI offered «Thursday 13 November» when 13 November 2026 is a Friday: it worked the weekday out by itself from the raw date. Now every date carries its weekday already computed: the current date and time in the AI's tool instructions (UTC and each integration's local time), and every date-time a tool returns (e.g. `starts_at` from `find_availability`) gains a `starts_at_local` field such as `Friday 2026-11-13 14:00 (-04:00)` in the integration's time zone. The original value is unchanged, so bookings still send it as is, and the AI is told to use those weekday names instead of working them out.
