@@ -62,7 +62,7 @@ export async function GET() {
       // `api_key` is selected only to derive `has_key` — it is stripped
       // out below and never returned to the client.
       .select(
-        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, api_key, embeddings_api_key, embeddings_provider'
+        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, handoff_mode, handoff_message, api_key, embeddings_api_key, embeddings_provider, voice_fallback_message'
       )
       .eq('account_id', accountId)
       .maybeSingle();
@@ -192,6 +192,27 @@ export async function POST(request: Request) {
       if (handoffMessage.length > HANDOFF_MESSAGE_MAX_LEN) {
         return bad(
           `handoff_message must be at most ${HANDOFF_MESSAGE_MAX_LEN} characters`
+        );
+      }
+    }
+
+    // n15.1 (D3, migration 096): text the bot sends when it can't
+    // transcribe a voice note. Same rules as `handoff_message`: '' is a
+    // deliberate opt-out, absent leaves the column alone (so a first save
+    // keeps the seeded default), same length cap.
+    const voiceFallbackProvided = 'voice_fallback_message' in body;
+    let voiceFallbackMessage = '';
+    if (voiceFallbackProvided) {
+      if (
+        body.voice_fallback_message !== null &&
+        typeof body.voice_fallback_message !== 'string'
+      ) {
+        return bad('voice_fallback_message must be a string');
+      }
+      voiceFallbackMessage = (body.voice_fallback_message ?? '').trim();
+      if (voiceFallbackMessage.length > HANDOFF_MESSAGE_MAX_LEN) {
+        return bad(
+          `voice_fallback_message must be at most ${HANDOFF_MESSAGE_MAX_LEN} characters`
         );
       }
     }
@@ -365,6 +386,9 @@ export async function POST(request: Request) {
     if (handoffProvided) shared.handoff_agent_id = handoffAgentId;
     if (modeProvided) shared.handoff_mode = handoffMode;
     if (messageProvided) shared.handoff_message = handoffMessage;
+    if (voiceFallbackProvided) {
+      shared.voice_fallback_message = voiceFallbackMessage;
+    }
     if (rawEmbeddingsKey) {
       shared.embeddings_api_key = encrypt(rawEmbeddingsKey);
     } else if (clearEmbeddingsKey) {

@@ -15,6 +15,7 @@ import { supabaseAdmin } from '@/lib/ai/admin-client';
 import { AiError, type ChatMessage } from '@/lib/ai/types';
 import { loadAiToolset } from '@/lib/ai/tools/load';
 import { EMPTY_TOOLSET } from '@/lib/ai/tools/types';
+import { formatVoiceNote } from '@/lib/ai/voice/config';
 
 // Keep the tested transcript bounded, mirroring the live context window.
 const MAX_TURNS = 20;
@@ -61,6 +62,19 @@ export async function POST(request: Request) {
             (m as ChatMessage).role === 'assistant') &&
           typeof (m as ChatMessage).content === 'string' &&
           (m as ChatMessage).content.trim().length > 0
+      )
+      // n15.1 (R36): a `user` turn with `voice: true` simulates a voice
+      // note — its text is taken as the transcript, exactly as the bot
+      // would see it. Nothing is transcribed or billed as `transcription`.
+      // `voice` on an assistant turn, or not a boolean, is ignored.
+      .map((m: ChatMessage): ChatMessage =>
+        m.role === 'user' && m.voice === true
+          ? {
+              role: 'user',
+              content: formatVoiceNote(m.content.trim()),
+              voice: true,
+            }
+          : { role: m.role, content: m.content }
       )
       .slice(-MAX_TURNS);
 
@@ -116,6 +130,7 @@ export async function POST(request: Request) {
       mode: 'auto_reply',
       knowledge,
       tools: toolset,
+      voiceNotes: messages.some((m) => m.voice),
     });
 
     const { text, handoff, usage, toolsUsed } = await generateReply(

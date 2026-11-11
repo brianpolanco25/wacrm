@@ -3,12 +3,15 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildConversationContext } from './context'
 
 /** Minimal fake matching the query chain in buildConversationContext:
- *  from().select().eq().eq().order().limit() → { data, error }. */
-function fakeDb(rows: unknown[]): SupabaseClient {
+ *  from().select().eq().in().or().order().limit() → { data, error }.
+ *  `calls` records the filters (n15.1). */
+function fakeDb(rows: unknown[], calls: unknown[][] = []): SupabaseClient {
   const chain = {
     from: () => chain,
-    select: () => chain,
-    eq: () => chain,
+    select: (...a: unknown[]) => (calls.push(['select', ...a]), chain),
+    eq: (...a: unknown[]) => (calls.push(['eq', ...a]), chain),
+    in: (...a: unknown[]) => (calls.push(['in', ...a]), chain),
+    or: (...a: unknown[]) => (calls.push(['or', ...a]), chain),
     order: () => chain,
     limit: () => Promise.resolve({ data: rows, error: null }),
   }
@@ -49,5 +52,66 @@ describe('buildConversationContext', () => {
       'conv-1',
     )
     expect(out).toEqual([{ role: 'user', content: 'real' }])
+  })
+})
+
+describe('buildConversationContext — voice notes (n15.1, R25)', () => {
+  it('asks for text plus transcribed audio only', async () => {
+    const calls: unknown[][] = []
+    await buildConversationContext(fakeDb([], calls), 'conv-1')
+    expect(calls).toContainEqual(['eq', 'conversation_id', 'conv-1'])
+    expect(calls).toContainEqual(['in', 'content_type', ['text', 'audio']])
+    expect(calls).toContainEqual([
+      'or',
+      'content_type.eq.text,transcript_status.eq.done',
+    ])
+  })
+
+  it('maps a transcribed customer voice note to a marked user turn', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        {
+          sender_type: 'customer',
+          content_type: 'audio',
+          content_text: null,
+          transcript: 'tienen cita el jueves',
+          transcript_status: 'done',
+        },
+        { sender_type: 'bot', content_type: 'text', content_text: 'Hola' },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([
+      { role: 'assistant', content: 'Hola' },
+      {
+        role: 'user',
+        content: '[nota de voz] tienen cita el jueves',
+        voice: true,
+      },
+    ])
+  })
+
+  it('drops audio without a done transcript, and agent/bot audio', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        {
+          sender_type: 'customer',
+          content_type: 'audio',
+          content_text: null,
+          transcript: null,
+          transcript_status: 'failed',
+        },
+        {
+          sender_type: 'agent',
+          content_type: 'audio',
+          content_text: null,
+          transcript: 'x',
+          transcript_status: 'done',
+        },
+        { sender_type: 'customer', content_type: 'text', content_text: 'hola' },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([{ role: 'user', content: 'hola' }])
   })
 })

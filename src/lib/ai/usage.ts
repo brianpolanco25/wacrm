@@ -7,8 +7,9 @@ export interface LogAiUsageArgs {
    *  deleted between generation and logging. */
   conversationId: string | null
   /** Which surface spent the tokens. Mirrors the `mode` CHECK on
-   *  `ai_usage_log` (033, widened with 'playground' in 047). */
-  mode: 'auto_reply' | 'draft' | 'playground'
+   *  `ai_usage_log` (033, widened with 'playground' in 047 and
+   *  'transcription' — voice notes, n15.1 — in 096). */
+  mode: 'auto_reply' | 'draft' | 'playground' | 'transcription'
   provider: AiProvider
   model: string
   /** Which key paid for this call: the account's own ('account') or the

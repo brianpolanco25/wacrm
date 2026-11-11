@@ -686,3 +686,91 @@ describe('POST /api/ai/config — handoff message (fase 1)', () => {
     expect(mocks.state.inserts[0]).not.toHaveProperty('handoff_message');
   });
 });
+
+describe('/api/ai/config — voice fallback message (n15.1, R46)', () => {
+  beforeEach(() => {
+    vi.stubEnv('AI_PLATFORM_OPENAI_API_KEY', 'sk-platform');
+  });
+
+  it('stores the trimmed message', async () => {
+    const res = await POST(
+      post({ ...BASE_BODY, voice_fallback_message: '  Escríbeme, porfa.  ' })
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.state.inserts[0]).toMatchObject({
+      voice_fallback_message: 'Escríbeme, porfa.',
+    });
+  });
+
+  it('stores an empty string as an explicit opt-out', async () => {
+    const res = await POST(post({ ...BASE_BODY, voice_fallback_message: '' }));
+    expect(res.status).toBe(200);
+    expect(mocks.state.inserts[0]).toMatchObject({
+      voice_fallback_message: '',
+    });
+  });
+
+  it('rejects 1001 characters', async () => {
+    const res = await POST(
+      post({ ...BASE_BODY, voice_fallback_message: 'x'.repeat(1001) })
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.state.inserts).toEqual([]);
+  });
+
+  it('rejects a non-string', async () => {
+    const res = await POST(post({ ...BASE_BODY, voice_fallback_message: 42 }));
+    expect(res.status).toBe(400);
+    expect(mocks.state.inserts).toEqual([]);
+  });
+
+  it('leaves the column alone on insert and update when the field is absent', async () => {
+    const first = await POST(post(BASE_BODY));
+    expect(first.status).toBe(200);
+    expect(mocks.state.inserts[0]).not.toHaveProperty('voice_fallback_message');
+
+    mocks.state.existing = {
+      id: 'cfg',
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: null,
+    };
+    const second = await POST(post(BASE_BODY));
+    expect(second.status).toBe(200);
+    expect(mocks.state.updates[0]).not.toHaveProperty('voice_fallback_message');
+  });
+
+  it('GET selects and returns it', async () => {
+    let selected = '';
+    const base = ctx();
+    const inner = base.supabase.from;
+    mocks.getCurrentAccount.mockResolvedValue({
+      ...base,
+      supabase: {
+        from: (table: string) => {
+          const chain = inner(table);
+          return {
+            ...chain,
+            select: (cols: string) => {
+              selected = cols;
+              return chain;
+            },
+          };
+        },
+      },
+    });
+    mocks.state.existing = {
+      provider: 'openai',
+      model: 'gpt-x',
+      api_key: null,
+      embeddings_api_key: null,
+      voice_fallback_message: 'Escríbeme.',
+    };
+    const res = await GET();
+    const body = await res.json();
+    expect(selected.split(',').map((c) => c.trim())).toContain(
+      'voice_fallback_message'
+    );
+    expect(body.voice_fallback_message).toBe('Escríbeme.');
+  });
+});

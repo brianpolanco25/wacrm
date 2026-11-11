@@ -2508,3 +2508,63 @@ describe('coexistencia (#1651)', () => {
     }
   });
 });
+
+describe('inbound webhook: voice notes reach the AI (n15.1, R4–R6)', () => {
+  const VOICE_MESSAGE = {
+    id: 'wamid.VOICE1',
+    from: '15551230000',
+    timestamp: '1700000000',
+    type: 'audio',
+    audio: { id: '9876543210987654', mime_type: 'audio/ogg; codecs=opus' },
+  };
+
+  beforeEach(() => {
+    mockGetMediaUrl.mockResolvedValue({
+      url: 'https://lookaside.fbsbx.com/whatsapp/voice',
+      mimeType: 'audio/ogg',
+      fileSize: 2048,
+    });
+    mockDownloadMedia.mockResolvedValue({
+      buffer: Buffer.alloc(2048),
+      contentType: 'audio/ogg',
+    });
+  });
+
+  it('dispatches a voice note to the AI with its Meta media id and token (R4)', async () => {
+    await runWebhook(VOICE_MESSAGE);
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalledTimes(1);
+    const args = h.dispatchInboundToAiReply.mock.calls[0][0] as {
+      inboundMessageId: string;
+      voiceNote?: { metaMediaId: string; accessToken: string };
+    };
+    expect(args.inboundMessageId).toBe('msg-1');
+    expect(args.voiceNote?.metaMediaId).toBe('9876543210987654');
+    expect(typeof args.voiceNote?.accessToken).toBe('string');
+    expect(args.voiceNote?.accessToken).not.toBe('');
+  });
+
+  it('a text inbound is dispatched without voiceNote (R5)', async () => {
+    await runWebhook();
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalledTimes(1);
+    expect(h.dispatchInboundToAiReply.mock.calls[0][0]).not.toHaveProperty(
+      'voiceNote'
+    );
+  });
+
+  it('an image without caption still does not wake the AI (R5)', async () => {
+    await runWebhook({
+      id: 'wamid.IMG2',
+      from: '15551230000',
+      timestamp: '1700000000',
+      type: 'image',
+      image: { id: '1234567890123456', mime_type: 'image/jpeg' },
+    });
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled();
+  });
+
+  it('a voice note a flow consumed is not dispatched (R6)', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({ consumed: true });
+    await runWebhook(VOICE_MESSAGE);
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled();
+  });
+});

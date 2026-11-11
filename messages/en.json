@@ -291,7 +291,9 @@
       "downloadFailed": "Couldn't download the attachment",
       "viewImage": "View image",
       "expandVideo": "Expand video",
-      "imageAlt": "Shared image"
+      "imageAlt": "Shared image",
+      "transcriptLabel": "Transcript",
+      "transcriptUnavailable": "The voice note could not be transcribed"
     },
     "mediaViewer": {
       "counter": "{index} of {total}",
@@ -2025,6 +2027,9 @@
       "handoffMessage": "Message when handing off",
       "handoffMessageDesc": "Sent to the customer right before the bot steps back, so the chat never just goes quiet. Leave empty to send nothing. It does not count as an AI reply.",
       "handoffMessagePlaceholder": "e.g. Thanks for writing to us. A member of our team will continue this conversation shortly.",
+      "voiceFallbackMessage": "Message when a voice note can't be heard",
+      "voiceFallbackMessageDesc": "Sent to the customer when their voice note can't be transcribed, asking them to type instead. The bot stays on. At most one every 10 minutes per conversation. Leave empty to send nothing. It does not count as an AI reply.",
+      "voiceFallbackMessagePlaceholder": "e.g. Sorry, I can't listen to voice notes. Could you type your message, please?",
       "remove": "Remove",
       "save": "Save",
       "missingModel": "Enter a model name.",
@@ -3265,5 +3270,10 @@
     "ok": "ok",
     "failed": "failed",
     "playgroundNotice": "Active tools really run against the integration (for example, they create appointments)."
+  },
+  "AiVoice": {
+    "sendAsVoice": "As a voice note",
+    "sendAsVoiceHint": "Simulates a voice note: the text is treated as its transcript",
+    "simulatedVoiceNote": "Voice note (simulated)"
   }
 }

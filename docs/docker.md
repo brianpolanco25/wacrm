@@ -194,6 +194,31 @@ provider calls; the `ai_usage_log` row of that reply carries their sum.
 | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AI_TOOL_BUDGET_MS` | `40000` | Time budget of one reply that uses tools. Once spent, the next provider call is the last one and may not call tools. Each provider call still has its own `AI_REQUEST_TIMEOUT_MS`. |
 
+### Voice notes in the AI (optional tuning)
+
+When the auto-reply bot answers a customer's voice note (migration 096),
+it first transcribes the audio — after every gate a text goes through,
+so a voice note nobody will answer is never transcribed. Accounts on
+`openai` transcribe with their own key (or the platform's), accounts on
+`gemini` with theirs and their chat model. Anthropic has no audio API:
+an `anthropic` account transcribes with `AI_PLATFORM_OPENAI_API_KEY`,
+else `AI_PLATFORM_GEMINI_API_KEY` (billed to the platform,
+`key_source = 'platform'`). Without a transcriber, or when the
+transcription fails (one retry on network errors, timeouts, 429 and
+5xx), the bot sends the account's «Message when a voice note can't be
+heard» (Settings → AI) at most once per conversation per cooldown, and
+the AI stays on. Each transcription is logged to `ai_usage_log` with
+`mode = 'transcription'`; with `whisper-1` OpenAI reports seconds, not
+tokens, so no cost row is written for that model.
+
+| Variable                             | Default                  | What it does                                                                     |
+| ------------------------------------ | ------------------------ | -------------------------------------------------------------------------------- |
+| `AI_VOICE_MAX_BYTES`                 | `5242880`                | Largest voice note transcribed (5 MiB). Larger → the fallback text.               |
+| `AI_VOICE_MAX_SECONDS`               | `300`                    | Longest Ogg/Opus voice note transcribed. Longer → the fallback text.             |
+| `AI_TRANSCRIBE_TIMEOUT_MS`           | `15000`                  | Timeout of one transcription call (there is at most one retry).                  |
+| `AI_TRANSCRIBE_OPENAI_MODEL`         | `gpt-4o-mini-transcribe` | OpenAI transcription model.                                                      |
+| `AI_VOICE_FALLBACK_COOLDOWN_MINUTES` | `10`                     | At most one fallback text per conversation in this window.                       |
+
 ## PayPal catalogue (optional until billing is enabled)
 
 Create the initial product and six plans in the PayPal sandbox with

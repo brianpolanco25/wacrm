@@ -2610,6 +2610,39 @@ BEGIN
   END IF;
   -- /094 -----------------------------------------------------------
 
+  -- 096 — notas de voz para la IA (n15.1) ---------------------------
+  IF (SELECT count(*) FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'messages'
+        AND column_name IN ('transcript', 'transcript_status')
+        AND is_nullable = 'YES') <> 2 THEN
+    RAISE EXCEPTION 'messages.transcript / transcript_status are missing (migration 096)';
+  END IF;
+  IF (SELECT count(*) FROM pg_constraint
+      WHERE conrelid = 'public.messages'::regclass
+        AND contype = 'c'
+        AND conname IN ('messages_transcript_status_check',
+                        'messages_transcript_audio_only',
+                        'messages_transcript_len')) <> 3 THEN
+    RAISE EXCEPTION 'messages transcript checks are missing (migration 096)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ai_usage_log_mode_check'
+      AND conrelid = 'public.ai_usage_log'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%transcription%'
+  ) THEN
+    RAISE EXCEPTION
+      'ai_usage_log_mode_check does not accept ''transcription'' (migration 096)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'ai_configs'
+                   AND column_name = 'voice_fallback_message'
+                   AND column_default IS NOT NULL) THEN
+    RAISE EXCEPTION 'ai_configs.voice_fallback_message (with its DEFAULT) is missing (migration 096)';
+  END IF;
+  -- /096 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

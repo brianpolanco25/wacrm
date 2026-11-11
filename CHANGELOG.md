@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### The AI answers voice notes
+
+- **Migration required: `096_ai_voice_notes.sql`** (apply it before deploying the code). The AI auto-reply now answers customers' voice notes: the audio is transcribed with OpenAI or Gemini (an account on Anthropic uses the platform's OpenAI or Gemini key), the transcript shows under the audio bubble in the inbox, and the bot replies to what was said. The transcription cost is logged to the AI usage log as its own mode. If the voice note can't be transcribed (too long, too large, unsupported format, provider down after one retry, or no transcriber), the bot sends a fixed text asking the customer to type — editable in Settings → AI («Message when a voice note can't be heard»), empty to send nothing, at most once every 10 minutes per conversation — and stays on: no handoff. The playground can simulate a voice note («As a voice note»). New optional variables in `docs/docker.md`.
+
 ### Cabbity Health: the AI accepts the cédula with dashes and no longer asks for consent
 
 - No migration. Re-run `node --env-file=.env.local scripts/integrations-bootstrap-catalog.ts cabbity-health` to sync the catalogue. An integration parameter can now declare `normalize: 'compact'`: the executor strips dashes, spaces and dots from the value before validating and sending it, for every caller (AI, flows, automations). Cabbity Health's `document_number` uses it, so `001-1234567-8` reaches Health as `00112345678` and the AI no longer asks the customer to repeat it without dashes. `create_patient` no longer tells the AI to ask the customer for consent: giving their details over WhatsApp counts as consent, and the AI always sends `consent.accepted = true` with the current time and the channel.
