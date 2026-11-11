@@ -6334,7 +6334,9 @@ describe('/api/media/sign (m14.1, service-role storage signing)', () => {
       `x%23/../../account-${B}/1-photo.png`,
     ]) {
       const res = await mediaSign.GET(signReq(`${base}/account-${A}/${tail}`));
-      expect(res.status, tail).toBe(403);
+      // Non-canonical forms: m14.3 rejects them with 400 before the
+      // ownership check (403). Either way, nothing is signed.
+      expect([400, 403], tail).toContain(res.status);
       expect(JSON.stringify(await res.json())).not.toContain(`account-${B}`);
     }
     expect(storageCalls).toEqual([]);
