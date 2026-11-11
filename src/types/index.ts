@@ -274,6 +274,13 @@ export interface Message {
    * badge in the inbox. Migration 033.
    */
   ai_generated?: boolean;
+  /**
+   * n15.1 (migration 096): transcript of an inbound voice note, written
+   * by the AI auto-reply when it answers one. Only on `audio` rows; null
+   * until the bot transcribes it (and forever when it never does).
+   */
+  transcript?: string | null;
+  transcript_status?: 'done' | 'failed' | 'skipped' | null;
 }
 
 export type ReactionActor = 'customer' | 'agent';
