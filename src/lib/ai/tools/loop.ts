@@ -22,6 +22,10 @@
 //     de agenda en el turno (lectura en vivo ok o llamada ok a una
 //     herramienta con `grounds: schedule`) recibe UNA vuelta correctiva;
 //     si insiste, el turno es un traspaso. No aplica en `draft`.
+//
+// n13.11: el texto final (auto_reply y draft, nunca el traspaso) pasa por
+// `fixWeekdays` con la fecha de hoy en la zona de la primera integración
+// con zona válida (o UTC): un weekday que contradice a su fecha se corrige.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -49,8 +53,10 @@ import { flattenToolArgs } from './args';
 import { loadPriorEvidence } from './evidence';
 import { GROUNDING_RETRY_NOTE, mentionsSchedule } from './grounding';
 import { invalidateLiveCache } from './live';
+import { isValidTimeZone, todayInZone } from './local-time';
 import { checkRequiresPrior, groundsSchedule } from './policy';
 import { errorPayload, policyPayload, toolResultPayload } from './result';
+import { fixWeekdays } from './weekday-fix';
 import {
   AI_TOOL_DEFAULT_BUDGET_MS,
   AI_TOOL_MAX_CALLS,
@@ -109,6 +115,31 @@ export interface ToolLoopResult {
 export function aiToolBudgetMs(): number {
   const raw = Number(process.env.AI_TOOL_BUDGET_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : AI_TOOL_DEFAULT_BUDGET_MS;
+}
+
+/**
+ * n13.11: corrige el weekday del texto final con la fecha de hoy en la zona
+ * de la primera integración con zona válida (si ninguna, UTC). El traspaso
+ * no se toca.
+ */
+function guardWeekdays(
+  text: string,
+  toolset: AiToolset,
+  now: Date,
+  accountId: string
+): string {
+  if (!text || text.includes(HANDOFF_SENTINEL)) return text;
+  const zone =
+    toolset.integrations.find(
+      (i) => i.timezone !== null && isValidTimeZone(i.timezone)
+    )?.timezone ?? 'UTC';
+  const today = todayInZone(now, zone);
+  if (!today) return text;
+  const fixed = fixWeekdays(text, today);
+  if (fixed.fixes > 0) {
+    console.warn('[ai weekday-fix]', accountId, fixed.fixes);
+  }
+  return fixed.text;
 }
 
 function defaultCallProvider(
@@ -261,7 +292,12 @@ export async function runToolLoop(
         };
       }
       return {
-        text,
+        text: guardWeekdays(
+          text,
+          args.toolset,
+          new Date(now()),
+          args.accountId
+        ),
         usage,
         toolsUsed: used,
         ...(grounding ? { grounding } : {}),
@@ -320,7 +356,8 @@ export async function runToolLoop(
             res,
             tool.declaredParams,
             flat,
-            timeZoneOf.get(tool.integrationSlug) ?? null
+            timeZoneOf.get(tool.integrationSlug) ?? null,
+            new Date(now())
           );
           record(tool, res.ok);
           if (res.ok) {

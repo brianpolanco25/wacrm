@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Fix: the AI no longer says «tomorrow Thursday 13 November» when tomorrow is Friday
+
+- No migration. After the previous fix the AI still wrote «Mañana jueves 13 de noviembre» on Thursday 12 November: at night in Santo Domingo the UTC date is already the next day, and «tomorrow» was left for the model to work out. Now each integration's local time comes first in the AI's tool instructions and says which dates today, tomorrow and the day after tomorrow are; dates returned by tools are marked «(today)», «(tomorrow)» or «(in 5 days)» up to 30 days ahead; and as a last safety net, a weekday name in the final reply (auto-reply and drafts) that contradicts its date («jueves 13 de noviembre», «Thursday, November 13», «mañana jueves») is corrected to the right one before sending. Nothing else in the text is changed.
+
 ### Fix: the AI auto-reply switch can be turned off while the assistant is off
 
 - No migration. In Settings → AI, «Auto-reply to inbound messages» was locked whenever «Assistant active» was off, yet still showed as on, so it could not be turned off and the bot started replying on its own as soon as the assistant was switched back on. The switch is now editable whenever your role can edit settings, and its description says it only takes effect while the assistant is active.

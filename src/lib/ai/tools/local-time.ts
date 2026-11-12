@@ -6,6 +6,9 @@
 // de cabeza (n13.9: ofrecía «jueves 13 de noviembre» cuando era viernes).
 // Lo comparten la sección de herramientas del prompt, el bloque «Live
 // data» y los resultados de herramienta.
+//
+// n13.11: también los días relativos (hoy, mañana, «in 5 days»), siempre
+// sobre fechas de calendario locales, nunca sobre epoch/24 h.
 // ============================================================
 
 import { AI_TIMEZONE_MAX } from './types';
@@ -105,6 +108,58 @@ export function weekdayInZone(now: Date, timeZone: string): string | null {
   return w ? weekdayOf(w.year, w.month, w.day) : null;
 }
 
+/** n13.11: fecha de calendario (mes 1–12). */
+export interface CalendarDate {
+  year: number;
+  month: number;
+  day: number;
+}
+
+/** n13.11: `YYYY-MM-DD`. */
+export function formatDate(d: CalendarDate): string {
+  return `${pad(d.year, 4)}-${pad(d.month)}-${pad(d.day)}`;
+}
+
+/** n13.11: la fecha `n` días de calendario después (o antes, si `n < 0`). */
+export function addDays(d: CalendarDate, n: number): CalendarDate {
+  const t = new Date(Date.UTC(d.year, d.month - 1, d.day + n));
+  return {
+    year: t.getUTCFullYear(),
+    month: t.getUTCMonth() + 1,
+    day: t.getUTCDate(),
+  };
+}
+
+/** n13.11: días de calendario de `from` a `to` (negativo si `to` es antes). */
+export function daysBetween(from: CalendarDate, to: CalendarDate): number {
+  return Math.round(
+    (Date.UTC(to.year, to.month - 1, to.day) -
+      Date.UTC(from.year, from.month - 1, from.day)) /
+      86_400_000
+  );
+}
+
+/** n13.11: la fecha de hoy en `timeZone`; `null` si la zona no vale. */
+export function todayInZone(now: Date, timeZone: string): CalendarDate | null {
+  const w = wallClockInZone(now, timeZone);
+  return w ? { year: w.year, month: w.month, day: w.day } : null;
+}
+
+/**
+ * n13.11: `today`, `tomorrow`, `in N days` (hasta 30); `null` si la fecha
+ * es pasada o más lejana.
+ */
+export function relativeDayLabel(days: number): string | null {
+  if (!Number.isInteger(days) || days < 0 || days > RELATIVE_DAYS_MAX) {
+    return null;
+  }
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return `in ${days} days`;
+}
+
+export const RELATIVE_DAYS_MAX = 30;
+
 export function isIsoWithOffset(value: unknown): value is string {
   return (
     typeof value === 'string' &&
@@ -151,12 +206,46 @@ export function localTime(
   };
 }
 
-/** n13.9: `Friday 2026-11-13 14:00 (-04:00)`; `null` si no es ISO con offset. */
+/**
+ * n13.9: `Friday 2026-11-13 14:00 (-04:00)`; `null` si no es ISO con offset.
+ * n13.11: con `now`, el día relativo tras la fecha cuando cae entre hoy y
+ * hoy+30 (`Friday 2026-11-13 (tomorrow) 14:00 (-04:00)`). «Hoy» es el de
+ * `timeZone` o, si no vale, el del offset del propio valor.
+ */
 export function localLabel(
   value: string,
-  timeZone: string | null
+  timeZone: string | null,
+  now?: Date
 ): string | null {
   if (!isIsoWithOffset(value)) return null;
   const t = localTime(value, timeZone);
-  return t ? `${t.weekday} ${t.date} ${t.time} (${t.offset})` : null;
+  if (!t) return null;
+  const relative = now ? relativeOf(t, timeZone, now) : null;
+  const day = relative ? `${t.date} (${relative})` : t.date;
+  return `${t.weekday} ${day} ${t.time} (${t.offset})`;
+}
+
+function relativeOf(
+  t: LocalTime,
+  timeZone: string | null,
+  now: Date
+): string | null {
+  if (Number.isNaN(now.getTime())) return null;
+  let today: CalendarDate | null = null;
+  if (timeZone && isValidTimeZone(timeZone)) {
+    today = todayInZone(now, timeZone);
+  } else {
+    const m = /^([+-])(\d{2}):(\d{2})$/.exec(t.offset);
+    if (!m) return null;
+    const minutes = (m[1] === '-' ? -1 : 1) * (+m[2] * 60 + +m[3]);
+    const shifted = new Date(now.getTime() + minutes * 60_000);
+    today = {
+      year: shifted.getUTCFullYear(),
+      month: shifted.getUTCMonth() + 1,
+      day: shifted.getUTCDate(),
+    };
+  }
+  if (!today) return null;
+  const [y, mo, d] = t.date.split('-').map(Number);
+  return relativeDayLabel(daysBetween(today, { year: y, month: mo, day: d }));
 }

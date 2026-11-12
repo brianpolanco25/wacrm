@@ -76,10 +76,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * `timeZone` o, si no vale, en el offset del propio valor). El valor
  * original no se toca y una clave `<clave>_local` existente gana. Tope de
  * profundidad y de elementos visitados; lo que pasa del tope va tal cual.
+ * n13.11: con `now`, la etiqueta gana el día relativo (`(tomorrow)`) si la
+ * fecha local cae entre hoy y hoy+30; sin él, sin etiqueta relativa.
  */
 export function annotateLocalDates(
   data: unknown,
-  timeZone: string | null
+  timeZone: string | null,
+  now?: Date
 ): unknown {
   let budget = ANNOTATE_MAX_ITEMS;
   const walk = (value: unknown, depth: number): unknown => {
@@ -103,7 +106,7 @@ export function annotateLocalDates(
       if (typeof item !== 'string') continue;
       const localKey = `${key}_local`;
       if (Object.prototype.hasOwnProperty.call(value, localKey)) continue;
-      const label = localLabel(item, timeZone);
+      const label = localLabel(item, timeZone, now);
       if (label !== null) out[localKey] = label;
     }
     return out;
@@ -173,7 +176,9 @@ export function toolResultPayload(
   declaredParams: OperationParam[],
   flatArgs: Record<string, unknown>,
   /** n13.9: zona IANA de la integración para los campos `_local`. */
-  timeZone: string | null = null
+  timeZone: string | null = null,
+  /** n13.11: el instante del turno, para el día relativo de los `_local`. */
+  now?: Date
 ): { isError: boolean; payload: Record<string, unknown> } {
   if (result.ok) {
     return {
@@ -181,7 +186,7 @@ export function toolResultPayload(
       // n13.9: se anota antes de medir/truncar contra los 8 KiB.
       payload: successPayload(
         result.status,
-        annotateLocalDates(result.data, timeZone)
+        annotateLocalDates(result.data, timeZone, now)
       ),
     };
   }
