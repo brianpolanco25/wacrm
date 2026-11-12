@@ -518,6 +518,33 @@ describe('runToolLoop — weekday guard (n13.11)', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('H2: without a valid zone, a relative day is not touched at night', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Jueves 21:00 en Santo Domingo = viernes 01:00 UTC; «mañana viernes» es correcto.
+    const late = Date.parse('2026-11-12T21:00:00-04:00');
+    const { fn } = scripted([
+      round([], 'mañana viernes; el jueves 13 de noviembre no hay'),
+    ]);
+    const r = await run({ callProvider: fn, now: () => late }, toolset);
+    // La fecha explícita sí se corrige (13-nov-2026 es viernes).
+    expect(r.text).toBe('mañana viernes; el viernes 13 de noviembre no hay');
+    expect(warn).toHaveBeenCalledWith('[ai weekday-fix]', ACCOUNT, 1);
+  });
+
+  it('H3: a disagreement is left as is and warned as conflict', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const text = 'mañana viernes 14 de noviembre';
+    const { fn } = scripted([round([], text)]);
+    const r = await run({ callProvider: fn, now: () => NOW }, sd);
+    expect(r.text).toBe(text);
+    expect(warn).toHaveBeenCalledWith(
+      '[ai weekday-fix]',
+      ACCOUNT,
+      'conflict',
+      1
+    );
+  });
+
   it('the handoff text is never touched', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { fn } = scripted([

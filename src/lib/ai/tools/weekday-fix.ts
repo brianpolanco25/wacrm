@@ -105,6 +105,17 @@ const RELATIVE_RE = new RegExp(
   'g'
 );
 
+// H1 (ronda 2): «mañana, lunes a viernes» / «hoy, lunes y sábado» es un
+// horario o una lista de días, no una aposición: el relativo no aplica.
+const LIST_CONNECTOR = '(?:a|al|hasta|y|o|and|or|to|through)';
+const LIST_AFTER_RE = new RegExp(
+  `^(?:\\s*,\\s*(?:${LIST_CONNECTOR}\\s+)?|\\s+${LIST_CONNECTOR}\\s+)${WD_ANY}${E}`
+);
+
+/** H4 (ronda 2): un año explícito fuera de hoy-1 … hoy+2 no es un año (precios, etc.). */
+const EXPLICIT_YEAR_BEFORE = 1;
+const EXPLICIT_YEAR_AFTER = 2;
+
 const RELATIVE_OFFSET: Record<string, number> = {
   hoy: 0,
   today: 0,
@@ -147,6 +158,12 @@ function resolveYear(
 ): CalendarDate | null {
   if (explicit) {
     const year = Number(explicit);
+    if (
+      year < today.year - EXPLICIT_YEAR_BEFORE ||
+      year > today.year + EXPLICIT_YEAR_AFTER
+    ) {
+      return null;
+    }
     return validDate(year, month, day) ? { year, month, day } : null;
   }
   // Fecha inválida en el año de hoy (31 de noviembre) → no se toca. El 29
@@ -184,17 +201,40 @@ interface Replacement {
   spanish: boolean;
 }
 
+export interface FixWeekdaysOptions {
+  /**
+   * H2 (ronda 2): aplicar el patrón relativo (hoy/mañana + weekday). Sin
+   * zona conocida «hoy» no es fiable y el llamador lo apaga. Por defecto sí.
+   */
+  relative?: boolean;
+}
+
+export interface FixWeekdaysResult {
+  text: string;
+  /** Palabras cambiadas. */
+  fixes: number;
+  /**
+   * H3 (ronda 2): weekdays que la fecha explícita y el día relativo
+   * resuelven distinto («mañana viernes 14 de noviembre» siendo hoy el
+   * 12): no se tocan, solo se cuentan.
+   */
+  conflicts: number;
+}
+
 /**
  * Corrige el nombre del día de la semana que contradice al calendario.
- * `today` es la fecha local de hoy (mes 1–12). `fixes` = palabras cambiadas.
+ * `today` es la fecha local de hoy (mes 1–12).
  */
 export function fixWeekdays(
   text: string,
-  today: CalendarDate
-): { text: string; fixes: number } {
-  if (!text) return { text, fixes: 0 };
+  today: CalendarDate,
+  options: FixWeekdaysOptions = {}
+): FixWeekdaysResult {
+  if (!text) return { text, fixes: 0, conflicts: 0 };
+  const relativeOn = options.relative ?? true;
   const norm = normalize(text);
-  const byStart = new Map<number, Replacement>();
+  const fromDates = new Map<number, Replacement>();
+  const fromRelative = new Map<number, Replacement>();
 
   const toOriginal = (normStart: number, word: string) => {
     const start = norm.origin[normStart];
@@ -205,65 +245,96 @@ export function fixWeekdays(
   };
 
   const consider = (
+    into: Map<number, Replacement>,
     normStart: number,
     word: string,
     correctIndex: number,
     spanish: boolean
   ) => {
     const { start, end } = toOriginal(normStart, word);
-    if (byStart.has(start)) return;
-    byStart.set(start, { start, end, correctIndex, spanish });
+    if (into.has(start)) return;
+    into.set(start, { start, end, correctIndex, spanish });
   };
 
-  // (a) Fechas explícitas: ganan sobre (b) si ambas cubren el mismo weekday.
+  // H5 (ronda 2): «may» en minúscula seguido de una palabra es el verbo
+  // («Friday may 3 people join?»), no el mes.
+  const isVerbMay = (m: RegExpExecArray, month: string): boolean => {
+    if (month !== 'may') return false;
+    const at = m.index + m[0].indexOf('may', m[1].length);
+    const original = text[norm.origin[at]];
+    if (original && original !== original.toLowerCase()) return false;
+    return /^\s*[a-z]/.test(norm.text.slice(m.index + m[0].length));
+  };
+
+  // (a) Fechas explícitas.
   const datePatterns: {
     re: RegExp;
     spanish: boolean;
     pick: (m: RegExpExecArray) => {
       day: string;
-      month: number;
+      month: string;
       year?: string;
     };
   }[] = [
     {
       re: ES_DATE_RE,
       spanish: true,
-      pick: (m) => ({ day: m[2], month: ES_MONTHS[m[3]], year: m[4] }),
+      pick: (m) => ({ day: m[2], month: m[3], year: m[4] }),
     },
     {
       re: EN_DAY_MONTH_RE,
       spanish: false,
-      pick: (m) => ({ day: m[2], month: EN_MONTHS[m[3]], year: m[4] }),
+      pick: (m) => ({ day: m[2], month: m[3], year: m[4] }),
     },
     {
       re: EN_MONTH_DAY_RE,
       spanish: false,
-      pick: (m) => ({ day: m[3], month: EN_MONTHS[m[2]], year: m[4] }),
+      pick: (m) => ({ day: m[3], month: m[2], year: m[4] }),
     },
   ];
   for (const { re, spanish, pick } of datePatterns) {
-    re.lastIndex = 0;
     for (const m of norm.text.matchAll(re)) {
       const { day, month, year } = pick(m);
-      const date = resolveYear(month, Number(day), year, today);
+      if (!spanish && isVerbMay(m, month)) continue;
+      const monthNumber = (spanish ? ES_MONTHS : EN_MONTHS)[month];
+      const date = resolveYear(monthNumber, Number(day), year, today);
       if (!date) continue;
-      consider(m.index, m[1], weekdayIndex(date), spanish);
+      consider(fromDates, m.index, m[1], weekdayIndex(date), spanish);
     }
   }
 
   // (b) Días relativos: hoy/mañana/pasado mañana + weekday.
-  for (const m of norm.text.matchAll(RELATIVE_RE)) {
-    const relative = m[1].replace(/\s+/g, ' ');
-    const offset = RELATIVE_OFFSET[relative];
-    if (offset === undefined) continue;
-    const word = m[2];
-    const wordStart = m.index + m[0].length - word.length;
-    consider(
-      wordStart,
-      word,
-      weekdayIndex(addDays(today, offset)),
-      ES_WD.includes(word)
-    );
+  if (relativeOn) {
+    for (const m of norm.text.matchAll(RELATIVE_RE)) {
+      const relative = m[1].replace(/\s+/g, ' ');
+      const offset = RELATIVE_OFFSET[relative];
+      if (offset === undefined) continue;
+      if (LIST_AFTER_RE.test(norm.text.slice(m.index + m[0].length))) {
+        continue;
+      }
+      const word = m[2];
+      const wordStart = m.index + m[0].length - word.length;
+      consider(
+        fromRelative,
+        wordStart,
+        word,
+        weekdayIndex(addDays(today, offset)),
+        ES_WD.includes(word)
+      );
+    }
+  }
+
+  // H3: si ambos cubren el mismo weekday y discrepan, no se toca.
+  let conflicts = 0;
+  const byStart = new Map<number, Replacement>(fromDates);
+  for (const [start, r] of fromRelative) {
+    const dated = byStart.get(start);
+    if (!dated) {
+      byStart.set(start, r);
+    } else if (dated.correctIndex !== r.correctIndex) {
+      byStart.delete(start);
+      conflicts += 1;
+    }
   }
 
   let fixes = 0;
@@ -276,5 +347,5 @@ export function fixWeekdays(
     out = out.slice(0, r.start) + shaped(original, correct) + out.slice(r.end);
     fixes += 1;
   }
-  return { text: fixes > 0 ? out : text, fixes };
+  return { text: fixes > 0 ? out : text, fixes, conflicts };
 }

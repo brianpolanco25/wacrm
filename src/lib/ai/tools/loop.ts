@@ -25,7 +25,8 @@
 //
 // n13.11: el texto final (auto_reply y draft, nunca el traspaso) pasa por
 // `fixWeekdays` con la fecha de hoy en la zona de la primera integración
-// con zona válida (o UTC): un weekday que contradice a su fecha se corrige.
+// con zona válida (o UTC, y entonces solo fechas explícitas): un weekday que
+// contradice a su fecha se corrige.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -119,8 +120,8 @@ export function aiToolBudgetMs(): number {
 
 /**
  * n13.11: corrige el weekday del texto final con la fecha de hoy en la zona
- * de la primera integración con zona válida (si ninguna, UTC). El traspaso
- * no se toca.
+ * de la primera integración con zona válida (si ninguna, UTC y solo fechas
+ * explícitas). El traspaso no se toca.
  */
 function guardWeekdays(
   text: string,
@@ -129,15 +130,19 @@ function guardWeekdays(
   accountId: string
 ): string {
   if (!text || text.includes(HANDOFF_SENTINEL)) return text;
-  const zone =
-    toolset.integrations.find(
-      (i) => i.timezone !== null && isValidTimeZone(i.timezone)
-    )?.timezone ?? 'UTC';
-  const today = todayInZone(now, zone);
+  const zone = toolset.integrations.find(
+    (i) => i.timezone !== null && isValidTimeZone(i.timezone)
+  )?.timezone;
+  // H2 (ronda 2): sin zona conocida, «hoy» en UTC no es el del cliente
+  // (de noche en América ya es mañana): solo se corrigen fechas explícitas.
+  const today = todayInZone(now, zone ?? 'UTC');
   if (!today) return text;
-  const fixed = fixWeekdays(text, today);
+  const fixed = fixWeekdays(text, today, { relative: zone !== undefined });
   if (fixed.fixes > 0) {
     console.warn('[ai weekday-fix]', accountId, fixed.fixes);
+  }
+  if (fixed.conflicts > 0) {
+    console.warn('[ai weekday-fix]', accountId, 'conflict', fixed.conflicts);
   }
   return fixed.text;
 }
