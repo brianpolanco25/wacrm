@@ -46,8 +46,9 @@ export interface GenerateArgs {
  * n15.2 (R22–R24, R31): a turn with images goes through the vision gate.
  * A model on the no-vision list gets the transcript without images (one
  * call). Otherwise, a `provider_error` with no finished tool round
- * (`err.usage === null`) is retried ONCE without images — never after a
- * tool ran, which could book an appointment twice (D5). Without images
+ * (`!err.toolsRan`, set by `runToolLoop` even when the provider reported
+ * no usage, and `err.usage === null`) is retried ONCE without images —
+ * never after a tool ran, which could book an appointment twice (D5). Without images
  * the path is exactly the one before n15.2.
  */
 export async function generateReply(
@@ -64,6 +65,7 @@ export async function generateReply(
     if (
       err instanceof AiError &&
       err.code === 'provider_error' &&
+      !err.toolsRan &&
       err.usage === null
     ) {
       console.warn(

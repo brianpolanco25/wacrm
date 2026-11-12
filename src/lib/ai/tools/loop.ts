@@ -263,8 +263,12 @@ export async function runToolLoop(
       steps: [...steps],
       toolChoice: final ? 'none' : 'auto',
     }).catch((err: unknown) => {
-      if (err instanceof AiError && usage)
-        err.usage = sumUsage(err.usage, usage);
+      if (err instanceof AiError) {
+        if (usage) err.usage = sumUsage(err.usage, usage);
+        // n15.2 (D5): a finished round may have run a tool; mark it
+        // explicitly — `usage` stays null when the provider sent none.
+        if (steps.length > 0) err.toolsRan = true;
+      }
       throw err;
     });
     usage = sumUsage(usage, round.usage);

@@ -340,6 +340,33 @@ describe('runToolLoop', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it('marks toolsRan on an AiError after a tool round, even with usage null (n15.2 D5)', async () => {
+    const execute = okExec();
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce(round([call('c1')], '', null))
+      .mockRejectedValueOnce(new AiError('down', { code: 'provider_error' }));
+    const err = await run({
+      callProvider: fn,
+      execute: execute as never,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AiError);
+    expect((err as AiError).toolsRan).toBe(true);
+    expect((err as AiError).usage).toBeNull();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark toolsRan when the first round fails (n15.2 D5)', async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new AiError('down', { code: 'provider_error' }));
+    const err = await run({
+      callProvider: fn,
+      execute: okExec() as never,
+    }).catch((e: unknown) => e);
+    expect((err as AiError).toolsRan).toBe(false);
+  });
+
   it('a provider AiError after earlier rounds carries their usage (finding 6)', async () => {
     const u = (p: number, c: number) => ({
       promptTokens: p,

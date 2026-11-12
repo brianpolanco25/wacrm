@@ -109,12 +109,10 @@ describe('generateReply — vision gate (R22)', () => {
 
 describe('generateReply — retry without images (R23, R24, R31)', () => {
   it('provider_error with usage null → one retry without images, its usage', async () => {
-    openai
-      .mockRejectedValueOnce(providerError())
-      .mockResolvedValueOnce({
-        text: 'Tu cédula termina en 5',
-        usage: RETRY_USAGE,
-      });
+    openai.mockRejectedValueOnce(providerError()).mockResolvedValueOnce({
+      text: 'Tu cédula termina en 5',
+      usage: RETRY_USAGE,
+    });
     const r = await generateReply({
       config: config(),
       systemPrompt: 'S',
@@ -158,6 +156,20 @@ describe('generateReply — retry without images (R23, R24, R31)', () => {
       expect(openai).toHaveBeenCalledTimes(1);
     }
   );
+
+  it('provider_error marked toolsRan (usage null) → no retry', async () => {
+    const err = providerError();
+    err.toolsRan = true;
+    openai.mockRejectedValueOnce(err);
+    await expect(
+      generateReply({
+        config: config(),
+        systemPrompt: 'S',
+        messages: withImage,
+      })
+    ).rejects.toBe(err);
+    expect(openai).toHaveBeenCalledTimes(1);
+  });
 
   it('provider_error after a tool round (usage set) → no retry', async () => {
     const err = providerError(USAGE);

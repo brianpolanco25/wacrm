@@ -192,6 +192,11 @@ export class AiError extends Error {
   /** n13.3: tokens already spent by earlier tool rounds of the turn that
    *  failed, so the caller can still log them to `ai_usage_log`. */
   usage: AiUsage | null = null;
+  /** n15.2 (D5): at least one tool round finished before this error, so a
+   *  tool may already have run (an appointment booked). Set by
+   *  `runToolLoop` regardless of whether the provider reported usage;
+   *  `generateReply` never retries such a turn. */
+  toolsRan = false;
   constructor(message: string, opts: { code?: string; status?: number } = {}) {
     super(message);
     this.name = 'AiError';
