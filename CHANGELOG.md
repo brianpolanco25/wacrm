@@ -11,6 +11,14 @@ and polish.
 
 ## [Unreleased]
 
+### AI: the assistant reads the photos the customer sends
+
+- No migration. A photo the customer sends (for example their ID card or health-insurance card) now wakes the AI auto-reply, and the AI sees it: it reads the name, document number, insurer, plan or policy number and uses them, without asking again for what is clearly legible. Stickers, videos and documents still do not wake it.
+- Up to the 3 most recent customer photos of the conversation travel with each turn (`AI_IMAGE_MAX_PER_TURN`, `0` turns vision off), up to 3.75 MiB each (`AI_IMAGE_MAX_BYTES`). Works with Gemini, OpenAI and Anthropic; a model without vision, or a photo that cannot be loaded, is shown to the AI as «[imagen no disponible]» and it asks the customer to type the data.
+- Cost: each photo counts as input tokens on the same `ai_usage_log` row (roughly 1,000–1,600 per photo) while it is one of the 3 most recent.
+- Photos are only held in memory during the turn: never stored outside the private bucket and never logged.
+- AI playground: attach a JPG, PNG or WebP test image (up to 2 MB) to a message; a hint next to the button explains the token cost.
+
 ### Fix: the AI no longer says «tomorrow Thursday 13 November» when tomorrow is Friday
 
 - No migration. After the previous fix the AI still wrote «Mañana jueves 13 de noviembre» on Thursday 12 November: at night in Santo Domingo the UTC date is already the next day, and «tomorrow» was left for the model to work out. Now each integration's local time comes first in the AI's tool instructions and says which dates today, tomorrow and the day after tomorrow are; dates returned by tools are marked «(today)», «(tomorrow)» or «(in 5 days)» up to 30 days ahead; and as a last safety net, a weekday name in the final reply (auto-reply and drafts) that contradicts its date («jueves 13 de noviembre», «Thursday, November 13», «mañana jueves») is corrected to the right one before sending. Nothing else in the text is changed.

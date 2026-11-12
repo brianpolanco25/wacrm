@@ -220,6 +220,26 @@ tokens, so no cost row is written for that model.
 | `AI_TRANSCRIBE_OPENAI_MODEL`         | `gpt-4o-mini-transcribe` | OpenAI transcription model.                                                      |
 | `AI_VOICE_FALLBACK_COOLDOWN_MINUTES` | `10`                     | At most one fallback text per conversation in this window.                       |
 
+### Customer photos in the AI (optional tuning)
+
+A photo the customer sends (not a sticker) wakes the AI auto-reply like a
+text, and the most recent customer photos of the conversation reach the
+model as images (Gemini, OpenAI and Anthropic): this is how the AI reads an
+ID card or a health-insurance card. Photos are read from the private
+`chat-media` bucket (only the account's own canonical path) or, for the
+message that just arrived without a mirror copy, from Meta. They are kept in
+memory for the turn only: never stored elsewhere, never logged. A photo that
+cannot be loaded, or a model without vision, is shown to the AI as
+`[imagen no disponible]` and the turn goes on. No migration. Images are
+billed as input tokens of the same `ai_usage_log` row (roughly 1,000–1,600
+tokens per WhatsApp photo, re-sent while it is one of the most recent).
+
+| Variable                       | Default   | What it does                                                                          |
+| ------------------------------ | --------- | ------------------------------------------------------------------------------------- |
+| `AI_IMAGE_MAX_PER_TURN`        | `3`       | How many of the most recent customer photos carry their bytes. `0` turns vision off.  |
+| `AI_IMAGE_MAX_BYTES`           | `3932160` | Largest photo sent to the model (3.75 MiB, under Anthropic's 5 MiB in base64).        |
+| `AI_IMAGE_DOWNLOAD_TIMEOUT_MS` | `8000`    | Timeout of one photo download; on timeout the photo is `[imagen no disponible]`.      |
+
 ## PayPal catalogue (optional until billing is enabled)
 
 Create the initial product and six plans in the PayPal sandbox with

@@ -3286,5 +3286,14 @@
     "sendAsVoice": "Como nota de voz",
     "sendAsVoiceHint": "Simula una nota de voz: el texto se trata como su transcripción",
     "simulatedVoiceNote": "Nota de voz (simulada)"
+  },
+  "AiImage": {
+    "attach": "Adjuntar imagen",
+    "remove": "Quitar imagen",
+    "attached": "Imagen adjunta",
+    "tooLarge": "La imagen supera 2 MB",
+    "unsupportedType": "Solo JPG, PNG o WebP",
+    "costHint": "Cada imagen cuenta como tokens de entrada (unos 1.000–1.600 por foto) y se reenvía mientras sea de las 3 más recientes.",
+    "invalidImage": "La imagen no es válida"
   }
 }
