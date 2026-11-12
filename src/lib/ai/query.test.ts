@@ -35,4 +35,21 @@ describe('latestUserMessage', () => {
       latestUserMessage([{ role: 'user', content: '[nota de voz] hola' }]),
     ).toBe('[nota de voz] hola')
   })
+
+  it('returns the caption of an image turn without its marker (n15.2, R15)', () => {
+    const image = { messageId: 'm1', mediaUrl: null, mediaType: 'image/jpeg' }
+    expect(
+      latestUserMessage([
+        { role: 'user', content: '[imagen] mi cédula', image },
+      ]),
+    ).toBe('mi cédula')
+    expect(
+      latestUserMessage([
+        { role: 'user', content: '[imagen no disponible] mi carnet', image },
+      ]),
+    ).toBe('mi carnet')
+    expect(
+      latestUserMessage([{ role: 'user', content: '[imagen]', image }]),
+    ).toBe('')
+  })
 })

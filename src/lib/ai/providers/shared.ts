@@ -1,4 +1,9 @@
-import { AiError, type AiUsage, type ChatMessage } from '../types';
+import {
+  AiError,
+  type AiUsage,
+  type ChatImage,
+  type ChatMessage,
+} from '../types';
 import {
   INVALID_ARGS,
   type JsonSchema,
@@ -126,6 +131,9 @@ export async function providerHttpError(
  * Collapse consecutive same-role turns into one (joined with blank
  * lines). Anthropic and Gemini want alternating roles; merging is
  * also harmless for OpenAI and keeps the transcript compact.
+ * n15.2 (R19): images of merged turns are concatenated in order; a turn
+ * without images has no `images` key. `voice`/`image` are not copied
+ * (the adapters do not need them).
  */
 export function mergeConsecutive(messages: ChatMessage[]): ChatMessage[] {
   const out: ChatMessage[] = [];
@@ -133,11 +141,24 @@ export function mergeConsecutive(messages: ChatMessage[]): ChatMessage[] {
     const last = out[out.length - 1];
     if (last && last.role === m.role) {
       last.content = `${last.content}\n\n${m.content}`;
+      if (m.images?.length) {
+        last.images = [...(last.images ?? []), ...m.images];
+      }
     } else {
-      out.push({ role: m.role, content: m.content });
+      out.push({
+        role: m.role,
+        content: m.content,
+        ...(m.images?.length ? { images: [...m.images] } : {}),
+      });
     }
   }
   return out;
+}
+
+/** n15.2 (R21): images ride only on `user` turns; elsewhere they are
+ *  ignored. Empty array when the turn carries none. */
+export function userImages(m: ChatMessage): ChatImage[] {
+  return m.role === 'user' && m.images?.length ? m.images : [];
 }
 
 // ============================================================

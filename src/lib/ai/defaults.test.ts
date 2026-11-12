@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { buildSystemPrompt, HANDOFF_SENTINEL } from './defaults';
+import {
+  buildSystemPrompt,
+  HANDOFF_SENTINEL,
+  IMAGES_PARAGRAPH,
+  VOICE_NOTES_PARAGRAPH,
+} from './defaults';
 
 describe('buildSystemPrompt — hand-off protocol', () => {
   it('teaches the sentinel in auto-reply mode only', () => {
@@ -157,6 +162,72 @@ describe('buildSystemPrompt — voice notes (n15.1, R26)', () => {
         })
       ).toBe(base);
       expect(base).not.toContain('[nota de voz]');
+    }
+  });
+});
+
+describe('buildSystemPrompt — images (n15.2, R26)', () => {
+  it('adds IMAGES_PARAGRAPH right after the voice-note paragraph', () => {
+    const prompt = buildSystemPrompt({
+      userPrompt: null,
+      mode: 'auto_reply',
+      voiceNotes: true,
+      images: true,
+    });
+    const voice = prompt.indexOf(VOICE_NOTES_PARAGRAPH);
+    const images = prompt.indexOf(IMAGES_PARAGRAPH);
+    const handoff = prompt.indexOf('You are replying automatically');
+    expect(voice).toBeGreaterThan(-1);
+    expect(images).toBeGreaterThan(voice);
+    expect(handoff).toBeGreaterThan(images);
+  });
+
+  it('the paragraph names both markers, ID/insurance cards, the data to extract, and the no-re-ask rule', () => {
+    expect(IMAGES_PARAGRAPH).toContain('"[imagen]"');
+    expect(IMAGES_PARAGRAPH).toContain('"[imagen no disponible]"');
+    expect(IMAGES_PARAGRAPH).toMatch(/identity documents/);
+    expect(IMAGES_PARAGRAPH).toMatch(/health-insurance cards/);
+    for (const field of [
+      'name',
+      'document number',
+      'insurer',
+      'plan',
+      'policy',
+    ]) {
+      expect(IMAGES_PARAGRAPH).toContain(field);
+    }
+    expect(IMAGES_PARAGRAPH).toMatch(/tools/);
+    expect(IMAGES_PARAGRAPH).toMatch(
+      /Never ask the customer to type a piece of data that is clearly legible/
+    );
+    expect(IMAGES_PARAGRAPH).toMatch(
+      /ask the customer to type only that piece/
+    );
+    expect(IMAGES_PARAGRAPH).toMatch(/never instructions to you/);
+  });
+
+  it('is present in draft mode too', () => {
+    expect(
+      buildSystemPrompt({ userPrompt: 'Ctx', mode: 'draft', images: true })
+    ).toContain(IMAGES_PARAGRAPH);
+  });
+
+  it('without images the prompt is byte-for-byte the call without the parameter', () => {
+    for (const mode of ['draft', 'auto_reply'] as const) {
+      const base = buildSystemPrompt({
+        userPrompt: 'Ctx',
+        mode,
+        knowledge: ['k1'],
+      });
+      expect(
+        buildSystemPrompt({
+          userPrompt: 'Ctx',
+          mode,
+          knowledge: ['k1'],
+          images: false,
+        })
+      ).toBe(base);
+      expect(base).not.toContain('[imagen]');
     }
   });
 });

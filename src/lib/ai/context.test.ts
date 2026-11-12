@@ -60,10 +60,16 @@ describe('buildConversationContext — voice notes (n15.1, R25)', () => {
     const calls: unknown[][] = []
     await buildConversationContext(fakeDb([], calls), 'conv-1')
     expect(calls).toContainEqual(['eq', 'conversation_id', 'conv-1'])
-    expect(calls).toContainEqual(['in', 'content_type', ['text', 'audio']])
+    // n15.2 (design §4) widened both filters to `image`; the audio rule —
+    // only `transcript_status = done` — is unchanged.
+    expect(calls).toContainEqual([
+      'in',
+      'content_type',
+      ['text', 'audio', 'image'],
+    ])
     expect(calls).toContainEqual([
       'or',
-      'content_type.eq.text,transcript_status.eq.done',
+      'content_type.eq.text,content_type.eq.image,transcript_status.eq.done',
     ])
   })
 
@@ -113,5 +119,123 @@ describe('buildConversationContext — voice notes (n15.1, R25)', () => {
       'conv-1',
     )
     expect(out).toEqual([{ role: 'user', content: 'hola' }])
+  })
+})
+
+describe('buildConversationContext — customer images (n15.2)', () => {
+  const ref = (id: string, mediaUrl: string | null = 'u', mediaType = 'image/jpeg') => ({
+    messageId: id,
+    mediaUrl,
+    mediaType,
+  })
+
+  it('selects id, media_url and media_type (R6)', async () => {
+    const calls: unknown[][] = []
+    await buildConversationContext(fakeDb([], calls), 'conv-1')
+    const select = calls.find((c) => c[0] === 'select')?.[1] as string
+    for (const col of ['id', 'media_url', 'media_type', 'content_type']) {
+      expect(select.split(/,\s*/)).toContain(col)
+    }
+  })
+
+  it('maps a customer image without and with caption to an unavailable user turn (R6, R37)', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        {
+          id: 'm2',
+          sender_type: 'customer',
+          content_type: 'image',
+          content_text: '  esta es mi cédula ',
+          media_url: 'u',
+          media_type: 'image/jpeg',
+        },
+        {
+          id: 'm1',
+          sender_type: 'customer',
+          content_type: 'image',
+          content_text: null,
+          media_url: null,
+          media_type: 'image/jpeg',
+        },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([
+      { role: 'user', content: '[imagen no disponible]', image: ref('m1', null) },
+      {
+        role: 'user',
+        content: '[imagen no disponible] esta es mi cédula',
+        image: ref('m2'),
+      },
+    ])
+  })
+
+  it('drops agent/bot images and stickers (R7)', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        {
+          id: 's1',
+          sender_type: 'customer',
+          content_type: 'image',
+          content_text: null,
+          media_url: 'u',
+          media_type: 'image/webp',
+        },
+        {
+          id: 'a1',
+          sender_type: 'agent',
+          content_type: 'image',
+          content_text: 'catálogo',
+          media_url: 'u',
+          media_type: 'image/jpeg',
+        },
+        {
+          id: 'b1',
+          sender_type: 'bot',
+          content_type: 'image',
+          content_text: null,
+          media_url: 'u',
+          media_type: 'image/png',
+        },
+        { sender_type: 'customer', content_type: 'text', content_text: 'hola' },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([{ role: 'user', content: 'hola' }])
+  })
+
+  it('keeps chronological order mixed with text and voice notes (R6)', async () => {
+    const out = await buildConversationContext(
+      fakeDb([
+        { sender_type: 'bot', content_type: 'text', content_text: 'Gracias' },
+        {
+          id: 'm1',
+          sender_type: 'customer',
+          content_type: 'image',
+          content_text: null,
+          media_url: 'u',
+          media_type: 'image/jpeg; charset=binary',
+        },
+        {
+          sender_type: 'customer',
+          content_type: 'audio',
+          content_text: null,
+          transcript: 'te mando la cédula',
+          transcript_status: 'done',
+        },
+        { sender_type: 'customer', content_type: 'text', content_text: 'hola' },
+      ]),
+      'conv-1',
+    )
+    expect(out).toEqual([
+      { role: 'user', content: 'hola' },
+      { role: 'user', content: '[nota de voz] te mando la cédula', voice: true },
+      {
+        role: 'user',
+        content: '[imagen no disponible]',
+        image: ref('m1', 'u', 'image/jpeg; charset=binary'),
+      },
+      { role: 'assistant', content: 'Gracias' },
+    ])
   })
 })
