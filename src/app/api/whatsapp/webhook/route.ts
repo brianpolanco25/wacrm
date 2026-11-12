@@ -1396,12 +1396,15 @@ async function processMessage(
   // n15.1: a voice note (audio with a Meta media id) passes the same
   // gates as a text and carries what the dispatcher needs to fetch and
   // transcribe it (`aiReplyDispatchPlan`).
+  // n15.2: so does a photo; a sticker arrives as `type: 'sticker'` and
+  // never passes an `imageMediaId`, so it still does not wake the AI.
   const aiPlan = aiReplyDispatchPlan({
     flowConsumed,
     interactiveReplyId,
     inboundText,
     contentType,
     audioMediaId: message.audio?.id,
+    imageMediaId: message.type === 'image' ? message.image?.id : undefined,
     accessToken,
   });
   if (aiPlan.dispatch) {
@@ -1412,6 +1415,7 @@ async function processMessage(
       inboundMessageId,
       configOwnerUserId,
       ...(aiPlan.voiceNote ? { voiceNote: aiPlan.voiceNote } : {}),
+      ...(aiPlan.inboundImage ? { inboundImage: aiPlan.inboundImage } : {}),
     });
   }
 

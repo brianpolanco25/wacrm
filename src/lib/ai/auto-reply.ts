@@ -28,6 +28,9 @@ import { ensureVoiceTranscript } from './voice/ensure-transcript';
 import { sendVoiceFallback } from './voice/fallback';
 import { withVoiceTurn } from './voice/config';
 import type { VoiceNoteSource } from './voice/types';
+import type { VoiceNoteStorage } from './voice/audio-source';
+import { hydrateConversationImages } from './images/hydrate';
+import type { InboundImageSource } from './images/types';
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -45,6 +48,10 @@ interface DispatchArgs {
    *  It is transcribed after the reservation below; without a transcript
    *  the bot sends the account's fallback text and stops (D3). */
   voiceNote?: VoiceNoteSource;
+  /** n15.2: set when the inbound is a customer photo (content_type
+   *  'image', not a sticker). Lets the hydration below fetch it from Meta
+   *  when the inbound mirror did not store it. Never persisted. */
+  inboundImage?: InboundImageSource;
 }
 
 /**
@@ -244,13 +251,14 @@ export async function dispatchInboundToAiReply(
     // «hola». Strip them, and remember that we did: the prompt below
     // tells the model to resume instead.
     const context = await buildConversationContext(db, conversationId);
-    const { messages, resumedAfterHandoff } = stripHandoffNotices(
-      voiceTranscript === null
-        ? context
-        : withVoiceTurn(context, voiceTranscript),
-      config.handoffMessage
-    );
-    if (messages.length === 0) return;
+    const { messages: contextMessages, resumedAfterHandoff } =
+      stripHandoffNotices(
+        voiceTranscript === null
+          ? context
+          : withVoiceTurn(context, voiceTranscript),
+        config.handoffMessage
+      );
+    if (contextMessages.length === 0) return;
 
     // Account-wide throttle on the shared BYO key. The per-conversation
     // cap bounds one thread; this bounds a burst across many threads (a
@@ -267,6 +275,24 @@ export async function dispatchInboundToAiReply(
       );
       return;
     }
+
+    // n15.2 (R9–R14). Customer photos are downloaded only now: every gate,
+    // the reservation and the rate limit already passed (R4). The 3 most
+    // recent carry their bytes; an image that cannot be loaded stays
+    // `[imagen no disponible]` and the turn goes on as usual — no handoff,
+    // no fallback text (R25). Bytes live only in memory (R28). Never throws.
+    const messages = contextMessages.some((m) => m.image)
+      ? (
+          await hydrateConversationImages(contextMessages, {
+            accountId,
+            storage: db.storage as unknown as VoiceNoteStorage,
+            inbound: {
+              messageId: args.inboundMessageId,
+              ...(args.inboundImage ? { source: args.inboundImage } : {}),
+            },
+          })
+        ).messages
+      : contextMessages;
 
     // Ground the reply in the account's knowledge base (best-effort).
     const knowledge = await retrieveKnowledge(
@@ -306,6 +332,7 @@ export async function dispatchInboundToAiReply(
       now: turnNow,
       liveData,
       voiceNotes: messages.some((m) => m.voice),
+      images: messages.some((m) => m.image),
     });
 
     const { text, handoff, usage } = await generateReply(

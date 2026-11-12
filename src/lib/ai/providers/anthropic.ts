@@ -5,6 +5,7 @@ import {
   normalizeUsage,
   providerHttpError,
   toNetworkError,
+  userImages,
   type ProviderArgs,
   type ProviderToolArgs,
   type ProviderToolResult,
@@ -26,7 +27,7 @@ interface AnthropicResponse {
  * so the transcript always starts on the customer. Guarantees a valid,
  * non-empty payload.
  */
-function normalizeForAnthropic(messages: ChatMessage[]): ChatMessage[] {
+function normalizeForAnthropic(messages: ChatMessage[]): AnthropicMessage[] {
   const merged = mergeConsecutive(messages);
   while (merged.length > 0 && merged[0].role === 'assistant') {
     merged.shift();
@@ -36,7 +37,42 @@ function normalizeForAnthropic(messages: ChatMessage[]): ChatMessage[] {
       { role: 'user', content: '(The customer has not sent a message yet.)' },
     ];
   }
-  return merged;
+  return merged.map(toAnthropicMessage);
+}
+
+type AnthropicMessage = {
+  role: 'user' | 'assistant';
+  content:
+    | string
+    | (
+        | {
+            type: 'image';
+            source: { type: 'base64'; media_type: string; data: string };
+          }
+        | { type: 'text'; text: string }
+      )[];
+};
+
+/** n15.2 (R18): a `user` turn with images → image blocks, then the text
+ *  block (never empty: the marker is always there). Any other turn keeps
+ *  `content` as a string, exactly as before. */
+function toAnthropicMessage(m: ChatMessage): AnthropicMessage {
+  const images = userImages(m);
+  if (images.length === 0) return { role: m.role, content: m.content };
+  return {
+    role: m.role,
+    content: [
+      ...images.map((i) => ({
+        type: 'image' as const,
+        source: {
+          type: 'base64' as const,
+          media_type: i.mimeType,
+          data: i.data,
+        },
+      })),
+      { type: 'text' as const, text: m.content },
+    ],
+  };
 }
 
 /**

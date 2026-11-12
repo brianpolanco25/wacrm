@@ -17,7 +17,8 @@ import { loadAiToolset } from '@/lib/ai/tools/load';
 import { loadLiveData } from '@/lib/ai/tools/live';
 import { readTrail } from '@/lib/ai/tools/tools-used';
 import { EMPTY_TOOLSET, type LiveDataBlock } from '@/lib/ai/tools/types';
-import { formatVoiceNote } from '@/lib/ai/voice/config';
+import { aiImageMaxPerTurn } from '@/lib/ai/images/config';
+import { toPlaygroundMessages } from '@/lib/ai/images/playground';
 
 // Keep the tested transcript bounded, mirroring the live context window.
 const MAX_TURNS = 20;
@@ -55,30 +56,23 @@ export async function POST(request: Request) {
       );
     }
 
-    const messages: ChatMessage[] = rawMessages
-      .filter(
-        (m: unknown): m is ChatMessage =>
-          !!m &&
-          typeof m === 'object' &&
-          ((m as ChatMessage).role === 'user' ||
-            (m as ChatMessage).role === 'assistant') &&
-          typeof (m as ChatMessage).content === 'string' &&
-          (m as ChatMessage).content.trim().length > 0
-      )
-      // n15.1 (R36): a `user` turn with `voice: true` simulates a voice
-      // note — its text is taken as the transcript, exactly as the bot
-      // would see it. Nothing is transcribed or billed as `transcription`.
-      // `voice` on an assistant turn, or not a boolean, is ignored.
-      .map((m: ChatMessage): ChatMessage =>
-        m.role === 'user' && m.voice === true
-          ? {
-              role: 'user',
-              content: formatVoiceNote(m.content.trim()),
-              voice: true,
-            }
-          : { role: m.role, content: m.content }
-      )
-      .slice(-MAX_TURNS);
+    // n15.1 (R36): a `user` turn with `voice: true` simulates a voice
+    // note — its text is taken as the transcript, exactly as the bot would
+    // see it. Nothing is transcribed or billed as `transcription`.
+    // n15.2 (R32–R34): a `user` turn may carry a test image; it is
+    // validated here, before any config read or provider call, and only
+    // the most recent ones carry bytes — the same selection as the bot.
+    const parsed = toPlaygroundMessages(rawMessages, {
+      maxTurns: MAX_TURNS,
+      maxPerTurn: aiImageMaxPerTurn(),
+    });
+    if (!parsed.ok) {
+      return NextResponse.json(
+        { error: 'Invalid image', code: 'invalid_image' },
+        { status: 400 }
+      );
+    }
+    const messages: ChatMessage[] = parsed.messages;
 
     if (messages.length === 0) {
       return NextResponse.json(
@@ -147,6 +141,7 @@ export async function POST(request: Request) {
       now: turnNow,
       liveData,
       voiceNotes: messages.some((m) => m.voice),
+      images: messages.some((m) => m.image),
     });
 
     const { text, handoff, usage, toolsUsed, grounding } = await generateReply(

@@ -5,6 +5,7 @@ import {
   normalizeUsage,
   providerHttpError,
   toNetworkError,
+  userImages,
   type ProviderArgs,
   type ProviderToolArgs,
   type ProviderToolResult,
@@ -16,9 +17,12 @@ import type { JsonSchema, ToolCall } from '../tools/types';
 export const GEMINI_BASE_URL =
   'https://generativelanguage.googleapis.com/v1beta/models';
 
+type GeminiInputPart =
+  { text: string } | { inlineData: { mimeType: string; data: string } };
+
 interface GeminiContent {
   role: 'user' | 'model';
-  parts: { text: string }[];
+  parts: GeminiInputPart[];
 }
 
 interface GeminiResponse {
@@ -39,7 +43,8 @@ interface GeminiResponse {
  * turns, rename `assistant` to Gemini's `model`, and drop leading model
  * turns (an agent greeting before the customer wrote) so the payload
  * always starts on `user` and is never empty — same trick as the
- * Anthropic adapter.
+ * Anthropic adapter. n15.2 (R16): a `user` turn with images carries
+ * one `inlineData` part per image, before its text part.
  */
 function toGeminiContents(messages: ProviderArgs['messages']): GeminiContent[] {
   const merged = mergeConsecutive(messages);
@@ -56,7 +61,12 @@ function toGeminiContents(messages: ProviderArgs['messages']): GeminiContent[] {
   }
   return merged.map((m) => ({
     role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
+    parts: [
+      ...userImages(m).map((i) => ({
+        inlineData: { mimeType: i.mimeType, data: i.data },
+      })),
+      { text: m.content },
+    ],
   }));
 }
 

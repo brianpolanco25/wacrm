@@ -2551,13 +2551,32 @@ describe('inbound webhook: voice notes reach the AI (n15.1, R4–R6)', () => {
     );
   });
 
-  it('an image without caption still does not wake the AI (R5)', async () => {
+  // n15.2 R1 reverses n15.1's «an image without caption does not wake
+  // the AI»: a photo now dispatches, carrying its Meta media id.
+  it('an image without caption wakes the AI with inboundImage (n15.2 R1)', async () => {
     await runWebhook({
       id: 'wamid.IMG2',
       from: '15551230000',
       timestamp: '1700000000',
       type: 'image',
       image: { id: '1234567890123456', mime_type: 'image/jpeg' },
+    });
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalledTimes(1);
+    expect(h.dispatchInboundToAiReply.mock.calls[0][0]).toMatchObject({
+      inboundImage: { metaMediaId: '1234567890123456' },
+    });
+    expect(h.dispatchInboundToAiReply.mock.calls[0][0]).not.toHaveProperty(
+      'voiceNote'
+    );
+  });
+
+  it('a sticker still does not wake the AI (n15.2 R3)', async () => {
+    await runWebhook({
+      id: 'wamid.STK1',
+      from: '15551230000',
+      timestamp: '1700000000',
+      type: 'sticker',
+      sticker: { id: '6543210987654321', mime_type: 'image/webp' },
     });
     expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled();
   });

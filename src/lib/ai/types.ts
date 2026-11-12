@@ -110,6 +110,21 @@ export interface AiConfig {
   voiceFallbackMessage?: string | null;
 }
 
+/** n15.2: an image ready for the provider. Lives only in memory for the
+ *  turn: never logged, never persisted (R28). */
+export interface ChatImage {
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+  /** base64 without the `data:` prefix. */
+  data: string;
+}
+
+/** n15.2: the `messages` row an image turn came from (to hydrate it). */
+export interface ChatImageRef {
+  messageId: string;
+  mediaUrl: string | null;
+  mediaType: string | null;
+}
+
 /** A single conversation turn; each adapter maps it to its provider's shape. */
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -118,6 +133,11 @@ export interface ChatMessage {
    *  content starts with `[nota de voz]`. Adapters ignore it (they copy
    *  only `role`/`content`). */
   voice?: boolean;
+  /** n15.2: a customer image turn (the marker lives in `content`). The
+   *  playground has no row, hence `{ playground: true }`. */
+  image?: ChatImageRef | { playground: true };
+  /** n15.2: attached bytes; only honored on `user` turns. Absent = text. */
+  images?: ChatImage[];
 }
 
 /**
@@ -172,6 +192,11 @@ export class AiError extends Error {
   /** n13.3: tokens already spent by earlier tool rounds of the turn that
    *  failed, so the caller can still log them to `ai_usage_log`. */
   usage: AiUsage | null = null;
+  /** n15.2 (D5): at least one tool round finished before this error, so a
+   *  tool may already have run (an appointment booked). Set by
+   *  `runToolLoop` regardless of whether the provider reported usage;
+   *  `generateReply` never retries such a turn. */
+  toolsRan = false;
   constructor(message: string, opts: { code?: string; status?: number } = {}) {
     super(message);
     this.name = 'AiError';

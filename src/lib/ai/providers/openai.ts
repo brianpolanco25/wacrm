@@ -1,10 +1,11 @@
-import { AiError, type ProviderResult } from '../types';
+import { AiError, type ChatMessage, type ProviderResult } from '../types';
 import { MAX_OUTPUT_TOKENS } from '../defaults';
 import {
   mergeConsecutive,
   normalizeUsage,
   providerHttpError,
   toNetworkError,
+  userImages,
   parseToolArguments,
   type ProviderArgs,
   type ProviderToolArgs,
@@ -13,6 +14,41 @@ import {
 import type { ToolCall } from '../tools/types';
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+
+type OpenAiContentPart =
+  | {
+      type: 'image_url';
+      image_url: { url: string; detail: 'high' };
+    }
+  | { type: 'text'; text: string };
+
+/**
+ * n15.2 (R17): our transcript as Chat Completions messages. A `user` turn
+ * with images → `content` array of `image_url` data URIs (`detail:
+ * 'high'`: the main case is reading digits) then the text; every other
+ * turn keeps `content` as a string, byte-for-byte as before.
+ */
+function toOpenAiMessages(
+  messages: ChatMessage[]
+): { role: 'user' | 'assistant'; content: string | OpenAiContentPart[] }[] {
+  return mergeConsecutive(messages).map((m) => {
+    const images = userImages(m);
+    if (images.length === 0) return { role: m.role, content: m.content };
+    return {
+      role: m.role,
+      content: [
+        ...images.map((i): OpenAiContentPart => ({
+          type: 'image_url',
+          image_url: {
+            url: `data:${i.mimeType};base64,${i.data}`,
+            detail: 'high',
+          },
+        })),
+        { type: 'text', text: m.content },
+      ],
+    };
+  });
+}
 
 interface OpenAiResponse {
   choices?: { message?: { content?: string } }[];
@@ -45,7 +81,7 @@ export async function generateOpenAi(
         model,
         messages: [
           { role: 'system', content: systemPrompt },
-          ...mergeConsecutive(messages),
+          ...toOpenAiMessages(messages),
         ],
         max_completion_tokens: MAX_OUTPUT_TOKENS,
       }),
@@ -126,7 +162,7 @@ export async function generateOpenAiWithTools(
         model,
         messages: [
           { role: 'system', content: systemPrompt },
-          ...mergeConsecutive(messages),
+          ...toOpenAiMessages(messages),
           ...steps.flatMap((step) => [
             step.assistant,
             ...step.results.map((r) => ({

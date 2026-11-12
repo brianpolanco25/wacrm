@@ -15,11 +15,16 @@ import { Button } from '@/components/ui/button';
 import type { ToolUseRecord } from '@/lib/ai/tools/types';
 import { readToolsUsed, trailFromToolsUsed } from '@/lib/ai/tools/tools-used';
 import { PlaygroundToolsNotice, ToolsUsedLine } from './ai-tools-used';
+import { useTranslations } from 'next-intl';
+import { SimulatedVoiceNoteLabel, VoiceNoteToggle } from './ai-voice';
 import {
-  playgroundRequestMessages,
-  SimulatedVoiceNoteLabel,
-  VoiceNoteToggle,
-} from './ai-voice';
+  AttachedImagePreview,
+  ImageAttachButton,
+  ImageCostHint,
+  playgroundImageMessages,
+  TurnImage,
+  type PlaygroundImage,
+} from './ai-image';
 
 interface Turn {
   role: 'user' | 'assistant';
@@ -30,6 +35,8 @@ interface Turn {
   toolsUsed?: ToolUseRecord[];
   /** user-only (n15.1): sent as a simulated voice note. */
   voice?: boolean;
+  /** user-only (n15.2): the test image of this turn. */
+  image?: PlaygroundImage;
 }
 
 export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
@@ -38,6 +45,11 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
   const [sending, setSending] = useState(false);
   // n15.1: the next message goes as a simulated voice note.
   const [asVoice, setAsVoice] = useState(false);
+  // n15.2: the image attached to the next message (one per turn).
+  const [pendingImage, setPendingImage] = useState<PlaygroundImage | null>(
+    null
+  );
+  const tImage = useTranslations('AiImage');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -46,28 +58,34 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
 
   const send = async () => {
     const text = input.trim();
-    if (!text || sending) return;
+    const image = pendingImage;
+    if ((!text && !image) || sending) return;
 
     const next: Turn[] = [
       ...turns,
-      asVoice
-        ? { role: 'user', content: text, voice: true }
-        : { role: 'user', content: text },
+      {
+        role: 'user',
+        content: text,
+        ...(asVoice && !image ? { voice: true } : {}),
+        ...(image ? { image } : {}),
+      },
     ];
     setTurns(next);
     setInput('');
+    setPendingImage(null);
     setSending(true);
     try {
       const res = await fetch('/api/ai/playground', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Send only role+content (+ `voice` on simulated voice notes) —
-        // the server ignores anything else.
+        // Send only role+content (+ `voice` on simulated voice notes, and
+        // n15.2 the bytes of the 3 most recent images — older ones go as
+        // `imageOmitted`) — the server ignores anything else.
         // n13.7 R32: plus the successful tool calls of earlier turns, the
         // prior evidence the destructive-operation guard needs (there is
         // no conversation here). Resetting the chat empties it.
         body: JSON.stringify({
-          messages: playgroundRequestMessages(next),
+          messages: playgroundImageMessages(next),
           trail: turns.flatMap((t) => trailFromToolsUsed(t.toolsUsed)),
         }),
       });
@@ -75,12 +93,15 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
       if (!res.ok) {
         if (data.code === 'ai_not_configured') {
           toast.error('No agent configured yet — finish Setup first.');
+        } else if (data.code === 'invalid_image') {
+          toast.error(tImage('invalidImage'));
         } else {
           toast.error(data.error ?? "Couldn't get a reply.");
         }
         // Roll the unsent user turn back so the transcript stays clean.
         setTurns(turns);
         setInput(text);
+        setPendingImage(image);
         return;
       }
       setTurns([
@@ -99,6 +120,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
       toast.error("Couldn't reach the agent.");
       setTurns(turns);
       setInput(text);
+      setPendingImage(image);
     } finally {
       setSending(false);
     }
@@ -180,6 +202,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
                   : 'bg-muted text-foreground rounded-bl-sm'
               )}
             >
+              {t.role === 'user' && t.image && <TurnImage image={t.image} />}
               {t.role === 'user' && t.voice && <SimulatedVoiceNoteLabel />}
               {t.content && <p className="whitespace-pre-wrap">{t.content}</p>}
               {t.role === 'assistant' && t.handoff && (
@@ -211,8 +234,25 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
         )}
       </div>
 
+      {/* n15.2: the image waiting to be sent, and what it costs. */}
+      {pendingImage && (
+        <div className="border-border flex items-center gap-3 border-t px-3 pt-3">
+          <AttachedImagePreview
+            image={pendingImage}
+            onRemove={() => setPendingImage(null)}
+            disabled={sending}
+          />
+          <ImageCostHint />
+        </div>
+      )}
+
       {/* Composer */}
-      <div className="border-border flex items-end gap-2 border-t p-3">
+      <div
+        className={cn(
+          'border-border flex items-end gap-2 p-3',
+          !pendingImage && 'border-t'
+        )}
+      >
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -220,6 +260,11 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
           placeholder="Type a customer message…"
           rows={1}
           className="border-border bg-muted text-foreground placeholder-muted-foreground focus:border-primary/50 flex-1 resize-none rounded-xl border px-4 py-2.5 text-sm outline-none"
+        />
+        <ImageAttachButton
+          onPick={setPendingImage}
+          onError={(message) => toast.error(message)}
+          disabled={sending}
         />
         <VoiceNoteToggle
           pressed={asVoice}
@@ -229,7 +274,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
         <Button
           size="sm"
           onClick={send}
-          disabled={!input.trim() || sending}
+          disabled={(!input.trim() && !pendingImage) || sending}
           className="h-9 w-9 shrink-0 p-0"
         >
           {sending ? (
