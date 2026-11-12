@@ -321,3 +321,82 @@ describe('errorPayload (R17, R18, R21)', () => {
     });
   });
 });
+
+describe('toolResultPayload — relative day of dates (n13.11)', () => {
+  const SD = 'America/Santo_Domingo';
+  // Jueves 12 de noviembre de 2026, 15:00 en Santo Domingo.
+  const NOW = new Date('2026-11-12T15:00:00-04:00');
+  const ok = (data: unknown) =>
+    ({ ok: true, status: 200, data, latencyMs: 3 }) as IntegrationCallResult;
+  const label = (at: string, now: Date | null = NOW, tz: string | null = SD) =>
+    (
+      toolResultPayload(ok({ at }), declared, {}, tz, now ?? undefined).payload
+        .data as {
+        at_local?: string;
+      }
+    ).at_local;
+
+  it('(today)', () => {
+    expect(label('2026-11-12T17:00:00-04:00')).toBe(
+      'Thursday 2026-11-12 (today) 17:00 (-04:00)'
+    );
+  });
+
+  it('(tomorrow)', () => {
+    expect(label('2026-11-13T14:00:00-04:00')).toBe(
+      'Friday 2026-11-13 (tomorrow) 14:00 (-04:00)'
+    );
+  });
+
+  it('(in 5 days) and up to 30', () => {
+    expect(label('2026-11-17T09:00:00-04:00')).toBe(
+      'Tuesday 2026-11-17 (in 5 days) 09:00 (-04:00)'
+    );
+    expect(label('2026-12-12T09:00:00-04:00')).toBe(
+      'Saturday 2026-12-12 (in 30 days) 09:00 (-04:00)'
+    );
+    expect(label('2026-12-13T09:00:00-04:00')).toBe(
+      'Sunday 2026-12-13 09:00 (-04:00)'
+    );
+  });
+
+  it('a past date has no relative label', () => {
+    expect(label('2026-11-11T09:00:00-04:00')).toBe(
+      'Wednesday 2026-11-11 09:00 (-04:00)'
+    );
+  });
+
+  it('without now there is no relative label (old call sites)', () => {
+    expect(label('2026-11-13T14:00:00-04:00', null)).toBe(
+      'Friday 2026-11-13 14:00 (-04:00)'
+    );
+  });
+
+  it('counts calendar days in the zone, not UTC: 21:30 in Santo Domingo is still today', () => {
+    // 21:30 -04:00 = 01:30Z del viernes 13: en UTC ya es «Friday».
+    const late = new Date('2026-11-12T21:30:00-04:00');
+    expect(late.toISOString()).toBe('2026-11-13T01:30:00.000Z');
+    expect(label('2026-11-12T22:00:00-04:00', late)).toBe(
+      'Thursday 2026-11-12 (today) 22:00 (-04:00)'
+    );
+    expect(label('2026-11-13T08:00:00-04:00', late)).toBe(
+      'Friday 2026-11-13 (tomorrow) 08:00 (-04:00)'
+    );
+  });
+
+  it('without a zone, today is the one at the offset of the value', () => {
+    const late = new Date('2026-11-12T21:30:00-04:00');
+    expect(label('2026-11-13T08:00:00-04:00', late, null)).toBe(
+      'Friday 2026-11-13 (tomorrow) 08:00 (-04:00)'
+    );
+  });
+
+  it('annotateLocalDates takes now too', () => {
+    expect(
+      annotateLocalDates({ at: '2026-11-13T14:00:00-04:00' }, SD, NOW)
+    ).toEqual({
+      at: '2026-11-13T14:00:00-04:00',
+      at_local: 'Friday 2026-11-13 (tomorrow) 14:00 (-04:00)',
+    });
+  });
+});

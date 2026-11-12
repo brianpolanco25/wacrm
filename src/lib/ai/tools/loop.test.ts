@@ -9,6 +9,7 @@ vi.mock('@/lib/integrations/execute', () => ({
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { HANDOFF_SENTINEL } from '../defaults';
 import { generateReply } from '../generate';
 import type { ProviderToolArgs, ProviderToolResult } from '../providers/shared';
 import { AiError, type AiConfig, type AiUsage } from '../types';
@@ -443,11 +444,133 @@ describe('runToolLoop — weekday of dates (n13.9)', () => {
       ...toolset,
       integrations: [{ ...toolset.integrations[0], timezone: 'Europe/Madrid' }],
     };
-    await run({ callProvider: fn, execute: execute as never }, madrid);
+    // n13.11: un `now` fijo lejos de la fecha, sin etiqueta relativa.
+    await run(
+      {
+        callProvider: fn,
+        execute: execute as never,
+        now: () => Date.parse('2027-01-01T00:00:00Z'),
+      },
+      madrid
+    );
     expect(seen[1].steps[0].results[0].payload.data).toEqual([
       {
         starts_at: '2026-11-13T23:30:00-04:00',
         starts_at_local: 'Saturday 2026-11-14 04:30 (+01:00)',
+      },
+    ]);
+  });
+});
+
+describe('runToolLoop — weekday guard (n13.11)', () => {
+  // Jueves 12 de noviembre de 2026, 15:00 en Santo Domingo.
+  const NOW = Date.parse('2026-11-12T15:00:00-04:00');
+  const sd: AiToolset = {
+    ...toolset,
+    integrations: [
+      { ...toolset.integrations[0], timezone: 'America/Santo_Domingo' },
+    ],
+  };
+
+  it('fixes the weekday of the final text and warns, in auto_reply', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { fn } = scripted([
+      round([], 'Mañana jueves 13 de noviembre a las 2:00 p.m.'),
+    ]);
+    const r = await run({ callProvider: fn, now: () => NOW }, sd);
+    expect(r.text).toBe('Mañana viernes 13 de noviembre a las 2:00 p.m.');
+    expect(warn).toHaveBeenCalledWith('[ai weekday-fix]', ACCOUNT, 1);
+  });
+
+  it('also in draft', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { fn } = scripted([round([], 'Jueves 13 de noviembre')]);
+    const r = await runToolLoop(
+      {
+        config: config(),
+        systemPrompt: 'SYS',
+        messages: [{ role: 'user', content: 'hi' }],
+        toolset: sd,
+        db,
+        accountId: ACCOUNT,
+        mode: 'draft',
+      },
+      { callProvider: fn, now: () => NOW }
+    );
+    expect(r.text).toBe('Viernes 13 de noviembre');
+  });
+
+  it('uses the local date of the zone, not UTC, late at night', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 21:30 en Santo Domingo = viernes 13 en UTC: «mañana» sigue siendo el 13.
+    const late = Date.parse('2026-11-12T21:30:00-04:00');
+    const { fn } = scripted([round([], 'mañana jueves')]);
+    const r = await run({ callProvider: fn, now: () => late }, sd);
+    expect(r.text).toBe('mañana viernes');
+  });
+
+  it('a right text is returned as is, without a warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const text = 'Mañana viernes 13 de noviembre a las 2:00 p.m.';
+    const { fn } = scripted([round([], text)]);
+    const r = await run({ callProvider: fn, now: () => NOW }, sd);
+    expect(r.text).toBe(text);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('H2: without a valid zone, a relative day is not touched at night', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Jueves 21:00 en Santo Domingo = viernes 01:00 UTC; «mañana viernes» es correcto.
+    const late = Date.parse('2026-11-12T21:00:00-04:00');
+    const { fn } = scripted([
+      round([], 'mañana viernes; el jueves 13 de noviembre no hay'),
+    ]);
+    const r = await run({ callProvider: fn, now: () => late }, toolset);
+    // La fecha explícita sí se corrige (13-nov-2026 es viernes).
+    expect(r.text).toBe('mañana viernes; el viernes 13 de noviembre no hay');
+    expect(warn).toHaveBeenCalledWith('[ai weekday-fix]', ACCOUNT, 1);
+  });
+
+  it('H3: a disagreement is left as is and warned as conflict', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const text = 'mañana viernes 14 de noviembre';
+    const { fn } = scripted([round([], text)]);
+    const r = await run({ callProvider: fn, now: () => NOW }, sd);
+    expect(r.text).toBe(text);
+    expect(warn).toHaveBeenCalledWith(
+      '[ai weekday-fix]',
+      ACCOUNT,
+      'conflict',
+      1
+    );
+  });
+
+  it('the handoff text is never touched', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { fn } = scripted([
+      round([], `${HANDOFF_SENTINEL} jueves 13 de noviembre`),
+    ]);
+    const r = await run({ callProvider: fn, now: () => NOW }, sd);
+    expect(r.text).toBe(`${HANDOFF_SENTINEL} jueves 13 de noviembre`);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('tool results carry the relative day of the turn', async () => {
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      status: 200,
+      data: [{ starts_at: '2026-11-13T14:00:00-04:00' }],
+      latencyMs: 1,
+    }));
+    const { fn, seen } = scripted([round([call('c1')]), round([], 'x')]);
+    await run(
+      { callProvider: fn, execute: execute as never, now: () => NOW },
+      sd
+    );
+    expect(seen[1].steps[0].results[0].payload.data).toEqual([
+      {
+        starts_at: '2026-11-13T14:00:00-04:00',
+        starts_at_local: 'Friday 2026-11-13 (tomorrow) 14:00 (-04:00)',
       },
     ]);
   });

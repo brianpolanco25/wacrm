@@ -110,6 +110,45 @@ describe('buildToolsPromptSection', () => {
     expect(lines[iso + 1]).toContain('never work out a weekday yourself');
   });
 
+  it('n13.11: the local line carries today, tomorrow and the day after tomorrow, before the UTC line', () => {
+    // Jueves 12 de noviembre, 21:05 en Santo Domingo = viernes 13 en UTC.
+    const late = buildToolsPromptSection(toolset, {
+      now: new Date('2026-11-13T01:05:00Z'),
+      mode: 'auto_reply',
+    });
+    const lines = late.split('\n');
+    const local = lines.findIndex((l) =>
+      l.startsWith('- Cabbity Health: local time is')
+    );
+    const utc = lines.findIndex((l) =>
+      l.startsWith('- Current date and time:')
+    );
+    expect(lines[local]).toBe(
+      '- Cabbity Health: local time is Thursday 2026-11-12T21:05:00-04:00 (America/Santo_Domingo). Today is Thursday 2026-11-12; tomorrow is Friday 2026-11-13; the day after tomorrow is Saturday 2026-11-14.'
+    );
+    expect(lines[utc]).toBe(
+      '- Current date and time: Friday 2026-11-13T01:05:00Z (UTC).'
+    );
+    expect(local).toBeGreaterThan(0);
+    expect(local).toBeLessThan(utc);
+  });
+
+  it('n13.11: relative days refer to the local dates, never UTC', () => {
+    expect(section).toMatch(
+      /today\/tomorrow\/the day after tomorrow \(hoy\/mañana\/pasado mañana\) refer to those local dates of the integration, never to the UTC date/
+    );
+  });
+
+  it('n13.11: without any zone, the UTC line alone and no relative rule', () => {
+    const plain = buildToolsPromptSection(
+      { tools: [tool('nozone')], integrations: [toolset.integrations[1]] },
+      { now: NOW, mode: 'draft' }
+    );
+    expect(plain).toContain('Current date and time: Thursday');
+    expect(plain).not.toContain('local time is');
+    expect(plain).not.toContain('never to the UTC date');
+  });
+
   it('carries the rules', () => {
     expect(section).toMatch(/ISO 8601 with the UTC offset/);
     expect(section).toMatch(/never assume UTC/);
