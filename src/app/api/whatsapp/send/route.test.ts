@@ -354,6 +354,16 @@ describe('POST /api/whatsapp/send — role enforcement', () => {
     expect(res.status).toBe(200)
     expect(sendTemplateMessage).toHaveBeenCalledTimes(1)
   })
+
+  it('atribuye el envío al usuario autenticado (messages.sender_id)', async () => {
+    callerRole = 'agent'
+
+    const res = await postContactTemplate()
+
+    expect(res.status).toBe(200)
+    expect(messageInserts).toHaveLength(1)
+    expect(messageInserts[0]).toMatchObject({ sender_id: 'user-1' })
+  })
 })
 
 // ---------------------------------------------------------------------------

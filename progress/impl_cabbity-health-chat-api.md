@@ -79,7 +79,7 @@ Orden de despliegue: aplicar 097 antes de desplegar el código (el SELECT `*` no
 ## Desvíos y decisiones
 1. **Panel**: `POST /api/ai/autoreply/{id}` usa ahora `setConversationAiPaused` (misma lógica extraída a `lib/ai/autoreply-toggle.ts`) y por tanto emite `conversation.updated`/`assigned`; un error de BD en esa ruta ahora responde 404 en vez de 500 (igual que ya hacían `assign`/`status`). `PATCH /api/conversations/{id}` usa `checkAccountMember` (mismo comportamiento: miembro, viewers incluidos).
 2. **`conversation.updated` desde el panel**: reabrir/pasar a `pending` desde el panel también lo emite (`setConversationStatus` es compartido). El reabrir automático al entrar un mensaje (`reopen.ts`) NO lo emite (no se tocó).
-3. **Panel no guarda `sender_id`**: el panel no pasa `senderId` (su fila y comportamiento no cambian), así `message.sent.sender_member_id` es `null` para envíos desde el panel. Si Health quiere atribuir también esos, es un cambio de una línea en `/api/whatsapp/send` (pasar `userId`).
+3. **CERRADO**: el panel (`/api/whatsapp/send`) ahora pasa el `userId` autenticado como `senderId`: `messages.sender_id` y `message.sent.sender_member_id` quedan atribuidos en envíos del panel. Test: `src/app/api/whatsapp/send/route.test.ts` ('atribuye el envío…').
 4. **`message.sent` de bots** resuelve el `messages.id` con una lectura por (conversación, wamid) porque esos caminos insertan sin `.select()` (no se cambió su cadena de inserción); dentro de `try`, nunca afecta al envío.
 5. **Ordenar por actividad con nulos**: el cursor lleva el timestamp vacío al entrar en la zona de conversaciones sin mensajes.
 6. Los campos nuevos de `Conversation` en OpenAPI son opcionales (no van en exportaciones, que reutilizan el esquema).
