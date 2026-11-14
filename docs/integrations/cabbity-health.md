@@ -170,3 +170,73 @@ La prueba de conexión traduce cualquier 401/403 a «falló la autenticación» 
 - `PATCH`/`DELETE /patients/{id}` y el alias `DELETE /appointments/{id}`.
 - Campos no secretos por cuenta (p. ej. sede por defecto) y `base_url` por cuenta.
 - Importador genérico de OpenAPI (el test de contrato es el sustituto mínimo).
+
+## 8. Recordatorios de Cabbity Health (Health → wacrm)
+
+La otra dirección: Cabbity Health usa esta cuenta de wacrm como canal de WhatsApp para los
+recordatorios de cita. Health **envía** con `POST /api/v1/messages` (plantilla) y **recibe** la
+pulsación del botón por un webhook saliente. No hay endpoint de «recordatorio» en wacrm: el
+genérico basta.
+
+### Clave de API
+
+Ajustes → API: crear una clave con los scopes `messages:send`, `templates:read` y
+`webhooks:manage`. El plan de la cuenta necesita las features `api` y `webhooks`. Health pega la
+URL de wacrm y la clave, y registra solo su webhook (`events: ["message.interactive_reply",
+"message.status_updated"]`).
+
+### Plantilla recomendada
+
+Categoría Utility, cuerpo con 5 variables (paciente, centro, fecha, hora, profesional) y **dos
+botones QUICK_REPLY**: «Confirmo» y «Cancelar consulta». Health manda el `payload` de cada botón
+en el envío:
+
+```json
+POST /api/v1/messages
+{
+  "to": "+18095550123",
+  "from": "100234567890123",
+  "type": "template",
+  "template": {
+    "name": "recordatorio_cita",
+    "language": "es",
+    "params": {
+      "body": ["Ada", "Centro Norte", "viernes 14", "10:30", "Dra. Pérez"],
+      "buttonParams": { "0": "chr1:ab12cd34:confirm", "1": "chr1:ab12cd34:cancel" }
+    }
+  }
+}
+```
+
+`buttonParams` va por índice del botón y solo admite QUICK_REPLY, URL y COPY_CODE; apuntar a un
+PHONE_NUMBER o a un índice inexistente es `400`. También se aceptan `header_text` y
+`button_params`. `GET /api/v1/numbers` (scope `messages:send`) lista los números de la cuenta;
+`phone_number_id` es el `from`.
+
+### Evento `message.interactive_reply`
+
+Se emite cuando el contacto toca un botón de una plantilla (`button`) o un botón/fila de un mensaje
+interactivo, **además** de `message.received`. Un endpoint suscrito solo a este evento no recibe
+los textos libres.
+
+```json
+{
+  "id": "…", "event": "message.interactive_reply", "occurred_at": "…", "account_id": "…",
+  "data": {
+    "conversation_id": "…", "contact_id": "…",
+    "whatsapp_message_id": "wamid.… (la pulsación)",
+    "context_whatsapp_message_id": "wamid.… (la plantilla; null si Meta no lo informa)",
+    "reply_id": "chr1:ab12cd34:confirm",
+    "reply_title": "Confirmo",
+    "phone": "18095550123"
+  }
+}
+```
+
+`reply_id` es el `payload` del botón sin alterar.
+
+### Aviso: no crear automatizaciones que choquen
+
+La IA no contesta pulsaciones, pero las automatizaciones y flows con disparador
+`interactive_reply` sí. **No crees ninguna cuyo `reply_id` empiece por `chr1:`**: es el prefijo de
+Health y respondería encima de su confirmación o cancelación.

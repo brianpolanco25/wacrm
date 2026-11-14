@@ -11,6 +11,13 @@ and polish.
 
 ## [Unreleased]
 
+### Public API: webhook `message.interactive_reply`, `template.params` object and `GET /numbers` (Cabbity Health reminders)
+
+- No migration, no new scopes. New outbound webhook event `message.interactive_reply`: fired when a contact taps a template quick-reply button or an interactive button/list row, in addition to `message.received`. `data` = `conversation_id`, `contact_id`, `whatsapp_message_id`, `context_whatsapp_message_id`, `reply_id` (the button payload, untouched), `reply_title`, `phone`.
+- `POST /api/v1/messages`: `template.params` may be an object (`body`, `headerText`/`header_text`, `buttonParams`/`button_params`). `buttonParams` pointing at a button that is not QUICK_REPLY/URL/COPY_CODE, or at a missing index, or a malformed shape, is now `400` before anything is sent.
+- New `GET /api/v1/numbers` (scope `messages:send`): the account's connected numbers (`phone_number_id`, `display_phone_number`, `verified_name`, `is_default`); never tokens.
+- Guide: `docs/integrations/cabbity-health.md` §8.
+
 ### AI: the assistant reads the photos the customer sends
 
 - No migration. A photo the customer sends (for example their ID card or health-insurance card) now wakes the AI auto-reply, and the AI sees it: it reads the name, document number, insurer, plan or policy number and uses them, without asking again for what is clearly legible. Stickers, videos and documents still do not wake it.
