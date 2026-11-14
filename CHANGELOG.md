@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Public API: `GET /api/v1/members` and scope `members:read` (Cabbity Health)
+
+- No migration (scopes are a free `text[]`). New scope `members:read`, selectable when creating an API key. New `GET /api/v1/members`: the members of the key's account, cursor-paginated, as `{id, full_name, email, role}` where `id` is the user id (the one conversations use as `assigned_agent_id`) and `role` is `owner`, `admin`, `agent` or `viewer`. Never phones, avatars or tokens, and never another account's people.
+
 ### Public API: webhook `message.interactive_reply`, `template.params` object and `GET /numbers` (Cabbity Health reminders)
 
 - No migration, no new scopes. New outbound webhook event `message.interactive_reply`: fired when a contact taps a template quick-reply button or an interactive button/list row, in addition to `message.received`. `data` = `conversation_id`, `contact_id`, `whatsapp_message_id`, `context_whatsapp_message_id`, `reply_id` (the button payload, untouched), `reply_title`, `phone`.

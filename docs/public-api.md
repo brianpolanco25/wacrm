@@ -21,7 +21,7 @@ follow `/developers` for everything else:
 
 - **Get started** — create a key, call `GET /api/v1/me`, set the
   environment up.
-- **Authentication and scopes** — the twelve scopes, least privilege,
+- **Authentication and scopes** — the thirteen scopes, least privilege,
   expiry, rotation, what to do if a key leaks.
 - **Conventions** — response envelope, error codes, `request_id`, rate
   limits, pagination, idempotency.

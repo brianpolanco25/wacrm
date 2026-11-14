@@ -212,6 +212,9 @@ POST /api/v1/messages
 PHONE_NUMBER o a un índice inexistente es `400`. También se aceptan `header_text` y
 `button_params`. `GET /api/v1/numbers` (scope `messages:send`) lista los números de la cuenta;
 `phone_number_id` es el `from`.
+`GET /api/v1/members` (scope nuevo `members:read`, elegible al crear la clave) lista los miembros de la
+cuenta, paginado por cursor: `{id (= user_id, el de assigned_agent_id), full_name, email, role}`;
+nunca teléfonos ni tokens.
 
 ### Evento `message.interactive_reply`
 

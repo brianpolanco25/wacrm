@@ -26,6 +26,7 @@ export const API_SCOPES = [
   'templates:read',
   'templates:write',
   'conversations:export',
+  'members:read',
 ] as const;
 
 export type ApiScope = (typeof API_SCOPES)[number];
@@ -45,6 +46,7 @@ export const SCOPE_DESCRIPTIONS: Record<ApiScope, string> = {
   'templates:write':
     'Create, edit, delete and sync message templates with Meta',
   'conversations:export': 'Export conversations and their messages',
+  'members:read': 'List the account members (name, email and role)',
 };
 
 /** Type-narrow an unknown value into a valid `ApiScope`. */
