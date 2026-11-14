@@ -17,6 +17,7 @@ import { CONTACTS_OPERATIONS } from './contacts';
 import { CONVERSATIONS_OPERATIONS } from './conversations';
 import { EXPORTS_OPERATIONS } from './exports';
 import { ME_OPERATIONS } from './me';
+import { MEMBERS_OPERATIONS } from './members';
 import { MESSAGES_OPERATIONS } from './messages';
 import { COMPONENT_SCHEMAS, ref } from './schemas';
 import { TAGS_OPERATIONS } from './tags';
@@ -58,6 +59,7 @@ export const ALL_OPERATIONS: OperationDef[] = [
   ...TAGS_OPERATIONS,
   ...CONVERSATIONS_OPERATIONS,
   ...MESSAGES_OPERATIONS,
+  ...MEMBERS_OPERATIONS,
   ...BROADCASTS_OPERATIONS,
   ...TEMPLATES_OPERATIONS,
   ...EXPORTS_OPERATIONS,
@@ -69,6 +71,7 @@ const TAG_DESCRIPTIONS: Record<string, string> = {
   contacts: 'Contactos.',
   tags: 'Etiquetas y su asignación a contactos.',
   conversations: 'Conversaciones y la descarga directa de una de ellas.',
+  members: 'Miembros de la cuenta.',
   messages: 'Enviar mensajes y leer el hilo de una conversación.',
   broadcasts: 'Campañas por plantilla.',
   templates: 'Plantillas de mensaje y su sincronización con Meta.',

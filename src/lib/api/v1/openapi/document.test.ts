@@ -293,7 +293,7 @@ describe('documento OpenAPI: scopes por operación', () => {
     expect(operation('get', '/me')['x-scopes']).toEqual([]);
   });
 
-  it('todo scope declarado es uno de los 12 que existen', () => {
+  it('todo scope declarado es uno de los 13 que existen', () => {
     for (const op of ALL_OPERATIONS) {
       for (const scope of op.scopes) {
         expect(API_SCOPES, `${op.operationId}`).toContain(scope);

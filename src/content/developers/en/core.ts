@@ -121,7 +121,7 @@ export const authentication: DocPage = {
   slug: 'authentication',
   title: 'Authentication and scopes',
   summary:
-    'Bearer keys, the twelve scopes, least privilege, expiry, rotation and what to do about a leak.',
+    'Bearer keys, the thirteen scopes, least privilege, expiry, rotation and what to do about a leak.',
   blocks: [
     {
       kind: 'lead',
@@ -136,7 +136,7 @@ export const authentication: DocPage = {
       kind: 'p',
       text: 'The `wacrm_live_` prefix is visible in the dashboard so you can recognise a key in a log without holding the full value. Of the rest, only a SHA-256 hash is stored.',
     },
-    { kind: 'h2', id: 'scopes', text: 'The twelve scopes' },
+    { kind: 'h2', id: 'scopes', text: 'The thirteen scopes' },
     {
       kind: 'p',
       text: 'A scope is a permission of the key, independent of the role of whoever created it. A key with no scopes still authenticates and can call `GET /api/v1/me`, and nothing else.',
@@ -151,6 +151,7 @@ export const authentication: DocPage = {
         ['`contacts:write`', 'Create and update contacts'],
         ['`conversations:read`', 'List and read conversations'],
         ['`conversations:export`', 'Export conversations and their messages'],
+        ['`members:read`', 'List the account members (name, email and role)'],
         ['`broadcasts:send`', 'Launch broadcasts and poll their progress'],
         ['`webhooks:manage`', 'Register and manage outbound webhooks'],
         ['`tags:read`', 'List and read tags'],

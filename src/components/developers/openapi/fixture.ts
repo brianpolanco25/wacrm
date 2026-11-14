@@ -11,7 +11,7 @@ import type {
 // ============================================================
 // Documento OpenAPI 3.1 de prueba.
 //
-// Describe las 38 operaciones que `progress/impl_integracion-api-3.md`
+// Describe las 39 operaciones que `progress/impl_integracion-api-3.md`
 // §6 inventaría en `/api/v1`, con sus scopes, sus cubos y qué escrituras
 // aceptan `Idempotency-Key`. Ya NO es lo que sirve `source.ts` —desde la
 // integración final de la fase 7 eso es el generador de verdad
@@ -445,6 +445,10 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
       description: 'Enviar mensajes y leer los de una conversación.',
     },
     {
+      name: 'Miembros',
+      description: 'Las personas de la cuenta.',
+    },
+    {
       name: 'Contactos',
       description: 'Alta, lectura y actualización de contactos.',
     },
@@ -621,6 +625,36 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
           '502': errorResponse(
             '`meta_error`: la petición llegó a Meta y Meta la rechazó.'
           ),
+        },
+      }),
+    },
+    '/members': {
+      get: op({
+        summary: 'Listar los miembros de la cuenta',
+        description:
+          'Las personas de la cuenta de la clave. `id` es el id del usuario, el de `assigned_agent_id`. Solo nombre, correo y rol.',
+        tags: ['Miembros'],
+        scopes: ['members:read'],
+        parameters: [...PAGINATION],
+        responses: {
+          '200': {
+            description: 'Una página de miembros.',
+            content: json(
+              listEnvelope({
+                type: 'object',
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  full_name: { type: 'string' },
+                  email: { type: 'string' },
+                  role: {
+                    type: 'string',
+                    enum: ['owner', 'admin', 'agent', 'viewer'],
+                  },
+                },
+                required: ['id', 'full_name', 'email', 'role'],
+              })
+            ),
+          },
         },
       }),
     },

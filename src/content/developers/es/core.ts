@@ -122,7 +122,7 @@ export const authentication: DocPage = {
   slug: 'authentication',
   title: 'Autenticación y scopes',
   summary:
-    'Claves portadoras, los doce scopes, mínimo privilegio, caducidad, rotación y qué hacer ante una filtración.',
+    'Claves portadoras, los trece scopes, mínimo privilegio, caducidad, rotación y qué hacer ante una filtración.',
   blocks: [
     {
       kind: 'lead',
@@ -137,7 +137,7 @@ export const authentication: DocPage = {
       kind: 'p',
       text: 'El prefijo `wacrm_live_` es visible en el panel para que reconozcas la clave en un registro sin tener el valor completo. Del resto solo se guarda un hash SHA-256.',
     },
-    { kind: 'h2', id: 'scopes', text: 'Los doce scopes' },
+    { kind: 'h2', id: 'scopes', text: 'Los trece scopes' },
     {
       kind: 'p',
       text: 'Un scope es un permiso de la clave, independiente del rol de quien la creó. Una clave sin ningún scope se autentica igual y puede llamar a `GET /api/v1/me`, nada más.',
@@ -152,6 +152,10 @@ export const authentication: DocPage = {
         ['`contacts:write`', 'Crear y actualizar contactos'],
         ['`conversations:read`', 'Listar y leer conversaciones'],
         ['`conversations:export`', 'Exportar conversaciones y sus mensajes'],
+        [
+          '`members:read`',
+          'Listar los miembros de la cuenta (nombre, correo y rol)',
+        ],
         ['`broadcasts:send`', 'Lanzar difusiones y consultar su avance'],
         ['`webhooks:manage`', 'Registrar y administrar webhooks salientes'],
         ['`tags:read`', 'Listar y leer etiquetas'],
