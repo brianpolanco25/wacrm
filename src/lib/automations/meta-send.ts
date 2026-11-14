@@ -25,6 +25,7 @@ import {
   recordUsage,
 } from '@/lib/billing/enforce';
 import { supabaseAdmin } from './admin-client';
+import { emitBotMessageSent } from '@/lib/webhooks/message-sent';
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -288,6 +289,12 @@ async function sendViaMeta(
     // the send failed. The engine wraps this in a log line.
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`);
   }
+
+  await emitBotMessageSent(db, input.accountId, {
+    conversationId: input.conversationId,
+    whatsappMessageId: waMessageId,
+    contentType: content_type,
+  });
 
   await db
     .from('conversations')

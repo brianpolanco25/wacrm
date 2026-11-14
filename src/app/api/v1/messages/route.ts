@@ -27,6 +27,8 @@
 //     "reply_to_message_id": "<uuid>",       // optional, must be in the same conversation
 //     "name": "Jane Doe",                   // optional, names a newly-created contact
 //     "from": "100234567890123"              // optional, the phone_number_id to send through
+//     "conversation_id": "<uuid>",           // optional, send through this conversation (excludes to/to_user_id)
+//     "sent_by_member_id": "<user id>"       // optional, the account member that sends (stored in messages.sender_id)
 //   }
 //
 // Optional header `Idempotency-Key`: a retry with the same key and the
@@ -42,6 +44,7 @@ import { requireApiKey } from '@/lib/auth/api-context';
 import { configIdForPhoneNumberId } from '@/lib/whatsapp/resolve-config';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import { withIdempotency } from '@/lib/api/v1/idempotency';
+import { checkAccountMember } from '@/lib/conversations/members';
 import { resolveConversationForTarget } from '@/lib/whatsapp/resolve-conversation';
 import {
   sendMessageToConversation,
@@ -68,9 +71,40 @@ export async function POST(request: Request) {
       const to = typeof body.to === 'string' ? body.to.trim() : '';
       const toUserId =
         typeof body.to_user_id === 'string' ? body.to_user_id.trim() : '';
-      if (!to && !toUserId) {
-        return fail('bad_request', "'to' or 'to_user_id' is required", 400);
+      // n15.5: `conversation_id` sends through an existing conversation (and
+      // its number) instead of resolving one by recipient, so it excludes
+      // `to` / `to_user_id`.
+      const conversationId =
+        typeof body.conversation_id === 'string'
+          ? body.conversation_id.trim()
+          : '';
+      if (body.conversation_id !== undefined && !conversationId) {
+        return fail('bad_request', "'conversation_id' must be a string", 400);
       }
+      if (conversationId && (to || toUserId)) {
+        return fail(
+          'bad_request',
+          "'conversation_id' cannot be combined with 'to' or 'to_user_id'",
+          400
+        );
+      }
+      if (!conversationId && !to && !toUserId) {
+        return fail(
+          'bad_request',
+          "'to', 'to_user_id' or 'conversation_id' is required",
+          400
+        );
+      }
+      if (
+        body.sent_by_member_id !== undefined &&
+        (typeof body.sent_by_member_id !== 'string' || !body.sent_by_member_id)
+      ) {
+        return fail('bad_request', "'sent_by_member_id' must be a string", 400);
+      }
+      const sentByMemberId =
+        typeof body.sent_by_member_id === 'string'
+          ? body.sent_by_member_id
+          : null;
 
       const type = typeof body.type === 'string' ? body.type : 'text';
 
@@ -127,16 +161,62 @@ export async function POST(request: Request) {
         }
       }
 
-      // Find-or-create the conversation for this phone, then send. Both
-      // steps share `SendMessageError`, so one catch maps the whole
-      // pipeline to the envelope.
-      const resolved = await resolveConversationForTarget(
-        ctx.supabase,
-        ctx.accountId,
-        { phone: to || null, waUserId: toUserId || null },
-        typeof body.name === 'string' ? body.name : null,
-        whatsAppConfigId
-      );
+      // The sender must be a non-viewer member of THIS account, so that
+      // everything sent from an integration carries a name (n15.5).
+      if (sentByMemberId) {
+        const member = await checkAccountMember(
+          ctx.supabase,
+          ctx.accountId,
+          sentByMemberId,
+          { rejectViewer: true }
+        );
+        if (!member.ok && member.reason === 'error') {
+          return fail('internal', 'Failed to validate sent_by_member_id', 500);
+        }
+        if (!member.ok) {
+          return fail(
+            'invalid_member',
+            "'sent_by_member_id' must be a non-viewer member of this account",
+            400
+          );
+        }
+      }
+
+      // Find-or-create the conversation for this phone (or, with
+      // `conversation_id`, load the account's own), then send. Both steps
+      // share `SendMessageError`, so one catch maps the whole pipeline to
+      // the envelope.
+      let resolved: {
+        conversationId: string;
+        contactId: string;
+        contactCreated: boolean;
+      };
+      if (conversationId) {
+        const { data: conv, error: convError } = await ctx.supabase
+          .from('conversations')
+          .select('id, contact_id')
+          .eq('id', conversationId)
+          .eq('account_id', ctx.accountId)
+          .maybeSingle();
+        if (convError) {
+          console.error('[api/v1/messages] conversation lookup:', convError);
+          return fail('internal', 'Failed to load conversation', 500);
+        }
+        if (!conv) return fail('not_found', 'Conversation not found', 404);
+        resolved = {
+          conversationId: (conv as { id: string }).id,
+          contactId: (conv as { contact_id: string }).contact_id,
+          contactCreated: false,
+        };
+      } else {
+        resolved = await resolveConversationForTarget(
+          ctx.supabase,
+          ctx.accountId,
+          { phone: to || null, waUserId: toUserId || null },
+          typeof body.name === 'string' ? body.name : null,
+          whatsAppConfigId
+        );
+      }
 
       const result = await sendMessageToConversation(
         ctx.supabase,
@@ -159,6 +239,7 @@ export async function POST(request: Request) {
               ? body.reply_to_message_id
               : null,
           whatsAppConfigId,
+          senderId: sentByMemberId,
         }
       );
 
