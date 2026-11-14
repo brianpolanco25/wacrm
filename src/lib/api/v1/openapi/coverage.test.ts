@@ -130,7 +130,7 @@ describe('cobertura del documento OpenAPI', () => {
     // Una regresión silenciosa en `walkRouteFiles` dejaría el test en
     // verde comparando dos listas vacías. Este número es el inventario
     // de a7.5 (§6 de progress/impl_integracion-api-3.md).
-    expect(discovered.length).toBe(37);
+    expect(discovered.length).toBe(38);
   });
 
   it('documenta TODA operación que existe en src/app/api/v1', () => {

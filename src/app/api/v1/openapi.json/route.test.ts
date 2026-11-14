@@ -30,7 +30,7 @@ describe('GET /api/v1/openapi.json', () => {
     const body = await res.json();
     expect(body).toEqual(JSON.parse(JSON.stringify(buildOpenApiDocument())));
     expect(body.openapi).toBe('3.1.0');
-    expect(Object.keys(body.paths)).toHaveLength(25);
+    expect(Object.keys(body.paths)).toHaveLength(26);
   });
 
   it('sirve JSON', async () => {

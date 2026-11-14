@@ -697,3 +697,56 @@ describe('sendMessageToConversation — contacto sin teléfono', () => {
     expect(captured.message).toBeUndefined();
   });
 });
+
+describe('sendMessageToConversation — template.params objeto (cabbity-health W2)', () => {
+  const withButtons = {
+    ...TEMPLATE_ROW,
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Confirmo' },
+      { type: 'PHONE_NUMBER', text: 'Llamar', phone_number: '+18095550000' },
+    ],
+  };
+  const base = {
+    conversationId: 'cv-1',
+    messageType: 'template',
+    templateName: 'order_update',
+  };
+
+  it('una forma inválida es 400 antes de tocar la base', async () => {
+    await expectSendError(
+      { ...base, templateMessageParams: { body: 'no-es-array' } },
+      400,
+      /params\.body/
+    );
+  });
+
+  it('buttonParams hacia un botón PHONE_NUMBER es 400 y no se envía nada', async () => {
+    const captured: CapturedWrites = {};
+    await expect(
+      sendMessageToConversation(sendPathDb([withButtons], captured), 'acct-1', {
+        ...base,
+        templateMessageParams: {
+          body: ['A', 'B'],
+          button_params: { 1: 'x' },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, message: /PHONE_NUMBER/ });
+    expect(captured.message).toBeUndefined();
+  });
+
+  it('buttonParams hacia un QUICK_REPLY se acepta', async () => {
+    const captured: CapturedWrites = {};
+    const result = await sendMessageToConversation(
+      sendPathDb([withButtons], captured),
+      'acct-1',
+      {
+        ...base,
+        templateMessageParams: {
+          body: ['A', 'B'],
+          buttonParams: { 0: 'chr1:ab12cd34:confirm' },
+        },
+      }
+    );
+    expect(result.whatsappMessageId).toBe('wamid.1');
+  });
+});

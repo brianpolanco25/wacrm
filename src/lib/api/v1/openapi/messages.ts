@@ -57,10 +57,24 @@ export const MESSAGES_OPERATIONS: OperationDef[] = [
               name: { type: 'string' },
               language: { type: 'string', description: 'Por ejemplo `en_US`.' },
               params: {
-                type: 'array',
-                items: { type: 'string' },
                 description:
-                  'Variables posicionales del cuerpo, en el orden de `variables` de la plantilla.',
+                  'Variables de la plantilla. Un array de strings son las variables posicionales del cuerpo. Un objeto permite además la cabecera y los botones: `buttonParams` va por índice del botón en la plantilla y solo admite botones QUICK_REPLY (su valor es el `payload` que volverá en el evento `message.interactive_reply`), URL y COPY_CODE; apuntar a otro tipo o a un índice inexistente es `400`. También se aceptan `header_text` y `button_params`.',
+                oneOf: [
+                  { type: 'array', items: { type: 'string' } },
+                  {
+                    type: 'object',
+                    properties: {
+                      body: { type: 'array', items: { type: 'string' } },
+                      headerText: { type: 'string' },
+                      buttonParams: {
+                        type: 'object',
+                        description:
+                          'Índice del botón (`"0"`, `"1"`…) → valor.',
+                        additionalProperties: { type: 'string' },
+                      },
+                    },
+                  },
+                ],
               },
             },
           },
@@ -138,6 +152,51 @@ export const MESSAGES_OPERATIONS: OperationDef[] = [
           'La plantilla guardada no se puede convertir en un envío válido.',
       },
     ],
+  },
+  {
+    method: 'get',
+    path: '/numbers',
+    operationId: 'listNumbers',
+    summary: 'Listar los números de WhatsApp conectados',
+    description:
+      'Los números de la cuenta de la clave, el predeterminado primero. `phone_number_id` es el valor que `POST /messages` espera en `from`. Nunca devuelve tokens.',
+    tag: 'messages',
+    scopes: ['messages:send'],
+    envelope: 'data',
+    responses: [
+      {
+        status: 200,
+        description: 'Los números de la cuenta.',
+        schema: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'phone_number_id',
+              'display_phone_number',
+              'verified_name',
+              'is_default',
+            ],
+            properties: {
+              phone_number_id: { type: 'string' },
+              display_phone_number: { type: ['string', 'null'] },
+              verified_name: { type: ['string', 'null'] },
+              is_default: { type: 'boolean' },
+            },
+          },
+        },
+        example: [
+          {
+            phone_number_id: '100234567890123',
+            display_phone_number: '+1 415 555 0123',
+            verified_name: 'Acme Inc',
+            is_default: true,
+          },
+        ],
+      },
+    ],
+    errors: [],
   },
   {
     method: 'get',
