@@ -225,3 +225,26 @@ describe('POST /api/v1/messages — Idempotency-Key', () => {
     expect(h.sends).toHaveLength(1);
   });
 });
+
+describe('POST /api/v1/messages — template.params objeto (cabbity-health W2)', () => {
+  it('una forma inválida de params es 400 y no llega al envío', async () => {
+    const res = await post({
+      to: '+14155550123',
+      type: 'template',
+      template: { name: 't', language: 'es', params: { buttonParams: [1] } },
+    });
+    expect(res.status).toBe(400);
+    expect(h.sends).toHaveLength(0);
+  });
+
+  it('el objeto con buttonParams llega al núcleo de envío', async () => {
+    const params = { body: ['Ada'], buttonParams: { 0: 'chr1:x:confirm' } };
+    const res = await post({
+      to: '+14155550123',
+      type: 'template',
+      template: { name: 't', language: 'es', params },
+    });
+    expect(res.status).toBe(201);
+    expect(h.sends[0].templateMessageParams).toEqual(params);
+  });
+});

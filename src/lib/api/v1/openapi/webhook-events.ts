@@ -108,6 +108,29 @@ export const WEBHOOK_EVENT_DATA_SCHEMAS: Record<WebhookEvent, SchemaObject> = {
     },
     'Un mensaje entrante de un contacto.'
   ),
+  'message.interactive_reply': dataObject(
+    {
+      conversation_id: uuid,
+      contact_id: uuid,
+      whatsapp_message_id: { type: 'string' },
+      context_whatsapp_message_id: {
+        ...nullableString,
+        description:
+          'wamid del mensaje (p. ej. la plantilla) al que responde el toque; null si Meta no lo informa.',
+      },
+      reply_id: {
+        type: 'string',
+        description:
+          'El payload del botón de respuesta rápida (o el id del botón o fila de lista), sin alterar.',
+      },
+      reply_title: {
+        ...nullableString,
+        description: 'La etiqueta visible del botón.',
+      },
+      phone: nullableString,
+    },
+    'Un contacto tocó un botón de respuesta rápida o una fila de lista. Se emite además de message.received.'
+  ),
   'message.status_updated': dataObject(
     {
       whatsapp_message_id: { type: 'string' },
@@ -199,6 +222,15 @@ export const WEBHOOK_EVENT_DATA_EXAMPLES: Record<WebhookEvent, unknown> = {
     whatsapp_message_id: 'wamid.HBgLMTQxNTU1NTAxMjMVAgARGBI5QTND',
     content_type: 'text',
     text: 'Hola 👋',
+  },
+  'message.interactive_reply': {
+    conversation_id: '7f9d1a2b-3c4d-4e5f-8091-a2b3c4d5e6f7',
+    contact_id: '2c8a4a9e-1f3b-4c2d-9a10-6b7c8d9e0f11',
+    whatsapp_message_id: 'wamid.HBgLMTQxNTU1NTAxMjMVAgARGBI5QTRE',
+    context_whatsapp_message_id: 'wamid.HBgLMTQxNTU1NTAxMjMVAgARGBI5QTND',
+    reply_id: 'chr1:ab12cd34:confirm',
+    reply_title: 'Confirmo',
+    phone: '14155550123',
   },
   'message.status_updated': {
     whatsapp_message_id: 'wamid.HBgLMTQxNTU1NTAxMjMVAgARGBI5QTND',

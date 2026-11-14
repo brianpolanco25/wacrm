@@ -11,7 +11,7 @@ import type {
 // ============================================================
 // Documento OpenAPI 3.1 de prueba.
 //
-// Describe las 37 operaciones que `progress/impl_integracion-api-3.md`
+// Describe las 38 operaciones que `progress/impl_integracion-api-3.md`
 // §6 inventaría en `/api/v1`, con sus scopes, sus cubos y qué escrituras
 // aceptan `Idempotency-Key`. Ya NO es lo que sirve `source.ts` —desde la
 // integración final de la fase 7 eso es el generador de verdad
@@ -621,6 +621,50 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
           '502': errorResponse(
             '`meta_error`: la petición llegó a Meta y Meta la rechazó.'
           ),
+        },
+      }),
+    },
+    '/numbers': {
+      get: op({
+        summary: 'Listar los números de WhatsApp conectados',
+        description:
+          'Los números de la cuenta de la clave, el predeterminado primero. `phone_number_id` es el valor de `from` en `POST /messages`.',
+        tags: ['Mensajes'],
+        scopes: ['messages:send'],
+        responses: {
+          '200': {
+            description: 'Los números de la cuenta.',
+            content: json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    phone_number_id: { type: 'string' },
+                    display_phone_number: { type: 'string' },
+                    verified_name: { type: 'string' },
+                    is_default: { type: 'boolean' },
+                  },
+                  required: [
+                    'phone_number_id',
+                    'display_phone_number',
+                    'verified_name',
+                    'is_default',
+                  ],
+                },
+              }),
+              {
+                data: [
+                  {
+                    phone_number_id: '1002…',
+                    display_phone_number: '+1 415 555 0123',
+                    verified_name: 'Acme S.L.',
+                    is_default: true,
+                  },
+                ],
+              }
+            ),
+          },
         },
       }),
     },
@@ -1568,6 +1612,31 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
               whatsapp_message_id: 'wamid.…',
               content_type: 'text',
               text: 'Hola 👋',
+            },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
+    'message.interactive_reply': {
+      post: {
+        summary:
+          'Un contacto toca un botón de respuesta rápida o una fila de lista.',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: '8f3c…',
+            event: 'message.interactive_reply',
+            occurred_at: '2026-07-01T12:00:00.000Z',
+            account_id: '9f1c…',
+            data: {
+              conversation_id: '77ac…',
+              contact_id: '1d4f…',
+              whatsapp_message_id: 'wamid.…',
+              context_whatsapp_message_id: 'wamid.…',
+              reply_id: 'chr1:ab12cd34:confirm',
+              reply_title: 'Confirmo',
+              phone: '14155550123',
             },
           }),
         },

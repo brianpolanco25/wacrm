@@ -2587,3 +2587,53 @@ describe('inbound webhook: voice notes reach the AI (n15.1, R4–R6)', () => {
     expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled();
   });
 });
+
+describe('inbound webhook: message.interactive_reply (cabbity-health W1)', () => {
+  const events = () =>
+    h.dispatchWebhookEvent.mock.calls.map((c) => c[2] as string);
+  const dataOf = (event: string) =>
+    h.dispatchWebhookEvent.mock.calls.find((c) => c[2] === event)?.[3];
+
+  it('a template quick-reply tap emits it with the payload untouched, next to message.received', async () => {
+    await runWebhook({
+      id: 'wamid.BTN9',
+      from: '15551230000',
+      timestamp: '1700000000',
+      type: 'button',
+      button: { text: 'Confirmo', payload: 'chr1:ab12cd34:confirm' },
+      context: { id: 'wamid.TPL9' },
+    });
+
+    expect(events()).toEqual(['message.received', 'message.interactive_reply']);
+    expect(dataOf('message.interactive_reply')).toEqual({
+      conversation_id: 'conv-1',
+      contact_id: 'contact-1',
+      whatsapp_message_id: 'wamid.BTN9',
+      context_whatsapp_message_id: 'wamid.TPL9',
+      reply_id: 'chr1:ab12cd34:confirm',
+      reply_title: 'Confirmo',
+      phone: '15551230000',
+    });
+  });
+
+  it('an interactive button_reply emits it with the button id', async () => {
+    await runWebhook({
+      id: 'wamid.BTN10',
+      from: '15551230000',
+      timestamp: '1700000000',
+      type: 'interactive',
+      interactive: { button_reply: { id: 'opt-1', title: 'Sí' } },
+    });
+
+    expect(dataOf('message.interactive_reply')).toMatchObject({
+      reply_id: 'opt-1',
+      reply_title: 'Sí',
+      context_whatsapp_message_id: null,
+    });
+  });
+
+  it('a plain text message does not emit it', async () => {
+    await runWebhook();
+    expect(events()).toEqual(['message.received']);
+  });
+});

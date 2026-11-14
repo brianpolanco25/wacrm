@@ -46,6 +46,7 @@ import { resolveConversationForTarget } from '@/lib/whatsapp/resolve-conversatio
 import {
   sendMessageToConversation,
   validateSendMessageParams,
+  validateTemplateParams,
   SendMessageError,
 } from '@/lib/whatsapp/send-message';
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive';
@@ -100,6 +101,7 @@ export async function POST(request: Request) {
           ? (body.interactive_payload as InteractiveMessagePayload)
           : null;
 
+      validateTemplateParams(template?.params);
       validateSendMessageParams({
         messageType: type,
         contentText: typeof body.text === 'string' ? body.text : null,

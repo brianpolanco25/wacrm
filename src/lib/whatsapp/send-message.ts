@@ -56,6 +56,11 @@ import {
 import { assertQuota, recordUsage } from '@/lib/billing/enforce';
 import type { MessageTemplate } from '@/types';
 import {
+  assertButtonParamsMatchTemplate,
+  normalizeTemplateMessageParams,
+  TemplateParamsError,
+} from '@/lib/whatsapp/template-params';
+import {
   resolveTemplateRow,
   templateBodyParams,
   templateContentText,
@@ -220,6 +225,24 @@ export function validateSendMessageParams(params: {
   }
 }
 
+/**
+ * Valida y normaliza `template.params` en su forma objeto (alias
+ * snake_case incluidos). Un array o `undefined` pasa tal cual. Exportada
+ * para que `/api/v1/messages` rechace una forma inválida antes de crear
+ * contacto o conversación.
+ */
+export function validateTemplateParams(raw: unknown): unknown {
+  if (Array.isArray(raw)) return raw;
+  try {
+    return normalizeTemplateMessageParams(raw);
+  } catch (err) {
+    if (err instanceof TemplateParamsError) {
+      throw new SendMessageError('bad_request', err.message, 400);
+    }
+    throw err;
+  }
+}
+
 export async function sendMessageToConversation(
   db: SupabaseClient,
   accountId: string,
@@ -234,7 +257,7 @@ export async function sendMessageToConversation(
     templateName,
     templateLanguage,
     templateParams,
-    templateMessageParams,
+    templateMessageParams: rawTemplateMessageParams,
     interactivePayload,
     replyToMessageId,
     whatsAppConfigId,
@@ -255,6 +278,9 @@ export async function sendMessageToConversation(
     templateName,
     interactivePayload,
   });
+  const templateMessageParams = validateTemplateParams(
+    rawTemplateMessageParams
+  );
 
   // Fase 3 §4: `messages_out`. Checked BEFORE Meta is called — an
   // over-quota send that already reached the customer cannot be
@@ -369,6 +395,17 @@ export async function sendMessageToConversation(
     }
     templateRow = resolved.row;
     sendLanguage = resolved.language;
+    try {
+      assertButtonParamsMatchTemplate(
+        templateMessageParams as SendTimeParams | undefined,
+        templateRow
+      );
+    } catch (err) {
+      if (err instanceof TemplateParamsError) {
+        throw new SendMessageError('bad_request', err.message, 400);
+      }
+      throw err;
+    }
   }
 
   // Attachments hosted in our own Storage go to Meta by media id — the

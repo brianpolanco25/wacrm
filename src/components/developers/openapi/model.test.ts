@@ -59,8 +59,8 @@ describe('buildReference — cobertura', () => {
     expect(inSections).toEqual(model.operations.map((op) => op.id).sort());
   });
 
-  it('cubre las 37 operaciones del inventario de la fase', () => {
-    expect(model.operations).toHaveLength(37);
+  it('cubre las 38 operaciones del inventario de la fase', () => {
+    expect(model.operations).toHaveLength(38);
   });
 
   it('da a cada operación un ancla única', () => {
