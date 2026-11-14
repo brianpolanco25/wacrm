@@ -14,6 +14,8 @@
 
 export const WEBHOOK_EVENTS = [
   'message.received', // an inbound WhatsApp message landed
+  'message.sent', // an outbound message of a conversation was sent
+  'conversation.updated', // status (not closed), AI pause or unread reset changed
   'message.interactive_reply', // a contact tapped a button / list row
   'message.status_updated', // a sent message advanced (sent/delivered/read)
   'conversation.created', // a new conversation was opened for a contact
@@ -32,6 +34,10 @@ export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 /** Human-readable descriptions (surfaced in docs / a future UI). */
 export const WEBHOOK_EVENT_DESCRIPTIONS: Record<WebhookEvent, string> = {
   'message.received': 'An inbound message was received from a contact',
+  'message.sent':
+    'An outbound message of a conversation was sent (panel, API, AI or flow; not once per broadcast recipient)',
+  'conversation.updated':
+    'A conversation changed status (to anything but closed), had its AI auto-reply paused/resumed, or was marked as read',
   'message.interactive_reply':
     'A contact tapped a quick-reply button or list row (reply_id is the untouched button payload / row id)',
   'message.status_updated':
@@ -57,10 +63,20 @@ export const WEBHOOK_EVENT_DATA_FIELDS: Record<WebhookEvent, string[]> = {
   'message.received': [
     'conversation_id',
     'contact_id',
+    'message_id',
     'whatsapp_message_id',
     'content_type',
     'text',
   ],
+  'message.sent': [
+    'conversation_id',
+    'message_id',
+    'whatsapp_message_id',
+    'sender_type',
+    'sender_member_id',
+    'content_type',
+  ],
+  'conversation.updated': ['conversation_id', 'contact_id', 'fields'],
   'message.interactive_reply': [
     'conversation_id',
     'contact_id',
@@ -71,6 +87,7 @@ export const WEBHOOK_EVENT_DATA_FIELDS: Record<WebhookEvent, string[]> = {
     'phone',
   ],
   'message.status_updated': [
+    'message_id',
     'whatsapp_message_id',
     'conversation_id',
     'status',

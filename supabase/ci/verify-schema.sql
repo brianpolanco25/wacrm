@@ -2687,6 +2687,21 @@ BEGIN
   END IF;
   -- /096 -----------------------------------------------------------
 
+  -- 097: conversations.last_inbound_at + índice de última actividad
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'conversations'
+                   AND column_name = 'last_inbound_at') THEN
+    RAISE EXCEPTION 'conversations.last_inbound_at is missing (migration 097)';
+  END IF;
+  IF to_regclass('public.idx_conversations_account_last_message') IS NULL THEN
+    RAISE EXCEPTION 'idx_conversations_account_last_message is missing (migration 097)';
+  END IF;
+  IF pg_get_functiondef('public.bump_conversation_on_inbound(uuid,text)'::regprocedure)
+       NOT LIKE '%last_inbound_at%' THEN
+    RAISE EXCEPTION 'bump_conversation_on_inbound does not set last_inbound_at (migration 097)';
+  END IF;
+  -- /097 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;
