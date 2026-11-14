@@ -61,6 +61,7 @@ const { accountCtx, ACCOUNT_A, ACCOUNT_B, OPERATOR, USER_A, SUPPORT_LOG_ID } =
 const { __resetRateLimitForTests } = await import('@/lib/rate-limit');
 const { GET, POST } = await import('./route');
 const { DELETE } = await import('./[id]/route');
+const { POST: ROTATE } = await import('./[id]/rotate/route');
 const { supportWriteVerdict } = await import('@/lib/auth/support-scope');
 
 const REQUEST_ID = '7e000000-0000-4000-8000-0000000000aa';
@@ -213,6 +214,78 @@ describe('support session — API keys', () => {
     expect(keys.some((k: Record<string, unknown>) => k.id === 'key-b')).toBe(
       false
     );
+  });
+});
+
+const rotate = (id: string) =>
+  ROTATE(
+    new Request('http://localhost', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    { params: Promise.resolve({ id }) }
+  );
+
+describe('support session — rotate', () => {
+  const seedA = () =>
+    h.db.rows('api_keys').push({
+      id: 'key-a',
+      account_id: ACCOUNT_A,
+      name: 'A key',
+      key_prefix: 'wacrm_live_aaaa',
+      key_hash: 'hash-a',
+      scopes: ['contacts:read'],
+      expires_at: null,
+      revoked_at: null,
+    });
+
+  it('mints the replacement on the impersonated account and starts the grace window', async () => {
+    seedA();
+    tag('POST', '/api/account/api-keys/key-a/rotate');
+
+    const res = await rotate('key-a');
+    expect(res.status).toBe(201);
+    const body = await res.json();
+
+    const keys = keysOf(ACCOUNT_A);
+    expect(keys).toHaveLength(2);
+    const fresh = keys.find((k) => k.id !== 'key-a')!;
+    expect(fresh).toMatchObject({ name: 'A key', scopes: ['contacts:read'] });
+    const old = keys.find((k) => k.id === 'key-a')!;
+    expect(new Date(String(old.revoked_at)).getTime()).toBeGreaterThan(
+      Date.now()
+    );
+
+    const [entry] = trail();
+    expect(entry).toMatchObject({
+      account_id: ACCOUNT_A,
+      actor_user_id: OPERATOR,
+    });
+    expect(String(entry.path).split(' · ').slice(1)).toEqual([
+      'api_key.rotate',
+      'key-a',
+    ]);
+    expect(JSON.stringify(trail())).not.toContain(body.plaintext);
+    expect(keysOf(ACCOUNT_B)).toHaveLength(1);
+  });
+
+  it("answers 404 for another account's key and leaves it untouched", async () => {
+    tag('POST', '/api/account/api-keys/key-b/rotate');
+    const res = await rotate('key-b');
+    expect(res.status).toBe(404);
+    expect(h.db.rows('api_keys')).toHaveLength(1);
+    expect(keysOf(ACCOUNT_B)[0].revoked_at).toBeNull();
+  });
+
+  it('writes nothing when the trail cannot be saved (503)', async () => {
+    seedA();
+    tag('POST', '/api/account/api-keys/key-a/rotate');
+    h.failTrail = true;
+    const res = await rotate('key-a');
+    expect(res.status).toBe(503);
+    expect(h.db.rows('api_keys')).toHaveLength(2);
+    expect(keysOf(ACCOUNT_A)[0].revoked_at).toBeNull();
   });
 });
 
