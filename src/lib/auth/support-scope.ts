@@ -56,7 +56,9 @@ export const SUPPORT_WRITABLE_TABLES: ReadonlySet<string> = new Set([
  *   accounts                  ownership row; rename / currency are not
  *                             an `admin`-for-support matter.
  *   account_invitations       an invitation outlives the 30-minute session.
- *   api_keys                  a permanent credential the operator would see.
+ *   api_keys                  closed to the operator's own JWT. Its routes
+ *                             (/api/account/api-keys) are open to a session
+ *                             but use the service role, traced.
  *   webhook_endpoints         a permanent outbound channel for the
  *                             customer's events, with a signing secret
  *                             shown once: same reason as api_keys.
@@ -197,7 +199,6 @@ const SUPPORT_SESSION_EXEMPT = [
  *                                    `auth.uid()` — during a session that
  *                                    is the OPERATOR'S company.
  *   /api/account/invitations         access that outlives the session.
- *   /api/account/api-keys            a permanent credential.
  *   /api/account/webhooks            a permanent outbound channel (and its
  *                                    signing secret) that outlives the
  *                                    session.
@@ -205,6 +206,13 @@ const SUPPORT_SESSION_EXEMPT = [
  *                                    profile into another company.
  *   /api/platform/impersonate (exact) no nested sessions: exit first.
  *                                    `/stop` stays open.
+ *
+ * NOT here: /api/account/api-keys. Human decision (2026-11-14): the
+ * operator mints (and revokes / rotates) the customer's API key to connect
+ * it to Cabbity Health. The routes go through the service role (the table
+ * stays closed at the RLS, above), scoped by the session's account, and
+ * label the trail row `api_key.create|revoke|rotate` with the key's
+ * prefix, never the key (`@/lib/api-keys/support-trace`).
  *
  * NOT here: /api/account/integrations. n13.1 (D3) blocked it; n13.6
  * reverted that by human decision — the operator sets up an integration
@@ -217,7 +225,6 @@ const SUPPORT_SESSION_BLOCKED: readonly { path: string; exact?: boolean }[] = [
   { path: '/api/account/transfer-ownership' },
   { path: '/api/account/members' },
   { path: '/api/account/invitations' },
-  { path: '/api/account/api-keys' },
   { path: '/api/account/webhooks' },
   { path: '/api/invitations/' },
   { path: '/api/platform/impersonate', exact: true },

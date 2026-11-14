@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Support sessions can mint, rotate and revoke API keys
+
+- During a support session the platform operator can now create, rotate and revoke the customer's API keys (to connect the account to Cabbity Health). Each action is recorded in the session's audit trail (`api_key.create|rotate|revoke`, never the key itself) before it is written, and keys minted by support show as "created by support" in Settings → API. Billing, ownership, team members and invitations stay blocked. No migration.
+
 ### Public API: chat for Cabbity Health (`conversations:write`, `conversation_id`, last-activity inbox, signed media, `message.sent`)
 
 - **Migration required: `097_conversation_last_inbound_at.sql`** (apply with `supabase db push --local` / your usual flow). Adds `conversations.last_inbound_at` (backfilled from `messages`), keeps it up to date inside `bump_conversation_on_inbound` (the webhook does not change) and adds an `(account_id, last_message_at desc, id desc)` index.

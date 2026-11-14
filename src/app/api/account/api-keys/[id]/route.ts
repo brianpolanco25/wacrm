@@ -20,11 +20,11 @@
 
 import { NextResponse } from 'next/server';
 
+import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import {
-  assertNotSupportSession,
-  requireRole,
-  toErrorResponse,
-} from '@/lib/auth/account';
+  apiKeysDb,
+  traceApiKeySupportAction,
+} from '@/lib/api-keys/support-trace';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -37,8 +37,6 @@ export async function DELETE(
 ) {
   try {
     const ctx = await requireRole('admin');
-    // s9.5: never during a support session, whatever the role.
-    await assertNotSupportSession(ctx);
 
     const limit = checkRateLimit(
       `admin:apiKeyRevoke:${ctx.userId}`,
@@ -48,6 +46,16 @@ export async function DELETE(
 
     const { id } = await params;
 
+    // Support session: record it before writing; the detail is the key's
+    // uuid (the route has no prefix without a read, and the id is enough
+    // to find it in the customer's roster).
+    await traceApiKeySupportAction(ctx, {
+      action: 'api_key.revoke',
+      method: 'DELETE',
+      path: `/api/account/api-keys/${id}`,
+      detail: id,
+    });
+
     // Scope the update by account_id as well as id so an admin can
     // never revoke another account's key by guessing a UUID. (RLS
     // already enforces this; the explicit filter is belt-and-braces
@@ -56,7 +64,7 @@ export async function DELETE(
     // `revoked_at IS NULL OR revoked_at > now()` — never revoked, or
     // still inside its rotation grace. An already-dead key is a 404.
     const now = new Date().toISOString();
-    const { data, error } = await ctx.supabase
+    const { data, error } = await apiKeysDb(ctx)
       .from('api_keys')
       .update({ revoked_at: now })
       .eq('id', id)

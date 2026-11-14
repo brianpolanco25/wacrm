@@ -179,7 +179,7 @@ export async function middleware(request: NextRequest) {
       NextResponse.json(
         {
           error:
-            'Not available during a support session: billing, ownership, team members and API keys stay with the customer. Exit the session first.',
+            'Not available during a support session: billing, ownership and team members stay with the customer. Exit the session first.',
           code: 'support_session_forbidden',
         },
         { status: 403 }

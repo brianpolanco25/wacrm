@@ -298,8 +298,6 @@ describe('middleware — support sessions write, and are recorded', () => {
     ['DELETE', '/api/account/members/u-1'],
     ['POST', '/api/account/invitations'],
     ['DELETE', '/api/account/invitations/i-1'],
-    ['POST', '/api/account/api-keys'],
-    ['POST', '/api/account/api-keys/k-1/rotate'],
     ['POST', '/api/account/webhooks'],
     ['DELETE', '/api/account/webhooks/w-1'],
     ['POST', '/api/invitations/tok/redeem'],
