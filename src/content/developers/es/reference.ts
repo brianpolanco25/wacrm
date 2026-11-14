@@ -49,6 +49,10 @@ export const webhooks: DocPage = {
       rows: [
         ['`message.received`', 'Llega un mensaje entrante de un contacto'],
         [
+          '`message.interactive_reply`',
+          'Un contacto toca un botón de respuesta rápida o una fila de lista (también dispara `message.received`). `reply_id` es el payload del botón, sin alterar',
+        ],
+        [
           '`message.status_updated`',
           'Un mensaje que enviaste cambia de estado de entrega',
         ],
@@ -103,6 +107,11 @@ export const webhooks: DocPage = {
       code: `// message.received
 { "conversation_id": "…", "contact_id": "…", "whatsapp_message_id": "wamid.…",
   "content_type": "text", "text": "Hola 👋" }
+
+// message.interactive_reply   (reply_id = payload del botón, sin alterar)
+{ "conversation_id": "…", "contact_id": "…", "whatsapp_message_id": "wamid.…",
+  "context_whatsapp_message_id": "wamid.…", "reply_id": "chr1:ab12cd34:confirm",
+  "reply_title": "Confirmo", "phone": "14155550123" }
 
 // message.status_updated
 { "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "delivered" }

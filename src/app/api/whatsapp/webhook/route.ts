@@ -1433,6 +1433,33 @@ async function processMessage(
     content_type: contentType,
     text: contentText,
   });
+
+  // message.interactive_reply: el toque de un botón (plantilla `button`
+  // o `interactive`) llega aparte para que un endpoint suscrito solo a
+  // este evento no reciba el texto libre. `reply_id` es el payload del
+  // botón sin alterar; `reply_title` la etiqueta visible.
+  if (interactiveReplyId) {
+    const replyTitle =
+      message.type === 'button'
+        ? (message.button?.text ?? null)
+        : (message.interactive?.button_reply?.title ??
+          message.interactive?.list_reply?.title ??
+          null);
+    await dispatchWebhookEvent(
+      supabaseAdmin(),
+      accountId,
+      'message.interactive_reply',
+      {
+        conversation_id: conversation.id,
+        contact_id: contactRecord.id,
+        whatsapp_message_id: message.id,
+        context_whatsapp_message_id: message.context?.id ?? null,
+        reply_id: interactiveReplyId,
+        reply_title: replyTitle,
+        phone: contactRecord.phone ?? null,
+      }
+    );
+  }
 }
 
 async function parseMessageContent(

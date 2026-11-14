@@ -66,3 +66,24 @@ describe('normalizeEvents', () => {
     expect(normalizeEvents([])).toBeNull();
   });
 });
+
+describe('message.interactive_reply (cabbity-health W1)', () => {
+  it('es parte del vocabulario y se puede suscribir solo a él', () => {
+    expect(WEBHOOK_EVENTS).toContain('message.interactive_reply');
+    expect(normalizeEvents(['message.interactive_reply'])).toEqual([
+      'message.interactive_reply',
+    ]);
+  });
+
+  it('declara el contrato de `data`', () => {
+    expect(WEBHOOK_EVENT_DATA_FIELDS['message.interactive_reply']).toEqual([
+      'conversation_id',
+      'contact_id',
+      'whatsapp_message_id',
+      'context_whatsapp_message_id',
+      'reply_id',
+      'reply_title',
+      'phone',
+    ]);
+  });
+});
