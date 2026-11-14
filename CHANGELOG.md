@@ -11,6 +11,15 @@ and polish.
 
 ## [Unreleased]
 
+### Public API: chat for Cabbity Health (`conversations:write`, `conversation_id`, last-activity inbox, signed media, `message.sent`)
+
+- **Migration required: `097_conversation_last_inbound_at.sql`** (apply with `supabase db push --local` / your usual flow). Adds `conversations.last_inbound_at` (backfilled from `messages`), keeps it up to date inside `bump_conversation_on_inbound` (the webhook does not change) and adds an `(account_id, last_message_at desc, id desc)` index.
+- New scope `conversations:write` and `PATCH /api/v1/conversations/{id}` (`assigned_agent_id` — a non-viewer member or `null` —, `status`, `ai_autoreply_disabled`, `read: true`). All fields are validated before anything is written; a foreign id is 404, an invalid assignee is 400 `invalid_member`. Resuming the AI releases the assignee and resets the reply budget, exactly like the panel's «Resume AI» (the panel route now shares that code).
+- `POST /api/v1/messages`: `conversation_id` sends through an existing conversation (excludes `to`/`to_user_id`; foreign id → 404) and `sent_by_member_id` (non-viewer member, else 400 `invalid_member`) is stored in `messages.sender_id`.
+- `GET /api/v1/conversations`: `sort=last_activity` (own cursor), `assigned_agent_id` (user id or `none`), `unread=true` and `search`. Conversations now report `last_inbound_at`, `service_window_expires_at` (last inbound + 24 h) and `ai: {active, paused, handoff_summary}`.
+- Messages carry `sender_member_id` and `media: {url, mime_type, filename, expires_at}` — a 10-minute signed URL for objects of the account's own buckets (`media_url` is kept; the buckets are private).
+- Webhooks: new `message.sent` and `conversation.updated`; `message.received` and `message.status_updated` now include `message_id`. Reopening or moving a conversation to `pending` from the panel also fires `conversation.updated`.
+
 ### Public API: `GET /api/v1/members` and scope `members:read` (Cabbity Health)
 
 - No migration (scopes are a free `text[]`). New scope `members:read`, selectable when creating an API key. New `GET /api/v1/members`: the members of the key's account, cursor-paginated, as `{id, full_name, email, role}` where `id` is the user id (the one conversations use as `assigned_agent_id`) and `role` is `owner`, `admin`, `agent` or `viewer`. Never phones, avatars or tokens, and never another account's people.

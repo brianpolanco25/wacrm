@@ -49,6 +49,14 @@ export const webhooks: DocPage = {
       rows: [
         ['`message.received`', 'Llega un mensaje entrante de un contacto'],
         [
+          '`message.sent`',
+          'Se envió un saliente de una conversación (panel, API, IA o flujo); no uno por destinatario de una difusión',
+        ],
+        [
+          '`conversation.updated`',
+          'Una conversación cambió de estado (a algo distinto de cerrada), se pausó o reanudó su IA o se marcó como leída. `fields` dice cuál',
+        ],
+        [
           '`message.interactive_reply`',
           'Un contacto toca un botón de respuesta rápida o una fila de lista (también dispara `message.received`). `reply_id` es el payload del botón, sin alterar',
         ],
@@ -105,8 +113,15 @@ export const webhooks: DocPage = {
       kind: 'code',
       lang: 'jsonc',
       code: `// message.received
-{ "conversation_id": "…", "contact_id": "…", "whatsapp_message_id": "wamid.…",
+{ "conversation_id": "…", "contact_id": "…", "message_id": "…", "whatsapp_message_id": "wamid.…",
   "content_type": "text", "text": "Hola 👋" }
+
+// message.sent   (sender_member_id: el miembro que lo envió, o null)
+{ "conversation_id": "…", "message_id": "…", "whatsapp_message_id": "wamid.…",
+  "sender_type": "agent", "sender_member_id": "…", "content_type": "text" }
+
+// conversation.updated   (fields: status | ai_autoreply_disabled | unread_count)
+{ "conversation_id": "…", "contact_id": "…", "fields": ["unread_count"] }
 
 // message.interactive_reply   (reply_id = payload del botón, sin alterar)
 { "conversation_id": "…", "contact_id": "…", "whatsapp_message_id": "wamid.…",
@@ -114,7 +129,7 @@ export const webhooks: DocPage = {
   "reply_title": "Confirmo", "phone": "14155550123" }
 
 // message.status_updated
-{ "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "delivered" }
+{ "message_id": "…", "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "delivered" }
 
 // conversation.created / conversation.closed
 { "conversation_id": "…", "contact_id": "…" }

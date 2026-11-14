@@ -64,7 +64,7 @@ export const CONVERSATIONS_OPERATIONS: OperationDef[] = [
     operationId: 'listConversations',
     summary: 'Listar conversaciones',
     description:
-      'Las conversaciones de la cuenta, de la más nueva a la más vieja, con su contacto y las etiquetas de este embebidos.',
+      'Las conversaciones de la cuenta, con su contacto y las etiquetas de este embebidos. Por defecto de la más nueva a la más vieja; con `sort=last_activity`, por último mensaje (el orden de una bandeja), con su propio cursor: no mezcles cursores entre ordenaciones. Cada una informa de la ventana de 24 h (`service_window_expires_at`) y del estado de la IA (`ai`).',
     tag: 'conversations',
     scopes: ['conversations:read'],
     paginated: true,
@@ -75,6 +75,28 @@ export const CONVERSATIONS_OPERATIONS: OperationDef[] = [
       queryParam('contact_id', 'Solo las de este contacto.', {
         schema: { type: 'string', format: 'uuid' },
       }),
+      queryParam(
+        'sort',
+        'Orden. `created_at` (por defecto) o `last_activity` (`last_message_at` desc, `id` desc; las que no tienen mensajes al final).',
+        { schema: { type: 'string', enum: ['created_at', 'last_activity'] } }
+      ),
+      queryParam(
+        'assigned_agent_id',
+        'Solo las asignadas a este usuario, o `none` para las sin asignar.',
+        { schema: { type: 'string' } }
+      ),
+      queryParam(
+        'unread',
+        'Con `true`, solo las que tienen mensajes sin leer.',
+        {
+          schema: { type: 'string', enum: ['true', 'false'] },
+        }
+      ),
+      queryParam(
+        'search',
+        'Texto en el nombre o el teléfono del contacto (se sanea como en `GET /contacts`).',
+        { schema: { type: 'string' } }
+      ),
     ],
     envelope: 'list',
     responses: [
@@ -85,7 +107,13 @@ export const CONVERSATIONS_OPERATIONS: OperationDef[] = [
         example: [EXAMPLE_CONVERSATION],
       },
     ],
-    errors: [],
+    errors: [
+      {
+        ...ERR_BAD_REQUEST,
+        description:
+          '`sort`, `assigned_agent_id` o `unread` con un valor inválido.',
+      },
+    ],
   },
   {
     method: 'get',
@@ -106,6 +134,62 @@ export const CONVERSATIONS_OPERATIONS: OperationDef[] = [
       },
     ],
     errors: [ERR_NOT_FOUND],
+  },
+  {
+    method: 'patch',
+    path: '/conversations/{id}',
+    operationId: 'updateConversation',
+    summary: 'Asignar, cerrar, reabrir, pausar la IA o marcar como leída',
+    description:
+      'Aplica uno o varios cambios a una conversación de la cuenta y devuelve la conversación ya actualizada. Hace falta al menos un campo y se valida todo ANTES de escribir: un campo inválido no deja la conversación a medias. Emite los webhooks de siempre (`conversation.assigned`, `conversation.closed`) y `conversation.updated` para reabrir/pendiente, pausar o reanudar la IA y marcar leída. Reanudar la IA (`ai_autoreply_disabled: false`) devuelve el hilo al bot: también lo desasigna y reinicia su cupo de respuestas, igual que «Resume AI» del panel; si en la misma petición va `assigned_agent_id`, este se aplica después y gana.',
+    tag: 'conversations',
+    scopes: ['conversations:write'],
+    parameters: [CONVERSATION_ID],
+    requestBody: {
+      required: true,
+      description: 'Los cambios; al menos uno.',
+      schema: {
+        type: 'object',
+        properties: {
+          assigned_agent_id: {
+            type: ['string', 'null'],
+            description:
+              'Id de un miembro de la cuenta que no sea `viewer` (de `GET /members`), o `null` para desasignar.',
+          },
+          status: {
+            type: 'string',
+            enum: [...CONVERSATION_STATUS_VALUES],
+          },
+          ai_autoreply_disabled: {
+            type: 'boolean',
+            description: '`true` pausa la IA en este hilo; `false` la reanuda.',
+          },
+          read: {
+            type: 'boolean',
+            enum: [true],
+            description: 'Solo `true`: pone `unread_count` a 0.',
+          },
+        },
+      },
+      example: { assigned_agent_id: '6b5a4c3d-2e1f-4a09-8b7c-6d5e4f3a2b1c' },
+    },
+    envelope: 'data',
+    responses: [
+      {
+        status: 200,
+        description: 'La conversación actualizada.',
+        schema: ref('Conversation'),
+        example: EXAMPLE_CONVERSATION,
+      },
+    ],
+    errors: [
+      {
+        ...ERR_BAD_REQUEST,
+        description:
+          'Sin campos, un campo con tipo o valor inválido, o `assigned_agent_id` que no es de un miembro de la cuenta que no sea viewer (`invalid_member`).',
+      },
+      ERR_NOT_FOUND,
+    ],
   },
   {
     method: 'get',

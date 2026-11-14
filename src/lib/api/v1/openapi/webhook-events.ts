@@ -102,11 +102,52 @@ export const WEBHOOK_EVENT_DATA_SCHEMAS: Record<WebhookEvent, SchemaObject> = {
     {
       conversation_id: uuid,
       contact_id: uuid,
+      message_id: { ...uuid, description: 'Id del mensaje (`messages.id`).' },
       whatsapp_message_id: { type: 'string' },
       content_type: { type: 'string' },
       text: nullableString,
     },
     'Un mensaje entrante de un contacto.'
+  ),
+  'message.sent': dataObject(
+    {
+      conversation_id: uuid,
+      message_id: {
+        ...uuid,
+        type: ['string', 'null'],
+        description:
+          'Id del mensaje (`messages.id`); null solo si no se pudo leer la fila (envíos del bot).',
+      },
+      whatsapp_message_id: nullableString,
+      sender_type: {
+        type: 'string',
+        description:
+          '`agent` (panel o API) o `bot` (IA, flujo, automatización).',
+      },
+      sender_member_id: {
+        ...nullableString,
+        description:
+          'Miembro que lo envió (`sent_by_member_id` de la API); null si no hay.',
+      },
+      content_type: { type: 'string' },
+    },
+    'Un saliente de una conversación se envió y quedó guardado, venga del panel, de la API, de la IA o de un flujo. No se emite por cada destinatario de una difusión.'
+  ),
+  'conversation.updated': dataObject(
+    {
+      conversation_id: uuid,
+      contact_id: { ...uuid, type: ['string', 'null'] },
+      fields: {
+        type: 'array',
+        description:
+          'Qué cambió: `status` (a algo distinto de closed; el cierre tiene su evento), `ai_autoreply_disabled` o `unread_count` (pasó a 0).',
+        items: {
+          type: 'string',
+          enum: ['status', 'ai_autoreply_disabled', 'unread_count'],
+        },
+      },
+    },
+    'Una conversación cambió de estado (reabierta o pendiente), se pausó o reanudó su IA o se marcó como leída.'
   ),
   'message.interactive_reply': dataObject(
     {
@@ -133,6 +174,7 @@ export const WEBHOOK_EVENT_DATA_SCHEMAS: Record<WebhookEvent, SchemaObject> = {
   ),
   'message.status_updated': dataObject(
     {
+      message_id: { ...uuid, description: 'Id del mensaje (`messages.id`).' },
       whatsapp_message_id: { type: 'string' },
       conversation_id: uuid,
       status: {
@@ -219,9 +261,23 @@ export const WEBHOOK_EVENT_DATA_EXAMPLES: Record<WebhookEvent, unknown> = {
   'message.received': {
     conversation_id: '7f9d1a2b-3c4d-4e5f-8091-a2b3c4d5e6f7',
     contact_id: '2c8a4a9e-1f3b-4c2d-9a10-6b7c8d9e0f11',
+    message_id: 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e',
     whatsapp_message_id: 'wamid.HBgLMTQxNTU1NTAxMjMVAgARGBI5QTND',
     content_type: 'text',
     text: 'Hola 👋',
+  },
+  'message.sent': {
+    conversation_id: '7f9d1a2b-3c4d-4e5f-8091-a2b3c4d5e6f7',
+    message_id: 'c2d3e4f5-a6b7-4c8d-9e0f-1a2b3c4d5e6f',
+    whatsapp_message_id: 'wamid.HBgLMTQxNTU1NTAxMjMVAgARGBI5QTRF',
+    sender_type: 'agent',
+    sender_member_id: '6b5a4c3d-2e1f-4a09-8b7c-6d5e4f3a2b1c',
+    content_type: 'text',
+  },
+  'conversation.updated': {
+    conversation_id: '7f9d1a2b-3c4d-4e5f-8091-a2b3c4d5e6f7',
+    contact_id: '2c8a4a9e-1f3b-4c2d-9a10-6b7c8d9e0f11',
+    fields: ['unread_count'],
   },
   'message.interactive_reply': {
     conversation_id: '7f9d1a2b-3c4d-4e5f-8091-a2b3c4d5e6f7',
@@ -233,6 +289,7 @@ export const WEBHOOK_EVENT_DATA_EXAMPLES: Record<WebhookEvent, unknown> = {
     phone: '14155550123',
   },
   'message.status_updated': {
+    message_id: 'c2d3e4f5-a6b7-4c8d-9e0f-1a2b3c4d5e6f',
     whatsapp_message_id: 'wamid.HBgLMTQxNTU1NTAxMjMVAgARGBI5QTND',
     conversation_id: '7f9d1a2b-3c4d-4e5f-8091-a2b3c4d5e6f7',
     status: 'delivered',

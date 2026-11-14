@@ -151,6 +151,10 @@ export const authentication: DocPage = {
         ['`contacts:read`', 'Listar y leer contactos'],
         ['`contacts:write`', 'Crear y actualizar contactos'],
         ['`conversations:read`', 'Listar y leer conversaciones'],
+        [
+          '`conversations:write`',
+          'Asignar, cerrar, reabrir, pausar la IA y marcar como leídas las conversaciones',
+        ],
         ['`conversations:export`', 'Exportar conversaciones y sus mensajes'],
         [
           '`members:read`',
