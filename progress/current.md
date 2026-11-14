@@ -1,5 +1,114 @@
 # Estado actual
 
+## 2026-11-12 — Aura v5: saludo, empatía con medida, sin calendario, un solo hueco, fichas breves; n13.11 fechas
+
+Brian trajo seis cambios de comportamiento de Aura (Rehactive, producción) con tres capturas: (1) saludar y presentarse
+siempre como Aura, asistente virtual; (2) empatía solo ante dolor/lesión, no ante «necesito terapia» («Lamento mucho que
+esté pasando por eso» sobraba); (3) nunca el emoji de calendario 📅 (los pacientes leen «24»/«FEB» como fecha); (4) sigue
+diciendo «Mañana jueves 13 de noviembre» siendo jueves 12 (13 = viernes); (5) ofrecer UN solo hueco, el más cercano, y
+más solo si lo pide (objetivo: llenar los cupos del día); (6) información del centro condensada, párrafos de 2-3 líneas
+con línea en blanco, negrita de WhatsApp (*texto*) en montos y datos clave.
+
+Hecho: **`progress/aura_prompt_completo_v5.md`** (24 342 chars; fuente de verdad del prompt desde ahora: secciones
+nuevas SALUDO Y PRESENTACIÓN, EMPATÍA CON MEDIDA, FORMATO DE LOS MENSAJES; FECHA Y HORA reescrita; CITAS con un solo
+hueco; ejemplos en formato ficha) y **`progress/aura_conector_health_v5.txt`** (1 999 chars; un starts_at, plantilla de
+confirmación sin 📅 y con negritas). Script de aplicación en el scratchpad de la sesión (`aura_apply_v5.js`, node por
+PostgREST dentro de `crm-app`, con `--check` de solo lectura; lo corre Brian con `!` por `ssh cabbity`, el clasificador
+bloquea al agente). Pendiente: Brian lo ejecuta y prueba en playground.
+
+Código: **n13.11 `ai-weekday-guard`** (sin sdd, `in_progress`, rama `feat/ai-weekday-guard`, worktree
+`.claude/worktrees/ai-weekday-guard`, desde `main @ 57a98e6`): líneas de fecha local con today/tomorrow ya calculados y
+ANTES de la UTC; etiqueta relativa «(tomorrow)» en los campos `_local`; nuevo `weekday-fix.ts` que corrige de forma
+determinista el día de la semana del texto final cuando contradice al calendario («jueves 13 de noviembre» →
+«viernes»), aplicado en loop.ts con warn `[ai weekday-fix]`. Implementada en 2 rondas (533a7d2, 9af3d5c; el reviewer pidió no tocar listas «lunes a viernes», no aplicar el relativo sin zona, no corregir conflictos relativo↔fecha, año plausible), APPROVED, merge 0224f5f, compuerta completa verde (6184 tests, build), push → `done`. Deuda: generate.ts sin herramientas no pasa por la red; «Live data» sin «(tomorrow)». Producción: modelo de Rehactive era gemini-3.5-flash-lite (Brian lo subió a gemini-3.5-flash el 12-nov); ai_policy de Health estaba NULL en las 16 operaciones (guardia n13.7 inactiva): script `health_policy_apply.js` en el scratchpad, lo corre Brian. **n15.2 `ai-image-input`** (sdd): Brian aclaró que el objetivo son fotos de cédula y carnet de ARS. Spec aprobado («dale»), implementada en 2 rondas (9b42939, 90953bf, cfc0707; el reviewer cazó un reintento sin imágenes que podía duplicar una cita cuando el proveedor no manda `usage`), APPROVED, merge 5e55426, compuerta completa verde (6297 tests, build), push → `done`. Sin migración; 3 variables de entorno nuevas con defaults (`AI_IMAGE_MAX_PER_TURN`, `AI_IMAGE_MAX_BYTES`, `AI_IMAGE_DOWNLOAD_TIMEOUT_MS`, en docs/docker.md; `.env.local.example` bloqueado por permisos, añadir a mano). Prompt v5 ampliado con «FOTOS DEL PACIENTE»: reaplicar en producción tras el despliegue (script `aura_apply_v5.js` del scratchpad). Deuda: álbum de N fotos = N respuestas (decisión de Brian pendiente: agrupar ráfagas); borrador de bandeja sin párrafo de imágenes; sticker = cualquier image/webp.
+Dudas abiertas para Brian: si la captura 3 es posterior al despliegue de n13.9 (CI 43068701985, 11-nov 17:29 UTC) y si
+`ai_policy` de las operaciones Health se recargó en producción tras la migración 095 (bootstrap); sin ella la guardia de
+texto de n13.7 está inactiva.
+
+## 2026-11-11 (noche) — n13.10 interruptor de respuesta automática; cuenta del operador
+
+Brian no podía apagar «Responder automáticamente» en Rehactive: el Switch tenía `disabled={disabled || !isActive}` y el
+asistente principal se apagó a las 17:24, así que quedaba bloqueado pero pintado encendido. **n13.10
+`ai-autoreply-toggle-independent`** (sin sdd): regla extraída a `ai-config-state.ts` (`autoReplyControls`), el switch
+solo se bloquea por rol o guardado; textos es/en aclaran que solo aplica con el asistente activo. Implementada (69ced6e),
+APPROVED, merge 57a98e6, compuerta completa verde, push, CI verde → `done`. Sin migración. Deuda anotada por el
+implementer: Switches de esa pantalla sin `id`/`aria-labelledby`; comentario basura en `ai-config.tsx` ~L380.
+
+Aparte: brianpolancodisenos@gmail.com (platform admin) era expulsado del dashboard por la puerta de onboarding porque su
+empresa «Brian Polanco» (10826eaf) tenía suscripción `incomplete` (Pro/PayPal nunca pagado) y perfil vacío. Fix
+propuesto: plan `ilimitado` manual como las demás cuentas internas; el clasificador bloqueó el UPDATE, SQL dejado en
+el scratchpad de la sesión y camino UI (`/platform` → asignar plan) indicado a Brian. Su rol en esa cuenta es `user`.
+
+## 2026-11-11 (tarde) — n13.9: Aura dice mal el día de la semana
+
+Captura de producción (Rehactive): Aura ofreció «Jueves 13 de noviembre» cuando el 13-nov-2026 es viernes. Causa:
+el resultado de `find_availability` llega como JSON crudo sin weekday (`src/lib/ai/tools/result.ts`) y la línea
+«Current date and time» del prompt de herramientas tampoco lo lleva; el modelo calcula el día de cabeza. El bloque
+Live data de n13.7 sí lo anota, pero no cubre el camino de tool call. Feature **n13.9 `ai-tool-dates-weekday`**
+(sin sdd, `in_progress`, rama `feat/ai-tool-dates-weekday`, worktree `.claude/worktrees/ai-tool-dates-weekday`,
+desde `main @ 4257fcc`): weekday en las líneas de fecha del prompt, campo hermano `<clave>_local` («Friday
+2026-11-13 14:00 (-04:00)») en cada fecha ISO de los resultados de herramienta sin tocar el valor original, regla
+«nunca calcules el weekday», helper compartido con live-render. Brian: «dale subelo». Implementada (ac6bc6e), reviewer APPROVED, merge c3a2d88, compuerta completa en main verde, push y CI 43057042332 verde (sube también n13.7 y n15.1; las tres a `done`). **Incidente**: el push desplegó n13.7+n15.1 sin 095/096 aplicadas en el Supabase remoto → `loadAiConfig` y GET /api/ai/config fallaban por columna inexistente (`voice_fallback_message`): Ajustes → IA vacío, playground «Stored API key could not be decrypted», Aura caída ~1 h. Brian pegó token sbp_; 095 y 096 aplicadas y verificadas (historial 093–096, `ai_live_reads`, `ai_policy`, `transcript*`, 2 ai_configs intactas). Lección en memoria: aplicar migraciones remotas ANTES del push, o no pushear. El guardado de Ajustes → IA en ese estado (16:30) dejó `ai_configs` de Rehactive con `system_prompt` NULL e `is_active`/`auto_reply_enabled` en false; restaurado por SQL desde `progress/aura_prompt_completo_v4.md` (21 356 chars, cabecera «QUIÉN ES AURA»), interruptores en true. Conector Health intacto (1994 chars, `ai_timezone` Santo Domingo). `ai_live_reads` sigue `[]`: las lecturas en vivo de n13.7 no están configuradas aún para Rehactive. `voice_fallback_message` quedó con el default en inglés. Después: plantilla de confirmación de cita nueva (título «SU CITA QUEDÓ PROGRAMADA:» en mayúsculas, línea en blanco tras la primera, mapa https://maps.app.goo.gl/rUywiAEpMRAoENBF7 bajo el lugar) en `progress/aura_conector_health_v4.txt` (1992 chars; recortes: «deja una propuesta», «la confirma el recordatorio») y referencias alineadas en el prompt v4; ambos aplicados en producción por SQL. Pendiente: Brian revoca el token y comprueba en playground «viernes 13».
+Ojo: `main` está 11 commits por delante de `origin/main` (n13.7 + n15.1 fusionadas, sin push): el push de n13.9
+las sube también; mirar CI de main después.
+
+Aparte, consulta de Brian resuelta sin código: en la automatización «Bienvenida · menú al primer mensaje» de
+Rehactive, para que Aura responda cuando el primer mensaje contiene «darme consulta», basta un paso Condición
+(Contenido del mensaje → «darme consulta») con la rama Sí vacía y la bienvenida en la rama No: si la automatización
+no envía, la reserva de `inbound_auto_replies` queda libre y la IA responde.
+
+
+## 2026-11-11 — n13.7 y n15.1 aprobadas; implementación en paralelo
+
+Brian aprobó por la mañana los dos specs `spec_ready` de anoche: **n13.7 `ai-grounded-availability`** tal cual
+(D1–D8, migración 095) y **n15.1 `ai-voice-notes`** con D3 cambiada: ante fallo de transcripción, un reintento
+(solo errores transitorios) y texto fijo pidiendo que escriba, sin traspaso ni apagar la IA. Worktrees creados
+desde `main @ 2799b6b`: `.claude/worktrees/ai-grounded-availability` (`feat/ai-grounded-availability`, implementer
+lanzado, `in_progress`) y `.claude/worktrees/ai-voice-notes` (`feat/ai-voice-notes`; spec_author revisando D3,
+luego implementer). Las dos tocan `auto-reply.ts`, `defaults.ts`, playground, `messages/*`, CHANGELOG y
+`verify-schema.sql`: quien fusione segundo rebasa. Tras APPROVED: merge a main, compuerta completa, push, done
+(ver memoria autonomia-merge-push). Pendiente humano: aplicar 095/096 en Supabase remoto; verificar adjuntos en
+bandeja (m14.x) y dar un ejemplo de las «mentiras» de Aura.
+
+
+## 2026-11-10 — Aura (ex Elsa): cédula con guiones, sin pedir consentimiento, menos mentiras
+
+Encargo de Brian: la IA de Rehactive pasa a llamarse **Aura**; debe aceptar la cédula con guiones y mandarla a Health solo con dígitos; dejar de preguntar si autoriza el registro de datos; y dejar de «decir mentiras». Hecho: (1) textos nuevos `progress/aura_prompt_completo_v4.md` (fuente de verdad del prompt; añade VERDAD Y LÍMITES y DOCUMENTO DE IDENTIDAD) y `progress/aura_conector_health_v3.txt` (1994 chars); script de aplicación en el scratchpad de la sesión (`aura_apply.js`, PostgREST desde el contenedor `crm-app`; el clasificador bloquea al agente, lo corre Brian con `!`). (2) Feature **n13.8 `health-document-normalize`** (sin sdd, `in_progress`, rama `feat/health-document-normalize`): normalización declarativa `normalize` en el ejecutor + descripciones del catálogo Health sin «consentimiento expreso». Tras el merge hay que resincronizar `integration_operations` en producción (bootstrap o patch). (3) n13.7 `ai-grounded-availability` → **`spec_ready`** (`specs/ai-grounded-availability/`, D1–D8), esperando aprobación de Brian: dos capas (lecturas en vivo inyectadas en el prompt vía columna nueva `ai_live_reads`, migración 095 + guardia del texto final) y política `ai_policy` por operación (cancelar solo tras listar citas y buscar disponibilidad); se implementa después de n13.8.
+
+**Cierre (misma tarde):** n13.8 APPROVED (review en `progress/review_health-document-normalize.md`) y fusionada (bb18135). Al correr la compuerta en main aparecieron 2 tests rojos de m14.1 (`/api/media/sign`: esperaban 403 y m14.3 responde 400 a rutas no canónicas): **CI de main llevaba en rojo desde el 6-nov (a4726df)** y producción seguía en 7bc2fd2 (n13.6), sin nada de m14.x. Abierta y cerrada **m14.4 `media-sign-tests-canonical`** (solo tests, aa6a8d0; revisada por el líder por diff, sin reviewer, al no tocar comportamiento). Compuerta completa en verde en main y push → CI → despliegue. CI verde (run 42946478902) y desplegado. Brian corrió `health_ops_sync.js` (scratchpad) en el contenedor: `integration_operations` de Health ya lleva las descripciones nuevas (sin «consentimiento expreso») y `normalize: compact` en document_number (3 operaciones). Ojo al comparar jsonb desde JS: Postgres reordena claves; comparar canónico. Abierta **n15.1 `ai-voice-notes`** (sdd) → **`spec_ready`** (`specs/ai-voice-notes/`, migración 096, sin dependencias nuevas): la IA debe responder a notas de voz (hoy ni dispara ni entra en contexto).
+
+**Parado por Brian el 2026-11-10 («cuando tengas el spec lo paras ahí y seguimos tomorrow»).** Para el 11-nov: (1) Brian aprueba o pide cambios en los dos specs `spec_ready`: n13.7 (dos capas + `ai_policy`, migración 095) y n15.1 (transcripción en el camino de la IA; el líder recomienda cambiar la decisión 2: reintento + texto fijo en vez de traspaso pegajoso). Orden sugerido: n13.7 y luego n15.1. (2) Brian verifica en producción: playground con cédula con guiones y paciente nuevo sin pregunta de consentimiento; adjuntos visibles en la bandeja de Rehactive (m14.1/m14.2 recién desplegados); si siguen sin verse, pedir conversación concreta y leer logs del espejo de media en `crm-app`. (3) Un ejemplo concreto de las «mentiras» de Aura para validar la sección VERDAD Y LÍMITES. Adjuntos no visibles: m14.1/m14.2 recién desplegados por primera vez; Brian verifica. Ojo local: `npm run lint` en el checkout principal barre los `.next` de los worktrees de `.claude/worktrees/` y falla por eso; usar `npx eslint . --ignore-pattern '.claude/**'` o borrar los worktrees terminados.
+
+## 2026-11-10 — Elsa cancela en vez de reprogramar
+
+Brian mostró en playground que Elsa cancelaba con motivo de horario. Causa: el prompt v2 preguntaba motivo y ofrecía huecos en el mismo mensaje. Además el prompt guardado en `ai_configs` de Rehactive estaba corrupto (frases truncadas al pegarlo) y aún tenía la sección Gicre. Reconstruido entero en `progress/elsa_prompt_citas_v2.md` → `progress/elsa_prompt_completo_v3.md` y aplicado en producción junto con `progress/elsa_conector_health_v2.txt` (1990 chars; la columna trunca a 2000). Nota de n13.7 ampliada con la guardia de código para `cancel_appointment`. Pendiente: Brian repite la prueba. Nayelhy L. dada de alta a mano en Rehactive como `agent` (perfil insertado, invitación `cc2fe434…` aceptada). **Deuda/bug**: su usuario auth existía desde el 3-nov, confirmado y con login el 5-nov, pero SIN perfil: `handle_new_user` falló en silencio (rama personal con `EXCEPTION WHEN OTHERS → RAISE WARNING`). Investigar causa en logs de Postgres y plantear feature: alta sin perfil debe fallar ruidosamente o repararse al iniciar sesión.
+
+## Fase 14 — adjuntos que no se ven (abierta el 2026-11-05)
+
+Origen: captura de Brian en una conversación de Photo Nice Studio: dos imágenes entrantes con icono roto y dos
+salientes como «[image]». Diagnóstico del líder: (a) en **sesión de soporte** `src/lib/media/signed-url.ts` firma con
+el JWT del operador y la política 044 (`profiles.user_id = auth.uid()`) resuelve SU cuenta, no la impersonada → la
+firma falla, cae a la URL pública y el bucket es privado en producción (comprobado: 400) → `ImageOff`; sin rastro en
+logs del servidor. (b) Los ecos de coexistencia (`smb_message_echoes`) se guardan como marcador `[tipo]` con
+`media_url` null por diseño de #1651. Brian: «arreglalo». Dos features sin spec_author, en paralelo desde
+`main @ 7bc2fd2`:
+
+- `m14.1 support-media-signing` (`approved`, 3 rondas: traversal por normalización de storage-js → cerrado con dos capas
+  en `pathBelongsTo`; `expiresAt` solo con reloj local vía `expiresIn`). Merge b6719e0. Deuda: restringir
+  `/api/media/sign` a sesiones de soporte; unificar su validación con `assertStoragePathOwnedBy`.
+- `m14.2 coexistence-echo-media` (`approved`, 2 rondas: revoke limpia el adjunto, edit sobre adjunto escribe el caption a
+  secas, test de reintento). `main` ff 0dd04d8. Deuda H4–H6, H8 en `progress/impl_coexistence-echo-media.md`.
+- `m14.3 storage-path-canonical` (`approved`, 1 ronda). **Vulnerabilidad crítica** hallada por el reviewer de m14.1 y
+  auditada en `progress/sec_storage-path-normalization.md` (C1 `resolveOutboundMedia`, H1 `ensureImageHeaderHandle`):
+  un `media_url` con `..` codificado pasaba el check de cuenta y el rol de servicio descargaba y enviaba a Meta
+  adjuntos de otra empresa. Fix centralizado en `storage-url.ts` (path canónico + ida y vuelta `new URL` +
+  `assertStoragePathOwnedBy` con UUID estricto). Merge a4726df (conflictos de apéndice en CHANGELOG y
+  tenant-isolation.test.ts, ambos bloques conservados). **Antes de desplegar**: las dos consultas SQL de solo lectura
+  de `progress/impl_storage-path-canonical.md` («Verificaciones manuales pendientes») deben dar 0 filas.
+
+n13.6 `integrations-support-manage`: reviewer APPROVED, fusionada en main (7bc2fd2) y pusheada; pasada a `done` el
+2026-11-05.
+
 ## Fase 12 — invitación directa (abierta el 2026-11-03)
 
 Origen: un cliente invitó a un usuario desde Miembros y ese usuario acabó como empresa nueva. Decisión del humano:
@@ -335,3 +444,11 @@ Spec aprobado por el humano el 2026-11-04 («dale», seis decisiones recomendada
 (lint src 0 err, typecheck, 5250 tests, build, replay 001–093 + verify-schema). Migraciones 088, 089 y 093 aplicadas en Supabase remoto por el líder el 2026-11-04 vía API de gestión (`/database/query`, token con
 alcance limitado que Brian pasó en chat; 088/089 no estaban aplicadas aunque el código en producción las espera) y registradas en
 `supabase_migrations.schema_migrations` (historial ahora 001–093 sin 092). Pendiente humano: guiones S1/S2 de `progress/impl_member-direct-create.md`. Deuda: usuario en Auth sin perfil → 409, sin reparar.
+
+## 2026-11-09 — Elsa afirma disponibilidad inventada (pendiente para el 10-nov)
+- Dada de alta **n13.7 `ai-grounded-availability`** (`pending`, sdd): garantía de código para que la IA
+  siempre tenga la disponibilidad real de Cabbity Health antes de hablar de días u horas. Diseño
+  recomendado en la `note` de la feature. Siguiente paso: lanzar `spec_author` → `spec_ready` → aprobación de Brian.
+- Textos de prompt ya redactados (Brian los pega en el CRM): `progress/elsa_conector_health_v2.txt`
+  (1999 chars, Ajustes → Integraciones → Cabbity Health → Instrucciones para la IA) y
+  `progress/elsa_prompt_citas_v2.md` (sección para el prompt de Elsa; quitar horarios fijos y «No conoces la fecha de hoy»).

@@ -107,6 +107,13 @@
       "worktree": ".claude/worktrees/integraciones",
       "base": "main @ 5f64211",
       "note": "Fase 13 (2026-11-03): integraciones con aplicaciones Cabbity. El superadmin crea en el panel de plataforma integraciones (p. ej. Cabbity Health: crear citas, consultar doctores) que los clientes activan y usan desde el CRM. Sin spec todavía (sdd); diseño abierto, el spec debe fijar el modelo (catálogo declarativo de operaciones HTTP vs. conectores codificados) y dejar las decisiones al humano."
+    },
+    "14": {
+      "doc": null,
+      "branch": "feat/support-media-signing",
+      "worktree": ".claude/worktrees/support-media-signing",
+      "base": "main @ 7bc2fd2",
+      "note": "Fase 14 (2026-11-05): adjuntos que no se ven en la bandeja. Diagnóstico del líder sobre captura de Brian: (a) en sesión de soporte las imágenes espejadas en chat-media salen rotas porque signed-url.ts firma con el JWT del operador y la política 044 comprueba SU cuenta, no la suplantada; Supabase rechaza, cae a la URL pública y el bucket es privado en producción (400). (b) Los ecos de coexistencia (enviados desde el teléfono) se guardan como «[image]» sin media_url por diseño de #1651. Brian: «arreglalo» (2026-11-05). Dos features sin spec_author, decididas directamente."
     }
   },
   "features": [
@@ -1425,6 +1432,315 @@
       ],
       "review": "APPROVED (2026-11-05) → progress/review_cabbity-health-connector.md; guion §M1 de lectura y test vivo 7/7 corridos por el líder",
       "merged": "main 2026-11-05 (ff 69d67dd); pusheada 2026-11-05 con n13.3"
+    },
+    {
+      "id": "n13.6",
+      "name": "integrations-support-manage",
+      "phase": "13",
+      "status": "done",
+      "spec": "specs/integrations-catalog/requirements.md#D3 (alternativa) + acceptance de esta entrada",
+      "sdd": false,
+      "branch": "feat/integrations-support-manage",
+      "worktree": ".claude/worktrees/integrations-support-manage",
+      "depends_on": [
+        "n13.1",
+        "n13.3"
+      ],
+      "note": "Decisión del humano (2026-11-05): «el superadmin debería poder hacerlo». Revierte D3 de n13.1: en sesión de soporte, el operador de plataforma puede activar (pegar credencial), probar, desactivar y cambiar los ajustes de IA de una integración del cliente, con traza en impersonation_actions. Motivo: el superadmin configura Cabbity Health a Rehactive y la única cuenta real de Rehactive es del cliente.",
+      "approval": "humano 2026-11-05: decidido directamente, sin spec_author",
+      "acceptance": [
+        "A1 En sesión de soporte (ctx.impersonation), PUT/PATCH/DELETE /api/account/integrations/{id} y POST .../test dejan de responder 403: se comportan igual que para un admin de la cuenta, y cada escritura registra una fila en impersonation_actions con la acción (integration.enable | integration.test | integration.disable | integration.ai_settings), el slug de la integración y sin la credencial (ni en claro ni últimos 4 en la traza).",
+        "A2 GET /api/account/integrations devuelve canManage = true en sesión de soporte (el rol efectivo ya es admin); la UI de Ajustes → Integraciones muestra los controles y un aviso de que se actúa como soporte (i18n es/en).",
+        "A3 Lectura y escritura siguen filtradas por el account_id de la cuenta impersonada (CP3): un caso nuevo en tenant-isolation.test.ts demuestra que la sesión de soporte sobre A no toca la fila de B.",
+        "A4 Tests de ruta actualizados: los casos que hoy esperan 403 en sesión de soporte pasan a esperar 200 + fila de traza; el resto (rol < admin → 403, plan sin integrations → 403) intacto. Spec de n13.1 y docs actualizados (D3 revertida). Compuerta en verde + CHANGELOG."
+      ],
+      "implementation": "progress/impl_integrations-support-manage.md",
+      "commits": [
+        "7bc2fd2"
+      ]
+    },
+    {
+      "id": "m14.1",
+      "name": "support-media-signing",
+      "phase": "14",
+      "status": "approved",
+      "spec": "acceptance de esta entrada",
+      "sdd": false,
+      "branch": "feat/support-media-signing",
+      "worktree": ".claude/worktrees/support-media-signing",
+      "depends_on": [],
+      "note": "Imágenes rotas en sesión de soporte. Hoy src/lib/media/signed-url.ts firma con el cliente Supabase del navegador; la política «Members can read chat media» (044) resuelve la cuenta por profiles.user_id = auth.uid(): la del operador, no la impersonada. Al fallar la firma cae a la URL pública y el bucket es privado (comprobado en producción: 400). La nota de progress/impl_impersonation-audit.md que dice que «las firma el servidor con rol de servicio» es falsa. Fuera de soporte no cambia nada.",
+      "approval": "humano 2026-11-05: «arreglalo», decidido directamente sin spec_author",
+      "acceptance": [
+        "A1 Nueva ruta GET /api/media/sign?url=<media_url almacenado>: exige usuario autenticado (401), resuelve la cuenta efectiva con resolveEffectiveAccountId (cubre la sesión de soporte), parsea con parseStorageObjectUrl exigiendo origin = NEXT_PUBLIC_SUPABASE_URL y bucket ∈ MEDIA_BUCKETS (400 si no), exige que el primer segmento del path sea exactamente `account-<cuenta efectiva>` (403 si no), firma con supabaseAdmin().storage.from(bucket).createSignedUrl(path, SIGNED_URL_TTL_SECONDS) y responde { url, expiresAt } (epoch ms). Es GET para que el middleware de soporte la deje pasar (supportWriteVerdict solo mira mutaciones). Tests de ruta: 401, 400 URL ajena/externa, 403 cuenta ajena, 200 en soporte con la cuenta impersonada; caso de fuga en src/lib/security/tenant-isolation.test.ts (sesión de soporte sobre A no firma objetos de B).",
+        "A2 src/lib/media/signed-url.ts: cuando el navegador está en sesión de soporte (la bandera wacrm_support_active, ver supportFlagValue en src/lib/auth/support-cookie.ts y el helper ya usado en src/lib/supabase/client.ts) firma pidiendo a /api/media/sign (fetch con credenciales) en vez de createSignedUrl del cliente; fuera de soporte, el camino actual intacto. Caché por objeto, in-flight compartido, expiresAt y renovación de use-media-blob-url.ts se conservan. Fetch inyectable; tests nuevos en signed-url.test.ts (soporte → ruta; no soporte → cliente; ruta falla → devuelve la URL original como hoy).",
+        "A3 Con eso, MediaImageBubble, el lightbox, <video>/<audio> (useMediaSrc) y downloadMediaMessage (vía loadMediaBlob → defaultSigner) muestran media espejada en soporte sin tocar esos componentes. Verificar leyendo el código, no con capturas.",
+        "A4 Corregir la afirmación falsa en progress/impl_impersonation-audit.md (nota al pie fechada, no reescribir el informe), el comentario de cabecera de signed-url.ts, docs/security.md «Private attachments» y el punto 3 de progress/impl_impersonation-write.md (adjuntos: ahora se ven; subir sigue bloqueado). CHANGELOG. Compuerta dirigida en verde."
+      ],
+      "implementation": "progress/impl_support-media-signing.md",
+      "commits": [
+        "a0f2372",
+        "e6bdd0c",
+        "b705399"
+      ]
+    },
+    {
+      "id": "m14.2",
+      "name": "coexistence-echo-media",
+      "phase": "14",
+      "status": "approved",
+      "spec": "acceptance de esta entrada",
+      "sdd": false,
+      "branch": "feat/coexistence-echo-media",
+      "worktree": ".claude/worktrees/coexistence-echo-media",
+      "depends_on": [],
+      "note": "Los mensajes con media enviados desde el WhatsApp del teléfono (smb_message_echoes, coexistencia #1651) llegan a la bandeja como burbuja de texto «[image]» con media_url null: contentTextFor en src/lib/whatsapp/coexistence-webhook.ts guarda solo el marcador y storeThreadMessages fija content_type 'text'. Brian quiere ver la imagen. El historial (media_placeholder, sin id) sigue como «[media]»: Meta no entrega los bytes.",
+      "approval": "humano 2026-11-05: «arreglalo», decidido directamente sin spec_author",
+      "acceptance": [
+        "A1 Extraer verifyAndBuildUrl de src/app/api/whatsapp/webhook/route.ts (≈L1456-1485: getMediaUrl + mirrorInboundMedia respetando whatsapp_config.mirror_inbound_media, fallback al proxy /api/whatsapp/media/<id>, null si Meta falla) a un módulo compartido (p. ej. src/lib/whatsapp/inbound-media-url.ts) con test propio; el webhook de entrantes lo usa sin cambio de comportamiento (sus tests actuales siguen en verde).",
+        "A2 Un eco de tipo image | video | audio | document | sticker con `<type>.id` se persiste como un entrante: content_type = tipo (sticker → como lo mapea ALLOWED_CONTENT_TYPES/el webhook hoy), content_text = caption o null, media_type = mime_type, media_url = resultado de A1 con el token de la cuenta (resolverlo como lo hace el webhook de entrantes: resolveWhatsAppConfig con withToken o el camino que ya usa handleCoexistenceChange; nunca persistir el token). Si la resolución devuelve null, se guarda el marcador `[tipo] caption` de hoy con media_url null. El webhook nunca lanza por media (mejor esfuerzo, como mirrorInboundMedia). parseMessageEchoes/CoexistenceMessage/storeThreadMessages dejan de fijar content_type 'text' para todos.",
+        "A3 Sin cambios: ecos de texto, revoke y edit (edit con media conserva el marcador), historial (media_placeholder → «[media]»), last_message_text de la conversación (marcador o caption, como hoy). mirror_inbound_media = false → proxy URL, como en entrantes.",
+        "A4 Tests en coexistence-webhook.test.ts (o archivo nuevo): eco con imagen espejada → fila con content_type image y media_url del bucket; Meta falla → marcador y media_url null; eco de texto intacto. Ninguna petición real de red en tests (guardia de fetch). CHANGELOG. Compuerta dirigida en verde."
+      ],
+      "implementation": "progress/impl_coexistence-echo-media.md",
+      "commits": [
+        "7e33c06",
+        "0dd04d8"
+      ]
+    },
+    {
+      "id": "m14.3",
+      "name": "storage-path-canonical",
+      "phase": "14",
+      "status": "approved",
+      "spec": "progress/sec_storage-path-normalization.md (C1, H1, M1, L1, L2) + acceptance de esta entrada",
+      "sdd": false,
+      "branch": "feat/storage-path-canonical",
+      "worktree": ".claude/worktrees/storage-path-canonical",
+      "depends_on": [],
+      "note": "Auditoría de solo lectura (2026-11-05, derivada del hallazgo del reviewer de m14.1): parseStorageObjectUrl devuelve el path decodificado y los consumidores con rol de servicio validan sobre él; storage-js interpola el path sin codificar y el parser WHATWG de fetch normaliza después. C1 crítico: resolveOutboundMedia (src/lib/whatsapp/outbound-media.ts) descarga y envía a Meta objetos de otra cuenta (y alcanza /rest/v1 con la credencial de servicio). H1 alto: ensureImageHeaderHandle (template-header-handle.ts). Lanzada sin preguntar por ser fuga entre tenants en producción.",
+      "approval": "líder 2026-11-05: vulnerabilidad crítica confirmada; cabe en «arreglalo» de Brian. Brian informado en el mismo turno.",
+      "acceptance": [
+        "A1 src/lib/media/storage-url.ts: parseStorageObjectUrl devuelve null (o un resultado marcado) para cualquier path no canónico: segmentos vacíos, `.`/`..`, caracteres `\\ % ? #`, controles (< 0x20, 0x7f), y además comprobación de ida y vuelta: `new URL(origin + '/storage/v1/object/sign/' + bucket + '/' + path).pathname` debe reconstruir exactamente `/storage/v1/object/sign/<bucket>/<path>` con search y hash vacíos. Nueva función exportada `assertStoragePathOwnedBy(ref, accountId)` (o nombre equivalente) que exige primer segmento exactamente `account-<uuid>` con UUID estricto (no prefijo) y lanza/devuelve forbidden. Tests unitarios en storage-url.test.ts con todos los vectores de la tabla de la auditoría (`%2F..%2F`, `%5C`, `%252e%252e`, `.%09.`, `%0A`, `%3F`, `%23`, `%C0%AE`, `//`, salida a otro bucket y a /rest/v1, `account-A` como prefijo de `account-AB`) → todos rechazados; nombres legítimos de buildMediaPath y del espejo entrante (espacios, acentos, puntos, mayúsculas) → aceptados.",
+        "A2 resolveOutboundMedia (outbound-media.ts) y ensureImageHeaderHandle (template-header-handle.ts) usan la validación centralizada antes de cualquier operación con supabaseAdmin().storage; conservan sus mensajes de error actuales («media_url points at an attachment that belongs to another account» / forbidden). Tests de ambos con los vectores codificados → forbidden, sin llamadas a storage ni a Meta.",
+        "A3 src/lib/security/fake-supabase.ts normaliza la clave del objeto como lo haría fetch (`new URL('http://x/o/' + bucket + '/' + path).pathname`) para que la suite de aislamiento pueda detectar este fallo; src/lib/security/tenant-isolation.test.ts añade un describe NUEVO al final (no toques los describes existentes, para no chocar con m14.1) con C1 y H1: A nunca lee B con ningún vector.",
+        "A4 L1: buildMediaPath (src/lib/storage/upload-media.ts) sanea la extensión con lista blanca `[a-z0-9]{1,8}` (minúsculas), con test. Sin migraciones, sin UI, sin dependencias nuevas. CHANGELOG (sección Security). Nota: m14.1 (rama feat/support-media-signing) tiene su propia validación en src/app/api/media/sign/route.ts; NO la toques — se unificará después de fusionar ambas. Compuerta dirigida en verde."
+      ],
+      "implementation": "progress/impl_storage-path-canonical.md",
+      "commits": [
+        "c373c91"
+      ]
+    },
+    {
+      "id": "n13.7",
+      "name": "ai-grounded-availability",
+      "phase": "13",
+      "status": "done",
+      "spec": "specs/ai-grounded-availability/",
+      "sdd": true,
+      "branch": "feat/ai-grounded-availability",
+      "worktree": ".claude/worktrees/ai-grounded-availability",
+      "depends_on": [
+        "n13.3",
+        "n13.5"
+      ],
+      "note": "Encargo del humano (2026-11-09): Elsa (IA de Rehactive) afirma disponibilidad de citas de memoria —días y horas que no existen en Cabbity Health— porque el modelo decide si llama a find_availability y a menudo no lo hace. Hace falta una garantía de CÓDIGO, no de prompt: que la IA SIEMPRE tenga la disponibilidad real delante antes de hablar de días u horas. Diseño recomendado: (1) «datos en vivo antes de responder»: configuración por cuenta e integración de una operación de lectura a ejecutar ANTES de cada turno de IA (p. ej. find_availability con location_id y membership_id fijos y rango hoy..hoy+13 días en la zona de la integración), cuyo resultado se inyecta en el system prompt como bloque de datos fechado y compacto (agrupado por día, hora local), con la regla explícita de que esos son los ÚNICOS huecos que puede mencionar; si la carga falla, el prompt lo dice y prohíbe afirmar días u horas (o traspasa). Caché corto por cuenta+operación+params para respetar 120 req/min. (2) Evaluar y decidir en el spec una segunda capa: guardia del texto final (si menciona día de la semana/fecha/hora sin que haya habido find_availability ni datos en vivo en el turno, una vuelta extra con aviso) o forzar tool_choice a la operación en la primera vuelta de los tres proveedores. Genérico para cualquier integración del catálogo (plantillas de fecha {{today}}, {{today+Nd}}), no un parche solo para Health. UI en el mismo diálogo «Instrucciones para la IA». Migración 095 si hace falta columna (092 reservada por n13.2). Añadido 2026-11-10: en playground, tras preguntar el motivo y ofrecer huecos (inventados: no hubo find_availability) en el MISMO mensaje, el cliente respondió «no puedo ir ese día» y la IA llamó cancel_appointment sin reprogramar. Prompt corregido (motivo primero; motivo de horario = reprogramar), pero el spec debe evaluar guardia de código genérica: operaciones «destructivas» del catálogo (cancel_appointment) solo ejecutables si en la conversación ya hubo una operación de retención (find_availability con resultado) tras localizar la cita; si no, devolver al modelo un error de política que le obligue a ofrecer huecos primero.",
+      "base": "main @ 2799b6b",
+      "commits": [
+        "188e756",
+        "e274d0b",
+        "6c1c185",
+        "4257fcc"
+      ]
+    },
+    {
+      "id": "n13.8",
+      "name": "health-document-normalize",
+      "phase": "13",
+      "status": "done",
+      "spec": "acceptance de esta entrada (sin spec_author)",
+      "sdd": false,
+      "branch": "feat/health-document-normalize",
+      "worktree": ".claude/worktrees/health-document-normalize",
+      "depends_on": [
+        "n13.3",
+        "n13.5"
+      ],
+      "note": "Encargo del humano (2026-11-10), cambios en el agente de Rehactive (ahora «Aura»): (1) la IA pide la cédula «sin guiones» y rebota la que viene con guiones; debe aceptarla con guiones y mandarla a Cabbity Health solo con dígitos (Health exige 11 dígitos y responde 422 validation_failed si no). Garantía de CÓDIGO en el ejecutor, no solo prompt. (2) La IA pregunta al paciente si autoriza el registro de sus datos personales; el humano no quiere esa pregunta: el consentimiento queda implícito al dar los datos por WhatsApp (Health sigue exigiendo el objeto consent con accepted=true, se envía igual). Las descripciones del catálogo son las que empujan a la IA a preguntar: cambiarlas. El texto del prompt/instrucciones de la IA lo aplica el humano aparte (progress/aura_prompt_completo_v4.md, progress/aura_conector_health_v3.txt).",
+      "approval": "humano 2026-11-10: decidido directamente, sin spec_author",
+      "acceptance": [
+        "A1 Normalización declarativa por parámetro en el modelo del catálogo (p. ej. OperationParam.normalize: 'compact' en src/lib/integrations/types.ts), aplicada por el ejecutor (src/lib/integrations/request.ts, en la coerción/validación de buildIntegrationRequest/validateCallParams) a valores string ANTES de validar y enviar: elimina guiones, espacios y puntos. Vale para cualquier catálogo y cualquier caller (IA, flow, automatización). Tests: '001-1234567-8' → '00112345678'; '001 1234567 8' → '00112345678'; pasaporte 'AB 123456' → 'AB123456'; un número ya limpio no cambia; un parámetro sin normalize no se toca.",
+        "A2 El catálogo Cabbity Health (src/lib/integrations/catalogs/cabbity-health.ts) declara normalize en document_number de lookup_patient, create_patient y de cualquier otra operación que lo acepte (search_patients, update_patient si existen), y sus descripciones dicen que el cliente puede darlo con o sin guiones y que el sistema lo limpia (que la IA NO pida repetirlo sin guiones). La descripción de create_patient deja de pedir «consentimiento expreso»/«sin ese sí, no la uses»: el consentimiento se asume al dar los datos por WhatsApp; consent.accepted = siempre true, consent.accepted_at = ahora, consent.reference = 'whatsapp' (o canal + fecha). El OpenAPI de docs/integrations/ NO se toca (es la API remota). Test del catálogo actualizado (cabbity-health.test.ts / execute.test.ts) que afirme que ninguna descripción contiene 'consentimiento expreso' ni 'sin ese sí'.",
+        "A3 catalog-validate.ts acepta el campo nuevo (y lo rechaza con valor desconocido); el esquema de herramientas para la IA (src/lib/ai/tools/schema.ts) no expone normalize al modelo. scripts/integrations-bootstrap-catalog.ts sincroniza en filas existentes de integration_operations los cambios de description y params (comprobar que el diff de campos cubre params; test en bootstrap.test.ts si no lo cubre ya).",
+        "A4 Compuerta en verde (lint, typecheck, TZ=UTC test, build) + CHANGELOG. Sin migración."
+      ],
+      "implementation": "progress/impl_health-document-normalize.md",
+      "commits": [
+        "d469db8"
+      ],
+      "review": "progress/review_health-document-normalize.md"
+    },
+    {
+      "id": "m14.4",
+      "name": "media-sign-tests-canonical",
+      "phase": "14",
+      "status": "done",
+      "spec": "acceptance de esta entrada (sin spec_author)",
+      "sdd": false,
+      "branch": "fix/media-sign-tests-canonical",
+      "worktree": ".claude/worktrees/media-sign-tests-canonical",
+      "depends_on": [
+        "m14.1",
+        "m14.3"
+      ],
+      "note": "Detectado 2026-11-10: CI de main está en ROJO desde el merge de m14.3 (a4726df, 06-nov) y por eso producción sigue en 7bc2fd2 (n13.6): nada de m14.x está desplegado. Fallan 2 tests de m14.1 (src/app/api/media/sign/route.test.ts › «403s an object of another account…» y src/lib/security/tenant-isolation.test.ts › «no path form under A's folder reaches B's objects…») con vectores de traversal codificado (`..%5C`, `%2F..%2F`) que esperan 403 y reciben 400: m14.3 rechaza antes, con 400, cualquier ruta no canónica, y la rama de m14.3 no incluía esos tests cuando se revisó. Es un ajuste de tests, no de comportamiento: la petición sigue rechazada y nada se firma.",
+      "approval": "líder 2026-11-10: arreglo de compuerta, sin cambio de comportamiento",
+      "acceptance": [
+        "A1 Los dos tests pasan en TZ=UTC: para los vectores NO canónicos (traversal, codificados, backslash) aceptan 400 (rechazo de ruta no canónica de m14.3) y para la ruta canónica de otra cuenta siguen exigiendo 403; en todos los casos se afirma que no se firmó nada (no llamada a createSignedUrl / sin URL en la respuesta). No se toca ningún archivo de src/ que no sea *.test.ts.",
+        "A2 Compuerta completa en verde (lint, typecheck, TZ=UTC test, build) en el worktree. Nota breve en CHANGELOG (Unreleased) si el formato lo pide; sin migración."
+      ],
+      "implementation": "progress/impl_media-sign-tests-canonical.md",
+      "commits": [
+        "aa6a8d0"
+      ]
+    },
+    {
+      "id": "n15.1",
+      "name": "ai-voice-notes",
+      "phase": "15",
+      "status": "done",
+      "spec": "specs/ai-voice-notes/",
+      "sdd": true,
+      "branch": "feat/ai-voice-notes",
+      "worktree": ".claude/worktrees/ai-voice-notes",
+      "depends_on": [
+        "n13.3"
+      ],
+      "note": "Encargo del humano (2026-11-10): «necesito que la IA responda a notas de voz». Hoy el webhook (src/app/api/whatsapp/webhook/route.ts ~L1393) solo lanza dispatchInboundToAiReply cuando inboundText.trim() no está vacío, y buildConversationContext (src/lib/ai/context.ts) descarta todo mensaje sin content_text: una nota de voz (content_type audio, media_url en el bucket privado chat-media vía mirror-inbound-media.ts, mime audio/ogg opus) ni dispara la IA ni entra en el contexto. Diseño a decidir en el spec: (1) transcribir el audio en el servidor al recibirlo (o justo antes de la vuelta de IA), guardar la transcripción en la fila del mensaje (columna nueva, migración 095 o la siguiente libre; 092 reservada por n13.2, 095 posiblemente por n13.7: coordinar) para que la bandeja la muestre bajo la burbuja de audio y el contexto de la IA la use como texto del usuario con marca «[nota de voz]»; (2) proveedor de transcripción: la cuenta elige provider openai | anthropic | gemini (ai_configs) y la clave puede ser propia o de plataforma (src/lib/ai/platform-key.ts). OpenAI tiene API de transcripción (gpt-4o-mini-transcribe / whisper-1), Gemini acepta audio nativo en el mensaje, Anthropic NO acepta audio: definir la cadena de resolución (p. ej. transcripción con el proveedor de la cuenta si lo soporta, si no con la clave de plataforma de OpenAI o Gemini, si no, la IA responde con un texto fijo pidiendo que escriba o traspasa). (3) Límites: duración/tamaño máximo, timeout, coste registrado en ai usage (src/lib/ai/usage.ts) con tipo propio, idempotencia (una transcripción por mensaje), reintentos; la transcripción es dato del cliente (nunca instrucción). (4) Disparo: la nota de voz debe pasar por las mismas puertas que un texto (flows primero, automatizaciones, límite auto_reply_max_per_conversation, reserva inbound_auto_replies). (5) Playground: poder simular una nota de voz con texto transcrito. UI mínima: transcripción visible en la burbuja de audio (i18n es/en). Sin e2e. Cuenta piloto: Rehactive (Aura).",
+      "acceptance": [],
+      "implementation": "progress/impl_ai-voice-notes.md",
+      "commits": [
+        "0c573d0",
+        "3aee0f3",
+        "8d353c8",
+        "b130cc7",
+        "679b5ee"
+      ],
+      "base": "main @ 2799b6b"
+    },
+    {
+      "id": "n13.9",
+      "name": "ai-tool-dates-weekday",
+      "phase": "13",
+      "status": "done",
+      "spec": null,
+      "sdd": false,
+      "branch": "feat/ai-tool-dates-weekday",
+      "worktree": ".claude/worktrees/ai-tool-dates-weekday",
+      "depends_on": [
+        "n13.7"
+      ],
+      "note": "Bug reportado por Brian (2026-11-11, captura de producción, Rehactive): Aura ofreció «Jueves 13 de noviembre» y «Viernes 14 de noviembre» cuando el 13-nov-2026 es viernes. Causa (diagnóstico del líder): el resultado de find_availability llega al modelo como JSON crudo (src/lib/ai/tools/result.ts) con starts_at ISO y sin día de la semana, y la línea «Current date and time» de buildToolsPromptSection (src/lib/ai/tools/prompt.ts) tampoco lo lleva; el modelo calcula el día de la semana de cabeza y se equivoca por uno. El bloque Live data de n13.7 (live-render.ts) SÍ anota el weekday, pero no cubre el camino de tool call. Fix (sin spec, cambio acotado): (1) prompt: «Current date and time» y las líneas de hora local por integración llevan el día de la semana en inglés (p. ej. «Wednesday 2026-11-11T09:40:00-04:00»); (2) result.ts: al construir el payload de éxito, por cada string ISO con offset dentro de data (recursivo, con tope de profundidad/elementos) añadir un campo hermano <clave>_local = «Friday 2026-11-13 14:00 (-04:00)» en la zona de la integración (reutilizar localTime/wallClockInZone de live-render/prompt; extraer a un helper compartido), SIN alterar el valor original porque el modelo debe devolver ese starts_at exacto a create_appointment; respetar el tope de 8192 bytes (anotar antes de truncar); (3) regla nueva en el prompt de herramientas: los nombres de día de la semana que vienen en los resultados y en la fecha actual son los únicos válidos; nunca calcular el día de la semana por cuenta propia. Tests vitest en prompt.test.ts y result.test.ts (incluye 2026-11-13 → Friday y un cruce de medianoche por zona). Sin migración.",
+      "base": "main @ 4257fcc",
+      "commits": [
+        "ac6bc6e"
+      ]
+    },
+    {
+      "id": "n13.10",
+      "name": "ai-autoreply-toggle-independent",
+      "phase": "13",
+      "status": "done",
+      "spec": null,
+      "sdd": false,
+      "branch": "feat/ai-autoreply-toggle-independent",
+      "worktree": ".claude/worktrees/ai-autoreply-toggle-independent",
+      "depends_on": [],
+      "base": "main @ c3a2d88",
+      "note": "Bug de UI reportado por Brian (2026-11-11): en Ajustes → Asistente IA no puede desactivar «Responder automáticamente a los mensajes entrantes». Causa: src/components/settings/ai-config.tsx (~L695) pone disabled={disabled || !isActive} en ese Switch, así que cuando el interruptor principal «Asistente activo» está apagado el de respuesta automática queda bloqueado PERO sigue mostrándose encendido (valor guardado auto_reply_enabled=true); el usuario cree que no puede apagarlo. Funcionalmente no responde nada (loadAiConfig devuelve null si !is_active), pero es confuso y al reactivar el asistente arranca respondiendo solo sin que lo hayan elegido. Fix (sin spec, pequeño): el Switch de respuesta automática deja de depender de isActive (editable siempre que canEdit && !saving), y su descripción deja claro que solo aplica con el asistente activo (messages/es.json y en.json, clave autoReplyDesc o nueva). El guardado (PUT /api/ai/config) ya acepta auto_reply_enabled con is_active=false; no tocar la API. Revisar que el campo «máximo por conversación» siga la misma regla. Test vitest del componente si existe (ai-config.test.tsx) o añadir uno mínimo que renderice con is_active=false y compruebe que el switch no está disabled.",
+      "commits": [
+        "69ced6e"
+      ]
+    },
+    {
+      "id": "n13.11",
+      "name": "ai-weekday-guard",
+      "phase": "13",
+      "status": "done",
+      "spec": null,
+      "sdd": false,
+      "branch": "feat/ai-weekday-guard",
+      "worktree": ".claude/worktrees/ai-weekday-guard",
+      "depends_on": [
+        "n13.9"
+      ],
+      "note": "Bug reportado por Brian (2026-11-12, captura de producción, Rehactive): tras n13.9 Aura sigue diciendo «Mañana jueves 13 de noviembre» cuando hoy es jueves 12 y el 13 es viernes; «parece que no sabe ni qué día es». n13.9 ya pone el weekday en inglés en la línea «Current date and time» (UTC primero) y en los campos <clave>_local de los resultados, pero (a) la línea UTC va primero y de noche en Santo Domingo ya es «Friday» en UTC, (b) «mañana» obliga al modelo a sumar un día él solo y (c) no hay red de seguridad sobre el texto final. Fix (sin spec, cambio acotado, todo en src/lib/ai/tools/): (1) prompt.ts: cuando hay integraciones con zona, la línea local de cada una pasa a decir también los días relativos ya calculados: «- <name>: local time is Thursday 2026-11-12T21:05:00-04:00 (America/Santo_Domingo). Today is Thursday 2026-11-12; tomorrow is Friday 2026-11-13; the day after tomorrow is Saturday 2026-11-14.» y la regla nueva: «today/tomorrow/hoy/mañana refer to those local dates of the integration, never to the UTC date». La línea UTC se mantiene pero DESPUÉS de las locales. (2) result.ts: la etiqueta <clave>_local gana el día relativo entre paréntesis cuando la fecha local está entre hoy y hoy+30: «Friday 2026-11-13 (tomorrow) 14:00 (-04:00)», «(today)», «(in 5 days)»; nada si es pasada o más lejana. Para eso annotateLocalDates/toolResultPayload reciben `now` (opcional; sin él, sin etiqueta relativa) y loop.ts lo pasa con `new Date(now())`. La diferencia de días se calcula sobre fechas de calendario locales en la zona de la integración (helper en local-time.ts), no sobre epoch/24h. (3) NUEVO src/lib/ai/tools/weekday-fix.ts, puro: `fixWeekdays(text, today: {year,month,day}): { text, fixes }` corrige de forma determinista el nombre del día de la semana en el texto final cuando contradice al calendario. Patrones (insensible a mayúsculas y a acentos al DETECTAR, pero se sustituye solo la palabra del weekday en el texto original, conservando la mayúscula inicial y el idioma): (a) es: «<weekday>[,]? (el )?<1-31> de <mes>( de <año>)?»; en: «<weekday>,? (the )?<1-31>(st|nd|rd|th)? (of )?<month>» y «<weekday>,? <month> <1-31>». Año: el explícito; si no, el de `today`, salvo que esa fecha quede más de 60 días ANTES de hoy, en cuyo caso el año siguiente. Fecha inválida (31 de noviembre) → no se toca. (b) «(hoy|mañana|pasado mañana|today|tomorrow)[,:]? (el )?<weekday>» → el weekday real de today+0/+1/+2. Nunca toca nada más del texto (ni «mañana», ni el número, ni precios). (4) loop.ts: en los dos `return` que devuelven texto (no en el de HANDOFF_SENTINEL), aplicar fixWeekdays con la fecha local de hoy en la zona de la primera integración con `timezone` válida (si ninguna, UTC); si fixes>0, `console.warn('[ai weekday-fix]', args.accountId, fixes)`. Aplica en auto_reply y en draft. (5) Tests vitest: weekday-fix.test.ts (caso de producción «Mañana jueves 13 de noviembre» con today=2026-11-12 → «Mañana viernes 13 de noviembre»; «Jueves 13 de noviembre» → «Viernes 13 de noviembre» (mayúscula); «viernes 13 de noviembre» intacto; «miércoles 12 de noviembre» con y sin acento; año explícito «lunes 15 de diciembre de 2025» → «lunes» (15-dic-2025 es lunes: intacto) y «martes 16 de diciembre de 2025» → «martes» intacto; vuelta de año: today=2026-12-28 y «lunes 4 de enero» → 4-ene-2027 es lunes: intacto, «martes 4 de enero» → «lunes»; inglés «Thursday, November 13» → «Friday, November 13» y «Thursday 13 November»; «mañana jueves» → «mañana viernes»; «hoy jueves» intacto; fecha inválida intacta; «RD$4,000» y «a las 2:00 p.m.» intactos; texto sin fechas devuelve fixes=0 y el mismo string). result.test.ts: «(today)», «(tomorrow)», «(in 5 days)», fecha pasada sin etiqueta, cruce de medianoche por zona (21:30 Santo Domingo = ya «Friday» en UTC pero la etiqueta dice «(today)»). prompt.test.ts: la línea local lleva today/tomorrow/day after tomorrow en la zona y va ANTES de la línea UTC; regla nueva. loop.test.ts: extremo a extremo, un provider falso que devuelve «Mañana jueves 13 de noviembre a las 2:00 p.m.» con now=2026-11-12T15:00:00-04:00 y zona Santo Domingo → el texto final dice «viernes» y se registra el warn; el texto HANDOFF_SENTINEL no se toca. (6) CHANGELOG.md bajo Unreleased. Sin migración, sin dependencias nuevas. Compuerta dirigida: typecheck + eslint src/lib/ai/tools + vitest src/lib/ai.",
+      "base": "main @ 57a98e6",
+      "commits": [
+        "533a7d2",
+        "9af3d5c"
+      ]
+    },
+    {
+      "id": "n15.2",
+      "name": "ai-image-input",
+      "phase": "15",
+      "status": "done",
+      "spec": "specs/ai-image-input/",
+      "sdd": true,
+      "branch": "feat/ai-image-input",
+      "worktree": ".claude/worktrees/ai-image-input",
+      "depends_on": [
+        "n15.1",
+        "m14.3"
+      ],
+      "note": "Pedido por Brian (2026-11-12): la IA debe poder leer imágenes que envía el paciente (p. ej. la foto de la cédula: el prompt de Aura ya dice «si la envía en foto, lee los dígitos», pero hoy es falso). Estado actual: src/lib/ai/context.ts solo carga mensajes content_type 'text' y 'audio' (con transcript done, n15.1); las imágenes entrantes ni disparan la auto-respuesta ni entran en el contexto, y los proveedores (providers/gemini.ts, openai.ts, anthropic.ts) solo envían parts/bloques de texto. Objetivo: (1) un mensaje entrante de imagen dispara la auto-respuesta igual que una nota de voz (reutilizar el camino de n15.1 en auto-reply.ts); (2) las imágenes recientes de la conversación (solo del cliente, con tope de N y de tamaño; descargadas del storage privado con la ruta canónica de m14.3 / storage-url.ts) entran en el contexto como bloques multimodales en los tres proveedores (Gemini inlineData, OpenAI image_url data:, Anthropic image base64), con el caption como texto; (3) si el modelo no soporta visión o la descarga falla, marcador de texto «[imagen]» y seguir sin romper; (4) sin dato clínico: las imágenes nunca se persisten fuera del storage ni se loguean; (5) playground: adjuntar una imagen de prueba. Evaluar en el spec: límites (MB, número de imágenes, solo las del último turno o de los últimos N mensajes), coste, y si hace falta migración (probablemente no: media_url ya existe en messages). Depende del contexto de n15.1 (ai-voice-notes) y de m14.3 (storage-path-canonical).",
+      "base": "main @ 0224f5f",
+      "commits": [
+        "9b42939",
+        "90953bf",
+        "cfc0707"
+      ]
+    },
+    {
+      "id": "n15.3",
+      "name": "cabbity-health-reminders",
+      "phase": "15",
+      "status": "done",
+      "spec": "../cabbity-health/specs/whatsapp-agenda/ (design §15, tasks Tanda W)",
+      "sdd": true,
+      "branch": "feat/cabbity-health-reminders",
+      "worktree": null,
+      "depends_on": [],
+      "note": "Pedido por Brian (2026-11-14): Cabbity Health envía sus recordatorios por WhatsApp a través de la API v1 de wacrm (DEC-125/DEC-126 de Health). W1 evento message.interactive_reply con el payload del botón; W2 template.params como objeto (buttonParams) documentado y validado en POST /api/v1/messages; W3 GET /api/v1/numbers; W4 CI en verde + docs/integrations/cabbity-health.md. Sin scopes nuevos ni migración. APPROVED (a7de925) y fusionada a main (b483aa9) el 2026-11-14."
+    },
+    {
+      "id": "n15.4",
+      "name": "cabbity-health-members",
+      "phase": "15",
+      "status": "done",
+      "spec": "../cabbity-health/specs/mensajes-cita-configurables/ (spec hermana wacrm, W5)",
+      "sdd": true,
+      "branch": "feat/cabbity-health-members",
+      "worktree": null,
+      "depends_on": [
+        "n15.3"
+      ],
+      "note": "Pedido por Brian (2026-11-14, DEC-129/DEC-130 de Health): GET /api/v1/members con scope nuevo members:read para vincular usuarios de Cabbity Health con miembros de wacrm (profiles: user_id, full_name, email, account_role). Aislado por cuenta, sin datos sensibles. APPROVED (04c0230) y fusionada a main el 2026-11-14."
+    },
+    {
+      "id": "n15.5",
+      "name": "cabbity-health-chat-api",
+      "phase": "15",
+      "status": "done",
+      "spec": "../cabbity-health/specs/chat-whatsapp-en-health/ (spec hermana wacrm)",
+      "sdd": true,
+      "branch": "feat/cabbity-health-chat-api",
+      "worktree": null,
+      "depends_on": [
+        "n15.4"
+      ],
+      "note": "Pedido por Brian (2026-11-14, DEC-130 de Health): lo que wacrm debe exponer para que el chat viva también dentro de Cabbity Health (asignar conversación, enviar como miembro, eventos en tiempo real, etc.). El alcance lo fija la spec 1.5.2 de Health. APPROVED (9bd8dae, + 43475a1 atribución del panel) y fusionada a main el 2026-11-14. Aplicar migración 097 antes de desplegar."
     }
   ]
 }
