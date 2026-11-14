@@ -105,8 +105,6 @@ describe('supportWriteVerdict — what the middleware does with a support cookie
     ['PATCH', '/api/account/members/u-1'],
     ['POST', '/api/account/invitations'],
     ['DELETE', '/api/account/invitations/i-1'],
-    ['POST', '/api/account/api-keys'],
-    ['POST', '/api/account/api-keys/k-1/rotate'],
     ['POST', '/api/account/webhooks'],
     ['PATCH', '/api/account/webhooks/w-1'],
     ['POST', '/api/account/webhooks/w-1/rotate-secret'],

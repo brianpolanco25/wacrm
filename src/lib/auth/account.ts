@@ -376,7 +376,7 @@ export async function assertNotSupportSession(
   if (!ctx.impersonation) return;
   await markSupportActionStatus(ctx.impersonation, 403);
   throw new ForbiddenError(
-    "Not available during a support session: billing, ownership, team members and API keys stay with the customer",
+    "Not available during a support session: billing, ownership and team members stay with the customer",
   );
 }
 

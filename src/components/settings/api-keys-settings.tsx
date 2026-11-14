@@ -66,6 +66,8 @@ interface ApiKey {
   expires_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  /** Minted by platform support during a support session. */
+  created_by_support?: boolean;
 }
 
 function fmtDate(iso: string): string {
@@ -293,6 +295,9 @@ export function ApiKeysSettings() {
                       </div>
                       <p className="text-muted-foreground mt-1.5 text-xs">
                         {t('created', { date: fmtDate(k.created_at) })}
+                        {k.created_by_support
+                          ? ` · ${t('createdBySupport')}`
+                          : ''}
                         {' · '}
                         {k.last_used_at
                           ? t('lastUsed', { date: fmtDate(k.last_used_at) })

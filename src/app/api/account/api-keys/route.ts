@@ -21,11 +21,15 @@
 import { NextResponse } from 'next/server';
 
 import {
-  assertNotSupportSession,
   getCurrentAccount,
   requireRole,
   toErrorResponse,
 } from '@/lib/auth/account';
+import {
+  apiKeysDb,
+  platformAdminIds,
+  traceApiKeySupportAction,
+} from '@/lib/api-keys/support-trace';
 import { expiryFromDays, generateApiKey } from '@/lib/api-keys/keys';
 import { API_KEY_SAFE_COLUMNS } from '@/lib/api-keys/store';
 import { readJsonBody } from '@/lib/api/v1/body';
@@ -45,9 +49,11 @@ export async function GET() {
     // resolved account context.
     const ctx = await getCurrentAccount();
 
-    const { data, error } = await ctx.supabase
+    // Service role inside a support session (RLS closes `api_keys` to
+    // it), always filtered by the effective account.
+    const { data, error } = await apiKeysDb(ctx)
       .from('api_keys')
-      .select(API_KEY_SAFE_COLUMNS)
+      .select(`${API_KEY_SAFE_COLUMNS}, created_by`)
       .eq('account_id', ctx.accountId)
       .order('created_at', { ascending: false });
 
@@ -59,7 +65,21 @@ export async function GET() {
       );
     }
 
-    return NextResponse.json({ keys: data ?? [] });
+    // Who minted it, without exposing user ids: a key created by a
+    // platform admin (a support session) is flagged so the customer
+    // can tell. No migration: `created_by` already holds the operator.
+    const rows = (data ?? []) as unknown as (Record<string, unknown> & {
+      created_by: string | null;
+    })[];
+    const staff = await platformAdminIds(
+      rows.map((r) => r.created_by).filter((v): v is string => !!v)
+    );
+    const keys = rows.map(({ created_by, ...rest }) => ({
+      ...rest,
+      created_by_support: created_by !== null && staff.has(created_by),
+    }));
+
+    return NextResponse.json({ keys });
   } catch (err) {
     return toErrorResponse(err);
   }
@@ -68,8 +88,6 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const ctx = await requireRole('admin');
-    // s9.5: never during a support session, whatever the role.
-    await assertNotSupportSession(ctx);
     // A key is only useful on a plan with the `api` feature (Pro and
     // Negocio, migration 065): `/api/v1` refuses it otherwise. Refuse
     // the mint too, so an Inicio admin learns it here with the upgrade
@@ -121,7 +139,18 @@ export async function POST(request: Request) {
 
     const { plaintext, hash, prefix } = generateApiKey();
 
-    const { data, error } = await ctx.supabase
+    // Inside a support session: trail first (503 and no write if it
+    // cannot be saved), then the service-role insert. The plaintext is
+    // returned to the operator once, as to any admin; the trail only
+    // carries the public prefix.
+    await traceApiKeySupportAction(ctx, {
+      action: 'api_key.create',
+      method: 'POST',
+      path: '/api/account/api-keys',
+      detail: prefix,
+    });
+
+    const { data, error } = await apiKeysDb(ctx)
       .from('api_keys')
       .insert({
         account_id: ctx.accountId,

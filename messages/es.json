@@ -1825,6 +1825,7 @@
       "done": "Listo",
       "networkError": "No se pudo contactar con el servidor",
       "rotating": "En rotación",
+      "createdBySupport": "creada por soporte",
       "rotatingHint": "La clave anterior deja de funcionar el {date}.",
       "rotate": "Rotar",
       "rotateInProgress": "Rotando…",

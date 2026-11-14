@@ -52,11 +52,11 @@
 
 import { NextResponse } from 'next/server';
 
+import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import {
-  assertNotSupportSession,
-  requireRole,
-  toErrorResponse,
-} from '@/lib/auth/account';
+  apiKeysDb,
+  traceApiKeySupportAction,
+} from '@/lib/api-keys/support-trace';
 import {
   expiryFromDays,
   generateApiKey,
@@ -77,8 +77,6 @@ export async function POST(
 ) {
   try {
     const ctx = await requireRole('admin');
-    // s9.5: never during a support session, whatever the role.
-    await assertNotSupportSession(ctx);
     // Same rule as minting: the replacement key would be refused by
     // `/api/v1` on a plan without the `api` feature.
     await assertPlanFeature(ctx.accountId, 'api');
@@ -90,6 +88,15 @@ export async function POST(
     if (!limit.success) return rateLimitResponse(limit);
 
     const { id } = await params;
+    // Support session: service role (RLS closes `api_keys`) and a trail
+    // row before anything is written. The detail is the old key's uuid.
+    const db = apiKeysDb(ctx);
+    await traceApiKeySupportAction(ctx, {
+      action: 'api_key.rotate',
+      method: 'POST',
+      path: `/api/account/api-keys/${id}/rotate`,
+      detail: id,
+    });
     // Capped read, same contract as minting. The body is optional: an
     // empty one means "inherit the old expiry".
     const { data: body } = (await readJsonBody(request, {
@@ -101,7 +108,7 @@ export async function POST(
     // Scoped by account_id as well as id: an admin can never rotate
     // another account's key by guessing a UUID (RLS says the same; the
     // explicit filter makes the 404 path precise).
-    const { data: current, error: readError } = await ctx.supabase
+    const { data: current, error: readError } = await db
       .from('api_keys')
       .select('id, name, scopes, expires_at, revoked_at')
       .eq('id', id)
@@ -162,7 +169,7 @@ export async function POST(
 
     const { plaintext, hash, prefix } = generateApiKey();
 
-    const { data: created, error: insertError } = await ctx.supabase
+    const { data: created, error: insertError } = await db
       .from('api_keys')
       .insert({
         account_id: ctx.accountId,
@@ -191,7 +198,7 @@ export async function POST(
     }
 
     const revokedAt = new Date(now + ROTATION_GRACE_MS).toISOString();
-    const { data: stamped, error: updateError } = await ctx.supabase
+    const { data: stamped, error: updateError } = await db
       .from('api_keys')
       .update({ revoked_at: revokedAt })
       .eq('id', id)
@@ -206,7 +213,7 @@ export async function POST(
 
     if (updateError) {
       // Undo the new key rather than leave two live credentials.
-      await ctx.supabase
+      await db
         .from('api_keys')
         .delete()
         .eq('id', created.id)
