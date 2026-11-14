@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { FakeDatabase } from '@/lib/security/fake-supabase';
@@ -43,6 +43,16 @@ describe('serializeMessage', () => {
 });
 
 describe('serializeMessagesWithMedia', () => {
+  // signMessageMedia solo acepta URLs del origen de Supabase del entorno
+  // (NEXT_PUBLIC_SUPABASE_URL). CI lo define con otro host; fijarlo aquí
+  // al host del fake hace el test independiente del entorno.
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://fake.supabase.co');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('firma el adjunto propio con mime y nombre, y conserva media_url', async () => {
     const [out] = await serializeMessagesWithMedia(db, A, [
       msg({ media_url: url(A), media_type: 'image/jpeg' }),
