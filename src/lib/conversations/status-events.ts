@@ -17,6 +17,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { autoreplyToggleUpdate } from '@/lib/ai/autoreply-toggle';
 import { emitWebhookEvent } from '@/lib/webhooks/emit';
 import type { ConversationStatus } from '@/types';
 
@@ -31,6 +32,8 @@ interface ConversationSnapshot {
   contact_id: string | null;
   status: ConversationStatus;
   assigned_agent_id: string | null;
+  ai_autoreply_disabled?: boolean | null;
+  unread_count?: number | null;
 }
 
 async function readConversation(
@@ -38,7 +41,9 @@ async function readConversation(
 ): Promise<ConversationSnapshot | null> {
   const { data, error } = await scope.db
     .from('conversations')
-    .select('id, contact_id, status, assigned_agent_id')
+    .select(
+      'id, contact_id, status, assigned_agent_id, ai_autoreply_disabled, unread_count'
+    )
     .eq('id', scope.conversationId)
     .eq('account_id', scope.accountId)
     .maybeSingle();
@@ -74,6 +79,96 @@ export async function setConversationStatus(
     await emitWebhookEvent(scope.accountId, 'conversation.closed', {
       conversation_id: scope.conversationId,
       contact_id: before.contact_id,
+    });
+  } else if (status !== 'closed' && before.status !== status) {
+    // Reabrir o pasar a pendiente. El cierre ya tiene su propio evento y
+    // no se anuncia dos veces por el mismo cambio.
+    await emitWebhookEvent(scope.accountId, 'conversation.updated', {
+      conversation_id: scope.conversationId,
+      contact_id: before.contact_id,
+      fields: ['status'],
+    });
+  }
+
+  return true;
+}
+
+/**
+ * Pausa (`true`) o reanuda (`false`) la IA de una conversación con el
+ * mismo efecto que el banner del panel (ver `autoreply-toggle.ts`).
+ * Devuelve `false` si no existe en esa cuenta. Emite
+ * `conversation.updated` (`fields: ['ai_autoreply_disabled']`) solo si
+ * la bandera cambió, y `conversation.assigned` si además cambió el dueño
+ * (reanudar suelta al asignado; pausar con `assignTo` asigna).
+ */
+export async function setConversationAiPaused(
+  scope: ConversationScope,
+  paused: boolean,
+  opts: { assignTo?: string | null } = {}
+): Promise<boolean> {
+  const before = await readConversation(scope);
+  if (!before) return false;
+
+  const update = autoreplyToggleUpdate(paused, opts);
+  const { error } = await scope.db
+    .from('conversations')
+    .update(update)
+    .eq('id', scope.conversationId)
+    .eq('account_id', scope.accountId);
+
+  if (error) {
+    console.error('[conversations] ai pause update failed:', error);
+    return false;
+  }
+
+  if (Boolean(before.ai_autoreply_disabled) !== paused) {
+    await emitWebhookEvent(scope.accountId, 'conversation.updated', {
+      conversation_id: scope.conversationId,
+      contact_id: before.contact_id,
+      fields: ['ai_autoreply_disabled'],
+    });
+  }
+  if (
+    'assigned_agent_id' in update &&
+    (before.assigned_agent_id ?? null) !== (update.assigned_agent_id ?? null)
+  ) {
+    await emitWebhookEvent(scope.accountId, 'conversation.assigned', {
+      conversation_id: scope.conversationId,
+      contact_id: before.contact_id,
+      assigned_agent_id: (update.assigned_agent_id as string | null) ?? null,
+    });
+  }
+
+  return true;
+}
+
+/**
+ * Marca una conversación como leída (`unread_count = 0`). Devuelve
+ * `false` si no existe en esa cuenta. Emite `conversation.updated`
+ * (`fields: ['unread_count']`) solo si había algo sin leer.
+ */
+export async function markConversationRead(
+  scope: ConversationScope
+): Promise<boolean> {
+  const before = await readConversation(scope);
+  if (!before) return false;
+
+  const { error } = await scope.db
+    .from('conversations')
+    .update({ unread_count: 0 })
+    .eq('id', scope.conversationId)
+    .eq('account_id', scope.accountId);
+
+  if (error) {
+    console.error('[conversations] mark read failed:', error);
+    return false;
+  }
+
+  if ((before.unread_count ?? 0) > 0) {
+    await emitWebhookEvent(scope.accountId, 'conversation.updated', {
+      conversation_id: scope.conversationId,
+      contact_id: before.contact_id,
+      fields: ['unread_count'],
     });
   }
 

@@ -13,7 +13,7 @@ import {
   keysetFilter,
   buildPage,
 } from '@/lib/api/v1/pagination';
-import { serializeMessage } from '@/lib/api/v1/conversations';
+import { serializeMessagesWithMedia } from '@/lib/api/v1/conversations';
 import type { Message } from '@/types';
 
 export async function GET(
@@ -56,7 +56,11 @@ export async function GET(
       limit
     );
     return okList(
-      items.map((m) => serializeMessage(m as unknown as Message)),
+      await serializeMessagesWithMedia(
+        ctx.supabase,
+        ctx.accountId,
+        items as unknown as Message[]
+      ),
       nextCursor
     );
   } catch (err) {

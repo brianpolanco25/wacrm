@@ -19,7 +19,7 @@ export const MESSAGES_OPERATIONS: OperationDef[] = [
     operationId: 'sendMessage',
     summary: 'Enviar un mensaje de WhatsApp',
     description:
-      'Envía a un número en E.164 (`to`) o a un BSUID (`to_user_id`, para quien solo escribió con nombre de usuario de WhatsApp): el contacto y la conversación se buscan-o-crean y luego se envía. Hace falta exactamente uno de los dos; si mandas ambos **gana `to`**. Con varios números conectados, `from` elige el `phone_number_id` de salida; sin él sale por el número de la conversación y, si es nueva, por el predeterminado de la cuenta. Un `from` que no es tuyo es `400` y no envía ni crea nada.',
+      'Envía a un número en E.164 (`to`) o a un BSUID (`to_user_id`, para quien solo escribió con nombre de usuario de WhatsApp): el contacto y la conversación se buscan-o-crean y luego se envía. Hace falta exactamente uno de los dos; si mandas ambos **gana `to`**. Alternativamente, `conversation_id` envía por una conversación que ya existe (y por su número), sin resolver destinatario: no se puede combinar con `to` ni `to_user_id` (`400`) y un id de otra cuenta es `404`. `sent_by_member_id` es el miembro de la cuenta (no `viewer`) que envía —un id inválido es `400 invalid_member` y no envía—; queda guardado como remitente del mensaje y viaja en `message.sent` y en `sender_member_id`. Con varios números conectados, `from` elige el `phone_number_id` de salida; sin él sale por el número de la conversación y, si es nueva, por el predeterminado de la cuenta. Un `from` que no es tuyo es `400` y no envía ni crea nada.',
     tag: 'messages',
     scopes: ['messages:send'],
     idempotent: true,
@@ -86,6 +86,17 @@ export const MESSAGES_OPERATIONS: OperationDef[] = [
           from: {
             type: 'string',
             description: '`phone_number_id` de Meta de uno de tus números.',
+          },
+          conversation_id: {
+            type: 'string',
+            format: 'uuid',
+            description:
+              'Enviar por esta conversación en lugar de `to` / `to_user_id`.',
+          },
+          sent_by_member_id: {
+            type: 'string',
+            description:
+              'Id de un miembro de la cuenta que no sea `viewer` (de `GET /members`): el remitente del mensaje.',
           },
         },
       },

@@ -54,6 +54,7 @@ import {
   type MetaRecipient,
 } from '@/lib/whatsapp/recipient';
 import { assertQuota, recordUsage } from '@/lib/billing/enforce';
+import { emitMessageSent } from '@/lib/webhooks/message-sent';
 import type { MessageTemplate } from '@/types';
 import {
   assertButtonParamsMatchTemplate,
@@ -124,6 +125,12 @@ export interface SendMessageParams {
    * and by `/api/v1/messages` after translating its public `from`.
    */
   whatsAppConfigId?: string | null;
+  /**
+   * Account member that sends (n15.5, `sent_by_member_id` of the public
+   * API). Stored in `messages.sender_id` and reported in `message.sent`.
+   * The dashboard doesn't pass it (its rows keep `sender_id` null).
+   */
+  senderId?: string | null;
 }
 
 export interface SendMessageResult {
@@ -261,6 +268,7 @@ export async function sendMessageToConversation(
     interactivePayload,
     replyToMessageId,
     whatsAppConfigId,
+    senderId,
   } = params;
 
   if (!conversationId) {
@@ -604,6 +612,7 @@ export async function sendMessageToConversation(
       message_id: waMessageId,
       status: 'sent',
       reply_to_message_id: replyToMessageId || null,
+      ...(senderId ? { sender_id: senderId } : {}),
     })
     .select()
     .single();
@@ -630,6 +639,17 @@ export async function sendMessageToConversation(
       updated_at: new Date().toISOString(),
     })
     .eq('id', conversationId);
+
+  // n15.5: tell subscribers an outbound message of this conversation was
+  // saved. Never throws.
+  await emitMessageSent(accountId, {
+    conversationId,
+    messageId: messageRecord.id,
+    whatsappMessageId: waMessageId,
+    senderType: 'agent',
+    senderMemberId: senderId ?? null,
+    contentType: messageType,
+  });
 
   // Pause any active Flow run for this contact — the agent stepping in
   // is the strongest "yield, human is here" signal. Best-effort.

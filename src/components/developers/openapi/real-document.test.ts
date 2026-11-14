@@ -52,7 +52,7 @@ describe('el documento que pinta la referencia', () => {
     // El generador declara su versión en `info.version` y sus 27 rutas
     // se leen del árbol de `src/app/api/v1` (`coverage.test.ts`).
     expect(Object.keys(doc.paths)).toHaveLength(27);
-    expect(model.operations).toHaveLength(39);
+    expect(model.operations).toHaveLength(40);
   });
 
   it('ninguna clave de `paths` trae el prefijo', () => {
@@ -123,9 +123,9 @@ describe('el fixture no se separa del documento real', () => {
   // El fixture es el documento con el que se prueba el renderizador. Si
   // deriva del real, los tests de `model.test.ts` pasarían a afirmar
   // cosas de una API que no existe.
-  it('cubre las mismas 39 operaciones, con la misma ruta y los mismos scopes', () => {
+  it('cubre las mismas 40 operaciones, con la misma ruta y los mismos scopes', () => {
     const real = inventory(getOpenApiDocument());
-    expect(real).toHaveLength(39);
+    expect(real).toHaveLength(40);
     expect(inventory(OPENAPI_FIXTURE)).toEqual(real);
   });
 

@@ -1018,6 +1018,35 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
           '404': errorResponse('No existe, o es de otra cuenta.'),
         },
       }),
+      patch: op({
+        summary: 'Asignar, cerrar, reabrir, pausar la IA o marcar como leída',
+        description:
+          'Aplica uno o varios cambios y devuelve la conversación actualizada. Se valida todo antes de escribir.',
+        tags: ['Conversaciones'],
+        scopes: ['conversations:write'],
+        requestBody: body(
+          {
+            type: 'object',
+            properties: {
+              assigned_agent_id: { type: ['string', 'null'] },
+              status: { type: 'string', enum: ['open', 'pending', 'closed'] },
+              ai_autoreply_disabled: { type: 'boolean' },
+              read: { type: 'boolean' },
+            },
+          },
+          { assigned_agent_id: '4b2e…' }
+        ),
+        responses: {
+          '200': {
+            description: 'La conversación actualizada.',
+            content: json(envelope(ref('Conversation'))),
+          },
+          '400': errorResponse(
+            'Sin campos, valor inválido o un asignado que no es miembro (invalid_member).'
+          ),
+          '404': errorResponse('No existe, o es de otra cuenta.'),
+        },
+      }),
     },
     '/conversations/{id}/messages': {
       parameters: [pathId('id', 'Id de la conversación.')],
@@ -1643,9 +1672,55 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
             data: {
               conversation_id: '77ac…',
               contact_id: '1d4f…',
+              message_id: '5e90…',
               whatsapp_message_id: 'wamid.…',
               content_type: 'text',
               text: 'Hola 👋',
+            },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
+    'message.sent': {
+      post: {
+        summary:
+          'Un saliente de una conversación se envió y quedó guardado (panel, API, IA o flujo).',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: '3a82…',
+            event: 'message.sent',
+            occurred_at: '2026-07-01T12:00:03.000Z',
+            account_id: '9f1c…',
+            data: {
+              conversation_id: '77ac…',
+              message_id: '5e90…',
+              whatsapp_message_id: 'wamid.…',
+              sender_type: 'agent',
+              sender_member_id: '4b2e…',
+              content_type: 'text',
+            },
+          }),
+        },
+        responses: { '200': { description: 'Tu servidor aceptó la entrega.' } },
+      },
+    },
+    'conversation.updated': {
+      post: {
+        summary:
+          'Una conversación cambia de estado (no cerrada), se pausa su IA o se marca leída.',
+        requestBody: {
+          required: true,
+          content: json(ref('WebhookEventEnvelope'), {
+            id: '9d17…',
+            event: 'conversation.updated',
+            occurred_at: '2026-07-01T12:00:04.000Z',
+            account_id: '9f1c…',
+            data: {
+              conversation_id: '77ac…',
+              contact_id: '1d4f…',
+              fields: ['unread_count'],
             },
           }),
         },
@@ -1688,6 +1763,7 @@ export const OPENAPI_FIXTURE: OpenApiDocument = {
             occurred_at: '2026-07-01T12:00:05.000Z',
             account_id: '9f1c…',
             data: {
+              message_id: '5e90…',
               whatsapp_message_id: 'wamid.…',
               conversation_id: '77ac…',
               status: 'delivered',

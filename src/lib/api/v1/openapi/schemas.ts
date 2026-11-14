@@ -84,6 +84,7 @@ export const DOMAIN_ERROR_CODES = [
   'whatsapp_not_configured',
   'meta_error',
   'template_malformed',
+  'invalid_member',
 ] as const;
 
 // ------------------------------------------------------------------
@@ -202,6 +203,38 @@ const conversationSchema: SchemaObject = {
     created_at: timestamp,
     updated_at: timestamp,
     contact: ref('ConversationContact'),
+    last_inbound_at: {
+      ...nullableTimestamp,
+      description:
+        'Último mensaje ENTRANTE. Solo en listado, lectura y PATCH (no en exportaciones).',
+    },
+    service_window_expires_at: {
+      ...nullableTimestamp,
+      description:
+        '`last_inbound_at` + 24 h: hasta cuándo se puede escribir texto libre; null si el contacto nunca escribió. Pasada esa hora solo valen las plantillas.',
+    },
+    ai: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['active', 'paused', 'handoff_summary'],
+      description:
+        'Estado de la IA en este hilo. Mismos casos que `last_inbound_at`.',
+      properties: {
+        active: {
+          type: 'boolean',
+          description:
+            'IA y auto-respuesta de la cuenta encendidas, sin pausa en el hilo y sin asignado.',
+        },
+        paused: {
+          type: 'boolean',
+          description: 'La IA se pausó en este hilo.',
+        },
+        handoff_summary: {
+          ...nullableString,
+          description: 'Nota interna que dejó el bot al traspasar.',
+        },
+      },
+    },
   },
 };
 
@@ -215,9 +248,11 @@ const messageSchema: SchemaObject = {
     'conversation_id',
     'direction',
     'sender_type',
+    'sender_member_id',
     'content_type',
     'content_text',
     'media_url',
+    'media',
     'template_name',
     'whatsapp_message_id',
     'status',
@@ -230,9 +265,27 @@ const messageSchema: SchemaObject = {
     conversation_id: uuid,
     direction: { type: 'string', enum: ['inbound', 'outbound'] },
     sender_type: { type: 'string' },
+    sender_member_id: {
+      ...nullableUuid,
+      description:
+        'Miembro de la cuenta que lo envió (`sender_type: agent` enviado con `sent_by_member_id`); null si no.',
+    },
     content_type: { type: 'string' },
     content_text: nullableString,
     media_url: nullableString,
+    media: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['url', 'mime_type', 'filename', 'expires_at'],
+      description:
+        'Adjunto de nuestro almacenamiento con URL firmada de 10 minutos; null si no hay adjunto o es un enlace externo. `media_url` se conserva por compatibilidad y no se puede abrir directamente (buckets privados).',
+      properties: {
+        url: { type: 'string' },
+        mime_type: nullableString,
+        filename: nullableString,
+        expires_at: timestamp,
+      },
+    },
     template_name: nullableString,
     whatsapp_message_id: nullableString,
     status: { type: 'string' },
@@ -703,6 +756,9 @@ export const EXAMPLE_CONVERSATION = {
   unread_count: 0,
   created_at: '2026-09-01T10:05:00.000Z',
   updated_at: '2026-09-02T09:00:00.000Z',
+  last_inbound_at: '2026-09-02T09:00:00.000Z',
+  service_window_expires_at: '2026-09-03T09:00:00.000Z',
+  ai: { active: false, paused: false, handoff_summary: null },
   contact: {
     id: EXAMPLE_CONTACT.id,
     phone: EXAMPLE_CONTACT.phone,
@@ -718,9 +774,11 @@ export const EXAMPLE_MESSAGE = {
   conversation_id: EXAMPLE_CONVERSATION.id,
   direction: 'inbound',
   sender_type: 'contact',
+  sender_member_id: null,
   content_type: 'text',
   content_text: 'Hola 👋',
   media_url: null,
+  media: null,
   template_name: null,
   whatsapp_message_id: 'wamid.HBgLMTQxNTU1NTAxMjMVAgARGBI5QTND',
   status: 'delivered',

@@ -26,6 +26,7 @@ import {
   recordUsage,
 } from '@/lib/billing/enforce';
 import { supabaseAdmin } from './admin-client';
+import { emitBotMessageSent } from '@/lib/webhooks/message-sent';
 
 // ------------------------------------------------------------
 // Flows-side Meta sender (interactive variants).
@@ -181,6 +182,12 @@ export async function engineSendText(
   if (msgErr) {
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`);
   }
+
+  await emitBotMessageSent(db, args.accountId, {
+    conversationId: args.conversationId,
+    whatsappMessageId: waMessageId,
+    contentType: 'text',
+  });
 
   await db
     .from('conversations')
@@ -341,6 +348,12 @@ export async function engineSendMedia(
   if (msgErr) {
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`);
   }
+
+  await emitBotMessageSent(db, args.accountId, {
+    conversationId: args.conversationId,
+    whatsappMessageId: waMessageId,
+    contentType: args.kind,
+  });
 
   await db
     .from('conversations')
@@ -564,6 +577,12 @@ async function sendInteractiveViaMeta(
   if (msgErr) {
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`);
   }
+
+  await emitBotMessageSent(db, input.accountId, {
+    conversationId: input.conversationId,
+    whatsappMessageId: waMessageId,
+    contentType: 'interactive',
+  });
 
   await db
     .from('conversations')

@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+// n15.5: `message.sent` y `sender_id` salen del núcleo de envío.
+const emitted = vi.hoisted(() => ({ emit: vi.fn(async () => {}) }));
+vi.mock('@/lib/webhooks/emit', () => ({
+  emitWebhookEvent: emitted.emit,
+}));
+
 // Fase 3 §4: the send core now charges `messages_out`. Only the two
 // DB-touching entry points are stubbed — `importOriginal` keeps
 // `QuotaExceededError` real so the tests below assert against the
@@ -748,5 +754,63 @@ describe('sendMessageToConversation — template.params objeto (cabbity-health W
       }
     );
     expect(result.whatsappMessageId).toBe('wamid.1');
+  });
+});
+
+describe('sendMessageToConversation — message.sent y remitente (n15.5)', () => {
+  const textParams: SendMessageParams = {
+    conversationId: 'cv-1',
+    messageType: 'text',
+    contentText: 'hola',
+  };
+
+  beforeEach(() => emitted.emit.mockClear());
+
+  it('guarda sender_id y emite message.sent con el miembro', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(sendPathDb([], captured), 'acct-1', {
+      ...textParams,
+      senderId: 'member-1',
+    });
+    expect(captured.message).toMatchObject({ sender_id: 'member-1' });
+    expect(emitted.emit).toHaveBeenCalledWith('acct-1', 'message.sent', {
+      conversation_id: 'cv-1',
+      message_id: 'msg-1',
+      whatsapp_message_id: 'wamid.text',
+      sender_type: 'agent',
+      sender_member_id: 'member-1',
+      content_type: 'text',
+    });
+  });
+
+  it('sin senderId no escribe sender_id (el panel no cambia) y emite sin miembro', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(
+      sendPathDb([], captured),
+      'acct-1',
+      textParams
+    );
+    expect(captured.message).not.toHaveProperty('sender_id');
+    expect(emitted.emit).toHaveBeenCalledWith(
+      'acct-1',
+      'message.sent',
+      expect.objectContaining({ sender_member_id: null })
+    );
+  });
+
+  it('un envío que no llegó a guardarse no emite message.sent', async () => {
+    const db = sendPathDb([], {});
+    const original = db.from.bind(db);
+    db.from = ((table: string) => {
+      const b = original(table) as unknown as Record<string, unknown>;
+      if (table === 'messages') {
+        b.single = async () => ({ data: null, error: { message: 'boom' } });
+      }
+      return b;
+    }) as unknown as typeof db.from;
+    await expect(
+      sendMessageToConversation(db, 'acct-1', textParams)
+    ).rejects.toBeInstanceOf(SendMessageError);
+    expect(emitted.emit).not.toHaveBeenCalled();
   });
 });

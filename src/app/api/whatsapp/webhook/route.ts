@@ -861,6 +861,7 @@ async function handleStatusUpdate(
       'message.status_updated',
       {
         whatsapp_message_id: status.id,
+        message_id: msgRow.id,
         conversation_id: msgRow.conversation_id,
         status: status.status,
       }
@@ -1429,6 +1430,7 @@ async function processMessage(
   await dispatchWebhookEvent(supabaseAdmin(), accountId, 'message.received', {
     conversation_id: conversation.id,
     contact_id: contactRecord.id,
+    message_id: inboundMessageId,
     whatsapp_message_id: message.id,
     content_type: contentType,
     text: contentText,

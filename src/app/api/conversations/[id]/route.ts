@@ -15,6 +15,7 @@
 import { NextResponse } from 'next/server';
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import { checkAccountMember } from '@/lib/conversations/members';
 import {
   assignConversation,
   setConversationStatus,
@@ -86,23 +87,18 @@ export async function PATCH(
       // lives in `profiles.account_id`; `assigned_agent_id` is an
       // `auth.users` id, i.e. `profiles.user_id` (not `profiles.id`).
       if (agentId !== null) {
-        const { data: member, error: memberError } = await ctx.supabase
-          .from('profiles')
-          .select('user_id')
-          .eq('user_id', agentId)
-          .eq('account_id', ctx.accountId)
-          .maybeSingle();
-        if (memberError) {
-          console.error(
-            '[PATCH /api/conversations/[id]] member lookup:',
-            memberError
-          );
+        const member = await checkAccountMember(
+          ctx.supabase,
+          ctx.accountId,
+          agentId
+        );
+        if (!member.ok && member.reason === 'error') {
           return NextResponse.json(
             { error: 'Failed to update conversation' },
             { status: 500 }
           );
         }
-        if (!member) {
+        if (!member.ok) {
           return NextResponse.json(
             { error: "'assigned_agent_id' is not a member of this account" },
             { status: 400 }

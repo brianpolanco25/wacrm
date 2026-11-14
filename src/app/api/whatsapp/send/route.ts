@@ -174,6 +174,9 @@ export async function POST(request: Request) {
         interactivePayload: interactive_payload,
         replyToMessageId: reply_to_message_id,
         whatsAppConfigId: whatsapp_config_id,
+        // n15.5: atribuye el envío al usuario autenticado (messages.sender_id
+        // y `message.sent.sender_member_id`).
+        senderId: userId,
       });
 
       return NextResponse.json({

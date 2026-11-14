@@ -150,6 +150,10 @@ export const authentication: DocPage = {
         ['`contacts:read`', 'List and read contacts'],
         ['`contacts:write`', 'Create and update contacts'],
         ['`conversations:read`', 'List and read conversations'],
+        [
+          '`conversations:write`',
+          'Assign, close, reopen, pause the AI of and mark conversations as read',
+        ],
         ['`conversations:export`', 'Export conversations and their messages'],
         ['`members:read`', 'List the account members (name, email and role)'],
         ['`broadcasts:send`', 'Launch broadcasts and poll their progress'],

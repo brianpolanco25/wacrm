@@ -73,12 +73,17 @@ describe('setConversationStatus', () => {
     expect(mocks.emit).not.toHaveBeenCalled();
   });
 
-  it('reabrir no emite conversation.closed', async () => {
+  it('reabrir no emite conversation.closed sino conversation.updated', async () => {
     await setConversationStatus(
       { db, accountId: A, conversationId: 'conv-a2' },
       'open'
     );
-    expect(mocks.emit).not.toHaveBeenCalled();
+    expect(mocks.emit).toHaveBeenCalledTimes(1);
+    expect(mocks.emit).toHaveBeenCalledWith(A, 'conversation.updated', {
+      conversation_id: 'conv-a2',
+      contact_id: 'contact-a',
+      fields: ['status'],
+    });
   });
 
   it('una conversación de otra cuenta no existe: ni escribe ni emite', async () => {

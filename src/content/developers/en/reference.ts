@@ -49,6 +49,14 @@ export const webhooks: DocPage = {
       rows: [
         ['`message.received`', 'An inbound message arrives from a contact'],
         [
+          '`message.sent`',
+          'An outbound message of a conversation was sent (dashboard, API, AI or flow); not once per broadcast recipient',
+        ],
+        [
+          '`conversation.updated`',
+          'A conversation changed status (to anything but closed), had its AI paused or resumed, or was marked as read. `fields` says which',
+        ],
+        [
           '`message.interactive_reply`',
           'A contact taps a quick-reply button or list row (also fires `message.received`). `reply_id` is the untouched button payload',
         ],
@@ -102,8 +110,15 @@ export const webhooks: DocPage = {
       kind: 'code',
       lang: 'jsonc',
       code: `// message.received
-{ "conversation_id": "…", "contact_id": "…", "whatsapp_message_id": "wamid.…",
+{ "conversation_id": "…", "contact_id": "…", "message_id": "…", "whatsapp_message_id": "wamid.…",
   "content_type": "text", "text": "Hi 👋" }
+
+// message.sent   (sender_member_id: the member who sent it, or null)
+{ "conversation_id": "…", "message_id": "…", "whatsapp_message_id": "wamid.…",
+  "sender_type": "agent", "sender_member_id": "…", "content_type": "text" }
+
+// conversation.updated   (fields: status | ai_autoreply_disabled | unread_count)
+{ "conversation_id": "…", "contact_id": "…", "fields": ["unread_count"] }
 
 // message.interactive_reply   (reply_id = the button payload, untouched)
 { "conversation_id": "…", "contact_id": "…", "whatsapp_message_id": "wamid.…",
@@ -111,7 +126,7 @@ export const webhooks: DocPage = {
   "reply_title": "Confirm", "phone": "14155550123" }
 
 // message.status_updated
-{ "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "delivered" }
+{ "message_id": "…", "whatsapp_message_id": "wamid.…", "conversation_id": "…", "status": "delivered" }
 
 // conversation.created / conversation.closed
 { "conversation_id": "…", "contact_id": "…" }
