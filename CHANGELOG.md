@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### AI auto-reply stands down if a human takes the thread mid-generation
+
+- The bot re-checks the conversation (assigned agent, bot turned off, closed) right before sending, so an agent who takes over while the model is still thinking no longer gets a bot reply on top. A hand-off no longer overwrites an agent assigned during generation. No migration.
+
 ### Support sessions can mint, rotate and revoke API keys
 
 - During a support session the platform operator can now create, rotate and revoke the customer's API keys (to connect the account to Cabbity Health). Each action is recorded in the session's audit trail (`api_key.create|rotate|revoke`, never the key itself) before it is written, and keys minted by support show as "created by support" in Settings → API. Billing, ownership, team members and invitations stay blocked. No migration.
