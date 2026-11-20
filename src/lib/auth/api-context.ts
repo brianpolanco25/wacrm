@@ -30,7 +30,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/flows/admin-client';
-import { findActiveKeyByHash, touchLastUsed } from '@/lib/api-keys/store';
+import {
+  findActiveKeyByHash,
+  touchLastUsed,
+  type ApiKeyRow,
+} from '@/lib/api-keys/store';
+import type { Entitlements } from '@/lib/billing/entitlements';
 import { hashApiKey, looksLikeApiKey } from '@/lib/api-keys/keys';
 import { hasScope, type ApiScope } from '@/lib/api-keys/scopes';
 import { forbidden, rateLimited, unauthorized } from '@/lib/api/v1/respond';
@@ -50,6 +55,35 @@ export interface ApiKeyContext {
   scopes: string[];
   /** Who minted the key (null if that user was later removed). */
   createdBy: string | null;
+}
+
+// n15.6: every /api/v1 call paid two serial round trips (key, then
+// plan) before its own query. Both are cached per process.
+// shortcut: per-process cache, so a revoked key or a plan change takes up
+// to API_CACHE_TTL_MS to apply on each replica (accepted by the spec);
+// move to a shared cache if that window must shrink.
+const API_CACHE_TTL_MS = 30_000;
+type CacheEntry<T> = { value: T; expiresAt: number };
+const keyCache = new Map<string, CacheEntry<ApiKeyRow | null>>();
+const entitlementsCache = new Map<string, CacheEntry<Entitlements>>();
+
+/** Only hits are cached: an unknown key or a refused plan asks again. */
+async function cached<T>(
+  map: Map<string, CacheEntry<T>>,
+  key: string,
+  load: () => Promise<T>
+): Promise<T> {
+  const hit = map.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  const value = await load();
+  if (value === null) map.delete(key);
+  else map.set(key, { value, expiresAt: Date.now() + API_CACHE_TTL_MS });
+  return value;
+}
+
+export function __resetApiKeyCacheForTests() {
+  keyCache.clear();
+  entitlementsCache.clear();
 }
 
 /**
@@ -87,7 +121,8 @@ export async function requireApiKey(
     throw unauthorized();
   }
 
-  const row = await findActiveKeyByHash(hashApiKey(presented));
+  const hash = hashApiKey(presented);
+  const row = await cached(keyCache, hash, () => findActiveKeyByHash(hash));
   if (!row) {
     // Covers unknown, revoked, and expired keys alike — we don't
     // distinguish them on the wire so a probe can't learn whether a
@@ -113,7 +148,9 @@ export async function requireApiKey(
   //
   // The key itself stays valid — nothing is revoked — so upgrading the
   // plan restores access with no action from the tenant.
-  const entitlements = await assertPlanFeature(row.account_id, 'api');
+  const entitlements = await cached(entitlementsCache, row.account_id, () =>
+    assertPlanFeature(row.account_id, 'api')
+  );
 
   // §5: a read-only account keeps READING through its keys and stops
   // writing. Method-based because that is the only thing this function

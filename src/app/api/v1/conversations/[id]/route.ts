@@ -44,15 +44,17 @@ async function readSerialized(
   ctx: Awaited<ReturnType<typeof requireApiKey>>,
   id: string
 ) {
-  const { data, error } = await ctx.supabase
-    .from('conversations')
-    .select(CONVERSATION_SELECT)
-    .eq('id', id)
-    .eq('account_id', ctx.accountId)
-    .maybeSingle();
+  const [{ data, error }, accountAiOn] = await Promise.all([
+    ctx.supabase
+      .from('conversations')
+      .select(CONVERSATION_SELECT)
+      .eq('id', id)
+      .eq('account_id', ctx.accountId)
+      .maybeSingle(),
+    loadAccountAiOn(ctx.supabase, ctx.accountId),
+  ]);
   if (error) return { error: true as const, value: null };
   if (!data) return { error: false as const, value: null };
-  const accountAiOn = await loadAccountAiOn(ctx.supabase, ctx.accountId);
   return {
     error: false as const,
     value: serializeConversation(normalizeConversation(data as Conversation), {

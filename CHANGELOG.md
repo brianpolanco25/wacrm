@@ -11,6 +11,12 @@ and polish.
 
 ## [Unreleased]
 
+### Faster public API, searches that no longer fail, readable edits and deletions
+
+- No migration. `/api/v1` caches the API key and the plan per process for 30 s, so a revoked key or a plan change can take up to 30 s to apply. `GET /api/v1/conversations` and `GET /api/v1/conversations/{id}` load the AI state in parallel with the main query, and `GET /api/v1/conversations/{id}/messages` checks ownership in parallel with the page.
+- `GET /api/v1/conversations?search=` filters through the contact join instead of a list of up to 500 contact ids, which overflowed the URL and answered 500 when many contacts matched.
+- Inbound webhook: a customer's `edit` and `revoke` now rewrite the original message (`[deleted]` for a deletion) instead of adding an "[Unsupported message type: edit]" row; they don't bump unread, change the last message or trigger AI or automations. `unsupported` messages keep their real subtype (`[Unsupported message type: poll_creation]`, `unavailable` for error 131060), shared contacts are stored as name and phone, and `system` messages as their text.
+
 ### Support sessions can mint, rotate and revoke API keys
 
 - During a support session the platform operator can now create, rotate and revoke the customer's API keys (to connect the account to Cabbity Health). Each action is recorded in the session's audit trail (`api_key.create|rotate|revoke`, never the key itself) before it is written, and keys minted by support show as "created by support" in Settings → API. Billing, ownership, team members and invitations stay blocked. No migration.

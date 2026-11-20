@@ -579,8 +579,24 @@ export class FakeQuery implements PromiseLike<Result> {
   not(c: string, op: string, v: unknown): this {
     return this.add(`not.${op}`, c, v);
   }
-  or(expr: string): this {
-    this.orClauses.push(parseOrExpression(expr));
+  or(expr: string, opts: { referencedTable?: string } = {}): this {
+    const test = parseOrExpression(expr);
+    const ref = opts.referencedTable;
+    if (!ref) {
+      this.orClauses.push(test);
+      return this;
+    }
+    // Modelled for `!inner` embeds only: a non-matching embed drops the
+    // parent row. On a plain embed PostgREST would null it instead.
+    if (!this.embeds.some((e) => e.alias === ref && e.inner)) {
+      throw new Error(
+        `fake-supabase: or() on "${ref}" needs an !inner embed of that alias`
+      );
+    }
+    this.orClauses.push((row) => {
+      const embedded = row[ref];
+      return Boolean(embedded) && test(embedded as Row);
+    });
     return this;
   }
   order(column: string, opts: { ascending?: boolean } = {}): this {
