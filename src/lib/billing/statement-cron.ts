@@ -16,8 +16,10 @@
 //        - total 0 (PayPal with no overage: the fee is PayPal's): no
 //          statement and no cut-off — the ANCHOR moves on a month (and,
 //          on a manual account, `current_period_end` with it);
-//        - otherwise it is issued (`issued`, `due_at = period_end + 3
-//          days`) and the subscription goes `past_due` with
+//        - otherwise it is issued (`issued`, `due_at` = the issue + 3
+//          days: the sweep only takes cut-offs already past, so the
+//          clock starts now, never at a cut-off a late run left behind)
+//          and the subscription goes `past_due` with
 //          `grace_until = due_at`. The anchor is NOT touched: the next
 //          period starts where this one ended, whenever it is paid (no
 //          drift). Settling the statement moves it.

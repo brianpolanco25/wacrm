@@ -480,7 +480,10 @@ export async function POST(request: Request) {
     // operator moves it (`/api/platform/accounts/[id]/plan`).
     if (subscription?.meta_billing === 'managed') {
       return NextResponse.json(
-        { error: 'This plan is managed by Cabbity; ask us to change it' },
+        {
+          error:
+            "A managed account's plan is changed by Cabbity support; contact them to change it",
+        },
         { status: 409 }
       );
     }

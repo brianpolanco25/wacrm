@@ -13,9 +13,9 @@ and polish.
 
 ### Billing fixes from the 2026-11-20 audit
 
-- A cancelled subscription (PayPal-cancelled, or cancelled at period end) now becomes read-only once its paid period is over; `/billing` and checkout stay open so the account can contract again. Inbound WhatsApp is not affected.
+- A cancelled subscription (PayPal-cancelled, or cancelled at period end) now becomes read-only once its paid period is over. `/billing` stays open: a direct account can contract again from checkout; a managed account needs the operator to reassign its plan. Inbound WhatsApp is not affected.
 - A managed account (Cabbity pays Meta) can no longer change its plan or contract a public plan on its own: `change_plan` and checkout answer 409; the operator changes it.
-- A statement issued late (missing rate, stopped scheduler) is now due three days after it was issued instead of three days after the cut-off, so it is never born overdue. No migration.
+- Every statement is now due three days after it is issued instead of three days after the cut-off, so one issued late (missing rate, stopped scheduler) is never born overdue. No migration.
 
 ### Support sessions can mint, rotate and revoke API keys
 
