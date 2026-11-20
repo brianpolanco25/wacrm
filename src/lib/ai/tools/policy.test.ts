@@ -75,15 +75,20 @@ describe('checkRequiresPrior (R29)', () => {
 });
 
 describe('policyProblem / sanitizePolicy (R23, R26)', () => {
-  it.each([undefined, null, {}, { grounds: ['schedule'] }, CANCEL])(
-    'accepts %j',
-    (p) => expect(policyProblem(p)).toBeNull()
-  );
+  it.each([
+    undefined,
+    null,
+    {},
+    { grounds: ['schedule'] },
+    CANCEL,
+    { hidden: true },
+  ])('accepts %j', (p) => expect(policyProblem(p)).toBeNull());
 
   it.each([
     ['a string', 'schedule'],
     ['an array', []],
     ['an unknown key', { grounds: ['schedule'], other: 1 }],
+    ['hidden not a boolean', { hidden: 'yes' }],
     ['grounds outside the list', { grounds: ['price'] }],
     ['grounds not a list', { grounds: 'schedule' }],
     ['4 steps', { requires_prior: [['aa'], ['bb'], ['cc'], ['dd']] }],
@@ -96,6 +101,8 @@ describe('policyProblem / sanitizePolicy (R23, R26)', () => {
   it('sanitizePolicy: invalid → null, empty → null, valid → a copy', () => {
     expect(sanitizePolicy({ grounds: ['price'] })).toBeNull();
     expect(sanitizePolicy({})).toBeNull();
+    expect(sanitizePolicy({ hidden: false })).toBeNull();
+    expect(sanitizePolicy({ hidden: true })).toEqual({ hidden: true });
     expect(sanitizePolicy(CANCEL)).toEqual(CANCEL);
     expect(groundsSchedule(sanitizePolicy({ grounds: ['schedule'] }))).toBe(
       true

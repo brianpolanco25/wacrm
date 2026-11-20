@@ -35,7 +35,7 @@ export function policyProblem(raw: unknown): string | null {
   if (raw === null || raw === undefined) return null;
   if (!isPlainObject(raw)) return 'ai_policy must be an object or null';
   for (const key of Object.keys(raw)) {
-    if (key !== 'grounds' && key !== 'requires_prior') {
+    if (key !== 'grounds' && key !== 'requires_prior' && key !== 'hidden') {
       return `ai_policy has an unknown key: ${key}`;
     }
   }
@@ -48,6 +48,9 @@ export function policyProblem(raw: unknown): string | null {
     ) {
       return `ai_policy.grounds accepts only: ${AI_GROUND_CLAIMS.join(', ')}`;
     }
+  }
+  if (raw.hidden !== undefined && typeof raw.hidden !== 'boolean') {
+    return 'ai_policy.hidden must be a boolean';
   }
   if (raw.requires_prior !== undefined) {
     const steps = raw.requires_prior;
@@ -83,7 +86,8 @@ export function sanitizePolicy(raw: unknown): OperationAiPolicy | null {
   if (value.requires_prior && value.requires_prior.length > 0) {
     out.requires_prior = value.requires_prior.map((s) => [...s]);
   }
-  return out.grounds || out.requires_prior ? out : null;
+  if (value.hidden === true) out.hidden = true;
+  return out.grounds || out.requires_prior || out.hidden ? out : null;
 }
 
 export function groundsSchedule(

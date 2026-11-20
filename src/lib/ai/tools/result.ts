@@ -20,7 +20,8 @@ export type LoopErrorCode =
   | 'invalid_arguments'
   | 'limit_reached'
   | 'error'
-  | 'policy_requires_prior';
+  | 'policy_requires_prior'
+  | 'unverified_id';
 
 export const OUTCOME_HINTS: Record<string, string> = {
   invalid_params:
@@ -41,6 +42,9 @@ export const OUTCOME_HINTS: Record<string, string> = {
     'The arguments were not valid JSON; send a JSON object that matches the schema.',
   limit_reached:
     'Too many tool calls in this reply; answer with what you already have.',
+  // p16.4 D1.
+  unverified_id:
+    'That id was not returned by any tool in this conversation. Look it up first with a tool (list or lookup) and use an id from its result; an id the customer typed must be confirmed by a lookup.',
   // n13.7 R30: `{tools}` se sustituye por los nombres de las que faltan.
   policy_requires_prior:
     'This action is not allowed yet. First call: {tools}, and offer the customer the alternatives in this message. The action can only be done in a later message, after the customer has seen them.',

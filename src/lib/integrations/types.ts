@@ -66,6 +66,8 @@ export interface OperationAiPolicy {
    * que la IA tuvo que llamar con éxito en un mensaje anterior.
    */
   requires_prior?: string[][];
+  /** p16.4: la operación nunca se ofrece como herramienta de IA. */
+  hidden?: boolean;
 }
 
 export interface OperationParam {

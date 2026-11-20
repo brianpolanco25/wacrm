@@ -323,6 +323,8 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data[] pacientes con sus datos administrativos; meta.next_cursor: pásalo como cursor para pedir la página siguiente hasta que sea null.',
     is_active: false,
+    // p16.4: lista pacientes de toda la clínica; el bot nunca la ve.
+    ai_policy: { hidden: true },
   },
   {
     key: 'create_patient',
