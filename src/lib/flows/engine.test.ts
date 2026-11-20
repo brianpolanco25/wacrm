@@ -23,6 +23,8 @@ const db = vi.hoisted(() => ({
     throwOnRunUpdate: null as number | null,
     /** Make `loadActiveRunForContact`'s read throw. */
     throwOnLoad: false,
+    /** Whether the contact carries the tag (contact_tags count). */
+    tagged: false,
   },
 }));
 
@@ -83,6 +85,9 @@ vi.mock('./admin-client', () => {
         return { data: null, error: null, count };
       }
       if (table === 'flow_nodes') return { data: st.nodes, error: null };
+      if (table === 'contact_tags') {
+        return { data: null, error: null, count: st.tagged ? 1 : 0 };
+      }
       if (table === 'flows') return { data: st.flow, error: null };
       if (table === 'messages') {
         // Internal id derived from the wamid, so a test can tell which
@@ -149,7 +154,10 @@ vi.mock('./meta-send', () => ({
   engineSendInteractiveList: send.list,
 }));
 vi.mock('@/lib/contacts/tag-events', () => ({
-  addContactTagAndDispatch: vi.fn(async () => ({})),
+  addContactTagAndDispatch: vi.fn(async () => {
+    db.state.tagged = true;
+    return {};
+  }),
 }));
 vi.mock('@/lib/contacts/tag-write', () => ({
   removeContactTag: vi.fn(async () => ({})),
@@ -585,6 +593,7 @@ describe('flows — un solo envío por paso (p11.4)', () => {
     db.state.runUpdates = [];
     db.state.throwOnRunUpdate = null;
     db.state.throwOnLoad = false;
+    db.state.tagged = false;
     send.text.mockResolvedValue({ whatsapp_message_id: 'wamid.t' });
     send.buttons.mockResolvedValue({ whatsapp_message_id: 'wamid.b' });
     send.list.mockResolvedValue({ whatsapp_message_id: 'wamid.l' });
@@ -817,6 +826,57 @@ describe('flows — un solo envío por paso (p11.4)', () => {
     expect(errorReasons()).toContain('advance_cycle');
     expect(db.state.run!.status).toBe('failed');
     expect(db.state.run!.end_reason).toBe('advance_cycle');
+  });
+
+  it('a non-sending loop (condition → set_tag → same condition) ends normally', async () => {
+    db.state.nodes = [
+      {
+        ...BUTTONS_NODE,
+        config: {
+          ...BUTTONS_NODE.config,
+          buttons: [
+            { reply_id: 'precio', title: 'Precio', next_node_key: 'check' },
+          ],
+        },
+      },
+      {
+        node_key: 'check',
+        node_type: 'condition',
+        config: {
+          subject: 'tag',
+          subject_key: 'tag-1',
+          operator: 'absent',
+          true_next: 'tag',
+          false_next: 'done',
+        },
+      },
+      {
+        node_key: 'tag',
+        node_type: 'set_tag',
+        config: { mode: 'add', tag_id: 'tag-1', next_node_key: 'check' },
+      },
+      {
+        node_key: 'done',
+        node_type: 'send_message',
+        config: { text: 'Listo', next_node_key: 'bye' },
+      },
+      { node_key: 'bye', node_type: 'end', config: {} },
+    ];
+    const r = await tap('precio', 'wamid.in1');
+    expect(r).toMatchObject({ consumed: true, outcome: 'completed' });
+    expect(errorReasons()).not.toContain('advance_cycle');
+    expect(send.text).toHaveBeenCalledTimes(1);
+    expect(db.state.run!.status).toBe('completed');
+  });
+
+  it('a button back to its own menu, tapped twice in a row, re-sends the menu each time', async () => {
+    const first = await tap('otra', 'wamid.in1');
+    const second = await tap('otra', 'wamid.in2');
+    expect(first).toMatchObject({ consumed: true, outcome: 'advanced' });
+    expect(second).toMatchObject({ consumed: true, outcome: 'advanced' });
+    expect(send.buttons).toHaveBeenCalledTimes(2);
+    expect(errorReasons()).not.toContain('advance_cycle');
+    expect(db.state.run!.status).toBe('active');
   });
 
   it('R10 the same meta_message_id twice: the second sends nothing', async () => {

@@ -35,16 +35,18 @@ const uid = () =>
 
 export async function replaceSteps(
   automationId: string,
+  accountId: string,
   input: BuilderStepInput[]
 ): Promise<string | null> {
   const admin = supabaseAdmin();
   // Runs parked on a `wait` point at step ids and positions that the
   // delete below wipes out; resumed, they would run the wrong steps.
-  // Cancel them instead. (`automationId` is account-checked by the caller.)
+  // Cancel them instead.
   const { data: cancelled, error: cancelErr } = await admin
     .from('automation_pending_executions')
     .update({ status: 'failed' })
     .eq('automation_id', automationId)
+    .eq('account_id', accountId)
     .eq('status', 'pending')
     .select('log_id');
   if (cancelErr) return cancelErr.message;
@@ -52,14 +54,18 @@ export async function replaceSteps(
     .map((r: { log_id: string | null }) => r.log_id)
     .filter((id): id is string => !!id);
   if (logIds.length > 0) {
-    await admin
+    const { error: logErr } = await admin
       .from('automation_logs')
       .update({
         status: 'failed',
         error_message:
           'Cancelled: the automation was edited while this run was waiting',
       })
-      .in('id', logIds);
+      .in('id', logIds)
+      .eq('account_id', accountId);
+    // The runs are already cancelled; a stale log is cosmetic.
+    if (logErr)
+      console.error('[automations] cancel: log update failed', logErr);
   }
 
   // Not a transaction: if the insert fails after the delete, the
@@ -71,6 +77,53 @@ export async function replaceSteps(
     .eq('automation_id', automationId);
   if (delErr) return delErr.message;
   return insertSteps(automationId, input);
+}
+
+/**
+ * True when `input` differs from the stored steps (type, config, position,
+ * branch, parent). The builder resends every step on every save; an
+ * unchanged tree must not cancel parked runs nor churn step ids.
+ * A failed read counts as changed, which falls back to replacing.
+ */
+export async function stepsChanged(
+  automationId: string,
+  input: BuilderStepInput[]
+): Promise<boolean> {
+  try {
+    return (
+      stepsSignature(await loadStepsTree(automationId)) !==
+      stepsSignature(input)
+    );
+  } catch {
+    return true;
+  }
+}
+
+function stepsSignature(input: BuilderStepInput[]): string {
+  const looksFlat = input.some(
+    (s) => s.branch !== undefined || s.parent_index !== undefined
+  );
+  const walk = (steps: BuilderStepInput[]): unknown[] =>
+    steps.map((s) => [
+      s.step_type,
+      sortKeys(s.step_config ?? {}),
+      s.step_type === 'condition'
+        ? [walk(s.branches?.yes ?? []), walk(s.branches?.no ?? [])]
+        : null,
+    ]);
+  return JSON.stringify(walk(looksFlat ? seedsToTree(input) : input));
+}
+
+// jsonb does not keep key order, so compare configs with sorted keys.
+function sortKeys(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(sortKeys);
+  if (v && typeof v === 'object')
+    return Object.fromEntries(
+      Object.keys(v)
+        .sort()
+        .map((k) => [k, sortKeys((v as Record<string, unknown>)[k])])
+    );
+  return v;
 }
 
 export async function insertSteps(

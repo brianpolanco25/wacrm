@@ -31,6 +31,9 @@ import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 /** Tiempo máximo por intento. Corto: el primero corre en `after()`. */
 export const DELIVERY_TIMEOUT_MS = 5000;
 
+/** Lo que una fila reclamada queda fuera del barrido (ver claimDelivery). */
+export const CLAIM_LEASE_MS = 60_000;
+
 /** Fallos CONSECUTIVOS del endpoint tras los que se autodesactiva (028). */
 export const MAX_CONSECUTIVE_FAILURES = 15;
 
@@ -243,10 +246,10 @@ export async function claimDelivery(
       attempt: row.attempt + 1,
       status: 'pending',
       // Mientras el intento vuela, la fila no está vencida: otro barrido
-      // no la reclama. Si el proceso muere a medias, vuelve sola.
-      next_attempt_at: new Date(
-        Date.now() + 2 * DELIVERY_TIMEOUT_MS
-      ).toISOString(),
+      // no la reclama. Un intento (endpoint + DNS + fetch de 5 s) puede
+      // pasar de 10 s; 60 s lo cubre, y si el proceso muere a medias la
+      // fila vuelve sola en el barrido del minuto siguiente.
+      next_attempt_at: new Date(Date.now() + CLAIM_LEASE_MS).toISOString(),
     })
     .eq('id', row.id);
 
