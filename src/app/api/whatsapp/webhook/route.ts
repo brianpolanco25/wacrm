@@ -28,9 +28,11 @@ import {
   logRejectedDelivery,
 } from '@/lib/whatsapp/webhook-diagnostics';
 import {
+  applyMessageRewrite,
   handleAccountUpdate,
   handleCoexistenceChange,
   isCoexistenceField,
+  parseMessageRewrite,
   type DeliveryAuth,
 } from '@/lib/whatsapp/coexistence-webhook';
 import {
@@ -134,6 +136,15 @@ interface WhatsAppMessage {
   button?: { text?: string; payload?: string };
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string };
+  /** `type: 'unsupported'`: the real subtype, e.g. `poll_creation`. */
+  unsupported?: { type?: string };
+  errors?: { code?: number }[];
+  /** Shared contact cards. */
+  contacts?: {
+    name?: { formatted_name?: string };
+    phones?: { phone?: string; wa_id?: string }[];
+  }[];
+  system?: { body?: string };
 }
 
 /**
@@ -1095,6 +1106,34 @@ async function processMessage(
     return;
   }
 
+  // Edits and deletions (n15.6) rewrite the original row, like the
+  // coexistence echoes: no new row, no unread bump, no last-message
+  // change, no AI or automations.
+  if (message.type === 'edit' || message.type === 'revoke') {
+    const rewrite = parseMessageRewrite(
+      message as unknown as Record<string, unknown>
+    );
+    const updated = rewrite
+      ? await applyMessageRewrite(
+          supabaseAdmin(),
+          conversation.id,
+          rewrite,
+          message.id
+        )
+      : false;
+    if (!updated) {
+      console.warn(
+        '[webhook] edit/revoke target not found:',
+        JSON.stringify({
+          wamid: message.id,
+          originalId: rewrite?.originalId ?? null,
+          type: message.type,
+        })
+      );
+    }
+    return;
+  }
+
   // Parse message content based on type
   const { contentText, mediaUrl, mediaType, interactiveReplyId } =
     await parseMessageContent(
@@ -1634,6 +1673,41 @@ async function parseMessageContent(
         interactiveReplyId: payload || label,
       };
     }
+
+    case 'unsupported': {
+      // The real subtype (`poll_creation`, …) so the reader can name it;
+      // error 131060 means WhatsApp could not deliver the content at all.
+      const subtype = message.errors?.some((e) => e.code === 131060)
+        ? 'unavailable'
+        : message.unsupported?.type || 'unsupported';
+      return {
+        ...empty,
+        contentText: `[Unsupported message type: ${subtype}]`,
+      };
+    }
+
+    case 'contacts': {
+      const cards = (message.contacts ?? [])
+        .map((c) =>
+          [c.name?.formatted_name, c.phones?.[0]?.phone ?? c.phones?.[0]?.wa_id]
+            .filter(Boolean)
+            .join(' ')
+        )
+        .filter(Boolean);
+      return {
+        ...empty,
+        contentText: cards.length
+          ? cards.join('\n')
+          : '[Unsupported message type: contacts]',
+      };
+    }
+
+    case 'system':
+      return {
+        ...empty,
+        contentText:
+          message.system?.body || '[Unsupported message type: system]',
+      };
 
     default:
       return {

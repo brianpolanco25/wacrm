@@ -151,6 +151,33 @@ describe('GET /api/v1/conversations', () => {
     expect((await get('?unread=quizas')).res.status).toBe(400);
   });
 
+  it('una búsqueda con cientos de coincidencias pagina sin listar ids de contacto (n15.6)', async () => {
+    for (let n = 1000; n < 1600; n++) {
+      h.db.tables.contacts.push({
+        id: ID(n),
+        account_id: A,
+        name: `Ana ${n}`,
+        phone: `+1809${n}`,
+      });
+      h.db.tables.conversations.push(
+        conv(9, A, {
+          id: ID(n + 1000),
+          contact_id: ID(n),
+          created_at: `2026-02-01T00:${String(n % 60).padStart(2, '0')}:00.000Z`,
+        })
+      );
+    }
+    const { res, body } = await get('?search=ana&limit=50');
+    expect(res.status).toBe(200);
+    expect(body.data).toHaveLength(50);
+    expect(body.meta.next_cursor).toBeTruthy();
+    expect(
+      h.db.log.some((q) =>
+        q.filters.some((f) => f.op === 'in' && f.column === 'contact_id')
+      )
+    ).toBe(false);
+  });
+
   it('informa la ventana de 24 h y el estado de la IA', async () => {
     const { body } = await get('?sort=last_activity');
     const first = body.data[0];

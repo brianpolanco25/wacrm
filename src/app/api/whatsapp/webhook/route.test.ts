@@ -85,6 +85,13 @@ const h = vi.hoisted(() => ({
       values: Record<string, unknown>;
       ids: unknown;
     }[],
+    /** Rewrites of an original row by an edit / revoke (n15.6). */
+    messageRewrites: [] as {
+      values: Record<string, unknown>;
+      filters: Record<string, unknown>;
+    }[],
+    /** Rows the rewrite's `.select('id')` returns ([] = original not found). */
+    messageRewriteResult: [{ id: 'orig-1' }] as { id: string }[],
     /** Filters/limits the GET's verify-token query applied. */
     configVerifyQuery: null as {
       notNull: boolean;
@@ -378,6 +385,7 @@ vi.mock('@supabase/supabase-js', () => ({
                 values: Record<string, unknown>;
                 ids: unknown;
               } = { values, ids: null };
+              const filters: Record<string, unknown> = {};
               const chain = {
                 in: (column: string, ids: unknown) => {
                   if (column === 'id') {
@@ -385,6 +393,18 @@ vi.mock('@supabase/supabase-js', () => ({
                     h.state.messageStatusUpdates.push(captured);
                   }
                   return chain;
+                },
+                // Edit / revoke (n15.6): update().eq().eq().select('id').
+                eq: (column: string, value: unknown) => {
+                  filters[column] = value;
+                  return chain;
+                },
+                select: () => {
+                  h.state.messageRewrites.push({ values, filters });
+                  return Promise.resolve({
+                    data: h.state.messageRewriteResult,
+                    error: null,
+                  });
                 },
                 then: (resolve: (r: unknown) => unknown) =>
                   resolve({ error: null }),
@@ -564,6 +584,8 @@ beforeEach(() => {
   h.state.statusRecipientRows = [];
   h.state.recipientUpdates = [];
   h.state.messageStatusUpdates = [];
+  h.state.messageRewrites = [];
+  h.state.messageRewriteResult = [{ id: 'orig-1' }];
   h.state.configVerifyTokens = ['tenant-verify-token'];
   h.state.configWrites = [];
   h.state.configVerifyQuery = null;
@@ -703,6 +725,121 @@ describe('inbound webhook: template quick-reply buttons (#478)', () => {
       content_text: 'Track my order',
       interactive_reply_id: 'Track my order',
     });
+  });
+});
+
+describe('inbound webhook: edit, revoke, unsupported, contacts (n15.6)', () => {
+  const base = {
+    id: 'wamid.NEW',
+    from: '15551230000',
+    timestamp: '1700000000',
+  };
+  const expectNoFanOut = () => {
+    expect(h.state.upsertCalls).toHaveLength(0);
+    expect(h.state.rpcCalls).toHaveLength(0);
+    expect(h.dispatchInboundToFlows).not.toHaveBeenCalled();
+    expect(h.runAutomationsForTrigger).not.toHaveBeenCalled();
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled();
+  };
+
+  it('an edit rewrites the original row and inserts nothing', async () => {
+    await runWebhook({
+      ...base,
+      type: 'edit',
+      edit: {
+        original_message_id: 'wamid.ORIG',
+        message: { type: 'text', text: { body: 'corregido' } },
+      },
+    });
+    expect(h.state.messageRewrites).toEqual([
+      {
+        values: { content_text: 'corregido' },
+        filters: { conversation_id: 'conv-1', message_id: 'wamid.ORIG' },
+      },
+    ]);
+    expectNoFanOut();
+  });
+
+  it('a revoke marks the original as deleted and inserts nothing', async () => {
+    await runWebhook({
+      ...base,
+      type: 'revoke',
+      revoke: { original_message_id: 'wamid.ORIG' },
+    });
+    expect(h.state.messageRewrites[0]).toMatchObject({
+      values: { content_text: '[deleted]', content_type: 'text' },
+      filters: { conversation_id: 'conv-1', message_id: 'wamid.ORIG' },
+    });
+    expectNoFanOut();
+  });
+
+  it('a revoke whose original is unknown logs ids only and inserts nothing', async () => {
+    h.state.messageRewriteResult = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await runWebhook({
+      ...base,
+      type: 'revoke',
+      revoke: { original_message_id: 'wamid.GONE' },
+    });
+    expect(warn).toHaveBeenCalledWith(
+      '[webhook] edit/revoke target not found:',
+      JSON.stringify({
+        wamid: 'wamid.NEW',
+        originalId: 'wamid.GONE',
+        type: 'revoke',
+      })
+    );
+    warn.mockRestore();
+    expectNoFanOut();
+  });
+
+  it('an unsupported message keeps its real subtype, and 131060 reads as unavailable', async () => {
+    await runWebhook({
+      ...base,
+      type: 'unsupported',
+      unsupported: { type: 'poll_creation' },
+    });
+    expect(h.state.upsertCalls[0].row.content_text).toBe(
+      '[Unsupported message type: poll_creation]'
+    );
+
+    h.state.upsertCalls = [];
+    h.state.afterCallbacks = [];
+    await runWebhook({
+      ...base,
+      type: 'unsupported',
+      errors: [{ code: 131060 }],
+    });
+    expect(h.state.upsertCalls[0].row.content_text).toBe(
+      '[Unsupported message type: unavailable]'
+    );
+  });
+
+  it('a shared contact is stored with its name and phone', async () => {
+    await runWebhook({
+      ...base,
+      type: 'contacts',
+      contacts: [
+        {
+          name: { formatted_name: 'Ana Pérez' },
+          phones: [{ phone: '+1 809 555 0101', wa_id: '18095550101' }],
+        },
+      ],
+    });
+    expect(h.state.upsertCalls[0].row.content_text).toBe(
+      'Ana Pérez +1 809 555 0101'
+    );
+  });
+
+  it('a system message stores its body', async () => {
+    await runWebhook({
+      ...base,
+      type: 'system',
+      system: { body: 'El cliente cambió su número' },
+    });
+    expect(h.state.upsertCalls[0].row.content_text).toBe(
+      'El cliente cambió su número'
+    );
   });
 });
 

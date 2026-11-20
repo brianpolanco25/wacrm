@@ -8,9 +8,10 @@
 // rows) starts rejecting it immediately. Admin+, enforced here and
 // by the `api_keys_update` RLS policy.
 //
-// Revocation is effective on the next request: once `revoked_at` is
-// set to a moment that has passed, `findActiveKeyByHash` returns null
-// and the key 401s.
+// Revocation takes effect within 30 s on each replica: `requireApiKey`
+// caches a key's row per process (n15.6, `lib/auth/api-context.ts`).
+// Once that entry expires, `findActiveKeyByHash` returns null and the
+// key 401s.
 //
 // It also CUTS SHORT a rotation grace window (fase 7 §1): a key stamped
 // with `now() + 24 h` by /rotate is still live, so this route accepts it

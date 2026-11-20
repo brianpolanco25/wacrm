@@ -249,13 +249,11 @@ export function mapHistoryStatus(
   return HISTORY_STATUS[key] ?? (senderType === 'agent' ? 'sent' : 'delivered');
 }
 
-export type ParsedEcho =
-  | { kind: 'message'; phone: string; message: CoexistenceMessage }
-  | { kind: 'revoke'; phone: string; wamid: string; originalId: string }
+/** An `edit` / `revoke` of an earlier message: rewrites that row. */
+export type MessageRewrite =
+  | { kind: 'revoke'; originalId: string }
   | {
       kind: 'edit';
-      phone: string;
-      wamid: string;
       originalId: string;
       contentText: string;
       /**
@@ -265,6 +263,35 @@ export type ParsedEcho =
        */
       caption?: string | null;
     };
+
+export type ParsedEcho =
+  | { kind: 'message'; phone: string; message: CoexistenceMessage }
+  | ({ phone: string; wamid: string } & MessageRewrite);
+
+/**
+ * A message of type `revoke` or `edit` → its rewrite, or null when it
+ * names no original. Shared by the echoes and the inbound webhook.
+ */
+export function parseMessageRewrite(
+  message: Record<string, unknown>
+): MessageRewrite | null {
+  const type = asString(message.type);
+  if (type !== 'revoke' && type !== 'edit') return null;
+  const inner = asObject(message[type]);
+  const originalId = asString(inner?.original_message_id);
+  if (!originalId) return null;
+  if (type === 'revoke') return { kind: 'revoke', originalId };
+  const edited = asObject(inner?.message) ?? {};
+  const editedType = asString(edited.type);
+  return {
+    kind: 'edit',
+    originalId,
+    contentText: contentTextFor(edited),
+    ...(editedType && editedType !== 'text'
+      ? { caption: asString(asObject(edited[editedType])?.caption) }
+      : {}),
+  };
+}
 
 /**
  * The media of an echo that Meta delivered by id, or null (text, any
@@ -312,28 +339,9 @@ export function parseMessageEchoes(value: unknown): {
     }
     const type = asString(echo.type) ?? 'unknown';
     if (type === 'revoke' || type === 'edit') {
-      const inner = asObject(echo[type]);
-      const originalId = asString(inner?.original_message_id);
-      if (!originalId) {
-        skipped.push(wamid);
-        continue;
-      }
-      if (type === 'revoke') {
-        echoes.push({ kind: 'revoke', phone, wamid, originalId });
-      } else {
-        const edited = asObject(inner?.message) ?? {};
-        const editedType = asString(edited.type);
-        echoes.push({
-          kind: 'edit',
-          phone,
-          wamid,
-          originalId,
-          contentText: contentTextFor(edited),
-          ...(editedType && editedType !== 'text'
-            ? { caption: asString(asObject(edited[editedType])?.caption) }
-            : {}),
-        });
-      }
+      const rewrite = parseMessageRewrite(echo);
+      if (rewrite) echoes.push({ ...rewrite, phone, wamid });
+      else skipped.push(wamid);
       continue;
     }
     const media = echoMediaFor(echo);
@@ -611,45 +619,7 @@ async function applyEchoRewrite(
       .limit(1);
     const conversationId = (convRows as { id: string }[] | null)?.[0]?.id;
     if (conversationId) {
-      let patch: Record<string, unknown> =
-        echo.kind === 'revoke'
-          ? {
-              content_text: DELETED_MARKER,
-              content_type: 'text',
-              media_url: null,
-              media_type: null,
-            }
-          : { content_text: echo.contentText };
-      if (echo.kind === 'edit' && echo.caption !== undefined) {
-        const { data: target } = await db
-          .from('messages')
-          .select('id, content_type')
-          .eq('conversation_id', conversationId)
-          .eq('message_id', echo.originalId)
-          .limit(1);
-        const targetType = (target as { content_type: string }[] | null)?.[0]
-          ?.content_type;
-        if (targetType && targetType !== 'text') {
-          patch = { content_text: echo.caption };
-        }
-      }
-      const { data, error } = await db
-        .from('messages')
-        .update(patch)
-        .eq('conversation_id', conversationId)
-        .eq('message_id', echo.originalId)
-        .select('id');
-      if (error) {
-        console.error(
-          '[webhook] echo rewrite failed:',
-          JSON.stringify({
-            wamid: echo.wamid,
-            originalId: echo.originalId,
-            error: errorMessage(error),
-          })
-        );
-      }
-      updated = !error && Array.isArray(data) && data.length > 0;
+      updated = await applyMessageRewrite(db, conversationId, echo, echo.wamid);
     }
   }
   if (!updated) {
@@ -663,6 +633,58 @@ async function applyEchoRewrite(
     );
   }
   return updated;
+}
+
+/**
+ * Rewrite the original row of an `edit` / `revoke` inside one
+ * conversation. Never inserts; true when a row changed. Shared by the
+ * echoes above and the inbound webhook (n15.6).
+ */
+export async function applyMessageRewrite(
+  db: SupabaseClient,
+  conversationId: string,
+  rewrite: MessageRewrite,
+  wamid: string
+): Promise<boolean> {
+  let patch: Record<string, unknown> =
+    rewrite.kind === 'revoke'
+      ? {
+          content_text: DELETED_MARKER,
+          content_type: 'text',
+          media_url: null,
+          media_type: null,
+        }
+      : { content_text: rewrite.contentText };
+  if (rewrite.kind === 'edit' && rewrite.caption !== undefined) {
+    const { data: target } = await db
+      .from('messages')
+      .select('id, content_type')
+      .eq('conversation_id', conversationId)
+      .eq('message_id', rewrite.originalId)
+      .limit(1);
+    const targetType = (target as { content_type: string }[] | null)?.[0]
+      ?.content_type;
+    if (targetType && targetType !== 'text') {
+      patch = { content_text: rewrite.caption };
+    }
+  }
+  const { data, error } = await db
+    .from('messages')
+    .update(patch)
+    .eq('conversation_id', conversationId)
+    .eq('message_id', rewrite.originalId)
+    .select('id');
+  if (error) {
+    console.error(
+      '[webhook] echo rewrite failed:',
+      JSON.stringify({
+        wamid,
+        originalId: rewrite.originalId,
+        error: errorMessage(error),
+      })
+    );
+  }
+  return !error && Array.isArray(data) && data.length > 0;
 }
 
 /** The decrypted token for echo media, or null (logged, never thrown). */

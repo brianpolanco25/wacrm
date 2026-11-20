@@ -10,8 +10,9 @@
 // + tags via the shared CONVERSATION_SELECT and reports the 24 h service
 // window (`service_window_expires_at`) and the AI state.
 //
-// Tenancy: the key's client is service-role, so every query here —
-// including the contact lookup behind `search` — filters by account_id.
+// Tenancy: the key's client is service-role, so every query here filters
+// by account_id; `search` only reaches contacts through the account's own
+// conversations (inner join).
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
@@ -44,9 +45,6 @@ function sanitizeSearch(raw: string): string {
   return raw.replace(/[^\p{L}\p{N} +@.\-_]/gu, '').trim();
 }
 
-/** Cap on the contacts a `search` may match (keeps the `in` list sane). */
-const SEARCH_CONTACT_CAP = 500;
-
 export async function GET(request: Request) {
   try {
     const ctx = await requireApiKey(request, 'conversations:read');
@@ -77,9 +75,18 @@ export async function GET(request: Request) {
     }
     const byActivity = sort === 'last_activity';
 
+    // `search` filters through an inner join on the contact (n15.6): the
+    // old `.in('contact_id', <up to 500 ids>)` overflowed the URL.
     let query = ctx.supabase
       .from('conversations')
-      .select(CONVERSATION_SELECT)
+      .select(
+        search
+          ? CONVERSATION_SELECT.replace(
+              'contact:contacts(',
+              'contact:contacts!inner('
+            )
+          : CONVERSATION_SELECT
+      )
       .eq('account_id', ctx.accountId);
 
     if (status) query = query.eq('status', status);
@@ -89,19 +96,9 @@ export async function GET(request: Request) {
     if (unread === 'true') query = query.gt('unread_count', 0);
 
     if (search) {
-      const { data: found, error: searchError } = await ctx.supabase
-        .from('contacts')
-        .select('id')
-        .eq('account_id', ctx.accountId)
-        .or(`name.ilike.*${search}*,phone.ilike.*${search}*`)
-        .limit(SEARCH_CONTACT_CAP);
-      if (searchError) {
-        console.error('[api/v1/conversations] search error:', searchError);
-        return fail('internal', 'Failed to list conversations', 500);
-      }
-      const ids = ((found ?? []) as Array<{ id: string }>).map((c) => c.id);
-      if (ids.length === 0) return okList([], null);
-      query = query.in('contact_id', ids);
+      query = query.or(`name.ilike.*${search}*,phone.ilike.*${search}*`, {
+        referencedTable: 'contact',
+      });
     }
 
     let page: (rows: unknown[]) => {
@@ -134,14 +131,16 @@ export async function GET(request: Request) {
         buildPage(rows as Array<{ created_at: string; id: string }>, limit);
     }
 
-    const { data, error } = await query;
+    const [{ data, error }, accountAiOn] = await Promise.all([
+      query,
+      loadAccountAiOn(ctx.supabase, ctx.accountId),
+    ]);
     if (error) {
       console.error('[api/v1/conversations] list error:', error);
       return fail('internal', 'Failed to list conversations', 500);
     }
 
     const { items, nextCursor } = page(data ?? []);
-    const accountAiOn = await loadAccountAiOn(ctx.supabase, ctx.accountId);
     return okList(
       items.map((r) =>
         serializeConversation(normalizeConversation(r as Conversation), {

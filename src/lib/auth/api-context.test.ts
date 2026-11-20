@@ -1,17 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { generateApiKey } from "@/lib/api-keys/keys";
-import type { ApiKeyRow } from "@/lib/api-keys/store";
-import { ApiError } from "@/lib/api/v1/respond";
+import { generateApiKey, hashApiKey } from '@/lib/api-keys/keys';
+import type { ApiKeyRow } from '@/lib/api-keys/store';
+import { ApiError } from '@/lib/api/v1/respond';
 import {
   AccountLockedError,
   FeatureNotAvailableError,
-} from "@/lib/billing/enforce";
-import { __resetRateLimitForTests, RATE_LIMITS } from "@/lib/rate-limit";
+} from '@/lib/billing/enforce';
+import { __resetRateLimitForTests, RATE_LIMITS } from '@/lib/rate-limit';
 
 // Mock the service-role client factory — requireApiKey only stashes
 // the returned client in the context; tests never call through it.
-vi.mock("@/lib/flows/admin-client", () => ({
+vi.mock('@/lib/flows/admin-client', () => ({
   supabaseAdmin: () => ({ __isMockAdminClient: true }),
 }));
 
@@ -21,10 +21,10 @@ vi.mock("@/lib/flows/admin-client", () => ({
 // `FeatureNotAvailableError` / `AccountLockedError`, not a lookalike.
 const billing = vi.hoisted(() => {
   const entitlements = {
-    planId: "pro",
-    status: "active" as const,
+    planId: 'pro',
+    status: 'active' as const,
     limits: {} as Record<string, number | null>,
-    features: ["api", "webhooks"],
+    features: ['api', 'webhooks'],
     readOnly: false,
     trialEndsAt: null,
   };
@@ -34,38 +34,40 @@ const billing = vi.hoisted(() => {
     assertWritable: vi.fn(async () => entitlements),
   };
 });
-vi.mock("@/lib/billing/enforce", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/billing/enforce")>()),
+vi.mock('@/lib/billing/enforce', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/billing/enforce')>()),
   assertPlanFeature: billing.assertPlanFeature,
   assertWritable: billing.assertWritable,
 }));
 
 // Mock the store so we control which row a hash resolves to.
-const findActiveKeyByHash = vi.fn<(hash: string) => Promise<ApiKeyRow | null>>();
+const findActiveKeyByHash =
+  vi.fn<(hash: string) => Promise<ApiKeyRow | null>>();
 const touchLastUsed = vi.fn();
-vi.mock("@/lib/api-keys/store", () => ({
+vi.mock('@/lib/api-keys/store', () => ({
   findActiveKeyByHash: (hash: string) => findActiveKeyByHash(hash),
   touchLastUsed: (id: string) => touchLastUsed(id),
 }));
 
 // Import AFTER the mocks are registered.
-const { requireApiKey } = await import("./api-context");
+const { requireApiKey, __resetApiKeyCacheForTests } =
+  await import('./api-context');
 
 const KEY = generateApiKey().plaintext;
 
 function reqWith(authHeader?: string): Request {
-  return new Request("https://crm.example.com/api/v1/me", {
+  return new Request('https://crm.example.com/api/v1/me', {
     headers: authHeader ? { authorization: authHeader } : {},
   });
 }
 
 function row(overrides: Partial<ApiKeyRow> = {}): ApiKeyRow {
   return {
-    id: "key-1",
-    account_id: "acct-1",
-    created_by: "user-1",
-    name: "Test key",
-    scopes: ["messages:send"],
+    id: 'key-1',
+    account_id: 'acct-1',
+    created_by: 'user-1',
+    name: 'Test key',
+    scopes: ['messages:send'],
     expires_at: null,
     revoked_at: null,
     ...overrides,
@@ -74,6 +76,7 @@ function row(overrides: Partial<ApiKeyRow> = {}): ApiKeyRow {
 
 beforeEach(() => {
   __resetRateLimitForTests();
+  __resetApiKeyCacheForTests();
   findActiveKeyByHash.mockReset();
   touchLastUsed.mockReset();
   billing.assertPlanFeature.mockClear();
@@ -86,7 +89,11 @@ afterEach(() => {
   __resetRateLimitForTests();
 });
 
-async function expectApiError(p: Promise<unknown>, code: string, status: number) {
+async function expectApiError(
+  p: Promise<unknown>,
+  code: string,
+  status: number
+) {
   await expect(p).rejects.toBeInstanceOf(ApiError);
   await p.catch((e: unknown) => {
     const err = e as ApiError;
@@ -95,62 +102,62 @@ async function expectApiError(p: Promise<unknown>, code: string, status: number)
   });
 }
 
-describe("requireApiKey", () => {
-  it("401s when no Authorization header is present", async () => {
-    await expectApiError(requireApiKey(reqWith()), "unauthorized", 401);
+describe('requireApiKey', () => {
+  it('401s when no Authorization header is present', async () => {
+    await expectApiError(requireApiKey(reqWith()), 'unauthorized', 401);
     expect(findActiveKeyByHash).not.toHaveBeenCalled();
   });
 
   it("401s on a token that doesn't look like a wacrm key", async () => {
     await expectApiError(
-      requireApiKey(reqWith("Bearer some-invite-token")),
-      "unauthorized",
-      401,
+      requireApiKey(reqWith('Bearer some-invite-token')),
+      'unauthorized',
+      401
     );
     expect(findActiveKeyByHash).not.toHaveBeenCalled();
   });
 
-  it("401s when the key is unknown / revoked / expired (store returns null)", async () => {
+  it('401s when the key is unknown / revoked / expired (store returns null)', async () => {
     findActiveKeyByHash.mockResolvedValue(null);
     await expectApiError(
       requireApiKey(reqWith(`Bearer ${KEY}`)),
-      "unauthorized",
-      401,
+      'unauthorized',
+      401
     );
   });
 
-  it("returns a context for a valid key with no scope required", async () => {
+  it('returns a context for a valid key with no scope required', async () => {
     findActiveKeyByHash.mockResolvedValue(row());
     const ctx = await requireApiKey(reqWith(`Bearer ${KEY}`));
-    expect(ctx.authType).toBe("api_key");
-    expect(ctx.accountId).toBe("acct-1");
-    expect(ctx.keyId).toBe("key-1");
-    expect(ctx.scopes).toEqual(["messages:send"]);
-    expect(touchLastUsed).toHaveBeenCalledWith("key-1");
+    expect(ctx.authType).toBe('api_key');
+    expect(ctx.accountId).toBe('acct-1');
+    expect(ctx.keyId).toBe('key-1');
+    expect(ctx.scopes).toEqual(['messages:send']);
+    expect(touchLastUsed).toHaveBeenCalledWith('key-1');
   });
 
   it("accepts a bare key without the 'Bearer ' prefix", async () => {
     findActiveKeyByHash.mockResolvedValue(row());
     const ctx = await requireApiKey(reqWith(KEY));
-    expect(ctx.accountId).toBe("acct-1");
+    expect(ctx.accountId).toBe('acct-1');
   });
 
-  it("403s when the key lacks the required scope", async () => {
-    findActiveKeyByHash.mockResolvedValue(row({ scopes: ["contacts:read"] }));
+  it('403s when the key lacks the required scope', async () => {
+    findActiveKeyByHash.mockResolvedValue(row({ scopes: ['contacts:read'] }));
     await expectApiError(
-      requireApiKey(reqWith(`Bearer ${KEY}`), "messages:send"),
-      "forbidden",
-      403,
+      requireApiKey(reqWith(`Bearer ${KEY}`), 'messages:send'),
+      'forbidden',
+      403
     );
   });
 
-  it("passes when the key has the required scope", async () => {
-    findActiveKeyByHash.mockResolvedValue(row({ scopes: ["messages:send"] }));
-    const ctx = await requireApiKey(reqWith(`Bearer ${KEY}`), "messages:send");
-    expect(ctx.accountId).toBe("acct-1");
+  it('passes when the key has the required scope', async () => {
+    findActiveKeyByHash.mockResolvedValue(row({ scopes: ['messages:send'] }));
+    const ctx = await requireApiKey(reqWith(`Bearer ${KEY}`), 'messages:send');
+    expect(ctx.accountId).toBe('acct-1');
   });
 
-  it("429s once the per-key budget is exhausted", async () => {
+  it('429s once the per-key budget is exhausted', async () => {
     findActiveKeyByHash.mockResolvedValue(row());
     // Burn the whole window.
     for (let i = 0; i < RATE_LIMITS.publicApi.limit; i++) {
@@ -158,8 +165,8 @@ describe("requireApiKey", () => {
     }
     await expectApiError(
       requireApiKey(reqWith(`Bearer ${KEY}`)),
-      "rate_limited",
-      429,
+      'rate_limited',
+      429
     );
   });
 });
@@ -236,5 +243,103 @@ describe('requireApiKey — plan entitlements (fase 3 §4/§5)', () => {
     findActiveKeyByHash.mockResolvedValue(row());
     const ctx = await requireApiKey(reqMethod('POST'));
     expect(ctx.accountId).toBe('acct-1');
+  });
+});
+
+// n15.6 W.1: the key and the plan are cached per process for 30 s.
+describe('requireApiKey — cache (n15.6)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reuses the key and the plan within the window', async () => {
+    findActiveKeyByHash.mockResolvedValue(row());
+    await requireApiKey(reqWith(`Bearer ${KEY}`));
+    await requireApiKey(reqWith(`Bearer ${KEY}`));
+    expect(findActiveKeyByHash).toHaveBeenCalledTimes(1);
+    expect(billing.assertPlanFeature).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again once the window expires, so a revoked key stops working', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    findActiveKeyByHash.mockResolvedValue(row());
+    await requireApiKey(reqWith(`Bearer ${KEY}`));
+
+    findActiveKeyByHash.mockResolvedValue(null);
+    vi.setSystemTime(Date.now() + 29_000);
+    await requireApiKey(reqWith(`Bearer ${KEY}`));
+    vi.setSystemTime(Date.now() + 2_000);
+    await expectApiError(
+      requireApiKey(reqWith(`Bearer ${KEY}`)),
+      'unauthorized',
+      401
+    );
+    expect(findActiveKeyByHash).toHaveBeenCalledTimes(2);
+  });
+
+  it('tells keys apart and never caches an unknown key', async () => {
+    const other = generateApiKey().plaintext;
+    findActiveKeyByHash.mockImplementation(async (hash) =>
+      hash === hashApiKey(KEY) ? row() : null
+    );
+    await requireApiKey(reqWith(`Bearer ${KEY}`));
+    await expectApiError(
+      requireApiKey(reqWith(`Bearer ${other}`)),
+      'unauthorized',
+      401
+    );
+    await expectApiError(
+      requireApiKey(reqWith(`Bearer ${other}`)),
+      'unauthorized',
+      401
+    );
+    expect(findActiveKeyByHash).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not cache a plan without the api feature', async () => {
+    findActiveKeyByHash.mockResolvedValue(row());
+    billing.assertPlanFeature.mockRejectedValueOnce(
+      new FeatureNotAvailableError('api')
+    );
+    await expect(
+      requireApiKey(reqWith(`Bearer ${KEY}`))
+    ).rejects.toBeInstanceOf(FeatureNotAvailableError);
+    const ctx = await requireApiKey(reqWith(`Bearer ${KEY}`));
+    expect(ctx.accountId).toBe('acct-1');
+    expect(billing.assertPlanFeature).toHaveBeenCalledTimes(2);
+  });
+
+  it('a cached key still dies at its expires_at, without waiting out the window', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    findActiveKeyByHash.mockResolvedValue(
+      row({ expires_at: new Date(Date.now() + 10_000).toISOString() })
+    );
+    await requireApiKey(reqWith(`Bearer ${KEY}`));
+    vi.setSystemTime(Date.now() + 11_000);
+    await expectApiError(
+      requireApiKey(reqWith(`Bearer ${KEY}`)),
+      'unauthorized',
+      401
+    );
+    expect(findActiveKeyByHash).toHaveBeenCalledTimes(1);
+  });
+
+  it('keys of two accounts each get their own account and their own plan', async () => {
+    const keyB = generateApiKey().plaintext;
+    findActiveKeyByHash.mockImplementation(async (hash) =>
+      hash === hashApiKey(KEY)
+        ? row({ id: 'key-a', account_id: 'acct-a' })
+        : row({ id: 'key-b', account_id: 'acct-b' })
+    );
+    const a1 = await requireApiKey(reqWith(`Bearer ${KEY}`));
+    const b1 = await requireApiKey(reqWith(`Bearer ${keyB}`));
+    const a2 = await requireApiKey(reqWith(`Bearer ${KEY}`));
+    const b2 = await requireApiKey(reqWith(`Bearer ${keyB}`));
+    expect([a1, a2].map((c) => c.accountId)).toEqual(['acct-a', 'acct-a']);
+    expect([b1, b2].map((c) => c.accountId)).toEqual(['acct-b', 'acct-b']);
+    expect(billing.assertPlanFeature.mock.calls).toEqual([
+      ['acct-a', 'api'],
+      ['acct-b', 'api'],
+    ]);
   });
 });

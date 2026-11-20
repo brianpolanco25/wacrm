@@ -25,15 +25,6 @@ export async function GET(
     const { id } = await params;
     const { limit, cursor } = parseListParams(request);
 
-    // Gate on account ownership of the conversation first.
-    const { data: conv } = await ctx.supabase
-      .from('conversations')
-      .select('id')
-      .eq('id', id)
-      .eq('account_id', ctx.accountId)
-      .maybeSingle();
-    if (!conv) return fail('not_found', 'Conversation not found', 404);
-
     let query = ctx.supabase
       .from('messages')
       .select('*')
@@ -45,7 +36,18 @@ export async function GET(
     const kf = keysetFilter(cursor);
     if (kf) query = query.or(kf);
 
-    const { data, error } = await query;
+    // Ownership gate and page in parallel (n15.6): the page is only
+    // returned once the conversation is proven to be this account's.
+    const [{ data: conv }, { data, error }] = await Promise.all([
+      ctx.supabase
+        .from('conversations')
+        .select('id')
+        .eq('id', id)
+        .eq('account_id', ctx.accountId)
+        .maybeSingle(),
+      query,
+    ]);
+    if (!conv) return fail('not_found', 'Conversation not found', 404);
     if (error) {
       console.error('[api/v1/messages] list error:', error);
       return fail('internal', 'Failed to list messages', 500);
