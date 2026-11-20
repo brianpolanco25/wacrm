@@ -13,7 +13,7 @@ and polish.
 
 ### AI tools only act on ids a tool returned in the same conversation
 
-- The AI bot no longer cancels, reschedules, confirms or reads a record by an id the customer typed: a path id or `patient_id` must have come from a tool result in this conversation (kept in process memory for 24 h; after a restart the bot simply looks it up again). The bot is told to confirm customer-given numbers with a lookup, and operations marked `ai_policy.hidden` (Cabbity Health `list_patients`) are never offered to the AI. No migration; reload the Cabbity Health catalog so the flag reaches production.
+- The AI bot no longer cancels, reschedules, confirms or reads a record by an id the customer typed: a path id or `patient_id` must have come from a tool result in this conversation (kept in process memory for 24 h; after a restart the bot simply looks it up again). The bot is told to confirm customer-given numbers with a lookup, and operations marked `ai_policy.hidden` (Cabbity Health `list_patients`) are never offered to the AI. Evidence is typed by origin: each protected parameter declares in `ai_policy.ids` which operation and field its value may come from (an appointment id only from an appointment record, `patient_id` only from a patient record or an appointment's `patient_id`), so a `location_id` or a nested practitioner id can never stand in for a patient or an appointment. No migration; reload the Cabbity Health catalog so the flags reach production.
 
 ### AI auto-reply stands down if a human takes the thread mid-generation
 

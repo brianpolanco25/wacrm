@@ -335,7 +335,7 @@ export async function dispatchInboundToAiReply(
       images: messages.some((m) => m.image),
     });
 
-    const { text, handoff, usage } = await generateReply(
+    const { text, handoff, usage, toolsUsed } = await generateReply(
       toolset.tools.length > 0
         ? {
             config,
@@ -414,6 +414,7 @@ export async function dispatchInboundToAiReply(
         .eq('ai_autoreply_disabled', false)
         // p16.4 D2: a human assigned during generation keeps the thread.
         .is('assigned_agent_id', null)
+        .neq('status', 'closed')
         .select('id');
 
       if (handoffErr) {
@@ -478,6 +479,17 @@ export async function dispatchInboundToAiReply(
       fresh.assigned_agent_id ||
       fresh.ai_autoreply_disabled
     ) {
+      // A tool may already have written (cancel, reschedule) and the
+      // customer gets no confirmation: leave a trace for whoever took over.
+      const ran = (toolsUsed ?? []).filter((t) => t.ok).map((t) => t.operation);
+      if (ran.length > 0) {
+        console.info(
+          '[ai auto-reply] reply dropped after tools ran: the thread changed hands',
+          accountId,
+          conversationId,
+          ran
+        );
+      }
       return;
     }
 

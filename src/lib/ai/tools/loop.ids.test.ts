@@ -10,15 +10,17 @@ vi.mock('@/lib/integrations/execute', () => ({
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import type { OperationParam } from '@/lib/integrations/types';
+import { CABBITY_HEALTH_CATALOG } from '@/lib/integrations/catalogs/cabbity-health';
 
 import type { ProviderToolResult } from '../providers/shared';
 import type { AiConfig } from '../types';
 import { __resetIdCacheForTests } from './ids';
 import { runToolLoop } from './loop';
-import type { AiTool, AiToolset, ToolCall } from './types';
+import { buildAiTools } from './schema';
+import type { AiToolset, PriorEvidence, ToolCall } from './types';
 
 const db = { tag: 'db' } as unknown as SupabaseClient;
+const SLUG = CABBITY_HEALTH_CATALOG.integration.slug;
 
 const config = {
   provider: 'anthropic',
@@ -36,61 +38,78 @@ const config = {
   embeddingsProvider: 'openai',
 } as AiConfig;
 
-const p = (
-  name: string,
-  where: OperationParam['in'],
-  type: OperationParam['type'] = 'string'
-): OperationParam => ({
-  name,
-  in: where,
-  type,
-  required: true,
-  description: '',
-});
-
-function tool(
-  key: string,
-  method: AiTool['method'],
-  params: OperationParam[]
-): AiTool {
-  return {
-    name: `health__${key}`,
-    integrationSlug: 'health',
-    integrationName: 'Cabbity Health',
-    operationKey: key,
-    method,
-    description: key,
-    parameters: { type: 'object', properties: {} },
-    declaredParams: params,
-  };
-}
-
+// El catálogo real (parámetros y `ai_policy`), como lo arma `loadAiToolset`.
+const tools = buildAiTools(
+  CABBITY_HEALTH_CATALOG.operations.map((op) => ({
+    integration: { slug: SLUG, name: 'Cabbity Health', sortOrder: 1 },
+    operation: {
+      key: op.key,
+      name: op.name,
+      description: op.description,
+      method: op.method,
+      params: op.params,
+      responseDescription: op.response_description,
+      sortOrder: op.sort_order,
+      aiPolicy: op.ai_policy ?? null,
+    },
+  })),
+  { mode: 'auto_reply' }
+);
 const toolset: AiToolset = {
-  tools: [
-    tool('lookup_patient', 'GET', [p('phone', 'query')]),
-    tool('list_appointments', 'GET', [p('patient_id', 'query', 'integer')]),
-    tool('cancel_appointment', 'POST', [
-      p('appointment_id', 'path', 'integer'),
-      p('reason', 'body'),
-    ]),
-  ],
+  tools,
   integrations: [
-    { slug: 'health', name: 'Health', instructions: null, timezone: null },
+    { slug: SLUG, name: 'Cabbity Health', instructions: null, timezone: null },
   ],
 };
+const nameOf = (key: string) => {
+  const t = tools.find((x) => x.operationKey === key);
+  if (!t) throw new Error(`no tool ${key}`);
+  return t.name;
+};
 
-// Lo que devuelve la integración por operación.
+// requires_prior de cancel_appointment ya cumplido en mensajes anteriores.
+const PRIOR: PriorEvidence[] = [
+  { integrationSlug: SLUG, operationKey: 'list_appointments' },
+  { integrationSlug: SLUG, operationKey: 'find_availability' },
+];
+
+// Lo que devuelve Cabbity Health por operación (formas de response_description).
 const DATA: Record<string, unknown> = {
   lookup_patient: { data: { source: 'center', matches: [{ id: 88 }] } },
   list_appointments: {
-    data: [{ id: 1234, patient_id: 88, starts_at: '2026-11-21T10:00:00Z' }],
+    data: [
+      {
+        id: 1234,
+        patient_id: 88,
+        status: 'scheduled',
+        starts_at: '2026-11-21T10:00:00-04:00',
+        practitioner: { id: 5, membership_id: 12, name: 'Dra. A' },
+        location: { id: 3, name: 'Sede' },
+      },
+    ],
   },
+  find_availability: {
+    data: [
+      {
+        membership_id: 12,
+        practitioner_name: 'Dra. A',
+        location_id: 3,
+        starts_at: '2026-11-22T09:00:00-04:00',
+      },
+    ],
+    meta: { truncated: false },
+  },
+  list_practitioners: {
+    data: [{ membership_id: 12, name: 'Dra. A', location_ids: [3] }],
+  },
+  get_practitioner: { data: { membership_id: 12, name: 'Dra. A' } },
+  get_center: { data: { center: { id: 7, name: 'C' } } },
   cancel_appointment: { data: { id: 1234, status: 'cancelled' } },
 };
 
 const call = (id: string, key: string, args: unknown): ToolCall => ({
   id,
-  name: `health__${key}`,
+  name: nameOf(key),
   args,
 });
 
@@ -116,6 +135,7 @@ function run(
       toolset,
       db,
       accountId: opts.accountId ?? 'acct-A',
+      priorEvidence: PRIOR,
       conversationId:
         opts.conversationId === undefined ? 'conv-1' : opts.conversationId,
     },
@@ -132,7 +152,7 @@ function run(
 }
 
 const cancel = (id: string, appt: unknown = 1234) =>
-  call(id, 'cancel_appointment', { appointment_id: appt, reason: 'x' });
+  call(id, 'cancel_appointment', { id: appt });
 const executedKeys = () =>
   h.execute.mock.calls.map(
     (c) => (c[1] as { operationKey: string }).operationKey
@@ -145,7 +165,7 @@ beforeEach(() => {
     async (_db: unknown, a: { operationKey: string }) => ({
       ok: true,
       status: 200,
-      data: DATA[a.operationKey],
+      data: DATA[a.operationKey] ?? { data: null },
       latencyMs: 1,
     })
   );
@@ -241,11 +261,130 @@ describe('runToolLoop — id guard (p16.4 D1)', () => {
   });
 
   it('a refused call does not spend the execution budget', async () => {
-    // 9 refusals in one round: none counts towards AI_TOOL_MAX_CALLS (8).
+    // 9 refusals: if they counted towards AI_TOOL_MAX_CALLS (8), the next
+    // round would be final and the lookup would never run.
     const refusals = Array.from({ length: 9 }, (_, i) => cancel(`r${i}`));
-    const r = await run([round(refusals), round([], 'x')]);
-    expect(
-      r.seen[1].every((payload) => payload.outcome === 'unverified_id')
-    ).toBe(true);
+    await run([
+      round(refusals),
+      round([call('c1', 'lookup_patient', { phone: '+1809' })]),
+      round([], 'x'),
+    ]);
+    expect(executedKeys()).toEqual(['lookup_patient']);
+  });
+});
+
+describe('runToolLoop — id guard is typed by origin (p16.4 D1, review 1)', () => {
+  it('a location_id from find_availability opens neither patient_id nor an appointment id', async () => {
+    await run([
+      round([call('c1', 'find_availability', { from: '2026-11-22' })]),
+      round([
+        call('c2', 'list_appointments', { patient_id: 3 }),
+        cancel('c3', 3),
+        cancel('c4', 12),
+      ]),
+      round([], 'x'),
+    ]);
+    expect(executedKeys()).toEqual(['find_availability']);
+  });
+
+  it('nested practitioner/location ids of an appointment open nothing', async () => {
+    await run([
+      round([call('c1', 'lookup_patient', { phone: '+1809' })]),
+      round([call('c2', 'list_appointments', { patient_id: 88 })]),
+      round([
+        call('c3', 'list_appointments', { patient_id: 5 }),
+        call('c4', 'list_appointments', { patient_id: 3 }),
+        cancel('c5', 5),
+        // The own patient_id is not an appointment id.
+        cancel('c6', 88),
+      ]),
+      round([], 'x'),
+    ]);
+    expect(executedKeys()).toEqual(['lookup_patient', 'list_appointments']);
+  });
+
+  it('a nested center id from get_center opens nothing', async () => {
+    await run([
+      round([call('c1', 'get_center', {})]),
+      round([
+        call('c2', 'list_appointments', { patient_id: 7 }),
+        cancel('c3', 7),
+      ]),
+      round([], 'x'),
+    ]);
+    expect(executedKeys()).toEqual(['get_center']);
+  });
+
+  it('list_practitioners → get_practitioner by membership_id still passes', async () => {
+    await run([
+      round([call('c1', 'list_practitioners', {})]),
+      round([call('c2', 'get_practitioner', { id: 12 })]),
+      round([], 'x'),
+    ]);
+    expect(executedKeys()).toEqual(['list_practitioners', 'get_practitioner']);
+  });
+
+  it('every protected parameter of the catalog declares its origins', async () => {
+    const { isProtectedParam } = await import('./ids');
+    const keys = new Set(CABBITY_HEALTH_CATALOG.operations.map((o) => o.key));
+    for (const op of CABBITY_HEALTH_CATALOG.operations) {
+      for (const param of op.params.filter(isProtectedParam)) {
+        const sources = op.ai_policy?.ids?.[param.name];
+        expect(sources, `${op.key}.${param.name}`).toBeDefined();
+        for (const source of sources ?? []) {
+          expect(keys.has(source.split('.')[0]), source).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe('runToolLoop — id guard without a declaration (default)', () => {
+  it('only a top-level record id of the integration counts, never *_id keys', async () => {
+    const bare: AiToolset = {
+      ...toolset,
+      tools: tools.map((t) => ({ ...t, policy: null })),
+    };
+    const seenIds: string[] = [];
+    h.execute.mockImplementation(
+      async (
+        _db: unknown,
+        a: { operationKey: string; params: Record<string, unknown> }
+      ) => {
+        if (a.operationKey === 'get_appointment')
+          seenIds.push(String(a.params.id));
+        return {
+          ok: true,
+          status: 200,
+          data: DATA[a.operationKey] ?? { data: null },
+          latencyMs: 1,
+        };
+      }
+    );
+    await runToolLoop(
+      {
+        config,
+        systemPrompt: 'SYS',
+        messages: [{ role: 'user', content: 'x' }],
+        toolset: bare,
+        db,
+        accountId: 'acct-A',
+        conversationId: 'conv-default',
+      },
+      {
+        invalidate: () => {},
+        callProvider: (() => {
+          const rounds = [
+            round([call('c1', 'find_availability', { from: '2026-11-22' })]),
+            round([call('c2', 'get_appointment', { id: 3 })]),
+            round([call('c3', 'lookup_patient', { phone: '+1809' })]),
+            round([call('c4', 'get_appointment', { id: 88 })]),
+            round([], 'x'),
+          ];
+          return async () => rounds.shift()!;
+        })(),
+      }
+    );
+    expect(seenIds).toEqual(['88']);
   });
 });

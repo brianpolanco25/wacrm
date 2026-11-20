@@ -6,9 +6,19 @@
 // `ok` de una herramienta de ESTA conversación: así un cliente no puede
 // teclear «cancela la cita 1235» y actuar sobre la de otro paciente.
 //
-// Evidencia = valores de las claves `id` / `*_id` de los resultados `ok`,
-// por integración. Los del turno viven en el bucle; los de turnos
-// anteriores, en una caché de proceso por (cuenta, conversación).
+// La evidencia está tipada por origen: (integración, operación, campo,
+// valor). Campo = `id` (id de registro) o una clave `*_id` de nivel
+// superior del registro. Registros = `data` (si es objeto), `data[]` y
+// `data.<lista>[]`; nada anidado en sub-objetos (`practitioner`,
+// `location`, `center`) cuenta. Sin `data` en el cuerpo, la raíz hace de
+// `data`.
+//
+// Qué orígenes acepta cada parámetro lo declara `ai_policy.ids` de la
+// operación (`op` = id de registro de `op`; `op.campo` = esa clave). Sin
+// declaración, vale solo un id de registro de cualquier operación de la
+// integración: valor por defecto que NO distingue entidades (dos tablas
+// con enteros pequeños colisionan); toda operación con ids protegidos de
+// una integración real debería declararlo.
 // ============================================================
 
 import type { OperationParam } from '@/lib/integrations/types';
@@ -19,8 +29,7 @@ import { AI_EVIDENCE_WINDOW_MS } from './types';
 export const AI_ID_CACHE_MAX = 500;
 /** Ids como mucho por conversación (los más viejos salen primero). */
 export const AI_ID_CACHE_IDS_MAX = 1000;
-const COLLECT_MAX_DEPTH = 8;
-const COLLECT_MAX_ITEMS = 2000;
+const RECORDS_MAX = 500;
 
 /** ¿Es un id protegido? Declarativo: ruta, o `patient_id` en query/body. */
 export function isProtectedParam(p: OperationParam): boolean {
@@ -37,46 +46,81 @@ function idText(value: unknown): string | null {
   return null;
 }
 
-/** Clave de evidencia: el id solo vale en la integración que lo devolvió. */
-export function idKey(slug: string, value: string): string {
-  return `${slug}\u0000${value}`;
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Valores de ids protegidos de los argumentos (ya aplanados). */
+/** Origen comodín de un id de registro (lo que acepta el valor por defecto). */
+const ANY_OP = '*';
+
+/** Clave de evidencia: integración, operación de origen, campo y valor. */
+export function idKey(
+  slug: string,
+  op: string,
+  field: string,
+  value: string
+): string {
+  return `${slug}\u0000${op}\u0000${field}\u0000${value}`;
+}
+
+/** Ids protegidos de los argumentos (ya aplanados): parámetro y valor. */
 export function protectedIdValues(
   declared: OperationParam[],
   flatArgs: Record<string, unknown>
-): string[] {
-  const out: string[] = [];
+): { param: string; value: string }[] {
+  const out: { param: string; value: string }[] = [];
   for (const p of declared) {
     if (!isProtectedParam(p) || !Object.hasOwn(flatArgs, p.name)) continue;
-    const text = idText(flatArgs[p.name]);
-    if (text !== null) out.push(text);
+    const value = idText(flatArgs[p.name]);
+    if (value !== null) out.push({ param: p.name, value });
   }
   return out;
 }
 
-/** Valores de `id` / `*_id` de un resultado (anidados, con topes). */
-export function collectResultIds(data: unknown): string[] {
+/**
+ * ¿Hay evidencia para este valor? `sources` = `ai_policy.ids[param]` de la
+ * operación; sin ella, un id de registro de cualquier operación.
+ */
+export function isKnownId(
+  known: Set<string>,
+  slug: string,
+  value: string,
+  sources: string[] | undefined
+): boolean {
+  if (!sources) return known.has(idKey(slug, ANY_OP, 'id', value));
+  return sources.some((source) => {
+    const [op, field = 'id'] = source.split('.');
+    return known.has(idKey(slug, op, field, value));
+  });
+}
+
+/** Claves de evidencia de un resultado `ok` de `op`. */
+export function collectResultIds(
+  slug: string,
+  op: string,
+  body: unknown
+): string[] {
+  const root =
+    isPlainObject(body) && Object.hasOwn(body, 'data') ? body.data : body;
+  const records: unknown[] = [];
+  if (Array.isArray(root)) records.push(...root);
+  else if (isPlainObject(root)) {
+    records.push(root);
+    for (const value of Object.values(root)) {
+      if (Array.isArray(value)) records.push(...value);
+    }
+  }
   const out: string[] = [];
-  let visited = 0;
-  const walk = (node: unknown, depth: number) => {
-    if (depth > COLLECT_MAX_DEPTH || visited >= COLLECT_MAX_ITEMS) return;
-    visited += 1;
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item, depth + 1);
-      return;
+  for (const record of records.slice(0, RECORDS_MAX)) {
+    if (!isPlainObject(record)) continue;
+    for (const [field, raw] of Object.entries(record)) {
+      if (field !== 'id' && !field.endsWith('_id')) continue;
+      const value = idText(raw);
+      if (value === null) continue;
+      out.push(idKey(slug, op, field, value));
+      if (field === 'id') out.push(idKey(slug, ANY_OP, 'id', value));
     }
-    if (typeof node !== 'object' || node === null) return;
-    for (const [key, value] of Object.entries(node)) {
-      if (key === 'id' || key.endsWith('_id')) {
-        const text = idText(value);
-        if (text !== null) out.push(text);
-      }
-      if (typeof value === 'object' && value !== null) walk(value, depth + 1);
-    }
-  };
-  walk(data, 0);
+  }
   return out;
 }
 

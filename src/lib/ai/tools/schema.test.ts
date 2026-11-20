@@ -425,6 +425,12 @@ describe('buildAiTools — ai_policy.hidden (p16.4 D1)', () => {
     }
   });
 
+  it('hidden holds even when another key of the policy is invalid (review 4)', () => {
+    const hidden = row('list_patients');
+    hidden.operation.aiPolicy = { hidden: true, grounds: ['price'] };
+    expect(buildAiTools([hidden], { mode: 'auto_reply' })).toEqual([]);
+  });
+
   it('the Cabbity Health catalog hides list_patients from the bot', () => {
     const op = CABBITY_HEALTH_CATALOG.operations.find(
       (o) => o.key === 'list_patients'

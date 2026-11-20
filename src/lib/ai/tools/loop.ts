@@ -55,7 +55,7 @@ import { loadPriorEvidence } from './evidence';
 import { GROUNDING_RETRY_NOTE, mentionsSchedule } from './grounding';
 import {
   collectResultIds,
-  idKey,
+  isKnownId,
   knownConversationIds,
   protectedIdValues,
   rememberConversationIds,
@@ -361,7 +361,13 @@ export async function runToolLoop(
         );
       } else if (
         protectedIdValues(tool.declaredParams, flattenToolArgs(call.args)).some(
-          (v) => !knownIds.has(idKey(tool.integrationSlug, v))
+          ({ param, value }) =>
+            !isKnownId(
+              knownIds,
+              tool.integrationSlug,
+              value,
+              tool.policy?.ids?.[param]
+            )
         )
       ) {
         // p16.4 D1: id que ninguna herramienta devolvió (p. ej. tecleado por
@@ -398,8 +404,10 @@ export async function runToolLoop(
           );
           record(tool, res.ok);
           if (res.ok) {
-            const found = collectResultIds(res.data).map((v) =>
-              idKey(tool.integrationSlug, v)
+            const found = collectResultIds(
+              tool.integrationSlug,
+              tool.operationKey,
+              res.data
             );
             for (const k of found) knownIds.add(k);
             if (args.conversationId) {

@@ -425,6 +425,15 @@ describe('CABBITY_HEALTH_CATALOG ai_policy (n13.7, R24)', () => {
 
   it('cancel_appointment requires the appointment and then find_availability', () => {
     expect(byKey.get('cancel_appointment')!.ai_policy).toEqual({
+      // p16.4 D1: the appointment id only from an appointment record.
+      ids: {
+        id: [
+          'list_appointments',
+          'create_appointment',
+          'get_appointment',
+          'reschedule_appointment',
+        ],
+      },
       requires_prior: [
         ['list_appointments', 'get_appointment'],
         ['find_availability'],

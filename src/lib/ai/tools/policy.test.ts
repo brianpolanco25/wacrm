@@ -82,6 +82,7 @@ describe('policyProblem / sanitizePolicy (R23, R26)', () => {
     { grounds: ['schedule'] },
     CANCEL,
     { hidden: true },
+    { ids: { id: ['list_appointments', 'list_practitioners.membership_id'] } },
   ])('accepts %j', (p) => expect(policyProblem(p)).toBeNull());
 
   it.each([
@@ -89,6 +90,11 @@ describe('policyProblem / sanitizePolicy (R23, R26)', () => {
     ['an array', []],
     ['an unknown key', { grounds: ['schedule'], other: 1 }],
     ['hidden not a boolean', { hidden: 'yes' }],
+    ['ids not an object', { ids: ['list_appointments'] }],
+    ['ids empty', { ids: {} }],
+    ['ids with no sources', { ids: { id: [] } }],
+    ['ids with a bad source', { ids: { id: ['List Appointments'] } }],
+    ['ids with a two-dot source', { ids: { id: ['a_op.b.c'] } }],
     ['grounds outside the list', { grounds: ['price'] }],
     ['grounds not a list', { grounds: 'schedule' }],
     ['4 steps', { requires_prior: [['aa'], ['bb'], ['cc'], ['dd']] }],

@@ -68,6 +68,12 @@ export interface OperationAiPolicy {
   requires_prior?: string[][];
   /** p16.4: la operación nunca se ofrece como herramienta de IA. */
   hidden?: boolean;
+  /**
+   * p16.4: de dónde puede salir cada id protegido (parámetro → orígenes).
+   * `op` = id de registro de `op`; `op.campo` = clave `campo` de un registro
+   * de `op`. Ver `src/lib/ai/tools/ids.ts`.
+   */
+  ids?: Record<string, string[]>;
 }
 
 export interface OperationParam {

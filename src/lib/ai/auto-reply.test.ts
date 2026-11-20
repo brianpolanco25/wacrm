@@ -214,6 +214,11 @@ vi.mock('./admin-client', () => ({
             filters.push([`is:${column}`, value]);
             return chain;
           },
+          neq: (column: string, value: unknown) => {
+            h.state.conversationUpdateFilters.push([`neq:${column}`, value]);
+            filters.push([`neq:${column}`, value]);
+            return chain;
+          },
           select: () => {
             if (h.state.updateError) {
               return Promise.resolve({
@@ -232,6 +237,12 @@ vi.mock('./admin-client', () => ({
               ([column]) => column === 'is:assigned_agent_id'
             );
             if (unassignedOnly && h.state.conv?.assigned_agent_id) {
+              return Promise.resolve({ data: [], error: null });
+            }
+            const notClosed = filters.some(
+              ([column, value]) => column === 'neq:status' && value === 'closed'
+            );
+            if (notClosed && h.state.conv?.status === 'closed') {
               return Promise.resolve({ data: [], error: null });
             }
             h.state.updatePayload = payload;
@@ -498,6 +509,29 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     }
   );
 
+  it('p16.4 D2: logs (ids only) when the reply is dropped after a tool ran', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    h.generateReply.mockImplementation(async () => {
+      h.state.conv = { ...h.state.conv, assigned_agent_id: 'human-owner' };
+      return {
+        text: 'Listo, cancelé tu cita.',
+        handoff: false,
+        toolsUsed: [
+          { integration: 'Health', operation: 'cancel_appointment', ok: true },
+        ],
+      };
+    });
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('reply dropped after tools ran'),
+      'acct-1',
+      'conv-1',
+      ['cancel_appointment']
+    );
+    info.mockRestore();
+  });
+
   it('skips when the per-conversation cap is reached', async () => {
     h.state.conv = {
       assigned_agent_id: null,
@@ -626,7 +660,28 @@ describe('dispatchInboundToAiReply — handoff', () => {
       ['ai_autoreply_disabled', false],
       // p16.4 D2: never overwrite an assignment made during generation.
       ['assigned_agent_id', null],
+      ['neq:status', 'closed'],
     ]);
+  });
+
+  it('p16.4 D2: does not hand off a thread closed while the model was generating', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({
+        handoffMode: 'fixed',
+        handoffAgentId: 'agent-7',
+        handoffMessage: 'Un agente seguirá.',
+      })
+    );
+    h.generateReply.mockImplementation(async () => {
+      h.state.conv = { ...h.state.conv, status: 'closed' };
+      return { text: '', handoff: true };
+    });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.state.updatesApplied).toBe(0);
+    expect(h.state.conv?.assigned_agent_id).toBeNull();
+    expect(h.engineSendText).not.toHaveBeenCalled();
   });
 
   it('p16.4 D2: does not stomp an agent assigned while the model was generating', async () => {
