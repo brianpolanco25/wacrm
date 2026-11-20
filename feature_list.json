@@ -1741,6 +1741,20 @@
         "n15.4"
       ],
       "note": "Pedido por Brian (2026-11-14, DEC-130 de Health): lo que wacrm debe exponer para que el chat viva también dentro de Cabbity Health (asignar conversación, enviar como miembro, eventos en tiempo real, etc.). El alcance lo fija la spec 1.5.2 de Health. APPROVED (9bd8dae, + 43475a1 atribución del panel) y fusionada a main el 2026-11-14. Aplicar migración 097 antes de desplegar."
+    },
+    {
+      "id": "n15.6",
+      "name": "health-chat-perf-y-mensajes",
+      "phase": "15",
+      "status": "in_progress",
+      "sdd": false,
+      "spec": "../cabbity-health/docs/audit/2026-11-20-crm-chat.md (W.1–W.3, spec hermana)",
+      "branch": "fix/health-chat-perf",
+      "worktree": ".claude/worktrees/health-chat-perf",
+      "depends_on": [
+        "n15.5"
+      ],
+      "note": "Pedido por Brian (2026-11-20): API v1 lenta, búsqueda que revienta, edit/revoke/unsupported entrantes."
     }
   ]
 }
