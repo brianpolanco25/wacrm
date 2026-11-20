@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils';
+import { normalizePhone, phoneVariants } from '@/lib/whatsapp/phone-utils';
 import { sanitizeBsuid } from '@/lib/whatsapp/bsuid';
 
 /**
@@ -9,14 +9,25 @@ import { sanitizeBsuid } from '@/lib/whatsapp/bsuid';
  *
  * The canonical key is `normalizePhone` (digits-only) — the same form
  * the DB stores in the generated `contacts.phone_normalized` column
- * and enforces unique per account. `phonesMatch` adds trunk-prefix
- * tolerance (last-8-digit match) for the softer "possible duplicate"
- * surfaces.
+ * and enforces unique per account. `findExistingContact` also accepts
+ * trunk-0 variants and national numbers saved without country code.
  */
 
 /** Canonical de-dup key for a phone string (digits only). */
 export function normalizeKey(phone: string): string {
   return normalizePhone(phone);
+}
+
+/**
+ * The other form Meta and agents use for the same mobile in Mexico
+ * (`52` + 10 ↔ `521` + 10) and Argentina (`54` + 10 ↔ `549` + 10), or ''.
+ */
+function mobilePrefixTwin(d: string): string {
+  let m = d.match(/^52(1?)(\d{10})$/);
+  if (m) return (m[1] ? '52' : '521') + m[2];
+  m = d.match(/^54(9?)(\d{10})$/);
+  if (m) return (m[1] ? '54' : '549') + m[2];
+  return '';
 }
 
 /** Minimal shape we need back from a contacts lookup. */
@@ -33,9 +44,15 @@ export interface ExistingContact {
 
 /**
  * Find an existing contact in `accountId` whose phone matches `phone`,
- * or null. Pre-filters in SQL by the last-8-digit suffix (so we don't
- * pull every contact), then applies the strict `phonesMatch` in JS on
- * the small candidate set — the exact approach the webhook has used.
+ * or null. Pre-filters in SQL by the last 7 digits of the digits-only
+ * `phone_normalized` (the raw `phone` keeps the user's formatting, so
+ * `…555-1234` never matched `%95551234`; 7 so a 7-digit saved number
+ * still enters). Then, in order: exact digits; a trunk-0 variant
+ * (`370063949836` ↔ `37063949836`); one number a suffix of the other
+ * with the shorter ≥ 7 digits (`8095551234` saved without country code
+ * ↔ `18095551234`), longest suffix first. A bare shared tail is NOT
+ * enough: 1-809-555-1234 and 1-829-555-1234 are different people.
+ * The suffix rule only covers a missing country code (1–3 digits).
  */
 export async function findExistingContact(
   db: SupabaseClient,
@@ -45,20 +62,48 @@ export async function findExistingContact(
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
 
-  const suffix = normalized.length >= 8 ? normalized.slice(-8) : normalized;
+  const suffix = normalized.slice(-7);
 
   const { data, error } = await db
     .from('contacts')
     .select('*')
     .eq('account_id', accountId)
-    .like('phone', `%${suffix}`);
+    .like('phone_normalized', `%${suffix}`);
 
   if (error || !data) return null;
 
+  const rows = data as ExistingContact[];
+  const digits = (c: ExistingContact) => normalizePhone(c.phone ?? '');
+  const variants = [
+    ...phoneVariants(normalized),
+    mobilePrefixTwin(normalized),
+  ].filter(Boolean);
+  // Length of the shorter number when the longer one is it plus a
+  // missing country code (1–3 digits), else 0.
+  const suffixLen = (c: ExistingContact) => {
+    const d = digits(c);
+    const [short, long] =
+      d.length <= normalized.length ? [d, normalized] : [normalized, d];
+    // A national number saved with its trunk 0 (`07911…`) drops it.
+    const s = short.startsWith('0') ? short.slice(1) : short;
+    const missing = long.length - s.length;
+    return s.length >= 7 && missing >= 1 && missing <= 3 && long.endsWith(s)
+      ? s.length
+      : 0;
+  };
+  const bySuffix = rows
+    .filter((c) => suffixLen(c) > 0)
+    .sort((a, b) => suffixLen(b) - suffixLen(a));
+  // Two candidates equally good by suffix: ambiguous, match neither.
+  const suffixHit =
+    bySuffix.length > 1 && suffixLen(bySuffix[0]) === suffixLen(bySuffix[1])
+      ? null
+      : bySuffix[0];
   return (
-    (data as ExistingContact[]).find((c) =>
-      phonesMatch(c.phone ?? '', phone)
-    ) ?? null
+    rows.find((c) => digits(c) === normalized) ??
+    rows.find((c) => variants.includes(digits(c))) ??
+    suffixHit ??
+    null
   );
 }
 

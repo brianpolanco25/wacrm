@@ -197,6 +197,9 @@ function getPath(row: Row, path: string): unknown {
       ? (value as Row)[jsonPath[2]]
       : undefined;
   }
+  // `contacts.phone_normalized` is a generated column (migration 022).
+  if (path === 'phone_normalized' && typeof row.phone === 'string')
+    return row.phone.replace(/\D/g, '');
   const parts = path.split('.');
   let cur: unknown = row;
   for (const part of parts) {

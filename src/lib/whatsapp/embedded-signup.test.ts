@@ -54,7 +54,9 @@ describe('exchangeCodeForToken', () => {
     // Embedded Signup delivers the code through the JS SDK callback, not
     // a redirect. Sending a redirect_uri makes Meta reject the exchange.
     expect(url.searchParams.get('redirect_uri')).toBeNull();
-    expect(fetchMock.mock.calls[0]?.[1]).toEqual({ method: 'GET' });
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' });
+    // p16.1: a hung Graph call cannot stall the signup forever.
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('honours the graph version it is given', async () => {
@@ -196,7 +198,9 @@ describe('refreshBusinessToken', () => {
     );
     expect(url.searchParams.get('set_token_expires_in_60_days')).toBe('true');
     expect(url.searchParams.get('code')).toBeNull();
-    expect(fetchMock.mock.calls[0]?.[1]).toEqual({ method: 'GET' });
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' });
+    // p16.1: a hung Graph call cannot stall the signup forever.
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('returns the fresh token with its expiry as an ISO instant', async () => {

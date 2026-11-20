@@ -11,6 +11,12 @@ and polish.
 
 ## [Unreleased]
 
+### Inbound WhatsApp: no more lost or misfiled messages
+
+- No migration. A customer saved with a formatted phone (`+1 (809) 555-1234`) is found again when they write in; before, their messages were dropped. Two numbers that only share the last 8 digits (`1-809-555-1234` and `1-829-555-1234`) are now separate contacts. Still the same contact: trunk-0 variants (`370063949836` / `37063949836`), Mexican and Argentine mobiles with or without the extra digit (`52`/`521`, `54`/`549`), and a number saved without its country code (`809-555-1234` ↔ `18095551234`; only when 1–3 digits are missing, and never when two contacts fit equally). A number saved without area code (`555-1234`) no longer matches an inbound one. The contact form's "possible duplicate" notice follows the same rule.
+- Inbound webhook: one bad message, status or change (undecryptable token, missing timestamp) no longer discards the rest of the delivery; with an undecryptable token the text is still saved without media. Delivery status only moves forward (a late `delivered` no longer hides `read`), checked in the update itself for both messages and broadcast recipients.
+- Every call to Meta's Graph API (messaging helpers, template sync, Embedded Signup token exchange) has a 15 s timeout (120 s for media upload and download), so a hung call no longer stalls the webhook or the send route.
+
 ### Faster public API, searches that no longer fail, readable edits and deletions
 
 - No migration. `/api/v1` caches the API key and the plan per process for 30 s, so a revoked key or a plan change can take up to 30 s to apply. `GET /api/v1/conversations` and `GET /api/v1/conversations/{id}` load the AI state in parallel with the main query, and `GET /api/v1/conversations/{id}/messages` checks ownership in parallel with the page.
