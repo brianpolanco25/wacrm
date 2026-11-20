@@ -607,6 +607,10 @@ async function advanceFromNodeKey(
   nodes: Map<string, FlowNodeRow>
 ): Promise<{ outcome: 'advanced' | 'completed' | 'handed_off' }> {
   let currentKey: string | null = startNodeKey;
+  // A cycle of auto-advancing nodes (A → A, A → B → A) would send on
+  // every lap. Legit loops pass through a suspending node, which ends
+  // this call, so any node seen twice here is a cycle: fail, don't send.
+  const visited = new Set<string>();
   // Defensive cap — if a flow has a cycle (which the validator
   // SHOULD catch but doesn't yet in v1), we bail rather than loop.
   for (let safety = 0; safety < 64; safety += 1) {
@@ -617,6 +621,14 @@ async function advanceFromNodeKey(
       await endRun(db, run.id, 'failed', 'missing_next_node');
       return { outcome: 'completed' };
     }
+    if (visited.has(currentKey)) {
+      await logEvent(db, run.id, 'error', currentKey, {
+        reason: 'advance_cycle',
+      });
+      await endRun(db, run.id, 'failed', 'advance_cycle');
+      return { outcome: 'completed' };
+    }
+    visited.add(currentKey);
     const node: FlowNodeRow | null = nodes.get(currentKey) ?? null;
     if (!node) {
       await logEvent(db, run.id, 'error', currentKey, {

@@ -802,6 +802,23 @@ describe('flows — un solo envío por paso (p11.4)', () => {
     expect(sendCount()).toBe(2);
   });
 
+  it('a cycle of auto-advancing nodes (A → A) sends once and fails the run', async () => {
+    db.state.nodes = [
+      BUTTONS_NODE,
+      {
+        node_key: 'info',
+        node_type: 'send_message',
+        config: { text: 'Otra vez', next_node_key: 'info' },
+      },
+    ];
+    const r = await tap('precio', 'wamid.in1');
+    expect(r.consumed).toBe(true);
+    expect(send.text).toHaveBeenCalledTimes(1);
+    expect(errorReasons()).toContain('advance_cycle');
+    expect(db.state.run!.status).toBe('failed');
+    expect(db.state.run!.end_reason).toBe('advance_cycle');
+  });
+
   it('R10 the same meta_message_id twice: the second sends nothing', async () => {
     await tap('otra', 'wamid.same');
     const before = sendCount();

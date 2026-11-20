@@ -240,6 +240,19 @@ tokens per WhatsApp photo, re-sent while it is one of the most recent).
 | `AI_IMAGE_MAX_BYTES`           | `3932160` | Largest photo sent to the model (3.75 MiB, under Anthropic's 5 MiB in base64).        |
 | `AI_IMAGE_DOWNLOAD_TIMEOUT_MS` | `8000`    | Timeout of one photo download; on timeout the photo is `[imagen no disponible]`.      |
 
+## Automations: time zone of `time_of_day` (optional)
+
+The `time_of_day` condition of an automation (`HH:mm-HH:mm`, e.g. the
+out-of-office `18:00-09:00`) is checked against a clock. Without this
+variable that clock is the server's (the image sets no `TZ`, so UTC).
+
+| Variable                      | Default         | What it does                                                                                           |
+| ----------------------------- | --------------- | ------------------------------------------------------------------------------------------------------ |
+| `AUTOMATION_DEFAULT_TIMEZONE` | (server's zone) | IANA zone for `time_of_day`, e.g. `America/Santo_Domingo`. An invalid name is ignored (server's zone). |
+
+A condition may also carry its own `timezone` in its config, which wins over
+this variable; the builder has no field for it yet.
+
 ## PayPal catalogue (optional until billing is enabled)
 
 Create the initial product and six plans in the PayPal sandbox with

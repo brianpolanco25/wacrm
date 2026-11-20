@@ -239,7 +239,15 @@ export async function claimDelivery(
 ): Promise<DeliveryRow | null> {
   let query = db
     .from('webhook_deliveries')
-    .update({ attempt: row.attempt + 1, status: 'pending' })
+    .update({
+      attempt: row.attempt + 1,
+      status: 'pending',
+      // Mientras el intento vuela, la fila no está vencida: otro barrido
+      // no la reclama. Si el proceso muere a medias, vuelve sola.
+      next_attempt_at: new Date(
+        Date.now() + 2 * DELIVERY_TIMEOUT_MS
+      ).toISOString(),
+    })
     .eq('id', row.id);
 
   // El barrido del cron es global por definición (drena todas las
@@ -275,7 +283,9 @@ async function markDelivered(
       last_error: null,
     })
     .eq('id', row.id)
-    .eq('account_id', row.account_id);
+    .eq('account_id', row.account_id)
+    // Un intento viejo no pisa el resultado de uno más nuevo.
+    .eq('attempt', row.attempt);
 }
 
 /**
@@ -302,7 +312,9 @@ async function markFailed(
       next_attempt_at: new Date(Date.now() + (delay ?? 0)).toISOString(),
     })
     .eq('id', row.id)
-    .eq('account_id', row.account_id);
+    .eq('account_id', row.account_id)
+    // Un intento viejo no pisa el resultado de uno más nuevo.
+    .eq('attempt', row.attempt);
 
   const { error: rpcError } = await db.rpc('record_webhook_failure', {
     endpoint_id: row.endpoint_id,

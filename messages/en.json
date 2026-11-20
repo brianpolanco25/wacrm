@@ -1094,6 +1094,7 @@
         },
         "operandLabel": "Operand",
         "placeholderTime": "HH:mm-HH:mm",
+        "timeOfDayHint": "The time is the server's (usually UTC) unless AUTOMATION_DEFAULT_TIMEZONE is configured.",
         "placeholderContact": "name / email / company",
         "placeholderTag": "tag id",
         "placeholderIdle": "minutes, e.g. 1440 (24 h)",

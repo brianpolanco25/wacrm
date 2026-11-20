@@ -11,6 +11,14 @@ and polish.
 
 ## [Unreleased]
 
+### Automations, flows and outbound webhooks: audit fixes (2026-11-20)
+
+- `POST /api/automations/engine` ignores a caller-supplied `context.conversation_id`; the run uses the contact's own conversation.
+- Saving an automation's steps cancels its runs parked on a `wait` (row `failed`, log `failed` with the reason) instead of resuming them at the wrong step.
+- Outbound webhooks: an attempt in flight is no longer re-sent by the next sweep, and a late, older attempt can no longer overwrite a newer result.
+- `time_of_day` conditions use the new optional `AUTOMATION_DEFAULT_TIMEZONE` (IANA, see `docs/docker.md`); without it, the server's clock as before. The builder says so under the operand.
+- Flows: a cycle of auto-advancing nodes (`A → A`) now fails the run after one send instead of sending up to 63 times.
+
 ### Support sessions can mint, rotate and revoke API keys
 
 - During a support session the platform operator can now create, rotate and revoke the customer's API keys (to connect the account to Cabbity Health). Each action is recorded in the session's audit trail (`api_key.create|rotate|revoke`, never the key itself) before it is written, and keys minted by support show as "created by support" in Settings → API. Billing, ownership, team members and invitations stay blocked. No migration.

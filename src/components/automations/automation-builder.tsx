@@ -1676,6 +1676,11 @@ function StepEditor({
               onChange={(e) => set({ operand: e.target.value })}
               className="bg-muted text-foreground"
             />
+            {cfg.subject === 'time_of_day' && (
+              <p className="text-muted-foreground mt-1 text-xs">
+                {t('config.timeOfDayHint')}
+              </p>
+            )}
           </FieldBlock>
           {(cfg.subject === 'contact_field' ||
             cfg.subject === 'message_content') && (
