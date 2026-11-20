@@ -240,7 +240,7 @@ export async function resolveAudience(
   if (!accountId) return contacts;
 
   if (audience.type === 'all') {
-    contacts = await fetchAllPages<Contact>(
+    const rows = await fetchAllPages<Contact>(
       'Failed to fetch contacts',
       (from, to) =>
         supabase
@@ -250,6 +250,9 @@ export async function resolveAudience(
           .order('id')
           .range(from, to)
     );
+    // Offset paging can re-read a row when a contact is inserted between
+    // pages; a duplicate would get the template twice.
+    contacts = [...new Map(rows.map((c) => [c.id, c])).values()];
   } else if (
     audience.type === 'tags' &&
     audience.tagIds &&
@@ -279,8 +282,8 @@ export async function resolveAudience(
     );
   }
 
-  // Apply exclude tags (works across all contact-derived audience
-  // types). CSV contacts are synthetic so exclusion doesn't apply.
+  // Apply exclude tags (every audience type, CSV included: its contacts
+  // are real rows by now).
   // A failed read throws: sending to people the user excluded is worse
   // than not sending.
   if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
@@ -335,20 +338,21 @@ async function upsertCsvContacts(
   }
   const phones = [...uniqueByPhone.keys()];
 
-  // Single round-trip lookup of existing contacts by phone.
-  const { data: existing, error: lookupErr } = await supabase
-    .from('contacts')
-    .select('*')
-    .eq('account_id', accountId)
-    .eq('user_id', user.id)
-    .in('phone', phones);
-  if (lookupErr) {
-    throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
-  }
-
+  // Lookup of existing contacts by phone, IN_CHUNK phones per request.
   const byPhone = new Map<string, Contact>();
-  for (const c of (existing ?? []) as Contact[]) {
-    if (c.phone) byPhone.set(c.phone, c);
+  for (let i = 0; i < phones.length; i += IN_CHUNK) {
+    const { data: existing, error: lookupErr } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('user_id', user.id)
+      .in('phone', phones.slice(i, i + IN_CHUNK));
+    if (lookupErr) {
+      throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
+    }
+    for (const c of (existing ?? []) as Contact[]) {
+      if (c.phone) byPhone.set(c.phone, c);
+    }
   }
 
   // Insert only missing contacts, in one batch per 200 rows (PostgREST

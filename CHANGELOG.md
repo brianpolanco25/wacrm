@@ -13,7 +13,7 @@ and polish.
 
 ### Broadcasts reach the whole audience; drafts stay in their conversation
 
-- Broadcasts sent from the panel no longer stop at 1000 recipients: audience, tag, exclusion and recipient reads now page through every row, and a failed exclusion read aborts the campaign instead of sending to contacts you excluded.
+- Broadcasts sent from the panel no longer stop at 1000 recipients: audience, tag, custom-field, exclusion and recipient reads now page through every row (each contact once), CSV phone lookups go out in chunks, and a failed exclusion read aborts the campaign instead of sending to contacts you excluded.
 - Switching conversation in the inbox clears the composer (typed text, staged attachment, voice recording), so a draft can no longer be sent to the next chat.
 
 ### Support sessions can mint, rotate and revoke API keys

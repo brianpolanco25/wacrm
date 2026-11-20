@@ -44,6 +44,13 @@ function fakeSupabase(tables: Tables) {
         filters.push((r) => vs.includes(r[col]));
         return builder;
       },
+      insert: (rows: Row[]) => ({
+        select: () =>
+          Promise.resolve({
+            data: rows.map((r, i) => ({ id: `new${i}`, ...r })),
+            error: null,
+          }),
+      }),
       range: (a: number, b: number) => {
         window = [a, b];
         return Promise.resolve(run());
@@ -53,7 +60,10 @@ function fakeSupabase(tables: Tables) {
     };
     return builder;
   };
-  return { client: { from } as never, inSizes };
+  const auth = {
+    getSession: async () => ({ data: { session: { user: { id: 'u1' } } } }),
+  };
+  return { client: { from, auth } as never, inSizes };
 }
 
 const contacts = Array.from({ length: 2500 }, (_, i) => ({
@@ -67,6 +77,33 @@ describe('resolveAudience', () => {
     const out = await resolveAudience(client, 'acct', { type: 'all' });
     expect(out).toHaveLength(2500);
     expect(new Set(out.map((c) => c.id)).size).toBe(2500);
+  });
+
+  it('a row re-read across pages is sent once', async () => {
+    // A contact inserted between pages shifts the offset: c999 comes back
+    // as the first row of page 2.
+    const shifted = [
+      ...contacts.slice(0, 1000),
+      contacts[999],
+      ...contacts.slice(1000),
+    ];
+    const { client } = fakeSupabase({ contacts: shifted });
+    const out = await resolveAudience(client, 'acct', { type: 'all' });
+    expect(out).toHaveLength(2500);
+    expect(out.filter((c) => c.id === 'c999')).toHaveLength(1);
+  });
+
+  it('a CSV of 1 200 phones looks them up in chunks of at most 500', async () => {
+    const { client, inSizes } = fakeSupabase({ contacts: [] });
+    const csvContacts = Array.from({ length: 1200 }, (_, i) => ({
+      phone: `1809${String(i).padStart(7, '0')}`,
+    }));
+    const out = await resolveAudience(client, 'acct', {
+      type: 'csv',
+      csvContacts,
+    });
+    expect(out).toHaveLength(1200);
+    expect(inSizes).toEqual([500, 500, 200]);
   });
 
   it('a tag with 2 500 members resolves 2 500, chunking the .in(id)', async () => {
