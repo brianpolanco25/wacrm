@@ -114,6 +114,13 @@
       "worktree": ".claude/worktrees/support-media-signing",
       "base": "main @ 7bc2fd2",
       "note": "Fase 14 (2026-11-05): adjuntos que no se ven en la bandeja. Diagnóstico del líder sobre captura de Brian: (a) en sesión de soporte las imágenes espejadas en chat-media salen rotas porque signed-url.ts firma con el JWT del operador y la política 044 comprueba SU cuenta, no la suplantada; Supabase rechaza, cae a la URL pública y el bucket es privado en producción (400). (b) Los ecos de coexistencia (enviados desde el teléfono) se guardan como «[image]» sin media_url por diseño de #1651. Brian: «arreglalo» (2026-11-05). Dos features sin spec_author, decididas directamente."
+    },
+    "16": {
+      "doc": "progress/audit-2026-11-20/fixes.md",
+      "branch": null,
+      "worktree": null,
+      "base": "main @ 63f581e",
+      "note": "Fase 16 (2026-11-20): correcciones de la auditoría ponytail. Una rama y worktree por feature; p16.1 parte de fix/health-chat-perf (n15.6)."
     }
   },
   "features": [
@@ -1758,6 +1765,97 @@
       "commits": [
         "fix/health-chat-perf (sin fusionar)"
       ]
+    },
+    {
+      "id": "p16.1",
+      "name": "audit-whatsapp-inbound",
+      "phase": "16",
+      "status": "in_progress",
+      "sdd": false,
+      "spec": "progress/audit-2026-11-20/fixes.md#A",
+      "branch": "fix/audit-whatsapp-inbound",
+      "worktree": ".claude/worktrees/audit-whatsapp-inbound",
+      "depends_on": [],
+      "note": "Auditoría ponytail 2026-11-20; Brian: «aplica las correcciones para todo»."
+    },
+    {
+      "id": "p16.2",
+      "name": "audit-billing",
+      "phase": "16",
+      "status": "in_progress",
+      "sdd": false,
+      "spec": "progress/audit-2026-11-20/fixes.md#B",
+      "branch": "fix/audit-billing",
+      "worktree": ".claude/worktrees/audit-billing",
+      "depends_on": [],
+      "note": "Auditoría ponytail 2026-11-20; Brian: «aplica las correcciones para todo»."
+    },
+    {
+      "id": "p16.3",
+      "name": "audit-db-privileges",
+      "phase": "16",
+      "status": "in_progress",
+      "sdd": false,
+      "spec": "progress/audit-2026-11-20/fixes.md#C",
+      "branch": "fix/audit-db-privileges",
+      "worktree": ".claude/worktrees/audit-db-privileges",
+      "depends_on": [],
+      "note": "Auditoría ponytail 2026-11-20; Brian: «aplica las correcciones para todo»."
+    },
+    {
+      "id": "p16.4",
+      "name": "audit-ai-guards",
+      "phase": "16",
+      "status": "in_progress",
+      "sdd": false,
+      "spec": "progress/audit-2026-11-20/fixes.md#D",
+      "branch": "fix/audit-ai-guards",
+      "worktree": ".claude/worktrees/audit-ai-guards",
+      "depends_on": [],
+      "note": "Auditoría ponytail 2026-11-20; Brian: «aplica las correcciones para todo»."
+    },
+    {
+      "id": "p16.5",
+      "name": "audit-engines",
+      "phase": "16",
+      "status": "in_progress",
+      "sdd": false,
+      "spec": "progress/audit-2026-11-20/fixes.md#E",
+      "branch": "fix/audit-engines",
+      "worktree": ".claude/worktrees/audit-engines",
+      "depends_on": [],
+      "note": "Auditoría ponytail 2026-11-20; Brian: «aplica las correcciones para todo»."
+    },
+    {
+      "id": "p16.6",
+      "name": "audit-client",
+      "phase": "16",
+      "status": "in_progress",
+      "sdd": false,
+      "spec": "progress/audit-2026-11-20/fixes.md#F",
+      "branch": "fix/audit-client",
+      "worktree": ".claude/worktrees/audit-client",
+      "depends_on": [],
+      "note": "Auditoría ponytail 2026-11-20; Brian: «aplica las correcciones para todo»."
+    },
+    {
+      "id": "p16.7",
+      "name": "audit-lean",
+      "phase": "16",
+      "status": "spec_ready",
+      "sdd": false,
+      "spec": "progress/audit-2026-11-20/fixes.md#G",
+      "branch": "chore/audit-lean",
+      "worktree": ".claude/worktrees/audit-lean",
+      "depends_on": [
+        "p16.1",
+        "p16.2",
+        "p16.3",
+        "p16.4",
+        "p16.5",
+        "p16.6"
+      ],
+      "note": "Auditoría ponytail 2026-11-20; Brian: «aplica las correcciones para todo»."
     }
   ]
 }
