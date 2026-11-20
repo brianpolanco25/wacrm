@@ -1746,7 +1746,7 @@
       "id": "n15.6",
       "name": "health-chat-perf-y-mensajes",
       "phase": "15",
-      "status": "in_progress",
+      "status": "done",
       "sdd": false,
       "spec": "../cabbity-health/docs/audit/2026-11-20-crm-chat.md (W.1–W.3, spec hermana)",
       "branch": "fix/health-chat-perf",
@@ -1754,7 +1754,10 @@
       "depends_on": [
         "n15.5"
       ],
-      "note": "Pedido por Brian (2026-11-20): API v1 lenta, búsqueda que revienta, edit/revoke/unsupported entrantes."
+      "note": "Pedido por Brian (2026-11-20): API v1 lenta, búsqueda que revienta, edit/revoke/unsupported entrantes.",
+      "commits": [
+        "fix/health-chat-perf (sin fusionar)"
+      ]
     }
   ]
 }
