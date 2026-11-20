@@ -1842,7 +1842,7 @@
       "id": "p16.7",
       "name": "audit-lean",
       "phase": "16",
-      "status": "in_progress",
+      "status": "approved",
       "sdd": false,
       "spec": "progress/audit-2026-11-20/fixes.md#G",
       "branch": "chore/audit-lean",
