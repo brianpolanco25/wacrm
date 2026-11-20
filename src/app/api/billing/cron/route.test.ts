@@ -241,7 +241,7 @@ describe('the cut-off', () => {
       period_start: PERIOD_START,
       period_end: PERIOD_END,
       status: 'issued',
-      due_at: '2026-11-04T00:00:00.000Z',
+      due_at: '2026-11-04T06:00:00.000Z',
       plan_fee_usd: 1036,
       messages_total: 7010,
       overage_messages: 10,
@@ -250,9 +250,26 @@ describe('the cut-off', () => {
     });
     expect(subOf(A)).toMatchObject({
       status: 'past_due',
-      grace_until: '2026-11-04T00:00:00.000Z',
+      grace_until: '2026-11-04T06:00:00.000Z',
       current_period_end: PERIOD_END,
       statement_period_end: PERIOD_END,
+    });
+  });
+
+  it('a statement issued a week late is due three days after the issue, not born overdue (p16.2/B3)', async () => {
+    // A missing rate kept the account skipped until the 8th.
+    const late = '2026-11-08T12:00:00.000Z';
+    vi.setSystemTime(new Date(late));
+    await GET(req(SECRET));
+    const [st] = statementsOf(A);
+    expect(st).toMatchObject({
+      period_end: PERIOD_END,
+      due_at: '2026-11-11T12:00:00.000Z',
+    });
+    expect(Date.parse(st.due_at as string)).toBeGreaterThan(Date.parse(late));
+    expect(subOf(A)).toMatchObject({
+      status: 'past_due',
+      grace_until: '2026-11-11T12:00:00.000Z',
     });
   });
 
@@ -333,7 +350,7 @@ describe('the cut-off', () => {
     });
     expect(subOf(C)).toMatchObject({
       status: 'past_due',
-      grace_until: '2026-11-04T00:00:00.000Z',
+      grace_until: '2026-11-04T06:00:00.000Z',
     });
   });
 

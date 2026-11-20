@@ -57,7 +57,7 @@ const PLAN_COLUMNS =
 const INTENT_COLUMNS =
   'id, plan_id, cycle, status, provider, provider_subscription_id, created_at';
 const SUBSCRIPTION_COLUMNS =
-  'plan_id, status, provider_subscription_id, current_period_end, cancel_at_period_end';
+  'plan_id, status, provider_subscription_id, current_period_end, cancel_at_period_end, meta_billing';
 
 interface IntentRow {
   id: string;
@@ -73,6 +73,7 @@ interface SubscriptionRow extends CheckoutSubscriptionRow {
   plan_id: string;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
+  meta_billing?: string | null;
 }
 
 /** Shape the intent row for the wire. Never leaks another account's. */
@@ -228,6 +229,19 @@ export async function POST(request: Request) {
         {
           error:
             'This account already has an active subscription. Change the plan from Settings instead.',
+        },
+        { status: 409 }
+      );
+    }
+
+    // A managed account's plan carries its Meta package; contracting a
+    // public plan would keep the package at the public price. Only the
+    // operator moves it (`/api/platform/accounts/[id]/plan`).
+    if (existing?.meta_billing === 'managed') {
+      return NextResponse.json(
+        {
+          error:
+            "A managed account's plan is changed by Cabbity support; contact them to change it",
         },
         { status: 409 }
       );

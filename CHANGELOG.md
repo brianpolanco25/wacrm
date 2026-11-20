@@ -17,6 +17,12 @@ and polish.
 - `GET /api/v1/conversations?search=` filters through the contact join instead of a list of up to 500 contact ids, which overflowed the URL and answered 500 when many contacts matched.
 - Inbound webhook: a customer's `edit` and `revoke` now rewrite the original message (`[deleted]` for a deletion) instead of adding an "[Unsupported message type: edit]" row; they don't bump unread, change the last message or trigger AI or automations. `unsupported` messages keep their real subtype (`[Unsupported message type: poll_creation]`, `unavailable` for error 131060), shared contacts are stored as name and phone, and `system` messages as their text.
 
+### Billing fixes from the 2026-11-20 audit
+
+- A cancelled subscription (PayPal-cancelled, or cancelled at period end) now becomes read-only once its paid period is over. `/billing` stays open: a direct account can contract again from checkout; a managed account needs the operator to reassign its plan. Inbound WhatsApp is not affected.
+- A managed account (Cabbity pays Meta) can no longer change its plan or contract a public plan on its own: `change_plan` and checkout answer 409; the operator changes it.
+- Every statement is now due three days after it is issued instead of three days after the cut-off, so one issued late (missing rate, stopped scheduler) is never born overdue. No migration.
+
 ### Support sessions can mint, rotate and revoke API keys
 
 - During a support session the platform operator can now create, rotate and revoke the customer's API keys (to connect the account to Cabbity Health). Each action is recorded in the session's audit trail (`api_key.create|rotate|revoke`, never the key itself) before it is written, and keys minted by support show as "created by support" in Settings → API. Billing, ownership, team members and invitations stay blocked. No migration.

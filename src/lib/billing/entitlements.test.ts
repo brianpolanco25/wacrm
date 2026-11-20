@@ -217,13 +217,72 @@ describe('getEntitlements', () => {
       ['incomplete', true],
       ['trialing', false],
       ['active', false],
-      ['cancelled', false],
+      // p16.2/B1: a cancelled row with no period end has nothing left to use.
+      ['cancelled', true],
       ['suspended', true],
       ['expired', true],
     ] as const)('status %s → readOnly %s', async (status, expected) => {
       subscribed({ status });
       const e = await getEntitlements(ACCOUNT);
       expect(e.readOnly).toBe(expected);
+    });
+
+    describe('cancellation ends access with the paid period (p16.2/B1)', () => {
+      const past = () => new Date(Date.now() - 60_000).toISOString();
+      const future = () => new Date(Date.now() + 86_400_000).toISOString();
+
+      it('cancelled with the period still running → writable', async () => {
+        subscribed({ status: 'cancelled', current_period_end: future() });
+        const e = await getEntitlements(ACCOUNT);
+        expect(e.readOnly).toBe(false);
+        expect(e.readOnlyReason).toBeNull();
+      });
+
+      it('cancelled with the period over → read-only for the subscription', async () => {
+        subscribed({ status: 'cancelled', current_period_end: past() });
+        const e = await getEntitlements(ACCOUNT);
+        expect(e.readOnly).toBe(true);
+        expect(e.readOnlyReason).toBe('subscription');
+      });
+
+      it('active + cancel_at_period_end with the period over → read-only', async () => {
+        subscribed({
+          status: 'active',
+          cancel_at_period_end: true,
+          current_period_end: past(),
+        });
+        expect((await getEntitlements(ACCOUNT)).readOnly).toBe(true);
+      });
+
+      it('active + cancel_at_period_end inside the period → writable', async () => {
+        subscribed({
+          status: 'active',
+          cancel_at_period_end: true,
+          current_period_end: future(),
+        });
+        expect((await getEntitlements(ACCOUNT)).readOnly).toBe(false);
+      });
+
+      it('a manual plan past its period end is unchanged (writable)', async () => {
+        subscribed({
+          status: 'active',
+          cancel_at_period_end: false,
+          current_period_end: past(),
+          payment_method: 'manual',
+          meta_billing: 'managed',
+        });
+        expect((await getEntitlements(ACCOUNT)).readOnly).toBe(false);
+      });
+
+      it('reads both columns off the same subscription query', async () => {
+        subscribed({ status: 'active' });
+        await getEntitlements(ACCOUNT);
+        const subQuery = h.state.queries.find(
+          (q) => q.table === 'subscriptions'
+        );
+        expect(subQuery?.columns).toContain('current_period_end');
+        expect(subQuery?.columns).toContain('cancel_at_period_end');
+      });
     });
 
     it('past_due is read-only only once grace_until has passed', async () => {

@@ -82,7 +82,7 @@ const PROVIDER = 'paypal';
 
 const SUBSCRIPTION_COLUMNS =
   'plan_id, status, provider, provider_subscription_id, current_period_end, ' +
-  'grace_until, trial_ends_at, cancel_at_period_end, cycle';
+  'grace_until, trial_ends_at, cancel_at_period_end, cycle, meta_billing';
 
 const PLAN_COLUMNS =
   'id, name, is_public, price_usd_month, price_usd_year, ' +
@@ -105,6 +105,7 @@ interface SubscriptionRow {
   trial_ends_at: string | null;
   cancel_at_period_end: boolean;
   cycle: string | null;
+  meta_billing?: string | null;
 }
 
 /** A read failed. Never conflated with "this account has nothing". */
@@ -475,6 +476,17 @@ export async function POST(request: Request) {
     }
 
     // ---- change_plan -------------------------------------------------
+    // A managed account's plan carries its Meta package; only the
+    // operator moves it (`/api/platform/accounts/[id]/plan`).
+    if (subscription?.meta_billing === 'managed') {
+      return NextResponse.json(
+        {
+          error:
+            "A managed account's plan is changed by Cabbity support; contact them to change it",
+        },
+        { status: 409 }
+      );
+    }
     if (actions.changePlan !== 'revise' || !providerSubscriptionId) {
       return NextResponse.json(
         {
