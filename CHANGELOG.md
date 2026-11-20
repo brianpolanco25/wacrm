@@ -23,6 +23,11 @@ and polish.
 - A managed account (Cabbity pays Meta) can no longer change its plan or contract a public plan on its own: `change_plan` and checkout answer 409; the operator changes it.
 - Every statement is now due three days after it is issued instead of three days after the cut-off, so one issued late (missing rate, stopped scheduler) is never born overdue. No migration.
 
+### Broadcasts reach the whole audience; drafts stay in their conversation
+
+- Broadcasts sent from the panel no longer stop at 1000 recipients: audience, tag, custom-field, exclusion and recipient reads now page through every row (each contact once), CSV phone lookups go out in chunks, and a failed exclusion read aborts the campaign instead of sending to contacts you excluded.
+- Switching conversation in the inbox clears the composer (typed text, staged attachment, voice recording), so a draft can no longer be sent to the next chat.
+
 ### Support sessions can mint, rotate and revoke API keys
 
 - During a support session the platform operator can now create, rotate and revoke the customer's API keys (to connect the account to Cabbity Health). Each action is recorded in the session's audit trail (`api_key.create|rotate|revoke`, never the key itself) before it is written, and keys minted by support show as "created by support" in Settings → API. Billing, ownership, team members and invitations stay blocked. No migration.
