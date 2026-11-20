@@ -34,6 +34,9 @@ and polish.
 - Outbound webhooks: an attempt in flight is no longer re-sent by the next sweep, and a late, older attempt can no longer overwrite a newer result.
 - `time_of_day` conditions use the new optional `AUTOMATION_DEFAULT_TIMEZONE` (IANA, see `docs/docker.md`); without it, the server's clock as before. The builder says so under the operand.
 - Flows: a cycle back to a node that sends (`A → A`) now fails the run after one send instead of sending up to 63 times. Loops through non-sending nodes (condition, tag) still work.
+### Database privilege hardening (audit 2026-11-20)
+
+- **Migration required: `098_audit_privilege_hardening.sql`.** Members can no longer change their own `profiles.email` or insert profile rows from the browser; `record_webhook_failure`, `_bcast_bump`, `recompute_broadcast_counts`, `merge_duplicate_contacts` and `merge_duplicate_conversations` are executable only by `service_role`; viewers can no longer upload, overwrite or delete chat and flow media (reads unchanged).
 
 ### Support sessions can mint, rotate and revoke API keys
 
