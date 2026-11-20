@@ -160,195 +160,264 @@ async function fetchCustomValueIndex(
   return index;
 }
 
+type BrowserClient = ReturnType<typeof createClient>;
+
+/** PostgREST's default `max-rows`: a read without `.range()` stops here. */
+const READ_PAGE = 1000;
+/** Ids per `.in()` call — every id goes in the URL. */
+const IN_CHUNK = 500;
+
+/**
+ * Read every row of a query, `READ_PAGE` at a time. `page` builds the
+ * query for one window and must carry a stable `.order()`, or rows can
+ * repeat or vanish between pages.
+ *
+ * shortcut: a page shorter than READ_PAGE is taken as the last one, so a
+ * server `max-rows` below 1000 would cut the read short; lower READ_PAGE
+ * if that setting ever changes.
+ */
+export async function fetchAllPages<T>(
+  label: string,
+  page: (
+    from: number,
+    to: number
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += READ_PAGE) {
+    const { data, error } = await page(from, from + READ_PAGE - 1);
+    if (error) throw new Error(`${label}: ${error.message}`);
+    rows.push(...(data ?? []));
+    if (!data || data.length < READ_PAGE) return rows;
+  }
+}
+
+/** Contacts by id, `IN_CHUNK` ids per request. */
+async function fetchContactsByIds(
+  supabase: BrowserClient,
+  ids: string[]
+): Promise<Contact[]> {
+  const contacts: Contact[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('*')
+      .in('id', ids.slice(i, i + IN_CHUNK));
+    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
+    contacts.push(...(data ?? []));
+  }
+  return contacts;
+}
+
+/** Every recipient row of a broadcast, joined to its contact. */
+export function fetchBroadcastRecipients(
+  supabase: BrowserClient,
+  broadcastId: string
+) {
+  return fetchAllPages('Failed to fetch broadcast recipients', (from, to) =>
+    supabase
+      .from('broadcast_recipients')
+      .select('*, contact:contacts(*)')
+      .eq('broadcast_id', broadcastId)
+      .order('id')
+      .range(from, to)
+  );
+}
+
+// Audience resolution reads the contact book of the account this
+// browser is showing. The `all` branch filters by `account_id`
+// explicitly: RLS stopped being a one-account filter in migration 057
+// (a platform operator inside a support session reads the impersonated
+// account too), and "all contacts" must mean one company's. The
+// branches that start from tag / custom-field ids inherit the account
+// from those ids.
+export async function resolveAudience(
+  supabase: BrowserClient,
+  accountId: string | null,
+  audience: AudienceConfig
+): Promise<Contact[]> {
+  let contacts: Contact[] = [];
+  if (!accountId) return contacts;
+
+  if (audience.type === 'all') {
+    contacts = await fetchAllPages<Contact>(
+      'Failed to fetch contacts',
+      (from, to) =>
+        supabase
+          .from('contacts')
+          .select('*')
+          .eq('account_id', accountId)
+          .order('id')
+          .range(from, to)
+    );
+  } else if (
+    audience.type === 'tags' &&
+    audience.tagIds &&
+    audience.tagIds.length > 0
+  ) {
+    const tagIds = audience.tagIds;
+    const contactTags = await fetchAllPages<{ contact_id: string }>(
+      'Failed to fetch contact tags',
+      (from, to) =>
+        supabase
+          .from('contact_tags')
+          .select('contact_id')
+          .in('tag_id', tagIds)
+          .order('id')
+          .range(from, to)
+    );
+    contacts = await fetchContactsByIds(supabase, [
+      ...new Set(contactTags.map((ct) => ct.contact_id)),
+    ]);
+  } else if (audience.type === 'custom_field' && audience.customField) {
+    contacts = await resolveCustomFieldAudience(supabase, audience.customField);
+  } else if (audience.type === 'csv' && audience.csvContacts) {
+    contacts = await upsertCsvContacts(
+      supabase,
+      accountId,
+      audience.csvContacts
+    );
+  }
+
+  // Apply exclude tags (works across all contact-derived audience
+  // types). CSV contacts are synthetic so exclusion doesn't apply.
+  // A failed read throws: sending to people the user excluded is worse
+  // than not sending.
+  if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
+    const excludeTagIds = audience.excludeTagIds;
+    const excludeRows = await fetchAllPages<{ contact_id: string }>(
+      'Failed to fetch excluded contacts',
+      (from, to) =>
+        supabase
+          .from('contact_tags')
+          .select('contact_id')
+          .in('tag_id', excludeTagIds)
+          .order('id')
+          .range(from, to)
+    );
+    const excludedIds = new Set(excludeRows.map((r) => r.contact_id));
+    contacts = contacts.filter((c) => !excludedIds.has(c.id));
+  }
+
+  return contacts;
+}
+
+/**
+ * CSV uploads arrive as raw phone/name pairs, not DB rows. Before we
+ * can insert broadcast_recipients (whose contact_id FKs contacts.id),
+ * we need real contacts.id UUIDs. So: look up each CSV phone in the
+ * caller's contacts table; insert any that don't exist; return the
+ * resolved set.
+ *
+ * Pre-existing implementation synthesized `csv-N` strings as
+ * contact_id, which failed the UUID cast on insert — every CSV
+ * broadcast silently created zero recipients.
+ */
+async function upsertCsvContacts(
+  supabase: BrowserClient,
+  accountId: string,
+  csvRows: { phone: string; name?: string }[]
+): Promise<Contact[]> {
+  if (csvRows.length === 0) return [];
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) {
+    throw new Error('You are not signed in.');
+  }
+
+  // De-duplicate by phone within the CSV (users can paste duplicates).
+  const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
+  for (const row of csvRows) {
+    if (row.phone) uniqueByPhone.set(row.phone, row);
+  }
+  const phones = [...uniqueByPhone.keys()];
+
+  // Single round-trip lookup of existing contacts by phone.
+  const { data: existing, error: lookupErr } = await supabase
+    .from('contacts')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('user_id', user.id)
+    .in('phone', phones);
+  if (lookupErr) {
+    throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
+  }
+
+  const byPhone = new Map<string, Contact>();
+  for (const c of (existing ?? []) as Contact[]) {
+    if (c.phone) byPhone.set(c.phone, c);
+  }
+
+  // Insert only missing contacts, in one batch per 200 rows (PostgREST
+  // has a default payload cap — 200 keeps individual requests small).
+  const missing = phones
+    .filter((p) => !byPhone.has(p))
+    .map((phone) => ({
+      user_id: user.id,
+      account_id: accountId,
+      phone,
+      name: uniqueByPhone.get(phone)?.name ?? null,
+    }));
+
+  const INSERT_CHUNK = 200;
+  for (let i = 0; i < missing.length; i += INSERT_CHUNK) {
+    const chunk = missing.slice(i, i + INSERT_CHUNK);
+    const { data: inserted, error: insertErr } = await supabase
+      .from('contacts')
+      .insert(chunk)
+      .select();
+    if (insertErr) {
+      throw new Error(`Failed to create CSV contacts: ${insertErr.message}`);
+    }
+    for (const c of (inserted ?? []) as Contact[]) {
+      if (c.phone) byPhone.set(c.phone, c);
+    }
+  }
+
+  // Preserve input order so analytics roughly matches the CSV order.
+  return phones
+    .map((p) => byPhone.get(p))
+    .filter((c): c is Contact => Boolean(c));
+}
+
+async function resolveCustomFieldAudience(
+  supabase: BrowserClient,
+  filter: CustomFieldFilter
+): Promise<Contact[]> {
+  const { fieldId, operator, value } = filter;
+
+  const matches = await fetchAllPages<{ contact_id: string }>(
+    'Custom-field filter failed',
+    (from, to) => {
+      // Build the WHERE clause for the operator. PostgREST supports
+      // eq/neq/ilike via the query builder — use ilike with wildcards
+      // for "contains" so the match is case-insensitive.
+      let query = supabase
+        .from('contact_custom_values')
+        .select('contact_id')
+        .eq('custom_field_id', fieldId);
+
+      if (operator === 'is') query = query.eq('value', value);
+      else if (operator === 'is_not') query = query.neq('value', value);
+      else if (operator === 'contains')
+        query = query.ilike('value', `%${value}%`);
+
+      return query.order('id').range(from, to);
+    }
+  );
+
+  return fetchContactsByIds(supabase, [
+    ...new Set(matches.map((m) => m.contact_id)),
+  ]);
+}
+
 export function useBroadcastSending(): UseBroadcastSendingReturn {
   const { accountId } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-
-  // Audience resolution reads the contact book of the account this
-  // browser is showing. The `all` branch filters by `account_id`
-  // explicitly: RLS stopped being a one-account filter in migration 057
-  // (a platform operator inside a support session reads the impersonated
-  // account too), and "all contacts" must mean one company's. The
-  // branches that start from tag / custom-field ids inherit the account
-  // from those ids.
-  async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
-    const supabase = createClient();
-
-    let contacts: Contact[] = [];
-    if (!accountId) return contacts;
-
-    if (audience.type === 'all') {
-      const { data, error } = await supabase
-        .from('contacts')
-        .select('*')
-        .eq('account_id', accountId);
-      if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-      contacts = data ?? [];
-    } else if (
-      audience.type === 'tags' &&
-      audience.tagIds &&
-      audience.tagIds.length > 0
-    ) {
-      const { data: contactTags, error: tagError } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.tagIds);
-
-      if (tagError)
-        throw new Error(`Failed to fetch contact tags: ${tagError.message}`);
-
-      if (contactTags && contactTags.length > 0) {
-        const uniqueContactIds = [
-          ...new Set(contactTags.map((ct) => ct.contact_id)),
-        ];
-        const { data, error } = await supabase
-          .from('contacts')
-          .select('*')
-          .in('id', uniqueContactIds);
-        if (error)
-          throw new Error(`Failed to fetch contacts: ${error.message}`);
-        contacts = data ?? [];
-      }
-    } else if (audience.type === 'custom_field' && audience.customField) {
-      contacts = await resolveCustomFieldAudience(
-        supabase,
-        audience.customField
-      );
-    } else if (audience.type === 'csv' && audience.csvContacts) {
-      contacts = await upsertCsvContacts(supabase, audience.csvContacts);
-    }
-
-    // Apply exclude tags (works across all contact-derived audience
-    // types). CSV contacts are synthetic so exclusion doesn't apply.
-    if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-      const { data: excludeRows } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.excludeTagIds);
-      const excludedIds = new Set((excludeRows ?? []).map((r) => r.contact_id));
-      contacts = contacts.filter((c) => !excludedIds.has(c.id));
-    }
-
-    return contacts;
-  }
-
-  /**
-   * CSV uploads arrive as raw phone/name pairs, not DB rows. Before we
-   * can insert broadcast_recipients (whose contact_id FKs contacts.id),
-   * we need real contacts.id UUIDs. So: look up each CSV phone in the
-   * caller's contacts table; insert any that don't exist; return the
-   * resolved set.
-   *
-   * Pre-existing implementation synthesized `csv-N` strings as
-   * contact_id, which failed the UUID cast on insert — every CSV
-   * broadcast silently created zero recipients.
-   */
-  async function upsertCsvContacts(
-    supabase: ReturnType<typeof createClient>,
-    csvRows: { phone: string; name?: string }[]
-  ): Promise<Contact[]> {
-    if (csvRows.length === 0) return [];
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-    if (!user) {
-      throw new Error('You are not signed in.');
-    }
-    if (!accountId) {
-      throw new Error('Your profile is not linked to an account.');
-    }
-
-    // De-duplicate by phone within the CSV (users can paste duplicates).
-    const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
-    for (const row of csvRows) {
-      if (row.phone) uniqueByPhone.set(row.phone, row);
-    }
-    const phones = [...uniqueByPhone.keys()];
-
-    // Single round-trip lookup of existing contacts by phone.
-    const { data: existing, error: lookupErr } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('user_id', user.id)
-      .in('phone', phones);
-    if (lookupErr) {
-      throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
-    }
-
-    const byPhone = new Map<string, Contact>();
-    for (const c of (existing ?? []) as Contact[]) {
-      if (c.phone) byPhone.set(c.phone, c);
-    }
-
-    // Insert only missing contacts, in one batch per 200 rows (PostgREST
-    // has a default payload cap — 200 keeps individual requests small).
-    const missing = phones
-      .filter((p) => !byPhone.has(p))
-      .map((phone) => ({
-        user_id: user.id,
-        account_id: accountId,
-        phone,
-        name: uniqueByPhone.get(phone)?.name ?? null,
-      }));
-
-    const INSERT_CHUNK = 200;
-    for (let i = 0; i < missing.length; i += INSERT_CHUNK) {
-      const chunk = missing.slice(i, i + INSERT_CHUNK);
-      const { data: inserted, error: insertErr } = await supabase
-        .from('contacts')
-        .insert(chunk)
-        .select();
-      if (insertErr) {
-        throw new Error(`Failed to create CSV contacts: ${insertErr.message}`);
-      }
-      for (const c of (inserted ?? []) as Contact[]) {
-        if (c.phone) byPhone.set(c.phone, c);
-      }
-    }
-
-    // Preserve input order so analytics roughly matches the CSV order.
-    return phones
-      .map((p) => byPhone.get(p))
-      .filter((c): c is Contact => Boolean(c));
-  }
-
-  async function resolveCustomFieldAudience(
-    supabase: ReturnType<typeof createClient>,
-    filter: CustomFieldFilter
-  ): Promise<Contact[]> {
-    const { fieldId, operator, value } = filter;
-
-    // Build the WHERE clause for the operator. PostgREST supports
-    // eq/neq/ilike via the query builder — use ilike with wildcards
-    // for "contains" so the match is case-insensitive.
-    let query = supabase
-      .from('contact_custom_values')
-      .select('contact_id')
-      .eq('custom_field_id', fieldId);
-
-    if (operator === 'is') query = query.eq('value', value);
-    else if (operator === 'is_not') query = query.neq('value', value);
-    else if (operator === 'contains')
-      query = query.ilike('value', `%${value}%`);
-
-    const { data: matches, error: matchErr } = await query;
-    if (matchErr)
-      throw new Error(`Custom-field filter failed: ${matchErr.message}`);
-
-    const contactIds = [...new Set((matches ?? []).map((m) => m.contact_id))];
-    if (contactIds.length === 0) return [];
-
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('*')
-      .in('id', contactIds);
-    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-    return data ?? [];
-  }
 
   async function createAndSendBroadcast(
     payload: BroadcastPayload
@@ -377,7 +446,11 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 1: Resolve audience contacts ─────────────────────────
       setProgress(5);
-      const contacts = await resolveAudience(payload.audience);
+      const contacts = await resolveAudience(
+        supabase,
+        accountId,
+        payload.audience
+      );
 
       if (contacts.length === 0) {
         throw new Error('No contacts found for this audience.');
@@ -474,14 +547,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 4: Fetch recipients back (joined contact) ────────────
       setProgress(30);
-      const { data: recipients, error: recipientsFetchError } = await supabase
-        .from('broadcast_recipients')
-        .select('*, contact:contacts(*)')
-        .eq('broadcast_id', broadcast.id);
-
-      if (recipientsFetchError || !recipients) {
-        throw new Error('Failed to fetch broadcast recipients');
-      }
+      const recipients = await fetchBroadcastRecipients(supabase, broadcast.id);
 
       let failedCount = 0;
       const totalRecipients = recipients.length;

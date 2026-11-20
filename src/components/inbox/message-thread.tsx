@@ -1251,7 +1251,10 @@ export function MessageThread({
       />
 
       {/* Composer */}
+      {/* Keyed so switching conversation remounts it: the draft text, a
+          staged attachment and a live recording never carry over. */}
       <MessageComposer
+        key={conversation.id}
         conversationId={conversation.id}
         sessionExpired={sessionInfo.expired}
         onSend={handleSend}
