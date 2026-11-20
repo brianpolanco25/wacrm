@@ -38,23 +38,17 @@ import {
 } from '@/lib/api/v1/templates';
 import { resolveAuditUserId } from '@/lib/api/v1/contacts';
 import { WhatsAppConfigError } from '@/lib/whatsapp/resolve-config';
-import { submitMessageTemplate } from '@/lib/whatsapp/meta-api';
 import { validateTemplatePayload } from '@/lib/whatsapp/template-validators';
-import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components';
-import { ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle';
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize';
-import { supabaseAdmin } from '@/lib/flows/admin-client';
+import {
+  isTemplatesDryRun as isDryRun,
+  submitTemplateToMeta,
+  templateContentColumns,
+} from '@/lib/whatsapp/template-operations';
 
 /** Igual que en `/api/v1/contacts`: nada que rompa la gramática de `.or()`. */
 function sanitizeSearch(raw: string): string {
   return raw.replace(/[^\p{L}\p{N} _+@.\-{}]/gu, '').trim();
-}
-
-function isDryRun(): boolean {
-  return (
-    process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
-    process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1'
-  );
 }
 
 export async function GET(request: Request) {
@@ -195,34 +189,21 @@ export async function POST(request: Request) {
         );
 
         // Una cabecera de imagen necesita un handle de Resumable Upload
-        // (Meta rechaza una URL suelta al crear). Mismo helper que el
+        // (Meta rechaza una URL suelta al crear). Mismo paso que el
         // panel, incluida la comprobación de que el objeto del bucket
         // es de esta cuenta.
-        try {
-          await ensureImageHeaderHandle(payload, target.accessToken, {
-            accountId: ctx.accountId,
-            storage: supabaseAdmin().storage,
-            db: supabaseAdmin(),
-          });
-        } catch (e) {
+        const meta = await submitTemplateToMeta(payload, target, ctx.accountId);
+        if (!meta.ok && meta.step === 'header') {
+          const e = meta.error;
           return fail(
             'bad_request',
             e instanceof Error ? e.message : 'Header image upload failed',
             400
           );
         }
-
-        try {
-          const meta = await submitMessageTemplate({
-            wabaId: target.wabaId,
-            accessToken: target.accessToken,
-            payload: buildMetaTemplatePayload(payload),
-          });
-          metaTemplateId = meta.id;
-          metaStatus = meta.status;
-        } catch (e) {
-          return metaErrorResponse(e);
-        }
+        if (!meta.ok) return metaErrorResponse(meta.error);
+        metaTemplateId = meta.id;
+        metaStatus = meta.status;
       }
 
       const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
@@ -233,16 +214,8 @@ export async function POST(request: Request) {
           account_id: ctx.accountId,
           user_id: auditUserId,
           name: payload.name,
-          category: payload.category,
           language: payload.language,
-          header_type: payload.header_type ?? null,
-          header_content: payload.header_content ?? null,
-          header_media_url: payload.header_media_url ?? null,
-          header_handle: payload.header_handle ?? null,
-          body_text: payload.body_text,
-          footer_text: payload.footer_text ?? null,
-          buttons: payload.buttons ?? null,
-          sample_values: payload.sample_values ?? null,
+          ...templateContentColumns(payload),
           status: normalizeStatus(metaStatus),
           meta_template_id: metaTemplateId,
           submission_error: null,
