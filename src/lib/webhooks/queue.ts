@@ -31,6 +31,9 @@ import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 /** Tiempo máximo por intento. Corto: el primero corre en `after()`. */
 export const DELIVERY_TIMEOUT_MS = 5000;
 
+/** Lo que una fila reclamada queda fuera del barrido (ver claimDelivery). */
+export const CLAIM_LEASE_MS = 60_000;
+
 /** Fallos CONSECUTIVOS del endpoint tras los que se autodesactiva (028). */
 export const MAX_CONSECUTIVE_FAILURES = 15;
 
@@ -239,7 +242,15 @@ export async function claimDelivery(
 ): Promise<DeliveryRow | null> {
   let query = db
     .from('webhook_deliveries')
-    .update({ attempt: row.attempt + 1, status: 'pending' })
+    .update({
+      attempt: row.attempt + 1,
+      status: 'pending',
+      // Mientras el intento vuela, la fila no está vencida: otro barrido
+      // no la reclama. Un intento (endpoint + DNS + fetch de 5 s) puede
+      // pasar de 10 s; 60 s lo cubre, y si el proceso muere a medias la
+      // fila vuelve sola en el barrido del minuto siguiente.
+      next_attempt_at: new Date(Date.now() + CLAIM_LEASE_MS).toISOString(),
+    })
     .eq('id', row.id);
 
   // El barrido del cron es global por definición (drena todas las
@@ -275,7 +286,9 @@ async function markDelivered(
       last_error: null,
     })
     .eq('id', row.id)
-    .eq('account_id', row.account_id);
+    .eq('account_id', row.account_id)
+    // Un intento viejo no pisa el resultado de uno más nuevo.
+    .eq('attempt', row.attempt);
 }
 
 /**
@@ -302,7 +315,9 @@ async function markFailed(
       next_attempt_at: new Date(Date.now() + (delay ?? 0)).toISOString(),
     })
     .eq('id', row.id)
-    .eq('account_id', row.account_id);
+    .eq('account_id', row.account_id)
+    // Un intento viejo no pisa el resultado de uno más nuevo.
+    .eq('attempt', row.attempt);
 
   const { error: rpcError } = await db.rpc('record_webhook_failure', {
     endpoint_id: row.endpoint_id,

@@ -658,6 +658,9 @@ export interface ConditionStepConfig {
   operand?: string;
   /** For contact_field equals / message_content contains — comparison value */
   value?: string;
+  /** time_of_day only: IANA zone for the window (e.g. America/Santo_Domingo).
+   *  Falls back to AUTOMATION_DEFAULT_TIMEZONE, then the server's zone. */
+  timezone?: string;
 }
 
 export interface SendWebhookStepConfig {

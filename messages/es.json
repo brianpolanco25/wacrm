@@ -1094,6 +1094,7 @@
         },
         "operandLabel": "Operando",
         "placeholderTime": "HH:mm-HH:mm",
+        "timeOfDayHint": "La hora es la del servidor (normalmente UTC), salvo que se configure AUTOMATION_DEFAULT_TIMEZONE.",
         "placeholderContact": "nombre / correo / empresa",
         "placeholderTag": "id de la etiqueta",
         "placeholderIdle": "minutos, p. ej. 1440 (24 h)",

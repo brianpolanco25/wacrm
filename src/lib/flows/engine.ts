@@ -600,6 +600,15 @@ async function endRun(
 // new current_node_key before returning.
 // ============================================================
 
+/** Node types that message the customer when the advance loop enters them. */
+const SENDING_NODE_TYPES = new Set([
+  'send_message',
+  'send_media',
+  'send_buttons',
+  'send_list',
+  'collect_input',
+]);
+
 async function advanceFromNodeKey(
   db: AdminClient,
   run: FlowRunRow,
@@ -607,6 +616,12 @@ async function advanceFromNodeKey(
   nodes: Map<string, FlowNodeRow>
 ): Promise<{ outcome: 'advanced' | 'completed' | 'handed_off' }> {
   let currentKey: string | null = startNodeKey;
+  // A cycle through a node that SENDS (A → A, A → B → A) would message
+  // the customer on every lap. Legit loops pass through a suspending
+  // node, which ends this call, so a sending node seen twice here is a
+  // cycle: fail, don't send again. Non-sending nodes (condition, set_tag)
+  // may repeat; the 64 cap below still bounds them.
+  const sent = new Set<string>();
   // Defensive cap — if a flow has a cycle (which the validator
   // SHOULD catch but doesn't yet in v1), we bail rather than loop.
   for (let safety = 0; safety < 64; safety += 1) {
@@ -624,6 +639,16 @@ async function advanceFromNodeKey(
       });
       await endRun(db, run.id, 'failed', 'node_not_found');
       return { outcome: 'completed' };
+    }
+    if (SENDING_NODE_TYPES.has(node.node_type)) {
+      if (sent.has(node.node_key)) {
+        await logEvent(db, run.id, 'error', node.node_key, {
+          reason: 'advance_cycle',
+        });
+        await endRun(db, run.id, 'failed', 'advance_cycle');
+        return { outcome: 'completed' };
+      }
+      sent.add(node.node_key);
     }
     await logEvent(db, run.id, 'node_entered', node.node_key, {
       node_type: node.node_type,

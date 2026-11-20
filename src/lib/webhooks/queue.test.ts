@@ -14,6 +14,7 @@ vi.mock('@/lib/webhooks/ssrf', () => ({
 
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 import {
+  CLAIM_LEASE_MS,
   MAX_ATTEMPTS,
   MAX_CONSECUTIVE_FAILURES,
   RETRY_BACKOFF_MS,
@@ -341,6 +342,82 @@ describe('ciclo completo con el barrido del cron', () => {
 
     expect(first).not.toBeNull();
     expect(second).toBeNull();
+  });
+
+  it('una fila reclamada no aparece como vencida mientras el intento vuela', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const [row] = await enqueueWebhookDeliveries(
+      admin,
+      A,
+      'message.received',
+      {}
+    );
+
+    // Primer intento reclamado; su receptor aún no ha respondido.
+    const claimed = await claimDelivery(admin, row);
+    expect(claimed).not.toBeNull();
+    expect(
+      new Date(deliveries()[0].next_attempt_at as string).getTime()
+    ).toBeGreaterThan(Date.now());
+
+    // El cron del minuto no la ve vencida: no la vuelve a mandar.
+    expect((await sweepDueDeliveries(admin)).attempted).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('una fila reclamada cuyo intento nunca termina vuelve sola al pasar el reclamo', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const [row] = await enqueueWebhookDeliveries(
+      admin,
+      A,
+      'message.received',
+      {}
+    );
+    // Reclamada y el proceso muere: nadie llama a attemptDelivery.
+    await claimDelivery(admin, row);
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + CLAIM_LEASE_MS - 1_000);
+      expect((await sweepDueDeliveries(admin)).attempted).toBe(0);
+
+      vi.setSystemTime(Date.now() + 2_000);
+      expect((await sweepDueDeliveries(admin)).attempted).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(deliveries()[0]).toMatchObject({ status: 'delivered', attempt: 2 });
+  });
+
+  it('un intento viejo no pisa el resultado de uno más nuevo', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, status: 200 })
+        .mockResolvedValueOnce({ ok: false, status: 504 })
+    );
+    const [row] = await enqueueWebhookDeliveries(
+      admin,
+      A,
+      'message.received',
+      {}
+    );
+    // Copia: la base falsa devuelve la fila viva, no una foto.
+    const stale = { ...(await claimDelivery(admin, row))! };
+    // Un segundo reclamo (p. ej. reintento manual) adelanta `attempt`.
+    const fresh = await claimDelivery(admin, stale);
+    expect(fresh!.attempt).toBe(2);
+
+    expect(await attemptDelivery(admin, fresh!)).toBe('delivered');
+    // El intento 1 termina tarde y con error: no deshace el éxito.
+    await attemptDelivery(admin, stale);
+
+    expect(deliveries()[0].status).toBe('delivered');
+    expect(deliveries()[0].last_status_code).toBe(200);
   });
 });
 

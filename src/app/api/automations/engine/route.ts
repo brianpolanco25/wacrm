@@ -1,10 +1,10 @@
-import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { NextResponse } from 'next/server';
+import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import {
   runAutomationsForTrigger,
   type AutomationContext,
-} from '@/lib/automations/engine'
-import type { AutomationTriggerType } from '@/types'
+} from '@/lib/automations/engine';
+import type { AutomationTriggerType } from '@/types';
 
 /**
  * Manual trigger for testing or for external integrations that want
@@ -14,17 +14,20 @@ import type { AutomationTriggerType } from '@/types'
 export async function POST(request: Request) {
   // Firing automations sends outbound WhatsApp — a write action. Require
   // at least `agent`; a viewer must not be able to trigger sends.
-  let accountId: string
+  let accountId: string;
   try {
-    const ctx = await requireRole('agent')
-    accountId = ctx.accountId
+    const ctx = await requireRole('agent');
+    accountId = ctx.accountId;
   } catch (err) {
-    return toErrorResponse(err)
+    return toErrorResponse(err);
   }
 
-  const body = await request.json().catch(() => null)
+  const body = await request.json().catch(() => null);
   if (!body?.trigger_type) {
-    return NextResponse.json({ error: 'trigger_type required' }, { status: 400 })
+    return NextResponse.json(
+      { error: 'trigger_type required' },
+      { status: 400 }
+    );
   }
 
   // `inbound_message_id` is not caller input: it keys the per-message
@@ -35,15 +38,19 @@ export async function POST(request: Request) {
   // legitimate source is the webhook that just stored the message.
   const context: AutomationContext = {
     ...((body.context ?? {}) as AutomationContext),
-  }
-  delete context.inbound_message_id
+  };
+  delete context.inbound_message_id;
+  // Same for `conversation_id`: the senders write into it through the
+  // service-role client. Without it the engine falls back to the
+  // contact's own conversation, which is already account-scoped.
+  delete context.conversation_id;
 
   await runAutomationsForTrigger({
     accountId,
     triggerType: body.trigger_type as AutomationTriggerType,
     contactId: body.contact_id ?? null,
     context,
-  })
+  });
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true });
 }

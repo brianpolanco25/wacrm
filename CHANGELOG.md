@@ -27,6 +27,13 @@ and polish.
 
 - Broadcasts sent from the panel no longer stop at 1000 recipients: audience, tag, custom-field, exclusion and recipient reads now page through every row (each contact once), CSV phone lookups go out in chunks, and a failed exclusion read aborts the campaign instead of sending to contacts you excluded.
 - Switching conversation in the inbox clears the composer (typed text, staged attachment, voice recording), so a draft can no longer be sent to the next chat.
+### Automations, flows and outbound webhooks: audit fixes (2026-11-20)
+
+- `POST /api/automations/engine` ignores a caller-supplied `context.conversation_id`; the run uses the contact's own conversation.
+- Saving an automation with changed steps cancels its runs parked on a `wait` (row `failed`, log `failed` with the reason) instead of resuming them at the wrong step. A save that leaves the steps as they were (rename, activate, the builder resending them) no longer rewrites them, and parked runs keep waiting.
+- Outbound webhooks: an attempt in flight is no longer re-sent by the next sweep, and a late, older attempt can no longer overwrite a newer result.
+- `time_of_day` conditions use the new optional `AUTOMATION_DEFAULT_TIMEZONE` (IANA, see `docs/docker.md`); without it, the server's clock as before. The builder says so under the operand.
+- Flows: a cycle back to a node that sends (`A → A`) now fails the run after one send instead of sending up to 63 times. Loops through non-sending nodes (condition, tag) still work.
 
 ### Support sessions can mint, rotate and revoke API keys
 

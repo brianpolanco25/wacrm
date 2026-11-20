@@ -830,6 +830,51 @@ export function matchesWholeWord(
   return pattern.test(text);
 }
 
+/**
+ * `time_of_day` condition: operand "HH:mm-HH:mm", true if `now` falls in
+ * that window (over-midnight ranges like "18:00-09:00" included). The
+ * clock is read in `timezone` (IANA), else `AUTOMATION_DEFAULT_TIMEZONE`,
+ * else the server's own zone. An invalid zone counts as missing.
+ * Exported for direct unit testing with a fixed clock.
+ */
+export function inTimeOfDayWindow(
+  operand: string | undefined,
+  now: Date,
+  timezone?: string
+): boolean {
+  const [from, to] = (operand ?? '').split('-');
+  if (!from || !to) return false;
+  const mins =
+    minutesInZone(now, timezone) ??
+    minutesInZone(now, process.env.AUTOMATION_DEFAULT_TIMEZONE) ??
+    now.getHours() * 60 + now.getMinutes();
+  const parse = (s: string) => {
+    const [h, m] = s.split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  const f = parse(from);
+  const t = parse(to);
+  return f <= t ? mins >= f && mins < t : mins >= f || mins < t;
+}
+
+function minutesInZone(now: Date, timeZone?: string): number | null {
+  if (!timeZone) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(now);
+    const get = (type: string) =>
+      Number(parts.find((p) => p.type === type)?.value);
+    return get('hour') * 60 + get('minute');
+  } catch {
+    // RangeError: not a zone Intl knows.
+    return null;
+  }
+}
+
 export function triggerMatches(
   automation: Automation,
   ctx: AutomationContext | undefined
@@ -911,21 +956,8 @@ async function evaluateCondition(
       const text = (args.context.message_text ?? '').toString();
       return text.toLowerCase().includes((cfg.value ?? '').toLowerCase());
     }
-    case 'time_of_day': {
-      // operand form "HH:mm-HH:mm" — true if now is within that window
-      // (supports over-midnight ranges like "18:00-09:00").
-      const [from, to] = (cfg.operand ?? '').split('-');
-      if (!from || !to) return false;
-      const now = new Date();
-      const mins = now.getHours() * 60 + now.getMinutes();
-      const parse = (s: string) => {
-        const [h, m] = s.split(':').map(Number);
-        return (h || 0) * 60 + (m || 0);
-      };
-      const f = parse(from);
-      const t = parse(to);
-      return f <= t ? mins >= f && mins < t : mins >= f || mins < t;
-    }
+    case 'time_of_day':
+      return inTimeOfDayWindow(cfg.operand, new Date(), cfg.timezone);
     case 'conversation_idle': {
       // Operand = minutes of customer silence. Only meaningful for a run
       // that knows its conversation (message triggers, and the runs the

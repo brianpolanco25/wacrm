@@ -227,6 +227,7 @@ import {
   resumePendingExecution,
   runAutomationsForTrigger,
   triggerMatches,
+  inTimeOfDayWindow,
 } from './engine';
 import {
   engineSendInteractive,
@@ -576,6 +577,41 @@ function customStep(field: string, value: string) {
     step_config: { field, value },
   };
 }
+
+describe('time_of_day — evaluated in the account zone (audit 2026-11-20 #4)', () => {
+  // 19:00 UTC = 15:00 in Santo Domingo (UTC-4, no DST); 10:00 UTC = 06:00.
+  const AFTERNOON = new Date('2026-11-20T19:00:00Z');
+  const DAWN = new Date('2026-11-20T10:00:00Z');
+  const OUT_OF_OFFICE = '18:00-09:00';
+  const SD = 'America/Santo_Domingo';
+
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('with a zone in the condition, 3 pm in Santo Domingo is office hours', () => {
+    expect(inTimeOfDayWindow(OUT_OF_OFFICE, AFTERNOON, SD)).toBe(false);
+    expect(inTimeOfDayWindow(OUT_OF_OFFICE, DAWN, SD)).toBe(true);
+  });
+
+  it('falls back to AUTOMATION_DEFAULT_TIMEZONE', () => {
+    vi.stubEnv('AUTOMATION_DEFAULT_TIMEZONE', SD);
+    expect(inTimeOfDayWindow(OUT_OF_OFFICE, AFTERNOON)).toBe(false);
+    expect(inTimeOfDayWindow('09:00-18:00', AFTERNOON)).toBe(true);
+  });
+
+  it('an invalid zone counts as missing', () => {
+    vi.stubEnv('AUTOMATION_DEFAULT_TIMEZONE', SD);
+    expect(inTimeOfDayWindow(OUT_OF_OFFICE, AFTERNOON, 'Mars/Olympus')).toBe(
+      false
+    );
+  });
+
+  it('with no zone at all, keeps the server clock (TZ=UTC in tests)', () => {
+    vi.stubEnv('AUTOMATION_DEFAULT_TIMEZONE', '');
+    expect(inTimeOfDayWindow(OUT_OF_OFFICE, AFTERNOON)).toBe(true);
+  });
+});
 
 describe('triggerMatches — interactive_reply', () => {
   function automation(reply_ids: string[]): Automation {

@@ -76,6 +76,18 @@ describe('POST /api/automations/engine', () => {
     expect(context).toEqual({ message_text: 'hola' });
   });
 
+  it('drops a caller-supplied conversation_id (it would write into another account´s thread)', async () => {
+    await post({
+      trigger_type: 'tag_added',
+      contact_id: 'c1',
+      context: { tag_id: 't1', conversation_id: 'conv-of-account-b' },
+    });
+
+    const context = h.dispatches[0].context as Record<string, unknown>;
+    expect(context).not.toHaveProperty('conversation_id');
+    expect(context).toEqual({ tag_id: 't1' });
+  });
+
   it('rejects a body without a trigger type', async () => {
     const res = await post({ context: {} });
     expect(res.status).toBe(400);
