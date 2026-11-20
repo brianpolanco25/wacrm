@@ -359,15 +359,3 @@ export interface DispatchInboundResult {
     | 'lost_race'
     | 'no_match';
 }
-
-// ============================================================
-// Helpers — exhaustiveness assertions
-// ============================================================
-
-/**
- * Throws a typed compile-time error if the switch over a discriminated
- * union forgets a case. Used in the engine's node-type switch.
- */
-export function assertNever(x: never): never {
-  throw new Error(`Unhandled node type: ${JSON.stringify(x)}`);
-}

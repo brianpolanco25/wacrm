@@ -137,17 +137,6 @@ export function isMetaSignupOrigin(origin: string): boolean {
 }
 
 /**
- * The name Meta gives the coexistence onboarding ("connect your existing
- * WhatsApp Business app account"). Since Embedded Signup v5 (#1654,
- * 2026-10-20) coexistence is on by default and this value is NO LONGER
- * sent in `extras`: v4 needed `featureType` + `sessionInfoVersion: "3"`
- * and, even with both, production kept falling into the ordinary SMS
- * signup (#2494064). It stays as the feature's name; the session event
- * that reports it is `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`.
- */
-export const COEXISTENCE_FEATURE_TYPE = 'whatsapp_business_app_onboarding';
-
-/**
  * The options `FB.login` is called with. Exported so the test can pin
  * the shape without a browser.
  */

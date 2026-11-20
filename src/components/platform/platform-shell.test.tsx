@@ -31,7 +31,6 @@ vi.mock('@/hooks/use-auth', () => ({
 }));
 
 import { PlatformFrame, platformSectionFor } from './platform-shell';
-import { PlatformPlaceholder } from './platform-placeholder';
 
 type Catalogue = typeof es;
 const CATALOGUES: Array<['es' | 'en', Catalogue]> = [
@@ -213,41 +212,5 @@ describe('platformSectionFor', () => {
     ['/platform/aaaaaaaa-0000-4000-8000-000000000001', 'accounts'],
   ])('%s → %s', (path, section) => {
     expect(platformSectionFor(path)).toBe(section);
-  });
-});
-
-describe('PlatformPlaceholder', () => {
-  it('the Resumen shows empty cards that say «coming soon», not zeros', () => {
-    const html = render(
-      <PlatformPlaceholder
-        section="overview"
-        cards={['accounts', 'mrr', 'signups', 'delinquent']}
-      />
-    );
-    expect(html).toContain(es.Platform.placeholder.overview.title);
-    expect(html.match(/data-placeholder-card=/g)).toHaveLength(4);
-    expect(html.split(es.Platform.placeholder.comingSoon).length - 1).toBe(4);
-    expect(html).not.toMatch(/>\s*0\s*</);
-  });
-
-  it.each(['plans', 'operators'] as const)(
-    'the %s page says what it will be',
-    (section) => {
-      const html = render(<PlatformPlaceholder section={section} />);
-      expect(html).toContain(es.Platform.placeholder[section].title);
-      expect(html).toContain(es.Platform.placeholder[section].subtitle);
-      expect(html).toContain(es.Platform.placeholder.comingSoon);
-    }
-  );
-
-  it.each(CATALOGUES)('is translated in %s (CP6)', (locale, messages) => {
-    const html = render(
-      <PlatformPlaceholder section="overview" cards={['mrr']} />,
-      locale,
-      messages
-    );
-    expect(html).toContain(messages.Platform.placeholder.overview.title);
-    expect(html).toContain(messages.Platform.placeholder.cards.mrr);
-    expect(html).toContain(messages.Platform.placeholder.comingSoon);
   });
 });

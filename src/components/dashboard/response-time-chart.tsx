@@ -98,7 +98,6 @@ export function ResponseTimeChart({
             // the brand accent the hand-rolled bars used (#7c3aed).
             colors={['violet']}
             valueFormatter={(value) => `${value.toFixed(1)}m`}
-            showLegend={false}
             yAxisWidth={48}
             // Compact height so the chart sits well inside the card
             // without dominating the row alongside the donut + activity feed.

@@ -2366,28 +2366,6 @@
       "signOut": "Cerrar sesión",
       "defaultUser": "Operador"
     },
-    "placeholder": {
-      "comingSoon": "Próximamente",
-      "body": "Esta sección llega en una próxima versión del panel.",
-      "overview": {
-        "title": "Resumen",
-        "subtitle": "Métricas del servicio: cuentas, ingresos recurrentes, altas y morosos."
-      },
-      "plans": {
-        "title": "Planes",
-        "subtitle": "Catálogo de planes, límites y sincronización con PayPal."
-      },
-      "operators": {
-        "title": "Operadores",
-        "subtitle": "Quién puede administrar la plataforma."
-      },
-      "cards": {
-        "accounts": "Cuentas",
-        "mrr": "Ingresos recurrentes (MRR)",
-        "signups": "Altas recientes",
-        "delinquent": "Morosos"
-      }
-    },
     "metrics": {
       "title": "Resumen",
       "subtitle": "El servicio de un vistazo: cuentas, ingresos recurrentes, altas, morosos y actividad del mes.",
