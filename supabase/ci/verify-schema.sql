@@ -2702,6 +2702,48 @@ BEGIN
   END IF;
   -- /097 -----------------------------------------------------------
 
+  -- 098: endurecimiento de privilegios (auditoría 2026-11-20)
+  IF pg_get_functiondef('public.enforce_profile_privilege_columns()'::regprocedure)
+       NOT LIKE '%NEW.email IS DISTINCT FROM OLD.email%' THEN
+    RAISE EXCEPTION 'enforce_profile_privilege_columns does not guard profiles.email (migration 098)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'profiles'
+               AND policyname = 'profiles_insert') THEN
+    RAISE EXCEPTION 'profiles_insert policy must not exist (migration 098)';
+  END IF;
+  DECLARE
+    fn regprocedure;
+    r text;
+  BEGIN
+    FOREACH fn IN ARRAY ARRAY[
+      'public.record_webhook_failure(uuid, int)'::regprocedure,
+      'public._bcast_bump(uuid, text, int)'::regprocedure,
+      'public.recompute_broadcast_counts(uuid)'::regprocedure,
+      'public.merge_duplicate_contacts()'::regprocedure,
+      'public.merge_duplicate_conversations()'::regprocedure
+    ] LOOP
+      FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+        IF has_function_privilege(r, fn, 'EXECUTE') THEN
+          RAISE EXCEPTION '% must not execute % (migration 098)', r, fn;
+        END IF;
+      END LOOP;
+      IF NOT has_function_privilege('service_role', fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'service_role must execute % (migration 098)', fn;
+      END IF;
+    END LOOP;
+  END;
+  IF (SELECT count(*) FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname IN (
+          'Members can upload chat media', 'Members can update chat media',
+          'Members can delete chat media', 'Members can upload flow media',
+          'Members can update flow media', 'Members can delete flow media')
+        AND coalesce(qual, with_check) LIKE '%viewer%') <> 6 THEN
+    RAISE EXCEPTION 'chat/flow media write policies must exclude viewers (migration 098)';
+  END IF;
+  -- /098 -----------------------------------------------------------
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

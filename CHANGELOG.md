@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### Database privilege hardening (audit 2026-11-20)
+
+- **Migration required: `098_audit_privilege_hardening.sql`.** Members can no longer change their own `profiles.email` or insert profile rows from the browser; `record_webhook_failure`, `_bcast_bump`, `recompute_broadcast_counts`, `merge_duplicate_contacts` and `merge_duplicate_conversations` are executable only by `service_role`; viewers can no longer upload, overwrite or delete chat and flow media (reads unchanged).
+
 ### Support sessions can mint, rotate and revoke API keys
 
 - During a support session the platform operator can now create, rotate and revoke the customer's API keys (to connect the account to Cabbity Health). Each action is recorded in the session's audit trail (`api_key.create|rotate|revoke`, never the key itself) before it is written, and keys minted by support show as "created by support" in Settings → API. Billing, ownership, team members and invitations stay blocked. No migration.
