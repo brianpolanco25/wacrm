@@ -56,6 +56,26 @@ export class MetaApiError extends Error {
   }
 }
 
+const META_TIMEOUT_MS = 15_000;
+/** Media bytes travel through these; a big file needs more than 15 s. */
+const META_MEDIA_TIMEOUT_MS = 120_000;
+
+/**
+ * `fetch` with a deadline: a Graph call or CDN download that accepts the
+ * connection and never answers would otherwise stall the webhook
+ * delivery (or the send route) behind it. A caller's own `signal` wins.
+ */
+function metaFetch(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = META_TIMEOUT_MS
+): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+  });
+}
+
 async function throwMetaError(
   response: Response,
   fallback: string
@@ -128,7 +148,7 @@ export async function verifyPhoneNumber(
 ): Promise<MetaPhoneInfo> {
   const { phoneNumberId, accessToken } = args;
   const url = `${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) {
@@ -197,7 +217,7 @@ export async function registerPhoneNumber(
 ): Promise<RegisterPhoneNumberResult> {
   const { phoneNumberId, accessToken, pin } = args;
   const url = `${META_API_BASE}/${phoneNumberId}/register`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -243,7 +263,7 @@ export async function subscribeWabaToApp(
 ): Promise<void> {
   const { wabaId, accessToken } = args;
   const url = `${META_API_BASE}/${wabaId}/subscribed_apps`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -285,7 +305,7 @@ export async function syncSmbAppData(
   const { phoneNumberId, accessToken, syncType } = args;
   const signal = args.signal ?? AbortSignal.timeout(SMB_SYNC_TIMEOUT_MS);
   const url = `${META_API_BASE}/${phoneNumberId}/smb_app_data`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     signal,
     headers: {
@@ -331,7 +351,7 @@ export async function listWabaPhoneNumbers(args: {
 }): Promise<WabaPhoneNumber[]> {
   const { wabaId, accessToken } = args;
   const url = `${META_API_BASE}/${wabaId}/phone_numbers?fields=id,display_phone_number,platform_type,is_on_biz_app`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'GET',
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -369,7 +389,7 @@ export async function getSubscribedApps(
 ): Promise<SubscribedApp[]> {
   const { wabaId, accessToken } = args;
   const url = `${META_API_BASE}/${wabaId}/subscribed_apps`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) {
@@ -393,7 +413,7 @@ export async function probeGraphField(args: {
 }): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
   const { nodeId, field, accessToken } = args;
   try {
-    const response = await fetch(
+    const response = await metaFetch(
       `${META_API_BASE}/${nodeId}?fields=${encodeURIComponent(field)}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
@@ -425,7 +445,7 @@ export async function getSubscribedAppsRaw(args: {
   accessToken: string;
 }): Promise<{ ok: true; rows: unknown[] } | { ok: false; error: string }> {
   try {
-    const response = await fetch(
+    const response = await metaFetch(
       `${META_API_BASE}/${args.wabaId}/subscribed_apps`,
       { headers: { Authorization: `Bearer ${args.accessToken}` } }
     );
@@ -475,7 +495,7 @@ export async function getWabaFundingInfo(
 ): Promise<WabaFundingInfo> {
   const { wabaId, accessToken, signal } = args;
   const url = `${META_API_BASE}/${wabaId}?fields=id,primary_funding_id`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'GET',
     headers: { Authorization: `Bearer ${accessToken}` },
     ...(signal ? { signal } : {}),
@@ -519,7 +539,7 @@ export async function getWabaPricingAnalytics(
     '.metric_types(["COST","VOLUME"])' +
     '.dimensions(["PHONE","PRICING_CATEGORY"])';
   const url = `${META_API_BASE}/${wabaId}?fields=${encodeURIComponent(field)}`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'GET',
     headers: { Authorization: `Bearer ${accessToken}` },
     ...(signal ? { signal } : {}),
@@ -566,7 +586,7 @@ export async function sendTextMessage(
   if (contextMessageId) {
     body.context = { message_id: contextMessageId };
   }
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -653,7 +673,7 @@ export async function sendMediaMessage(
   };
   if (contextMessageId) body.context = { message_id: contextMessageId };
 
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -773,7 +793,7 @@ export async function sendTemplateMessage(
     body.context = { message_id: contextMessageId };
   }
 
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -831,7 +851,7 @@ export async function uploadResumableMedia(
     file_type: mimeType,
     access_token: accessToken,
   });
-  const startRes = await fetch(
+  const startRes = await metaFetch(
     `${META_API_BASE}/${appId}/uploads?${startParams.toString()}`,
     { method: 'POST' }
   );
@@ -848,16 +868,20 @@ export async function uploadResumableMedia(
 
   // Step 2 — upload the bytes. Note the `OAuth` auth scheme (not Bearer)
   // and the file_offset header, both required by this endpoint.
-  const uploadRes = await fetch(`${META_API_BASE}/${startData.id}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `OAuth ${accessToken}`,
-      file_offset: '0',
+  const uploadRes = await metaFetch(
+    `${META_API_BASE}/${startData.id}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `OAuth ${accessToken}`,
+        file_offset: '0',
+      },
+      // Uint8Array is a valid BodyInit at runtime; cast around the
+      // lib.dom ArrayBufferLike-vs-ArrayBuffer generic mismatch.
+      body: bytes as unknown as BodyInit,
     },
-    // Uint8Array is a valid BodyInit at runtime; cast around the
-    // lib.dom ArrayBufferLike-vs-ArrayBuffer generic mismatch.
-    body: bytes as unknown as BodyInit,
-  });
+    META_MEDIA_TIMEOUT_MS
+  );
   if (!uploadRes.ok) {
     await throwMetaError(
       uploadRes,
@@ -907,7 +931,7 @@ export async function submitMessageTemplate(
 ): Promise<SubmitMessageTemplateResult> {
   const { wabaId, accessToken, payload } = args;
   const url = `${META_API_BASE}/${wabaId}/message_templates`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -959,7 +983,7 @@ export async function editMessageTemplate(
   const { metaTemplateId, accessToken, components, category } = args;
   const body: Record<string, unknown> = { components };
   if (category) body.category = category;
-  const response = await fetch(`${META_API_BASE}/${metaTemplateId}`, {
+  const response = await metaFetch(`${META_API_BASE}/${metaTemplateId}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -998,7 +1022,7 @@ export async function deleteMessageTemplate(
   const params = new URLSearchParams({ name });
   if (metaTemplateId) params.set('hsm_id', metaTemplateId);
   const url = `${META_API_BASE}/${wabaId}/message_templates?${params.toString()}`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -1036,7 +1060,7 @@ export async function sendReactionMessage(
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, targetMessageId, emoji } = args;
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1183,7 +1207,7 @@ export async function sendInteractiveButtons(
   if (contextMessageId) body.context = { message_id: contextMessageId };
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1328,7 +1352,7 @@ export async function sendInteractiveList(
   if (contextMessageId) body.context = { message_id: contextMessageId };
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
-  const response = await fetch(url, {
+  const response = await metaFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1394,7 +1418,7 @@ export async function getMediaUrl(
   args: GetMediaUrlArgs
 ): Promise<{ url: string; mimeType: string; fileSize: number | null }> {
   const { mediaId, accessToken } = args;
-  const response = await fetch(`${META_API_BASE}/${mediaId}`, {
+  const response = await metaFetch(`${META_API_BASE}/${mediaId}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) {
@@ -1449,11 +1473,15 @@ export async function uploadMedia(
     fileName
   );
 
-  const response = await fetch(`${META_API_BASE}/${phoneNumberId}/media`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}` },
-    body: form,
-  });
+  const response = await metaFetch(
+    `${META_API_BASE}/${phoneNumberId}/media`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form,
+    },
+    META_MEDIA_TIMEOUT_MS
+  );
   if (!response.ok) {
     await throwMetaError(response, `Media upload failed: ${response.status}`);
   }
@@ -1475,9 +1503,11 @@ export async function downloadMedia(
   args: DownloadMediaArgs
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const { downloadUrl, accessToken } = args;
-  const response = await fetch(downloadUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const response = await metaFetch(
+    downloadUrl,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    META_MEDIA_TIMEOUT_MS
+  );
   if (!response.ok) {
     throw new Error(`Media download failed: ${response.status}`);
   }

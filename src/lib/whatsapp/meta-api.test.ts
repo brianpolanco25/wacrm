@@ -659,3 +659,32 @@ describe('syncSmbAppData — timeout', () => {
     expect(init.signal).toBe(signal);
   });
 });
+
+describe('metaFetch: toda llamada a Meta lleva plazo (p16.1 A5)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sendTextMessage pasa un signal aunque el llamador no lo dé', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ messages: [{ id: 'wamid.X' }] }),
+        }) as unknown as Response
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await sendTextMessage({
+      phoneNumberId: 'pn',
+      accessToken: 'tok',
+      to: '15551230000',
+      text: 'hola',
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+});

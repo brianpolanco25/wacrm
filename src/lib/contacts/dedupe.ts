@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils';
+import { normalizePhone, phoneVariants } from '@/lib/whatsapp/phone-utils';
 import { sanitizeBsuid } from '@/lib/whatsapp/bsuid';
 
 /**
@@ -9,9 +9,8 @@ import { sanitizeBsuid } from '@/lib/whatsapp/bsuid';
  *
  * The canonical key is `normalizePhone` (digits-only) — the same form
  * the DB stores in the generated `contacts.phone_normalized` column
- * and enforces unique per account. `phonesMatch` adds trunk-prefix
- * tolerance (last-8-digit match) for the softer "possible duplicate"
- * surfaces.
+ * and enforces unique per account. `findExistingContact` also accepts
+ * trunk-0 variants of the same number.
  */
 
 /** Canonical de-dup key for a phone string (digits only). */
@@ -33,9 +32,12 @@ export interface ExistingContact {
 
 /**
  * Find an existing contact in `accountId` whose phone matches `phone`,
- * or null. Pre-filters in SQL by the last-8-digit suffix (so we don't
- * pull every contact), then applies the strict `phonesMatch` in JS on
- * the small candidate set — the exact approach the webhook has used.
+ * or null. Pre-filters in SQL by the last-8-digit suffix of the
+ * digits-only `phone_normalized` (the raw `phone` keeps the user's
+ * formatting, so `…555-1234` never matched `%95551234`), then prefers
+ * an exact digits match and otherwise accepts only a trunk-0 variant
+ * (`370063949836` ↔ `37063949836`). A bare last-8 match is NOT enough:
+ * 1-809-555-1234 and 1-829-555-1234 are different people.
  */
 export async function findExistingContact(
   db: SupabaseClient,
@@ -51,14 +53,17 @@ export async function findExistingContact(
     .from('contacts')
     .select('*')
     .eq('account_id', accountId)
-    .like('phone', `%${suffix}`);
+    .like('phone_normalized', `%${suffix}`);
 
   if (error || !data) return null;
 
+  const rows = data as ExistingContact[];
+  const digits = (c: ExistingContact) => normalizePhone(c.phone ?? '');
+  const variants = phoneVariants(normalized);
   return (
-    (data as ExistingContact[]).find((c) =>
-      phonesMatch(c.phone ?? '', phone)
-    ) ?? null
+    rows.find((c) => digits(c) === normalized) ??
+    rows.find((c) => variants.includes(digits(c))) ??
+    null
   );
 }
 

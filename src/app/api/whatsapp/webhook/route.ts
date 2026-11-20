@@ -442,126 +442,151 @@ async function processWebhook(
 
   for (const entry of body.entry) {
     for (const change of entry.changes) {
-      // Template-lifecycle events (status / quality / components
-      // updates from Meta) come in on a different change.field and
-      // have a different value shape — route them through the
-      // dedicated handler. Skip the messaging branches below so we
-      // don't try to read message-shaped fields off a template event.
-      if (isTemplateWebhookField(change.field)) {
-        await handleTemplateWebhookChange(
-          { field: change.field, value: change.value as unknown },
-          supabaseAdmin()
-        );
-        continue;
-      }
-
-      const value = change.value;
-
-      // One line per accepted change, so the next «no llega» can be told
-      // apart from «llegó y se descartó». Names and counts only.
-      console.log(
-        '[webhook] accepted change:',
-        JSON.stringify({
-          field: change.field,
-          entryId: entry.id,
-          phoneNumberId: value?.metadata?.phone_number_id ?? null,
-          messages: value?.messages?.length ?? 0,
-          statuses: value?.statuses?.length ?? 0,
-          event: (value as { event?: unknown } | undefined)?.event ?? null,
-          echoes: Array.isArray(value?.message_echoes)
-            ? value.message_echoes.length
-            : 0,
-          historyItems: Array.isArray(value?.history)
-            ? value.history.length
-            : 0,
-          stateSync: Array.isArray(value?.state_sync)
-            ? value.state_sync.length
-            : 0,
-        })
-      );
-
-      // Account-level events name the WABA (`entry.id`), never a number:
-      // handled before the phone_number_id requirement below (#1651).
-      if (change.field === 'account_update') {
-        await handleAccountUpdate(supabaseAdmin(), entry.id, value, auth);
-        continue;
-      }
-
-      // La configuración se resuelve UNA vez por `change`, antes de
-      // separar estados de mensajes, porque las dos ramas necesitan
-      // saber de qué cuenta es este número. Los estados se apoyaban
-      // hasta ahora solo en el `wamid`, que Meta NO garantiza único
-      // entre números (ver migración 009): sin la cuenta, un
-      // `wamid` repetido podía mover la fila de otro inquilino (CP3).
-      const phoneNumberId = value.metadata?.phone_number_id;
-      if (!phoneNumberId) {
-        console.error('[webhook] change without phone_number_id; skipped');
-        continue;
-      }
-
-      const config = await resolveInboundConfig(phoneNumberId);
-      if (!config) continue;
-
-      // Coexistence (#1651): echoes of what the business sent from the
-      // phone, the chat history and the phone's address book. Never
-      // reaches processMessage — no automations, flows, AI, public
-      // webhooks or charges.
-      if (isCoexistenceField(change.field)) {
-        const { batchIds } = await handleCoexistenceChange(
-          supabaseAdmin(),
-          change.field,
-          value,
-          {
-            ...config,
-            display_phone_number:
-              value.metadata?.display_phone_number ??
-              config.display_phone_number ??
-              null,
-          }
-        );
-        queuedBatches.push(...batchIds);
-        continue;
-      }
-
-      // Handle status updates
-      if (value.statuses) {
-        for (const status of value.statuses) {
-          await handleStatusUpdate(status, config.account_id, config.id);
+      // One bad change (or one bad tenant) must not cost the rest of the
+      // delivery: Meta already got its 200 and will not retry.
+      try {
+        // Template-lifecycle events (status / quality / components
+        // updates from Meta) come in on a different change.field and
+        // have a different value shape — route them through the
+        // dedicated handler. Skip the messaging branches below so we
+        // don't try to read message-shaped fields off a template event.
+        if (isTemplateWebhookField(change.field)) {
+          await handleTemplateWebhookChange(
+            { field: change.field, value: change.value as unknown },
+            supabaseAdmin()
+          );
+          continue;
         }
-      }
 
-      // Handle incoming messages.
-      //
-      // `contacts` ya no se exige: su única aportación es el nombre de
-      // perfil y el nombre de usuario, y desde abril de 2026 la
-      // identidad que importa (`from_user_id`) viaja en el propio
-      // mensaje. Pedirla como antes descartaba el lote entero cuando
-      // Meta la omitía — justo lo que CP11 prohíbe.
-      if (!value.messages) continue;
+        const value = change.value;
 
-      const decryptedAccessToken = decrypt(config.access_token);
-
-      for (let i = 0; i < value.messages.length; i++) {
-        const message = value.messages[i];
-        const contact = value.contacts?.[i] ?? value.contacts?.[0] ?? null;
-
-        await processMessage(
-          message,
-          contact,
-          // Tenancy — drives every contact / conversation lookup
-          // and the engines' active-row dispatch.
-          config.account_id,
-          // Audit / sender-of-record — used as the user_id on row
-          // inserts that need it for NOT NULL FK compliance. Always
-          // the admin who saved the WhatsApp config.
-          config.user_id,
-          decryptedAccessToken,
-          // Default ON: the column is NOT NULL DEFAULT TRUE, but a row
-          // read before migration 039 lands would have it undefined,
-          // and losing attachments is the failure mode worth avoiding.
-          config.mirror_inbound_media !== false,
-          config.id
+        // One line per accepted change, so the next «no llega» can be told
+        // apart from «llegó y se descartó». Names and counts only.
+        console.log(
+          '[webhook] accepted change:',
+          JSON.stringify({
+            field: change.field,
+            entryId: entry.id,
+            phoneNumberId: value?.metadata?.phone_number_id ?? null,
+            messages: value?.messages?.length ?? 0,
+            statuses: value?.statuses?.length ?? 0,
+            event: (value as { event?: unknown } | undefined)?.event ?? null,
+            echoes: Array.isArray(value?.message_echoes)
+              ? value.message_echoes.length
+              : 0,
+            historyItems: Array.isArray(value?.history)
+              ? value.history.length
+              : 0,
+            stateSync: Array.isArray(value?.state_sync)
+              ? value.state_sync.length
+              : 0,
+          })
         );
+
+        // Account-level events name the WABA (`entry.id`), never a number:
+        // handled before the phone_number_id requirement below (#1651).
+        if (change.field === 'account_update') {
+          await handleAccountUpdate(supabaseAdmin(), entry.id, value, auth);
+          continue;
+        }
+
+        // La configuración se resuelve UNA vez por `change`, antes de
+        // separar estados de mensajes, porque las dos ramas necesitan
+        // saber de qué cuenta es este número. Los estados se apoyaban
+        // hasta ahora solo en el `wamid`, que Meta NO garantiza único
+        // entre números (ver migración 009): sin la cuenta, un
+        // `wamid` repetido podía mover la fila de otro inquilino (CP3).
+        const phoneNumberId = value.metadata?.phone_number_id;
+        if (!phoneNumberId) {
+          console.error('[webhook] change without phone_number_id; skipped');
+          continue;
+        }
+
+        const config = await resolveInboundConfig(phoneNumberId);
+        if (!config) continue;
+
+        // Coexistence (#1651): echoes of what the business sent from the
+        // phone, the chat history and the phone's address book. Never
+        // reaches processMessage — no automations, flows, AI, public
+        // webhooks or charges.
+        if (isCoexistenceField(change.field)) {
+          const { batchIds } = await handleCoexistenceChange(
+            supabaseAdmin(),
+            change.field,
+            value,
+            {
+              ...config,
+              display_phone_number:
+                value.metadata?.display_phone_number ??
+                config.display_phone_number ??
+                null,
+            }
+          );
+          queuedBatches.push(...batchIds);
+          continue;
+        }
+
+        // Handle status updates
+        if (value.statuses) {
+          for (const status of value.statuses) {
+            try {
+              await handleStatusUpdate(status, config.account_id, config.id);
+            } catch (err) {
+              console.error('[webhook] status update failed:', status.id, err);
+            }
+          }
+        }
+
+        // Handle incoming messages.
+        //
+        // `contacts` ya no se exige: su única aportación es el nombre de
+        // perfil y el nombre de usuario, y desde abril de 2026 la
+        // identidad que importa (`from_user_id`) viaja en el propio
+        // mensaje. Pedirla como antes descartaba el lote entero cuando
+        // Meta la omitía — justo lo que CP11 prohíbe.
+        if (!value.messages) continue;
+
+        // An undecryptable token only costs the media (it falls back to
+        // null); the text of the message is still saved.
+        let decryptedAccessToken = '';
+        try {
+          decryptedAccessToken = decrypt(config.access_token);
+        } catch (err) {
+          console.error(
+            '[webhook] access_token decrypt failed:',
+            config.id,
+            err
+          );
+        }
+
+        for (let i = 0; i < value.messages.length; i++) {
+          const message = value.messages[i];
+          const contact = value.contacts?.[i] ?? value.contacts?.[0] ?? null;
+
+          try {
+            await processMessage(
+              message,
+              contact,
+              // Tenancy — drives every contact / conversation lookup
+              // and the engines' active-row dispatch.
+              config.account_id,
+              // Audit / sender-of-record — used as the user_id on row
+              // inserts that need it for NOT NULL FK compliance. Always
+              // the admin who saved the WhatsApp config.
+              config.user_id,
+              decryptedAccessToken,
+              // Default ON: the column is NOT NULL DEFAULT TRUE, but a row
+              // read before migration 039 lands would have it undefined,
+              // and losing attachments is the failure mode worth avoiding.
+              config.mirror_inbound_media !== false,
+              config.id
+            );
+          } catch (err) {
+            console.error('[webhook] message failed:', message.id, err);
+          }
+        }
+      } catch (err) {
+        console.error('[webhook] change failed:', change.field, entry.id, err);
       }
     }
   }
@@ -626,6 +651,25 @@ async function resolveInboundConfig(
 
   return configRows[0];
 }
+
+/** Meta's Unix-seconds timestamp as ISO; now when missing or garbage. */
+function metaTimestampIso(ts: unknown): string {
+  const d = new Date(Number(ts) * 1000);
+  return typeof ts === 'string' && ts.trim() !== '' && !isNaN(d.getTime())
+    ? d.toISOString()
+    : new Date().toISOString();
+}
+
+// What `messages.status` may be when each status arrives: it only moves
+// forward (sending → sent → delivered → read) and `failed` only before
+// delivery. Checked in the UPDATE itself, so out-of-order or concurrent
+// deliveries cannot move it back.
+const MESSAGE_STATUS_FROM: Record<string, string[]> = {
+  sent: ['sending'],
+  delivered: ['sending', 'sent'],
+  read: ['sending', 'sent', 'delivered'],
+  failed: ['sending', 'sent'],
+};
 
 // The happy-path status ladder — pending → sent → delivered → read →
 // replied. Webhook replays must never regress a recipient back down
@@ -757,7 +801,8 @@ async function handleStatusUpdate(
     conversations: { account_id: string; contact_id?: string | null } | null;
   }[];
 
-  if (messageRows.length > 0) {
+  const allowedFrom = MESSAGE_STATUS_FROM[status.status];
+  if (messageRows.length > 0 && allowedFrom) {
     // El segundo `.in()` es redundante para el resultado —los ids ya
     // salen de la lectura acotada de arriba— y deliberado para la
     // auditoría: `messages` no tiene `account_id` propio, su tenencia
@@ -772,7 +817,8 @@ async function handleStatusUpdate(
       )
       .in('conversation_id', [
         ...new Set(messageRows.map((m) => m.conversation_id)),
-      ]);
+      ])
+      .in('status', allowedFrom);
     if (msgErr) {
       console.error('Error updating message status:', msgErr);
     }
@@ -786,7 +832,7 @@ async function handleStatusUpdate(
   //    (added in migration 003). The aggregate trigger on
   //    broadcast_recipients re-derives the parent broadcast's
   //    sent/delivered/read/failed counts automatically.
-  const tsIso = new Date(parseInt(status.timestamp) * 1000).toISOString();
+  const tsIso = metaTimestampIso(status.timestamp);
 
   const { data: recipientRows, error: recFetchErr } = await supabaseAdmin()
     .from('broadcast_recipients')
@@ -822,7 +868,10 @@ async function handleStatusUpdate(
     const { error: recUpdateErr } = await supabaseAdmin()
       .from('broadcast_recipients')
       .update(update)
-      .eq('id', recipient.id);
+      .eq('id', recipient.id)
+      // Compare-and-set: a concurrent status that already moved the row
+      // makes this a no-op instead of a regression.
+      .eq('status', recipient.status);
 
     if (recUpdateErr) {
       console.error('Error updating broadcast recipient status:', recUpdateErr);
@@ -1222,7 +1271,7 @@ async function processMessage(
         media_type: mediaType,
         message_id: message.id,
         status: 'delivered',
-        created_at: new Date(parseInt(message.timestamp) * 1000).toISOString(),
+        created_at: metaTimestampIso(message.timestamp),
         reply_to_message_id: replyToInternalId,
         // Only populated for content_type='interactive'. Migration 010 added
         // the column; null for every other content_type so existing inserts

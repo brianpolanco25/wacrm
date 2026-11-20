@@ -79,7 +79,12 @@ const h = vi.hoisted(() => ({
     recipientUpdates: [] as {
       values: Record<string, unknown>;
       id: unknown;
+      filters: Record<string, unknown>;
     }[],
+    /** Estado actual simulado de la fila de `messages` (null = no simula). */
+    messageCurrentStatus: null as string | null,
+    /** `decrypt` del access_token lanza (clave rotada, fila corrupta). */
+    decryptThrows: false,
     /** Actualizaciones escritas sobre `messages` (estado de entrega). */
     messageStatusUpdates: [] as {
       values: Record<string, unknown>;
@@ -332,12 +337,24 @@ vi.mock('@supabase/supabase-js', () => ({
           void statusChain;
           return {
             select: () => ({ eq: eqStatus }),
-            update: (values: Record<string, unknown>) => ({
-              eq: (_column: string, id: unknown) => {
-                h.state.recipientUpdates.push({ values, id });
-                return Promise.resolve({ error: null });
-              },
-            }),
+            update: (values: Record<string, unknown>) => {
+              const filters: Record<string, unknown> = {};
+              const chain = {
+                eq: (column: string, value: unknown) => {
+                  filters[column] = value;
+                  return chain;
+                },
+                then: (resolve: (r: unknown) => unknown) => {
+                  h.state.recipientUpdates.push({
+                    values,
+                    id: filters.id,
+                    filters,
+                  });
+                  return resolve({ error: null });
+                },
+              };
+              return chain;
+            },
           };
         }
         case 'messages':
@@ -384,6 +401,7 @@ vi.mock('@supabase/supabase-js', () => ({
               const captured: {
                 values: Record<string, unknown>;
                 ids: unknown;
+                statusFrom?: string[];
               } = { values, ids: null };
               const filters: Record<string, unknown> = {};
               const chain = {
@@ -392,6 +410,8 @@ vi.mock('@supabase/supabase-js', () => ({
                     captured.ids = ids;
                     h.state.messageStatusUpdates.push(captured);
                   }
+                  if (column === 'status')
+                    captured.statusFrom = ids as string[];
                   return chain;
                 },
                 // Edit / revoke (n15.6): update().eq().eq().select('id').
@@ -406,8 +426,17 @@ vi.mock('@supabase/supabase-js', () => ({
                     error: null,
                   });
                 },
-                then: (resolve: (r: unknown) => unknown) =>
-                  resolve({ error: null }),
+                then: (resolve: (r: unknown) => unknown) => {
+                  // Applies the status filter the way Postgres would.
+                  const cur = h.state.messageCurrentStatus;
+                  if (
+                    captured.ids &&
+                    cur !== null &&
+                    (!captured.statusFrom || captured.statusFrom.includes(cur))
+                  )
+                    h.state.messageCurrentStatus = values.status as string;
+                  return resolve({ error: null });
+                },
               };
               return chain;
             },
@@ -458,7 +487,11 @@ vi.mock('@supabase/supabase-js', () => ({
 vi.mock('@/lib/whatsapp/encryption', () => ({
   // The GET loop stores verify tokens as `enc:<plaintext>` in this mock
   // so each config row decrypts to a distinct value.
-  decrypt: (v: string) => (v.startsWith('enc:') ? v.slice(4) : 'plain-token'),
+  decrypt: (v: string) => {
+    if (h.state.decryptThrows && !v.startsWith('enc:'))
+      throw new Error('bad decrypt');
+    return v.startsWith('enc:') ? v.slice(4) : 'plain-token';
+  },
   encrypt: (v: string) => v,
   isLegacyFormat: () => false,
 }));
@@ -584,6 +617,8 @@ beforeEach(() => {
   h.state.statusRecipientRows = [];
   h.state.recipientUpdates = [];
   h.state.messageStatusUpdates = [];
+  h.state.messageCurrentStatus = null;
+  h.state.decryptThrows = false;
   h.state.messageRewrites = [];
   h.state.messageRewriteResult = [{ id: 'orig-1' }];
   h.state.configVerifyTokens = ['tenant-verify-token'];
@@ -1757,6 +1792,98 @@ describe('estados de entrega: casados por recipient_user_id (fase 6 §5)', () =>
 // (progress/checks_meta-pricing-capture.sql). Aquí: qué le manda el
 // webhook, y que nada de esto lo tumba.
 // ============================================================
+describe('una entrega con un elemento malo no pierde el resto (p16.1 A3/A4)', () => {
+  function deliveryRequest(changes: unknown[]) {
+    return {
+      text: async () => JSON.stringify({ entry: [{ id: 'waba-1', changes }] }),
+      headers: { get: () => 'sha256=stub' },
+    } as unknown as Request;
+  }
+  async function run(changes: unknown[]) {
+    await POST(deliveryRequest(changes));
+    for (const cb of h.state.afterCallbacks) await cb();
+  }
+  const msgChange = (messages: unknown[], statuses?: unknown[]) => ({
+    field: 'messages',
+    value: { metadata: { phone_number_id: 'pn-1' }, messages, statuses },
+  });
+  const storedIds = () => h.state.upsertCalls.map((c) => c.row.message_id);
+
+  it('un timestamp no numérico no tumba el mensaje siguiente', async () => {
+    await run([
+      msgChange([
+        { ...TEXT_MESSAGE, id: 'wamid.BAD', timestamp: 'garbage' },
+        { ...TEXT_MESSAGE, id: 'wamid.GOOD' },
+      ]),
+    ]);
+    expect(storedIds()).toEqual(['wamid.BAD', 'wamid.GOOD']);
+  });
+
+  it('un access_token que no descifra no impide guardar el texto', async () => {
+    h.state.decryptThrows = true;
+    await run([msgChange([TEXT_MESSAGE])]);
+    expect(storedIds()).toEqual(['wamid.TEST1']);
+  });
+
+  it('un estado que lanza no impide guardar los mensajes del mismo change', async () => {
+    h.state.statusMessageRows = [
+      {
+        id: 'msg-9',
+        conversation_id: 'conv-1',
+        conversations: { account_id: 'acc-1', contact_id: 'contact-1' },
+      },
+    ];
+    h.dispatchWebhookEvent.mockRejectedValueOnce(new Error('subscriber down'));
+    await run([
+      msgChange(
+        [TEXT_MESSAGE],
+        [{ id: 'wamid.OUT', status: 'sent', timestamp: '1700000000' }]
+      ),
+    ]);
+    expect(storedIds()).toEqual(['wamid.TEST1']);
+  });
+
+  it('un change malformado no impide procesar el siguiente', async () => {
+    await run([{ field: 'messages' }, msgChange([TEXT_MESSAGE])]);
+    expect(storedIds()).toEqual(['wamid.TEST1']);
+  });
+
+  it('`read` seguido de `delivered` deja `read` en messages', async () => {
+    h.state.statusMessageRows = [
+      {
+        id: 'msg-9',
+        conversation_id: 'conv-1',
+        conversations: { account_id: 'acc-1', contact_id: 'contact-1' },
+      },
+    ];
+    h.state.messageCurrentStatus = 'sent';
+    const status = (s: string) => [
+      msgChange([], [{ id: 'wamid.OUT', status: s, timestamp: '1700000000' }]),
+    ];
+    await run(status('read'));
+    h.state.afterCallbacks = [];
+    await run(status('delivered'));
+    expect(h.state.messageCurrentStatus).toBe('read');
+  });
+
+  it('el UPDATE de broadcast_recipients exige el estado que leyó', async () => {
+    h.state.statusRecipientRows = [
+      { id: 'rcpt-1', status: 'delivered', contact_id: 'contact-1' },
+    ];
+    await run([
+      msgChange(
+        [],
+        [{ id: 'wamid.OUT', status: 'read', timestamp: '1700000000' }]
+      ),
+    ]);
+    expect(h.state.recipientUpdates).toHaveLength(1);
+    expect(h.state.recipientUpdates[0].filters).toEqual({
+      id: 'rcpt-1',
+      status: 'delivered',
+    });
+  });
+});
+
 describe('cobro de Meta por mensaje (s10.1)', () => {
   // El `pricing` tal como lo manda Meta en `sent` y `delivered`.
   const META_PRICING = {
