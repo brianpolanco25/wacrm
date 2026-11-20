@@ -32,6 +32,7 @@
 // The bitácora row (`member_invite`) goes BEFORE the invitation.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { NextResponse } from 'next/server';
 
 import {
@@ -67,9 +68,6 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type MemberRole = 'admin' | 'agent' | 'viewer';
 

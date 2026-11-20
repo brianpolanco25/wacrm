@@ -1,3 +1,5 @@
+import { UUID_RE } from '@/lib/uuid';
+
 /**
  * Recognise URLs that point into this project's Supabase Storage.
  *
@@ -184,9 +186,6 @@ export function isMediaBucketUrl(
   const ref = parseStorageObjectUrl(url, opts);
   return ref !== null && MEDIA_BUCKETS.has(ref.bucket);
 }
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * The account a path belongs to, read from its first segment: paths

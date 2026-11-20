@@ -3402,6 +3402,30 @@ describe('/api/whatsapp/templates (service role in the header-handle path)', () 
     expectBUnchanged(before);
   });
 
+  it('PATCH and DELETE write message_templates only with account_id = A (p16.7)', async () => {
+    await waTemplateById.PATCH(
+      req('PATCH', `/api/whatsapp/templates/${TPL_A}`, templatePayload()),
+      params({ id: TPL_A })
+    );
+    await waTemplateById.DELETE(
+      req('DELETE', `/api/whatsapp/templates/${TPL_A}`),
+      params({ id: TPL_A })
+    );
+    const writes = h.db.log.filter(
+      (l) =>
+        l.table === 'message_templates' &&
+        (l.op === 'update' || l.op === 'delete')
+    );
+    expect(writes.map((l) => l.op)).toEqual(['update', 'delete']);
+    for (const w of writes) {
+      expect(w.filters).toContainEqual({
+        column: 'account_id',
+        op: 'eq',
+        value: A,
+      });
+    }
+  });
+
   it("submit refuses B's attachment and, with A's, submits under A", async () => {
     const before = h.db.snapshot(B);
     h.db.storageObjects.push({

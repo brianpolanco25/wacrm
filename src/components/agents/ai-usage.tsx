@@ -184,7 +184,6 @@ export function AiUsageCard() {
                 categories={['Tokens']}
                 colors={['violet']}
                 valueFormatter={(v) => formatCompactNumber(v)}
-                showLegend={false}
                 yAxisWidth={48}
                 className="h-[200px]"
               />

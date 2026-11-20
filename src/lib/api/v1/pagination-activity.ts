@@ -9,10 +9,8 @@
 // `decodeCursor`, porque los valores se interpolan en un `.or()`.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { parseListParams } from '@/lib/api/v1/pagination';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ActivityCursor {
   /** `null` = ya en la zona de conversaciones sin mensajes. */

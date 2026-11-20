@@ -21,9 +21,6 @@ import type {
   OperationWrite,
 } from '@/lib/integrations/types';
 
-export const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export const INTEGRATION_COLUMNS =
   'id, slug, name, description, logo_url, base_url, auth_scheme, auth_header_name, credential_help, test_path, is_active, sort_order, created_at, updated_at';
 export const OPERATION_COLUMNS =

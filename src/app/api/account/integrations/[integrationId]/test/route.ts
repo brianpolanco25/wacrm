@@ -17,7 +17,7 @@ import { supabaseAdmin } from '@/lib/auth/admin-client';
 import { assertPlanFeature } from '@/lib/billing/enforce';
 import { testIntegrationConnection } from '@/lib/integrations/execute';
 import { traceIntegrationSupportAction } from '@/lib/integrations/support-trace';
-import { UUID_RE } from '@/lib/platform/integrations';
+import { UUID_RE } from '@/lib/uuid';
 import { RATE_LIMITS } from '@/lib/rate-limit';
 
 export async function POST(

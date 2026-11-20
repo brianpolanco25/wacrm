@@ -52,6 +52,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      # mcp-server es un paquete aparte (su lockfile, su TypeScript):
+      # el tsconfig raíz lo excluye, así que se construye aquí con lo suyo.
+      - name: Build mcp-server
+        working-directory: mcp-server
+        run: npm ci && npm run build
+
   # ---------------------------------------------------------------
   # Publica la imagen a GHCR y avisa a Dokploy para que redespliegue.
   #

@@ -14,6 +14,7 @@
 // sería crear otra.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import { readJsonBody } from '@/lib/api/v1/body';
@@ -26,32 +27,15 @@ import {
   metaErrorResponse,
 } from '@/lib/api/v1/templates';
 import { WhatsAppConfigError } from '@/lib/whatsapp/resolve-config';
-import {
-  deleteMessageTemplate,
-  editMessageTemplate,
-} from '@/lib/whatsapp/meta-api';
 import { validateTemplatePayload } from '@/lib/whatsapp/template-validators';
-import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components';
-import { ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle';
-import { supabaseAdmin } from '@/lib/flows/admin-client';
+import {
+  EDITABLE_TEMPLATE_STATUSES,
+  deleteTemplate,
+  editTemplate,
+  isTemplatesDryRun as isDryRun,
+} from '@/lib/whatsapp/template-operations';
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators';
 import type { SupabaseClient } from '@supabase/supabase-js';
-
-/** Meta solo deja editar estas tres. */
-const EDITABLE_STATUSES = new Set(['APPROVED', 'REJECTED', 'PAUSED']);
-
-// Un id que ni siquiera es un UUID no puede ser una fila de esta
-// cuenta: se responde 404 sin preguntarle a Postgres (que además
-// contestaría con un error de sintaxis 22P02 convertido en 500).
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isDryRun(): boolean {
-  return (
-    process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
-    process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1'
-  );
-}
 
 /** La fila de esta cuenta, o null. Siempre filtrada por `account_id`. */
 async function loadTemplate(
@@ -135,7 +119,7 @@ export async function PATCH(
         409
       );
     }
-    if (!EDITABLE_STATUSES.has(String(existing.status))) {
+    if (!EDITABLE_TEMPLATE_STATUSES.has(String(existing.status))) {
       return fail(
         'conflict',
         `Templates in status ${existing.status} cannot be edited. Allowed: APPROVED, REJECTED, PAUSED`,
@@ -173,87 +157,49 @@ export async function PATCH(
       );
     }
 
+    let accessToken: string | null = null;
     if (!isDryRun()) {
       const configId = await resolveRequestedConfigId(
         ctx.supabase,
         ctx.accountId,
         body
       );
-      const target = await resolveTemplateWaba(
-        ctx.supabase,
-        ctx.accountId,
-        configId
-      );
-
-      // Meta reemplaza los componentes, así que una cabecera de imagen
-      // necesita handle nuevo en cada edición.
-      try {
-        await ensureImageHeaderHandle(payload, target.accessToken, {
-          accountId: ctx.accountId,
-          storage: supabaseAdmin().storage,
-          db: supabaseAdmin(),
-        });
-      } catch (e) {
-        return fail(
-          'bad_request',
-          e instanceof Error ? e.message : 'Header image upload failed',
-          400
-        );
-      }
-
-      try {
-        await editMessageTemplate({
-          metaTemplateId: String(existing.meta_template_id),
-          accessToken: target.accessToken,
-          components: buildMetaTemplatePayload(payload).components,
-        });
-      } catch (e) {
-        // Se anota el fallo en la fila (igual que el panel) para que el
-        // motivo quede visible en la siguiente lectura.
-        await ctx.supabase
-          .from('message_templates')
-          .update({
-            submission_error:
-              e instanceof Error ? e.message : 'Meta edit failed',
-            last_submitted_at: new Date().toISOString(),
-          })
-          .eq('id', id)
-          .eq('account_id', ctx.accountId);
-        return metaErrorResponse(e);
-      }
+      accessToken = (
+        await resolveTemplateWaba(ctx.supabase, ctx.accountId, configId)
+      ).accessToken;
     }
 
-    // Meta aceptó la edición: la revisión vuelve a empezar.
-    const { data: row, error: updErr } = await ctx.supabase
-      .from('message_templates')
-      .update({
-        category: payload.category,
-        header_type: payload.header_type ?? null,
-        header_content: payload.header_content ?? null,
-        header_media_url: payload.header_media_url ?? null,
-        header_handle: payload.header_handle ?? null,
-        body_text: payload.body_text,
-        footer_text: payload.footer_text ?? null,
-        buttons: payload.buttons ?? null,
-        sample_values: payload.sample_values ?? null,
-        status: 'PENDING',
-        submission_error: null,
-        rejection_reason: null,
-        last_submitted_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .eq('account_id', ctx.accountId)
-      .select(TEMPLATE_SELECT)
-      .maybeSingle();
-
-    if (updErr || !row) {
-      console.error('[api/v1/templates] update error:', updErr);
+    // Meta reemplaza los componentes, así que una cabecera de imagen
+    // necesita handle nuevo en cada edición; si Meta la rechaza, el
+    // motivo queda anotado en la fila (igual que el panel).
+    const result = await editTemplate(ctx.supabase, {
+      accountId: ctx.accountId,
+      id,
+      metaTemplateId: String(existing.meta_template_id),
+      accessToken,
+      payload,
+      select: TEMPLATE_SELECT,
+    });
+    if (!result.ok && result.step === 'header') {
+      const e = result.error;
+      return fail(
+        'bad_request',
+        e instanceof Error ? e.message : 'Header image upload failed',
+        400
+      );
+    }
+    if (!result.ok && result.step === 'meta') {
+      return metaErrorResponse(result.error);
+    }
+    if (!result.ok) {
+      console.error('[api/v1/templates] update error:', result.error);
       return fail(
         'internal',
         'Edited on Meta but failed to save locally. Run POST /api/v1/templates/sync to recover.',
         500
       );
     }
+    const row = result.row;
 
     return ok(serializeTemplate(row as Record<string, unknown>));
   } catch (err) {
@@ -276,6 +222,7 @@ export async function DELETE(
     const existing = await loadTemplate(ctx.supabase, ctx.accountId, id);
     if (!existing) return fail('not_found', 'Template not found', 404);
 
+    let target: { wabaId: string; accessToken: string } | null = null;
     if (existing.meta_template_id && !isDryRun()) {
       // `DELETE` no lleva cuerpo, así que el número se elige por query
       // (`?from=<phone_number_id>`); sin él, el predeterminado.
@@ -284,44 +231,32 @@ export async function DELETE(
         ctx.accountId,
         Object.fromEntries(new URL(request.url).searchParams)
       );
-      const target = await resolveTemplateWaba(
-        ctx.supabase,
-        ctx.accountId,
-        configId
-      );
-      try {
-        await deleteMessageTemplate({
-          wabaId: target.wabaId,
-          accessToken: target.accessToken,
-          name: String(existing.name),
-          // Sin `hsm_id` Meta borraría TODAS las traducciones que
-          // comparten el nombre, no solo esta.
-          metaTemplateId: String(existing.meta_template_id),
-        });
-      } catch (e) {
-        return metaErrorResponse(e);
-      }
+      target = await resolveTemplateWaba(ctx.supabase, ctx.accountId, configId);
     }
 
-    const { data, error } = await ctx.supabase
-      .from('message_templates')
-      .delete()
-      .eq('id', id)
-      .eq('account_id', ctx.accountId)
-      .select('id')
-      .maybeSingle();
-
-    if (error) {
-      console.error('[api/v1/templates] delete error:', error);
+    const result = await deleteTemplate(ctx.supabase, {
+      accountId: ctx.accountId,
+      id,
+      name: String(existing.name),
+      metaTemplateId: existing.meta_template_id
+        ? String(existing.meta_template_id)
+        : null,
+      target,
+    });
+    if (!result.ok && result.step === 'meta') {
+      return metaErrorResponse(result.error);
+    }
+    if (!result.ok) {
+      console.error('[api/v1/templates] delete error:', result.error);
       return fail(
         'internal',
         'Deleted on Meta but failed to delete locally',
         500
       );
     }
-    if (!data) return fail('not_found', 'Template not found', 404);
+    if (!result.deleted) return fail('not_found', 'Template not found', 404);
 
-    return ok({ id: data.id, deleted: true });
+    return ok({ id, deleted: true });
   } catch (err) {
     if (err instanceof WhatsAppConfigError) {
       return fail(err.code, err.message, err.status);

@@ -2366,28 +2366,6 @@
       "signOut": "Sign out",
       "defaultUser": "Operator"
     },
-    "placeholder": {
-      "comingSoon": "Coming soon",
-      "body": "This section arrives in an upcoming version of the console.",
-      "overview": {
-        "title": "Overview",
-        "subtitle": "Service metrics: accounts, recurring revenue, signups and delinquent accounts."
-      },
-      "plans": {
-        "title": "Plans",
-        "subtitle": "Plan catalogue, limits and PayPal sync."
-      },
-      "operators": {
-        "title": "Operators",
-        "subtitle": "Who can administer the platform."
-      },
-      "cards": {
-        "accounts": "Accounts",
-        "mrr": "Recurring revenue (MRR)",
-        "signups": "Recent signups",
-        "delinquent": "Delinquent"
-      }
-    },
     "metrics": {
       "title": "Overview",
       "subtitle": "The service at a glance: accounts, recurring revenue, signups, delinquent accounts and this month's activity.",

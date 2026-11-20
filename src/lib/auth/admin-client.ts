@@ -5,7 +5,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // has a client-side write policy (migration 055), so the audit trail can
 // only be written from here.
 //
-// Same shape as the automations / flows / ai admin clients.
+// The ai / automations / flows admin-client files re-export this one.
 let _adminClient: SupabaseClient | null = null;
 
 export function supabaseAdmin(): SupabaseClient {

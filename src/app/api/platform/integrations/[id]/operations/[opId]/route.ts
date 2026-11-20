@@ -7,6 +7,7 @@
 // `is_active = false`.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { NextResponse } from 'next/server';
 
 import {
@@ -20,7 +21,6 @@ import {
   loadOperation,
   OperationExistsError,
   updateOperation,
-  UUID_RE,
 } from '@/lib/platform/integrations';
 import {
   checkRateLimit,

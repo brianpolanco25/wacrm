@@ -31,7 +31,8 @@
 // ============================================================
 
 import { NextResponse } from 'next/server';
-import { createClient as createAdminClient } from '@supabase/supabase-js';
+// Service role: a phone_number_id claimed by another account is invisible under RLS.
+import { supabaseAdmin } from '@/lib/auth/admin-client';
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { assertStockLimit, assertWritable } from '@/lib/billing/enforce';
@@ -65,24 +66,6 @@ import {
   checkAndRecordPaymentStatus,
   type MetaPaymentStatus,
 } from '@/lib/whatsapp/payment-method';
-
-// Service-role client, lazily built. It exists for exactly one query:
-// detecting a `phone_number_id` already claimed by a DIFFERENT account.
-// Under RLS the caller's own session cannot see other tenants' rows, so
-// without the service role the conflict would be invisible and two
-// accounts would end up bound to one number — which makes the webhook's
-// owner lookup ambiguous and drops every inbound message (issue #136).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _adminClient: any = null;
-function supabaseAdmin() {
-  if (!_adminClient) {
-    _adminClient = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-  }
-  return _adminClient;
-}
 
 /**
  * GET /api/whatsapp/embedded-signup

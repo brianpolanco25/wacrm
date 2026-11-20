@@ -16,6 +16,7 @@
 // 404 with nothing else in the body.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { NextResponse } from 'next/server';
 
 import {
@@ -25,9 +26,6 @@ import {
 } from '@/lib/auth/account';
 import { requirePlatformAdmin } from '@/lib/auth/platform';
 import { loadAccountDetail } from '@/lib/platform/accounts';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function GET(
   _request: Request,

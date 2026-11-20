@@ -11,6 +11,11 @@ and polish.
 
 ## [Unreleased]
 
+### Leaner install and an MCP server built on its own
+
+- `shadcn` (a CLI) is no longer a runtime dependency: its one stylesheet now lives in `src/app/shadcn.css`. The install drops from 803 to 608 packages, and the `hono`, `fast-uri` and `ip-address` overrides (only reached through it) are gone.
+- CI builds `mcp-server/` with its own lockfile and TypeScript (`npm ci && npm run build`); the root `tsconfig.json` no longer compiles it.
+
 ### Inbound WhatsApp: no more lost or misfiled messages
 
 - No migration. A customer saved with a formatted phone (`+1 (809) 555-1234`) is found again when they write in; before, their messages were dropped. Two numbers that only share the last 8 digits (`1-809-555-1234` and `1-829-555-1234`) are now separate contacts. Still the same contact: trunk-0 variants (`370063949836` / `37063949836`), Mexican and Argentine mobiles with or without the extra digit (`52`/`521`, `54`/`549`), and a number saved without its country code (`809-555-1234` ↔ `18095551234`; only when 1–3 digits are missing, and never when two contacts fit equally). A number saved without area code (`555-1234`) no longer matches an inbound one. The contact form's "possible duplicate" notice follows the same rule.

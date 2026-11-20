@@ -1,3 +1,4 @@
+import { UUID_RE } from '@/lib/uuid';
 import { NextResponse } from 'next/server';
 import {
   resolveWhatsAppConfig,
@@ -7,16 +8,15 @@ import { resolveEffectiveAccountId } from '@/lib/auth/account';
 import { createClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import {
-  deleteMessageTemplate,
-  editMessageTemplate,
-} from '@/lib/whatsapp/meta-api';
-import {
   validateTemplatePayload,
   type TemplatePayload,
 } from '@/lib/whatsapp/template-validators';
-import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components';
-import { ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle';
-import { supabaseAdmin } from '@/lib/flows/admin-client';
+import {
+  EDITABLE_TEMPLATE_STATUSES,
+  deleteTemplate,
+  editTemplate,
+  isTemplatesDryRun as isDryRun,
+} from '@/lib/whatsapp/template-operations';
 
 /**
  * Per-template lifecycle endpoint.
@@ -34,21 +34,6 @@ import { supabaseAdmin } from '@/lib/flows/admin-client';
  * /submit endpoint — keep this route narrowly about lifecycle of
  * already-submitted templates.
  */
-
-const EDITABLE_STATUSES = new Set(['APPROVED', 'REJECTED', 'PAUSED']);
-
-// uuid v4 plus the looser shape Postgres gen_random_uuid emits.
-// We don't need exhaustive RFC parsing — just enough to reject
-// "../etc/passwd"-style payloads before they hit Supabase.
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isDryRun(): boolean {
-  return (
-    process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
-    process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1'
-  );
-}
 
 export async function PATCH(
   request: Request,
@@ -119,7 +104,7 @@ export async function PATCH(
       );
     }
 
-    if (!EDITABLE_STATUSES.has(existing.status)) {
+    if (!EDITABLE_TEMPLATE_STATUSES.has(existing.status)) {
       return NextResponse.json(
         {
           error: `Templates in status ${existing.status} cannot be edited. Allowed: APPROVED, REJECTED, PAUSED.`,
@@ -147,6 +132,7 @@ export async function PATCH(
       );
     }
 
+    let accessToken: string | null = null;
     if (!isDryRun()) {
       // Fase 4 §1, deuda deliberada: en Meta las plantillas son POR WABA y
       // aquí son UNIQUE(account_id, name, language), así que una cuenta con
@@ -164,76 +150,40 @@ export async function PATCH(
           { status: 400 }
         );
       }
-      const accessToken = decrypt(config.access_token);
+      accessToken = decrypt(config.access_token);
+    }
 
-      // Image headers need a fresh Resumable-Upload handle on every edit
-      // (Meta replaces components wholesale). Derive from header_media_url.
-      try {
-        await ensureImageHeaderHandle(payload, accessToken, {
-          accountId,
-          storage: supabaseAdmin().storage,
-          db: supabaseAdmin(),
-        });
-      } catch (e) {
+    // Meta replaces components wholesale on edit and the status flips
+    // back to PENDING for review.
+    const result = await editTemplate(supabase, {
+      accountId,
+      id,
+      metaTemplateId: existing.meta_template_id,
+      accessToken,
+      payload,
+      select: '*',
+    });
+    if (!result.ok) {
+      if (result.step === 'local') {
+        const reason = result.error?.message ?? 'row not found';
         return NextResponse.json(
           {
-            error:
-              e instanceof Error ? e.message : 'Header image upload failed.',
+            error: `Edited on Meta but failed to save locally: ${reason}. Run "Sync from Meta" to recover.`,
           },
-          { status: 400 }
+          { status: 500 }
         );
       }
-
-      const metaPayload = buildMetaTemplatePayload(payload);
-      try {
-        await editMessageTemplate({
-          metaTemplateId: existing.meta_template_id,
-          accessToken,
-          components: metaPayload.components,
-        });
-      } catch (e) {
-        const message = e instanceof Error ? e.message : 'Meta edit failed.';
-        await supabase
-          .from('message_templates')
-          .update({
-            submission_error: message,
-            last_submitted_at: new Date().toISOString(),
-          })
-          .eq('id', id);
-        return NextResponse.json({ error: message }, { status: 502 });
-      }
-    }
-
-    // Meta accepted the edit — status flips back to PENDING for review.
-    const { data: row, error: updErr } = await supabase
-      .from('message_templates')
-      .update({
-        category: payload.category,
-        header_type: payload.header_type ?? null,
-        header_content: payload.header_content ?? null,
-        header_media_url: payload.header_media_url ?? null,
-        header_handle: payload.header_handle ?? null,
-        body_text: payload.body_text,
-        footer_text: payload.footer_text ?? null,
-        buttons: payload.buttons ?? null,
-        sample_values: payload.sample_values ?? null,
-        status: 'PENDING',
-        submission_error: null,
-        rejection_reason: null,
-        last_submitted_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (updErr) {
+      const e = result.error;
+      const fallback =
+        result.step === 'header'
+          ? 'Header image upload failed.'
+          : 'Meta edit failed.';
       return NextResponse.json(
-        {
-          error: `Edited on Meta but failed to save locally: ${updErr.message}. Run "Sync from Meta" to recover.`,
-        },
-        { status: 500 }
+        { error: e instanceof Error ? e.message : fallback },
+        { status: result.step === 'header' ? 400 : 502 }
       );
     }
+    const row = result.row;
 
     return NextResponse.json({
       success: true,
@@ -300,6 +250,7 @@ export async function DELETE(
       );
     }
 
+    let target: { wabaId: string; accessToken: string } | null = null;
     if (existing.meta_template_id && !isDryRun()) {
       // Fase 4 §1, deuda deliberada: en Meta las plantillas son POR WABA y
       // aquí son UNIQUE(account_id, name, language), así que una cuenta con
@@ -323,28 +274,28 @@ export async function DELETE(
           { status: 400 }
         );
       }
-      const accessToken = decrypt(config.access_token);
-      try {
-        await deleteMessageTemplate({
-          wabaId: config.waba_id,
-          accessToken,
-          name: existing.name,
-          metaTemplateId: existing.meta_template_id,
-        });
-      } catch (e) {
-        const message = e instanceof Error ? e.message : 'Meta delete failed.';
-        return NextResponse.json({ error: message }, { status: 502 });
-      }
+      target = {
+        wabaId: config.waba_id,
+        accessToken: decrypt(config.access_token),
+      };
     }
 
-    const { error: delErr } = await supabase
-      .from('message_templates')
-      .delete()
-      .eq('id', id);
-    if (delErr) {
+    const result = await deleteTemplate(supabase, {
+      accountId,
+      id,
+      name: existing.name,
+      metaTemplateId: existing.meta_template_id,
+      target,
+    });
+    if (!result.ok && result.step === 'meta') {
+      const e = result.error;
+      const message = e instanceof Error ? e.message : 'Meta delete failed.';
+      return NextResponse.json({ error: message }, { status: 502 });
+    }
+    if (!result.ok) {
       return NextResponse.json(
         {
-          error: `Deleted on Meta but failed to delete locally: ${delErr.message}.`,
+          error: `Deleted on Meta but failed to delete locally: ${result.error.message}.`,
         },
         { status: 500 }
       );

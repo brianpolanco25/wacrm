@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextResponse, after } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '@/lib/auth/admin-client';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { downloadMedia } from '@/lib/whatsapp/meta-api';
 import { resolveInboundMediaUrl } from '@/lib/whatsapp/inbound-media-url';
@@ -59,19 +59,6 @@ import {
 // give it headroom beyond the platform default (Vercel clamps this to the
 // plan's ceiling). Tune as needed.
 export const maxDuration = 60;
-
-// Lazy-initialized to avoid build-time crash when env vars are missing
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _adminClient: any = null;
-function supabaseAdmin() {
-  if (!_adminClient) {
-    _adminClient = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-  }
-  return _adminClient;
-}
 
 interface WhatsAppMessage {
   id: string;
@@ -800,7 +787,7 @@ async function handleStatusUpdate(
     console.error('Error fetching messages for status:', msgFetchErr);
   }
 
-  const messageRows = (msgRows ?? []) as {
+  const messageRows = (msgRows ?? []) as unknown as {
     id: string;
     conversation_id: string;
     conversations: { account_id: string; contact_id?: string | null } | null;

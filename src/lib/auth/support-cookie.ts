@@ -1,10 +1,12 @@
-// Name and lifetime of the support-session cookie, in a module with NO
-// imports on purpose.
+// Name and lifetime of the support-session cookie, in a module with no
+// imports on purpose (only `@/lib/uuid`, which has none itself).
 //
 // `src/middleware.ts` runs on the Edge runtime and needs the cookie name to
 // refuse writes while a support session is open. Importing it from
 // `impersonation.ts` would drag `node:crypto` into the edge bundle; this
 // file keeps the one constant both sides need free of that.
+
+import { UUID_RE } from '@/lib/uuid';
 
 /**
  * Signed, httpOnly cookie that carries an open support session. Its mere
@@ -65,10 +67,6 @@ export function supportFlagValue(cookieString: string): string | null {
   }
   return null;
 }
-
-/** Shape of the uuid the flag cookie is supposed to carry. */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * The impersonated account named by the flag cookie, or `null` when the

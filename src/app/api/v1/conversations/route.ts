@@ -15,6 +15,7 @@
 // conversations (inner join).
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { requireApiKey } from '@/lib/auth/api-context';
 import { okList, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import {
@@ -36,9 +37,6 @@ import {
   serializeConversation,
 } from '@/lib/api/v1/conversations';
 import type { Conversation } from '@/types';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Same rule as GET /contacts: strip what could break the `.or()` grammar.
 function sanitizeSearch(raw: string): string {

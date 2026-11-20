@@ -11,14 +11,15 @@ import {
   toErrorResponse,
 } from '@/lib/auth/account';
 import { decrypt } from '@/lib/whatsapp/encryption';
-import { submitMessageTemplate } from '@/lib/whatsapp/meta-api';
 import {
   validateTemplatePayload,
   type TemplatePayload,
 } from '@/lib/whatsapp/template-validators';
-import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components';
-import { ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle';
-import { supabaseAdmin } from '@/lib/flows/admin-client';
+import {
+  isTemplatesDryRun,
+  submitTemplateToMeta,
+  templateContentColumns,
+} from '@/lib/whatsapp/template-operations';
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize';
 
 /**
@@ -46,16 +47,8 @@ function buildUpsertRow(
     // for the cross-teammate dedup follow-up.
     user_id: userId,
     name: payload.name,
-    category: payload.category,
     language: payload.language,
-    header_type: payload.header_type ?? null,
-    header_content: payload.header_content ?? null,
-    header_media_url: payload.header_media_url ?? null,
-    header_handle: payload.header_handle ?? null,
-    body_text: payload.body_text,
-    footer_text: payload.footer_text ?? null,
-    buttons: payload.buttons ?? null,
-    sample_values: payload.sample_values ?? null,
+    ...templateContentColumns(payload),
     status: extras.status,
     meta_template_id: extras.metaTemplateId,
     submission_error: extras.submissionError,
@@ -167,9 +160,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const dryRun =
-      process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
-      process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1';
+    const dryRun = isTemplatesDryRun();
 
     let metaTemplateId: string;
     let metaStatus: string;
@@ -207,19 +198,17 @@ export async function POST(request: Request) {
         );
       }
 
-      const accessToken = decrypt(config.access_token);
-
       // Image headers need a Resumable-Upload handle (Meta rejects a
-      // plain URL at creation). Derive it from header_media_url before
-      // building the payload. Surfaces a 400 with an actionable message
-      // (missing META_APP_ID, unreachable URL, wrong type/size).
-      try {
-        await ensureImageHeaderHandle(payload, accessToken, {
-          accountId,
-          storage: supabaseAdmin().storage,
-          db: supabaseAdmin(),
-        });
-      } catch (e) {
+      // plain URL at creation), derived from header_media_url. Surfaces a
+      // 400 with an actionable message (missing META_APP_ID, unreachable
+      // URL, wrong type/size).
+      const meta = await submitTemplateToMeta(
+        payload,
+        { wabaId: config.waba_id, accessToken: decrypt(config.access_token) },
+        accountId
+      );
+      if (!meta.ok && meta.step === 'header') {
+        const e = meta.error;
         return NextResponse.json(
           {
             error:
@@ -228,17 +217,11 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
-
-      const metaPayload = buildMetaTemplatePayload(payload);
-      try {
-        const meta = await submitMessageTemplate({
-          wabaId: config.waba_id,
-          accessToken,
-          payload: metaPayload,
-        });
+      if (meta.ok) {
         metaTemplateId = meta.id;
         metaStatus = meta.status;
-      } catch (e) {
+      } else {
+        const e = meta.error;
         const message = e instanceof Error ? e.message : 'Meta submit failed.';
         // Persist the failure so the user can retry; row stays DRAFT
         // until they fix and re-submit.
