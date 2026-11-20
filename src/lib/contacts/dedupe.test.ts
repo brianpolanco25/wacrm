@@ -113,10 +113,49 @@ describe('findExistingContact', () => {
     expect((await findExistingContact(db, 'acct', '18095551234'))?.id).toBe(
       'c1'
     );
+  });
+
+  it('a suffix only stands for a missing country code (1-3 digits)', async () => {
+    // `555-1234` lacks area code AND country code: 809 and 829 would merge.
     const seven = stubDb([{ id: 'c7', phone: '555-1234' }]);
-    expect((await findExistingContact(seven, 'acct', '18095551234'))?.id).toBe(
-      'c7'
+    expect(await findExistingContact(seven, 'acct', '18095551234')).toBeNull();
+    const national = stubDb([{ id: 'c809', phone: '8095551234' }]);
+    expect(
+      await findExistingContact(national, 'acct', '18295551234')
+    ).toBeNull();
+    const both = stubDb([
+      { id: 'c809', phone: '18095551234' },
+      { id: 'c829', phone: '18295551234' },
+    ]);
+    expect(await findExistingContact(both, 'acct', '5551234')).toBeNull();
+  });
+
+  it('two equally good suffix candidates match neither', async () => {
+    const db = stubDb([
+      { id: 'us', phone: '12025551234' },
+      { id: 'other', phone: '72025551234' },
+    ]);
+    expect(await findExistingContact(db, 'acct', '2025551234')).toBeNull();
+  });
+
+  it('Mexico 52/521 and Argentina 54/549 are the same mobile', async () => {
+    const mx = stubDb([{ id: 'mx', phone: '+52 55 1234 5678' }]);
+    expect((await findExistingContact(mx, 'acct', '5215512345678'))?.id).toBe(
+      'mx'
     );
+    const mx1 = stubDb([{ id: 'mx1', phone: '5215512345678' }]);
+    expect((await findExistingContact(mx1, 'acct', '525512345678'))?.id).toBe(
+      'mx1'
+    );
+    const ar = stubDb([{ id: 'ar', phone: '+54 11 2345 6789' }]);
+    expect((await findExistingContact(ar, 'acct', '5491123456789'))?.id).toBe(
+      'ar'
+    );
+  });
+
+  it('a 52 number does not match another country sharing only the tail', async () => {
+    const db = stubDb([{ id: 'uk', phone: '445512345678' }]);
+    expect(await findExistingContact(db, 'acct', '5215512345678')).toBeNull();
   });
 
   it('prefers the exact match over a suffix match', async () => {
@@ -131,7 +170,7 @@ describe('findExistingContact', () => {
 
   it('prefers the longest suffix', async () => {
     const db = stubDb([
-      { id: 'short', phone: '5551234' },
+      { id: 'short', phone: '95551234' },
       { id: 'long', phone: '8095551234' },
     ]);
     expect((await findExistingContact(db, 'acct', '18095551234'))?.id).toBe(

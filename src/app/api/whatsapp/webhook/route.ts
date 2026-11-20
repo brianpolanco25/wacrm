@@ -441,7 +441,7 @@ async function processWebhook(
   const queuedBatches: string[] = [];
 
   for (const entry of body.entry) {
-    for (const change of entry.changes) {
+    for (const change of entry?.changes ?? []) {
       // One bad change (or one bad tenant) must not cost the rest of the
       // delivery: Meta already got its 200 and will not retry.
       try {
@@ -586,7 +586,12 @@ async function processWebhook(
           }
         }
       } catch (err) {
-        console.error('[webhook] change failed:', change.field, entry.id, err);
+        console.error(
+          '[webhook] change failed:',
+          change?.field,
+          entry?.id,
+          err
+        );
       }
     }
   }
@@ -869,9 +874,15 @@ async function handleStatusUpdate(
       .from('broadcast_recipients')
       .update(update)
       .eq('id', recipient.id)
-      // Compare-and-set: a concurrent status that already moved the row
-      // makes this a no-op instead of a regression.
-      .eq('status', recipient.status);
+      // Checked in the UPDATE: a concurrent status that already moved the
+      // row past this one makes it a no-op instead of a regression, and
+      // one that moved it to an earlier state still lets this advance.
+      .in(
+        'status',
+        [...RECIPIENT_STATUS_LADDER, 'failed'].filter((s) =>
+          isValidStatusTransition(s, status.status)
+        )
+      );
 
     if (recUpdateErr) {
       console.error('Error updating broadcast recipient status:', recUpdateErr);
@@ -1579,15 +1590,18 @@ async function parseMessageContent(
     mediaId: string,
     fileName?: string | null
   ): Promise<string | null> =>
-    resolveInboundMediaUrl({
-      mediaId,
-      accessToken,
-      mirror: mirror
-        ? { storage: supabaseAdmin().storage, accountId: mirror.accountId }
-        : null,
-      fileName,
-      messageTimestamp: message.timestamp,
-    });
+    // No token (it did not decrypt): Graph would only answer 401.
+    !accessToken
+      ? Promise.resolve(null)
+      : resolveInboundMediaUrl({
+          mediaId,
+          accessToken,
+          mirror: mirror
+            ? { storage: supabaseAdmin().storage, accountId: mirror.accountId }
+            : null,
+          fileName,
+          messageTimestamp: message.timestamp,
+        });
 
   // Default shape — each case overrides only the fields it cares about.
   // Keeps the new `interactiveReplyId` field DRY across every return site.

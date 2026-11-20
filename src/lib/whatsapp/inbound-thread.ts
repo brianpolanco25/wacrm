@@ -107,11 +107,12 @@ export async function findOrCreateContact(
   }
 
   // ---- 2) por teléfono ----------------------------------------
-  // El helper compartido pre-filtra en SQL por los últimos 8 dígitos
-  // (para no traerse la agenda entera en cada entrante) y aplica el
-  // `phonesMatch` estricto en JS sobre el puñado de candidatos. Lo
-  // usan también el alta manual y la importación CSV, así que las tres
-  // vías coinciden en qué es «el mismo número» (issue #212).
+  // El helper compartido pre-filtra en SQL por los últimos 7 dígitos de
+  // `phone_normalized` (para no traerse la agenda entera en cada
+  // entrante) y en JS acepta, por orden: dígitos exactos, variante
+  // troncal 0 o 52/521 y 54/549, o un número guardado sin código de
+  // país. Lo usan también el alta manual y la API v1, así que todas
+  // las vías coinciden en qué es «el mismo número» (issue #212).
   const existingContact = phone
     ? await findExistingContact(db, accountId, phone)
     : null;

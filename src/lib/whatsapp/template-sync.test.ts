@@ -147,6 +147,8 @@ describe('syncTemplatesFromMeta', () => {
     expect(fetchMock.mock.calls[1][0]).toBe(
       'https://graph.facebook.com/v21.0/next-page'
     );
+    // p16.1: cada página lleva plazo.
+    expect(fetchMock.mock.calls[1][1]?.signal).toBeInstanceOf(AbortSignal);
     expect(result).toMatchObject({
       total: 2,
       inserted: 1,

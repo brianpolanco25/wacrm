@@ -18,6 +18,18 @@ export function normalizeKey(phone: string): string {
   return normalizePhone(phone);
 }
 
+/**
+ * The other form Meta and agents use for the same mobile in Mexico
+ * (`52` + 10 ↔ `521` + 10) and Argentina (`54` + 10 ↔ `549` + 10), or ''.
+ */
+function mobilePrefixTwin(d: string): string {
+  let m = d.match(/^52(1?)(\d{10})$/);
+  if (m) return (m[1] ? '52' : '521') + m[2];
+  m = d.match(/^54(9?)(\d{10})$/);
+  if (m) return (m[1] ? '54' : '549') + m[2];
+  return '';
+}
+
 /** Minimal shape we need back from a contacts lookup. */
 export interface ExistingContact {
   id: string;
@@ -40,6 +52,7 @@ export interface ExistingContact {
  * with the shorter ≥ 7 digits (`8095551234` saved without country code
  * ↔ `18095551234`), longest suffix first. A bare shared tail is NOT
  * enough: 1-809-555-1234 and 1-829-555-1234 are different people.
+ * The suffix rule only covers a missing country code (1–3 digits).
  */
 export async function findExistingContact(
   db: SupabaseClient,
@@ -61,21 +74,36 @@ export async function findExistingContact(
 
   const rows = data as ExistingContact[];
   const digits = (c: ExistingContact) => normalizePhone(c.phone ?? '');
-  const variants = phoneVariants(normalized);
-  // Length of the shorter number when one ends with the other, else 0.
+  const variants = [
+    ...phoneVariants(normalized),
+    mobilePrefixTwin(normalized),
+  ].filter(Boolean);
+  // Length of the shorter number when the longer one is it plus a
+  // missing country code (1–3 digits), else 0.
   const suffixLen = (c: ExistingContact) => {
     const d = digits(c);
     const [short, long] =
       d.length <= normalized.length ? [d, normalized] : [normalized, d];
-    return short.length >= 7 && long.endsWith(short) ? short.length : 0;
+    const missing = long.length - short.length;
+    return short.length >= 7 &&
+      missing >= 1 &&
+      missing <= 3 &&
+      long.endsWith(short)
+      ? short.length
+      : 0;
   };
   const bySuffix = rows
     .filter((c) => suffixLen(c) > 0)
-    .sort((a, b) => suffixLen(b) - suffixLen(a))[0];
+    .sort((a, b) => suffixLen(b) - suffixLen(a));
+  // Two candidates equally good by suffix: ambiguous, match neither.
+  const suffixHit =
+    bySuffix.length > 1 && suffixLen(bySuffix[0]) === suffixLen(bySuffix[1])
+      ? null
+      : bySuffix[0];
   return (
     rows.find((c) => digits(c) === normalized) ??
     rows.find((c) => variants.includes(digits(c))) ??
-    bySuffix ??
+    suffixHit ??
     null
   );
 }

@@ -9,6 +9,8 @@
  * instead of a runtime rejection from Meta.
  */
 
+import { META_MEDIA_TIMEOUT_MS, metaFetch } from '@/lib/whatsapp/meta-fetch';
+
 const META_API_VERSION = 'v21.0';
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`;
 
@@ -54,26 +56,6 @@ export class MetaApiError extends Error {
     this.code = code;
     this.type = type;
   }
-}
-
-const META_TIMEOUT_MS = 15_000;
-/** Media bytes travel through these; a big file needs more than 15 s. */
-const META_MEDIA_TIMEOUT_MS = 120_000;
-
-/**
- * `fetch` with a deadline: a Graph call or CDN download that accepts the
- * connection and never answers would otherwise stall the webhook
- * delivery (or the send route) behind it. A caller's own `signal` wins.
- */
-function metaFetch(
-  url: string,
-  init: RequestInit = {},
-  timeoutMs = META_TIMEOUT_MS
-): Promise<Response> {
-  return fetch(url, {
-    ...init,
-    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
-  });
 }
 
 async function throwMetaError(

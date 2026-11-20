@@ -29,6 +29,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { emitWebhookEvent } from '@/lib/webhooks/emit';
+import { metaFetch } from '@/lib/whatsapp/meta-fetch';
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize';
 import type {
   MessageTemplateStatus,
@@ -203,7 +204,7 @@ async function fetchMetaTemplates(
 
   while (nextUrl && pageCount < SYNC_PAGE_CAP) {
     pageCount++;
-    const metaRes: Response = await fetch(nextUrl, {
+    const metaRes: Response = await metaFetch(nextUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 

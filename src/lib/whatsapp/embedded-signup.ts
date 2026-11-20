@@ -14,6 +14,7 @@
 // ============================================================
 
 import { randomInt } from 'node:crypto';
+import { metaFetch } from '@/lib/whatsapp/meta-fetch';
 
 export interface ExchangeCodeArgs {
   /** One-time code from `FB.login`'s `authResponse.code`. */
@@ -141,7 +142,7 @@ async function requestToken(
   url: URL,
   missingTokenMessage: string
 ): Promise<ExchangedToken> {
-  const response = await fetch(url.toString(), { method: 'GET' });
+  const response = await metaFetch(url.toString(), { method: 'GET' });
 
   // Tolerate a non-JSON body: Meta's edge occasionally answers an HTML
   // error page under load, and `response.json()` would throw a parse

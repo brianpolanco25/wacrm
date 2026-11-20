@@ -344,6 +344,10 @@ vi.mock('@supabase/supabase-js', () => ({
                   filters[column] = value;
                   return chain;
                 },
+                in: (column: string, value: unknown) => {
+                  filters[column] = value;
+                  return chain;
+                },
                 then: (resolve: (r: unknown) => unknown) => {
                   h.state.recipientUpdates.push({
                     values,
@@ -1866,7 +1870,7 @@ describe('una entrega con un elemento malo no pierde el resto (p16.1 A3/A4)', ()
     expect(h.state.messageCurrentStatus).toBe('read');
   });
 
-  it('el UPDATE de broadcast_recipients exige el estado que leyó', async () => {
+  it('el UPDATE de broadcast_recipients exige un estado previo válido', async () => {
     h.state.statusRecipientRows = [
       { id: 'rcpt-1', status: 'delivered', contact_id: 'contact-1' },
     ];
@@ -1877,10 +1881,51 @@ describe('una entrega con un elemento malo no pierde el resto (p16.1 A3/A4)', ()
       ),
     ]);
     expect(h.state.recipientUpdates).toHaveLength(1);
+    // `read` avanza desde cualquier estado anterior (aunque otro POST lo
+    // haya movido entre la lectura y la escritura), nunca desde
+    // read/replied/failed.
     expect(h.state.recipientUpdates[0].filters).toEqual({
       id: 'rcpt-1',
-      status: 'delivered',
+      status: ['pending', 'sent', 'delivered'],
     });
+  });
+
+  it('una entry sin `changes` no impide procesar la siguiente', async () => {
+    await POST({
+      text: async () =>
+        JSON.stringify({
+          entry: [
+            { id: 'waba-0' },
+            { id: 'waba-1', changes: [msgChange([TEXT_MESSAGE])] },
+          ],
+        }),
+      headers: { get: () => 'sha256=stub' },
+    } as unknown as Request);
+    for (const cb of h.state.afterCallbacks) await cb();
+    expect(storedIds()).toEqual(['wamid.TEST1']);
+  });
+
+  it('un change null no hace lanzar al propio catch', async () => {
+    await run([null, msgChange([TEXT_MESSAGE])]);
+    expect(storedIds()).toEqual(['wamid.TEST1']);
+  });
+
+  it('con token indescifrable no se llama a Graph para la media', async () => {
+    h.state.decryptThrows = true;
+    await run([
+      msgChange([
+        {
+          id: 'wamid.IMG',
+          from: '15551230000',
+          timestamp: '1700000000',
+          type: 'image',
+          image: { id: 'media-1', mime_type: 'image/jpeg' },
+        },
+      ]),
+    ]);
+    expect(mockGetMediaUrl).not.toHaveBeenCalled();
+    expect(storedIds()).toEqual(['wamid.IMG']);
+    expect(h.state.upsertCalls[0].row.media_url).toBeNull();
   });
 });
 
