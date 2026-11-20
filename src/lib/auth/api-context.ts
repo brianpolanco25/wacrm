@@ -123,7 +123,11 @@ export async function requireApiKey(
 
   const hash = hashApiKey(presented);
   const row = await cached(keyCache, hash, () => findActiveKeyByHash(hash));
-  if (!row) {
+  // A cached row is re-checked against the clock, so an expiry (or the end
+  // of a rotation grace window) inside the cache window still applies.
+  const now = Date.now();
+  const dead = (at: string | null) => !!at && Date.parse(at) <= now;
+  if (!row || dead(row.revoked_at) || dead(row.expires_at)) {
     // Covers unknown, revoked, and expired keys alike — we don't
     // distinguish them on the wire so a probe can't learn whether a
     // key ever existed.

@@ -308,4 +308,38 @@ describe('requireApiKey — cache (n15.6)', () => {
     expect(ctx.accountId).toBe('acct-1');
     expect(billing.assertPlanFeature).toHaveBeenCalledTimes(2);
   });
+
+  it('a cached key still dies at its expires_at, without waiting out the window', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    findActiveKeyByHash.mockResolvedValue(
+      row({ expires_at: new Date(Date.now() + 10_000).toISOString() })
+    );
+    await requireApiKey(reqWith(`Bearer ${KEY}`));
+    vi.setSystemTime(Date.now() + 11_000);
+    await expectApiError(
+      requireApiKey(reqWith(`Bearer ${KEY}`)),
+      'unauthorized',
+      401
+    );
+    expect(findActiveKeyByHash).toHaveBeenCalledTimes(1);
+  });
+
+  it('keys of two accounts each get their own account and their own plan', async () => {
+    const keyB = generateApiKey().plaintext;
+    findActiveKeyByHash.mockImplementation(async (hash) =>
+      hash === hashApiKey(KEY)
+        ? row({ id: 'key-a', account_id: 'acct-a' })
+        : row({ id: 'key-b', account_id: 'acct-b' })
+    );
+    const a1 = await requireApiKey(reqWith(`Bearer ${KEY}`));
+    const b1 = await requireApiKey(reqWith(`Bearer ${keyB}`));
+    const a2 = await requireApiKey(reqWith(`Bearer ${KEY}`));
+    const b2 = await requireApiKey(reqWith(`Bearer ${keyB}`));
+    expect([a1, a2].map((c) => c.accountId)).toEqual(['acct-a', 'acct-a']);
+    expect([b1, b2].map((c) => c.accountId)).toEqual(['acct-b', 'acct-b']);
+    expect(billing.assertPlanFeature.mock.calls).toEqual([
+      ['acct-a', 'api'],
+      ['acct-b', 'api'],
+    ]);
+  });
 });
