@@ -84,12 +84,11 @@ export async function findExistingContact(
     const d = digits(c);
     const [short, long] =
       d.length <= normalized.length ? [d, normalized] : [normalized, d];
-    const missing = long.length - short.length;
-    return short.length >= 7 &&
-      missing >= 1 &&
-      missing <= 3 &&
-      long.endsWith(short)
-      ? short.length
+    // A national number saved with its trunk 0 (`07911…`) drops it.
+    const s = short.startsWith('0') ? short.slice(1) : short;
+    const missing = long.length - s.length;
+    return s.length >= 7 && missing >= 1 && missing <= 3 && long.endsWith(s)
+      ? s.length
       : 0;
   };
   const bySuffix = rows

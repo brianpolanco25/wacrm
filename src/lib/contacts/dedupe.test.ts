@@ -130,6 +130,20 @@ describe('findExistingContact', () => {
     expect(await findExistingContact(both, 'acct', '5551234')).toBeNull();
   });
 
+  it('a national number saved with its trunk 0 matches the international one', async () => {
+    const uk = stubDb([{ id: 'uk', phone: '07911 123456' }]);
+    expect((await findExistingContact(uk, 'acct', '447911123456'))?.id).toBe(
+      'uk'
+    );
+    const fr = stubDb([{ id: 'fr', phone: '06 12 34 56 78' }]);
+    expect((await findExistingContact(fr, 'acct', '33612345678'))?.id).toBe(
+      'fr'
+    );
+    // Same rule as without the 0: no area code, no match.
+    const local = stubDb([{ id: 'c', phone: '0555-1234' }]);
+    expect(await findExistingContact(local, 'acct', '18095551234')).toBeNull();
+  });
+
   it('two equally good suffix candidates match neither', async () => {
     const db = stubDb([
       { id: 'us', phone: '12025551234' },
