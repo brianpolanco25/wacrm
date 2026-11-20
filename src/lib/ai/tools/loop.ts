@@ -53,6 +53,13 @@ import {
 import { flattenToolArgs } from './args';
 import { loadPriorEvidence } from './evidence';
 import { GROUNDING_RETRY_NOTE, mentionsSchedule } from './grounding';
+import {
+  collectResultIds,
+  isKnownId,
+  knownConversationIds,
+  protectedIdValues,
+  rememberConversationIds,
+} from './ids';
 import { invalidateLiveCache } from './live';
 import { isValidTimeZone, todayInZone } from './local-time';
 import { checkRequiresPrior, groundsSchedule } from './policy';
@@ -213,6 +220,11 @@ export async function runToolLoop(
       }
     }
   }
+  // p16.4 D1: ids que una herramienta devolvió en esta conversación (turnos
+  // anteriores, de la caché de proceso, más los de este turno).
+  const knownIds = args.conversationId
+    ? knownConversationIds(args.accountId, args.conversationId, now())
+    : new Set<string>();
   // R32: el `slug` solo viaja cuando el playground lo necesita para el trail.
   const record = (tool: AiTool, ok: boolean, blocked?: 'policy') => {
     used.push({
@@ -347,6 +359,28 @@ export async function runToolLoop(
           tool.operationKey,
           'policy_requires_prior'
         );
+      } else if (
+        protectedIdValues(tool.declaredParams, flattenToolArgs(call.args)).some(
+          ({ param, value }) =>
+            !isKnownId(
+              knownIds,
+              tool.integrationSlug,
+              value,
+              tool.policy?.ids?.[param]
+            )
+        )
+      ) {
+        // p16.4 D1: id que ninguna herramienta devolvió (p. ej. tecleado por
+        // el cliente). Falla cerrado, sin llamar ni gastar una ejecución.
+        outcome = errorPayload('unverified_id');
+        record(tool, false, 'policy');
+        console.info(
+          '[ai tools]',
+          args.accountId,
+          tool.integrationSlug,
+          tool.operationKey,
+          'unverified_id'
+        );
       } else {
         executed += 1;
         const flat = flattenToolArgs(call.args);
@@ -370,6 +404,20 @@ export async function runToolLoop(
           );
           record(tool, res.ok);
           if (res.ok) {
+            const found = collectResultIds(
+              tool.integrationSlug,
+              tool.operationKey,
+              res.data
+            );
+            for (const k of found) knownIds.add(k);
+            if (args.conversationId) {
+              rememberConversationIds(
+                args.accountId,
+                args.conversationId,
+                found,
+                now()
+              );
+            }
             if (groundsSchedule(tool.policy)) grounded = true;
             // R13: una escritura cambia lo que devolverían las lecturas.
             if (tool.method !== 'GET') {

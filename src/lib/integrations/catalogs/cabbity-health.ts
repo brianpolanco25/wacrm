@@ -101,6 +101,28 @@ const CURSOR =
 /** n13.7 R24: operaciones que fundamentan afirmaciones de agenda. */
 const SCHEDULE: OperationAiPolicy = { grounds: ['schedule'] };
 
+// p16.4 D1: de dónde puede salir cada id protegido (ver `ai/tools/ids.ts`).
+// `op` = id de registro (`data.id`, `data[].id`, `data.<lista>[].id`);
+// `op.campo` = esa clave de nivel superior de un registro de `op`.
+const APPOINTMENT_ID = {
+  id: [
+    'list_appointments',
+    'create_appointment',
+    'get_appointment',
+    'reschedule_appointment',
+  ],
+};
+const PATIENT_ID = {
+  patient_id: [
+    'lookup_patient',
+    'create_patient',
+    'get_patient',
+    'list_appointments.patient_id',
+    'get_appointment.patient_id',
+    'create_appointment.patient_id',
+  ],
+};
+
 const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
   {
     key: 'get_center',
@@ -172,6 +194,15 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data {membership_id, name, specialty {key, label}, additional_specialties, location_ids}.',
     is_active: true,
+    ai_policy: {
+      ids: {
+        id: [
+          'list_practitioners.membership_id',
+          'find_availability.membership_id',
+          'get_practitioner.membership_id',
+        ],
+      },
+    },
   },
   {
     key: 'list_specialties',
@@ -323,6 +354,8 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data[] pacientes con sus datos administrativos; meta.next_cursor: pásalo como cursor para pedir la página siguiente hasta que sea null.',
     is_active: false,
+    // p16.4: lista pacientes de toda la clínica; el bot nunca la ve.
+    ai_policy: { hidden: true },
   },
   {
     key: 'create_patient',
@@ -402,6 +435,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data {id, first_name, last_name, document_type, document_number, birth_date, sex, phone, email, address, …}.',
     is_active: false,
+    ai_policy: { ids: { id: PATIENT_ID.patient_id } },
   },
   {
     key: 'list_appointments',
@@ -457,7 +491,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data[] {id, status, status_label, starts_at, ends_at, practitioner, location, …}; meta.next_cursor: pásalo como cursor para la página siguiente hasta que sea null.',
     is_active: true,
-    ai_policy: SCHEDULE,
+    ai_policy: { ...SCHEDULE, ids: PATIENT_ID },
   },
   {
     key: 'create_appointment',
@@ -513,7 +547,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data: la cita creada {id, status, starts_at, ends_at, practitioner, location}. Errores: 409 slot_unavailable (el hueco se ocupó: vuelve a find_availability), 409 too_many_upcoming_appointments (ya tiene 3 citas futuras), 422 validation_failed.',
     is_active: true,
-    ai_policy: SCHEDULE,
+    ai_policy: { ...SCHEDULE, ids: PATIENT_ID },
   },
   {
     key: 'get_appointment',
@@ -529,7 +563,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data {id, status, status_label, starts_at, ends_at, practitioner, location}.',
     is_active: true,
-    ai_policy: SCHEDULE,
+    ai_policy: { ...SCHEDULE, ids: APPOINTMENT_ID },
   },
   {
     key: 'reschedule_appointment',
@@ -564,7 +598,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data: la cita con el nuevo horario. 409 appointment_not_changeable si ya no se puede mover (pasada, atendida o cancelada); 409 slot_unavailable si el hueco se ocupó.',
     is_active: true,
-    ai_policy: SCHEDULE,
+    ai_policy: { ...SCHEDULE, ids: APPOINTMENT_ID },
   },
   {
     key: 'confirm_appointment',
@@ -578,7 +612,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
     response_description:
       'data: la cita con status confirmed. 409 appointment_not_changeable si ya no se puede confirmar.',
     is_active: true,
-    ai_policy: SCHEDULE,
+    ai_policy: { ...SCHEDULE, ids: APPOINTMENT_ID },
   },
   {
     key: 'cancel_appointment',
@@ -603,6 +637,7 @@ const OPERATIONS: Omit<CatalogOperation, 'sort_order'>[] = [
       'data: la cita con status cancelled. 409 appointment_not_changeable si ya no se puede cancelar.',
     is_active: true,
     ai_policy: {
+      ids: APPOINTMENT_ID,
       requires_prior: [
         ['list_appointments', 'get_appointment'],
         ['find_availability'],

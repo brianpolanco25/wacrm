@@ -333,7 +333,7 @@ describe('bootstrapIntegrationCatalog: ai_policy (n13.7, R25)', () => {
       'updateOperation cancel_appointment ai_policy',
     ]);
     expect(report.operations.cancel_appointment).toBe('updated');
-    expect(cancel.ai_policy).toEqual({
+    expect(cancel.ai_policy).toMatchObject({
       requires_prior: [
         ['list_appointments', 'get_appointment'],
         ['find_availability'],

@@ -37,6 +37,13 @@ and polish.
 ### Database privilege hardening (audit 2026-11-20)
 
 - **Migration required: `098_audit_privilege_hardening.sql`.** Members can no longer change their own `profiles.email` or insert profile rows from the browser; `record_webhook_failure`, `_bcast_bump`, `recompute_broadcast_counts`, `merge_duplicate_contacts` and `merge_duplicate_conversations` are executable only by `service_role`; viewers can no longer upload, overwrite or delete chat and flow media (reads unchanged).
+### AI tools only act on ids a tool returned in the same conversation
+
+- The AI bot no longer cancels, reschedules, confirms or reads a record by an id the customer typed: a path id or `patient_id` must have come from a tool result in this conversation (kept in process memory for 24 h; after a restart the bot simply looks it up again). The bot is told to confirm customer-given numbers with a lookup, and operations marked `ai_policy.hidden` (Cabbity Health `list_patients`) are never offered to the AI. Evidence is typed by origin: each protected parameter declares in `ai_policy.ids` which operation and field its value may come from (an appointment id only from an appointment record, `patient_id` only from a patient record or an appointment's `patient_id`), so a `location_id` or a nested practitioner id can never stand in for a patient or an appointment. No migration; reload the Cabbity Health catalog so the flags reach production.
+
+### AI auto-reply stands down if a human takes the thread mid-generation
+
+- The bot re-checks the conversation (assigned agent, bot turned off, closed) right before sending, so an agent who takes over while the model is still thinking no longer gets a bot reply on top. A hand-off no longer overwrites an agent assigned during generation. No migration.
 
 ### Support sessions can mint, rotate and revoke API keys
 

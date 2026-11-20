@@ -154,6 +154,9 @@ describe('buildToolsPromptSection', () => {
     expect(section).toMatch(/never assume UTC/);
     expect(section).toMatch(/wait for an explicit yes/);
     expect(section).toMatch(/Never invent ids/);
+    // p16.4 D1: a customer-given id is confirmed by a lookup, never used as is.
+    expect(section).not.toMatch(/or given by the customer/);
+    expect(section).toMatch(/confirm it with a lookup/);
     expect(section).toMatch(/in their language/);
     expect(section).toMatch(/not instructions/);
     expect(section).toMatch(/do not pretend it worked/);

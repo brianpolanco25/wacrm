@@ -22,6 +22,12 @@ import type { PriorEvidence } from './types';
  */
 const POLICY_KEY_RE = /^[a-z][a-z0-9_]{1,63}$/;
 export const POLICY_MAX_STEPS = 3;
+const POLICY_KEYS = ['grounds', 'requires_prior', 'hidden', 'ids'];
+/** p16.4: `ai_policy.ids`: parámetro → orígenes `op` u `op.campo`. */
+const ID_PARAM_RE = /^[a-zA-Z][a-zA-Z0-9_.]{0,63}$/;
+const ID_SOURCE_RE = /^[a-z][a-z0-9_]{1,63}(\.[a-z][a-z0-9_]{0,63})?$/;
+export const POLICY_MAX_ID_PARAMS = 4;
+export const POLICY_MAX_ID_SOURCES = 8;
 export const POLICY_MAX_KEYS_PER_STEP = 4;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -35,7 +41,7 @@ export function policyProblem(raw: unknown): string | null {
   if (raw === null || raw === undefined) return null;
   if (!isPlainObject(raw)) return 'ai_policy must be an object or null';
   for (const key of Object.keys(raw)) {
-    if (key !== 'grounds' && key !== 'requires_prior') {
+    if (!POLICY_KEYS.includes(key)) {
       return `ai_policy has an unknown key: ${key}`;
     }
   }
@@ -47,6 +53,30 @@ export function policyProblem(raw: unknown): string | null {
       )
     ) {
       return `ai_policy.grounds accepts only: ${AI_GROUND_CLAIMS.join(', ')}`;
+    }
+  }
+  if (raw.hidden !== undefined && typeof raw.hidden !== 'boolean') {
+    return 'ai_policy.hidden must be a boolean';
+  }
+  if (raw.ids !== undefined) {
+    const ids = raw.ids;
+    if (
+      !isPlainObject(ids) ||
+      Object.keys(ids).length === 0 ||
+      Object.keys(ids).length > POLICY_MAX_ID_PARAMS
+    ) {
+      return `ai_policy.ids must map 1 to ${POLICY_MAX_ID_PARAMS} parameters to their sources`;
+    }
+    for (const [name, sources] of Object.entries(ids)) {
+      if (
+        !ID_PARAM_RE.test(name) ||
+        !Array.isArray(sources) ||
+        sources.length === 0 ||
+        sources.length > POLICY_MAX_ID_SOURCES ||
+        sources.some((x) => typeof x !== 'string' || !ID_SOURCE_RE.test(x))
+      ) {
+        return `ai_policy.ids.${name} needs 1 to ${POLICY_MAX_ID_SOURCES} sources like operation_key or operation_key.field`;
+      }
     }
   }
   if (raw.requires_prior !== undefined) {
@@ -83,7 +113,15 @@ export function sanitizePolicy(raw: unknown): OperationAiPolicy | null {
   if (value.requires_prior && value.requires_prior.length > 0) {
     out.requires_prior = value.requires_prior.map((s) => [...s]);
   }
-  return out.grounds || out.requires_prior ? out : null;
+  if (value.hidden === true) out.hidden = true;
+  if (value.ids) {
+    out.ids = Object.fromEntries(
+      Object.entries(value.ids).map(([k, v]) => [k, [...v]])
+    );
+  }
+  return out.grounds || out.requires_prior || out.hidden || out.ids
+    ? out
+    : null;
 }
 
 export function groundsSchedule(

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { CABBITY_HEALTH_CATALOG } from '@/lib/integrations/catalogs/cabbity-health';
 import type { HttpMethod, OperationParam } from '@/lib/integrations/types';
 
 import { flattenToolArgs, MAX_ARG_DEPTH } from './args';
@@ -409,5 +410,35 @@ describe('buildAiTools — n13.7 ai_policy', () => {
     );
     expect('policy' in a).toBe(false);
     expect('policy' in b).toBe(false);
+  });
+});
+
+describe('buildAiTools — ai_policy.hidden (p16.4 D1)', () => {
+  it('a hidden operation never reaches the model, in any mode', () => {
+    const hidden = row('list_patients');
+    hidden.operation.aiPolicy = { hidden: true };
+    for (const mode of ['auto_reply', 'playground', 'draft'] as const) {
+      const keys = buildAiTools([row('lookup_patient'), hidden], {
+        mode,
+      }).map((t) => t.operationKey);
+      expect(keys).toEqual(['lookup_patient']);
+    }
+  });
+
+  it('hidden holds even when another key of the policy is invalid (review 4)', () => {
+    const hidden = row('list_patients');
+    hidden.operation.aiPolicy = { hidden: true, grounds: ['price'] };
+    expect(buildAiTools([hidden], { mode: 'auto_reply' })).toEqual([]);
+  });
+
+  it('the Cabbity Health catalog hides list_patients from the bot', () => {
+    const op = CABBITY_HEALTH_CATALOG.operations.find(
+      (o) => o.key === 'list_patients'
+    );
+    expect(op?.ai_policy).toEqual({ hidden: true });
+    // Even if an admin activates it, the toolset leaves it out.
+    const active = row('list_patients');
+    active.operation.aiPolicy = op?.ai_policy ?? null;
+    expect(buildAiTools([active], { mode: 'auto_reply' })).toEqual([]);
   });
 });

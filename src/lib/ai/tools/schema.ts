@@ -182,6 +182,13 @@ export function buildAiTools(
 ): AiTool[] {
   const eligible = rows
     .filter((r) => opts.mode !== 'draft' || r.operation.method === 'GET')
+    // p16.4: `ai_policy.hidden` (p. ej. `list_patients`) nunca llega al modelo.
+    // Sin sanear: una política con otra clave inválida no la destapa.
+    .filter(
+      (r) =>
+        (r.operation.aiPolicy as { hidden?: unknown } | null | undefined)
+          ?.hidden !== true
+    )
     .sort(compareRows);
   const tools: AiTool[] = [];
   const taken = new Set<string>();

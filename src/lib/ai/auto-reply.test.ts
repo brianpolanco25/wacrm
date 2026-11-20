@@ -208,6 +208,17 @@ vi.mock('./admin-client', () => ({
             filters.push([column, value]);
             return chain;
           },
+          // `.is(column, null)`: matches only while the column is still null.
+          is: (column: string, value: null) => {
+            h.state.conversationUpdateFilters.push([column, value]);
+            filters.push([`is:${column}`, value]);
+            return chain;
+          },
+          neq: (column: string, value: unknown) => {
+            h.state.conversationUpdateFilters.push([`neq:${column}`, value]);
+            filters.push([`neq:${column}`, value]);
+            return chain;
+          },
           select: () => {
             if (h.state.updateError) {
               return Promise.resolve({
@@ -222,6 +233,18 @@ vi.mock('./admin-client', () => ({
             if (guarded && h.state.conv?.ai_autoreply_disabled) {
               return Promise.resolve({ data: [], error: null }); // lost the race
             }
+            const unassignedOnly = filters.some(
+              ([column]) => column === 'is:assigned_agent_id'
+            );
+            if (unassignedOnly && h.state.conv?.assigned_agent_id) {
+              return Promise.resolve({ data: [], error: null });
+            }
+            const notClosed = filters.some(
+              ([column, value]) => column === 'neq:status' && value === 'closed'
+            );
+            if (notClosed && h.state.conv?.status === 'closed') {
+              return Promise.resolve({ data: [], error: null });
+            }
             h.state.updatePayload = payload;
             h.state.updatesApplied += 1;
             if (h.state.conv) h.state.conv = { ...h.state.conv, ...payload };
@@ -232,7 +255,8 @@ vi.mock('./admin-client', () => ({
       };
       return {
         select: (columns: string) => {
-          h.state.conversationSelectColumns = columns;
+          // The first read is the gate read (p16.4 re-reads before the claim).
+          h.state.conversationSelectColumns ||= columns;
           return selectChain;
         },
         update: (payload: Record<string, unknown>) => {
@@ -465,6 +489,49 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.engineSendText).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['an agent is assigned', { assigned_agent_id: 'human-owner' }],
+    ['an agent takes over', { ai_autoreply_disabled: true }],
+    ['the thread is closed', { status: 'closed' }],
+  ])(
+    'p16.4 D2: sends nothing when %s while the model is generating',
+    async (_label, change) => {
+      h.generateReply.mockImplementation(async () => {
+        h.state.conv = { ...h.state.conv, ...change };
+        return { text: 'Hola, ¿en qué te ayudo?', handoff: false };
+      });
+      await dispatchInboundToAiReply(ARGS);
+      expect(h.generateReply).toHaveBeenCalled();
+      expect(h.state.rpcCalls.map((c) => c.name)).not.toContain(
+        'claim_ai_reply_slot'
+      );
+      expect(h.engineSendText).not.toHaveBeenCalled();
+    }
+  );
+
+  it('p16.4 D2: logs (ids only) when the reply is dropped after a tool ran', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    h.generateReply.mockImplementation(async () => {
+      h.state.conv = { ...h.state.conv, assigned_agent_id: 'human-owner' };
+      return {
+        text: 'Listo, cancelé tu cita.',
+        handoff: false,
+        toolsUsed: [
+          { integration: 'Health', operation: 'cancel_appointment', ok: true },
+        ],
+      };
+    });
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('reply dropped after tools ran'),
+      'acct-1',
+      'conv-1',
+      ['cancel_appointment']
+    );
+    info.mockRestore();
+  });
+
   it('skips when the per-conversation cap is reached', async () => {
     h.state.conv = {
       assigned_agent_id: null,
@@ -591,7 +658,46 @@ describe('dispatchInboundToAiReply — handoff', () => {
       // Concurrency guard, not tenancy — but it must not replace the
       // account filter.
       ['ai_autoreply_disabled', false],
+      // p16.4 D2: never overwrite an assignment made during generation.
+      ['assigned_agent_id', null],
+      ['neq:status', 'closed'],
     ]);
+  });
+
+  it('p16.4 D2: does not hand off a thread closed while the model was generating', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({
+        handoffMode: 'fixed',
+        handoffAgentId: 'agent-7',
+        handoffMessage: 'Un agente seguirá.',
+      })
+    );
+    h.generateReply.mockImplementation(async () => {
+      h.state.conv = { ...h.state.conv, status: 'closed' };
+      return { text: '', handoff: true };
+    });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.state.updatesApplied).toBe(0);
+    expect(h.state.conv?.assigned_agent_id).toBeNull();
+    expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+
+  it('p16.4 D2: does not stomp an agent assigned while the model was generating', async () => {
+    h.loadAiConfig.mockResolvedValue(
+      aiConfig({ handoffMode: 'fixed', handoffAgentId: 'agent-7' })
+    );
+    h.generateReply.mockImplementation(async () => {
+      h.state.conv = { ...h.state.conv, assigned_agent_id: 'human-owner' };
+      return { text: '', handoff: true };
+    });
+
+    await dispatchInboundToAiReply(ARGS);
+
+    expect(h.state.conv?.assigned_agent_id).toBe('human-owner');
+    expect(h.state.updatesApplied).toBe(0);
+    expect(h.engineSendText).not.toHaveBeenCalled();
   });
 });
 
