@@ -17,6 +17,7 @@
 // Sin DELETE a propósito (R10): una integración se retira, no se borra.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { NextResponse } from 'next/server';
 
 import {
@@ -32,7 +33,6 @@ import {
   loadPlatformIntegration,
   resetActivations,
   updateIntegration,
-  UUID_RE,
 } from '@/lib/platform/integrations';
 import {
   checkRateLimit,

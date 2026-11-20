@@ -27,6 +27,7 @@
 // in a Route Handler.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { headers } from 'next/headers';
 import { unstable_rethrow } from 'next/navigation';
 
@@ -52,9 +53,6 @@ export interface SupportActionSession {
   actorUserId: string;
   accountId: string;
 }
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Longest `path` the table accepts (CHECK in migration 072). */
 const MAX_PATH = 2048;

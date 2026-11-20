@@ -4,6 +4,7 @@
 // la integración ya trae sus operaciones.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { NextResponse } from 'next/server';
 
 import {
@@ -17,7 +18,6 @@ import {
   createOperation,
   loadPlatformIntegration,
   OperationExistsError,
-  UUID_RE,
 } from '@/lib/platform/integrations';
 import {
   checkRateLimit,

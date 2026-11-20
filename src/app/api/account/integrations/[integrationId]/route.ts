@@ -38,7 +38,7 @@ import {
 } from '@/lib/integrations/account';
 import { validateLiveReads } from '@/lib/ai/tools/live-templates';
 import { traceIntegrationSupportAction } from '@/lib/integrations/support-trace';
-import { UUID_RE } from '@/lib/platform/integrations';
+import { UUID_RE } from '@/lib/uuid';
 import {
   checkRateLimit,
   rateLimitResponse,

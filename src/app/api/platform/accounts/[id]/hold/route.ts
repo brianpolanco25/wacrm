@@ -31,6 +31,7 @@
 // suspension is the same back door the spec refuses for impersonation.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { NextResponse } from 'next/server';
 
 import {
@@ -46,9 +47,6 @@ import {
 } from '@/lib/rate-limit';
 import { loadAccountSummary, setManualHold } from '@/lib/platform/accounts';
 import { MIN_REASON_LENGTH, recordPlatformAction } from '@/lib/platform/audit';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type HoldAction = 'suspend' | 'reactivate';
 

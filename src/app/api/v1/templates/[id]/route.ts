@@ -14,6 +14,7 @@
 // sería crear otra.
 // ============================================================
 
+import { UUID_RE } from '@/lib/uuid';
 import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import { readJsonBody } from '@/lib/api/v1/body';
@@ -39,12 +40,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** Meta solo deja editar estas tres. */
 const EDITABLE_STATUSES = new Set(['APPROVED', 'REJECTED', 'PAUSED']);
-
-// Un id que ni siquiera es un UUID no puede ser una fila de esta
-// cuenta: se responde 404 sin preguntarle a Postgres (que además
-// contestaría con un error de sintaxis 22P02 convertido en 500).
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isDryRun(): boolean {
   return (
