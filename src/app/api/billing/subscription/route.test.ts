@@ -677,6 +677,18 @@ describe('POST /api/billing/subscription — change plan', () => {
     expect((await res.json()).status).toBe('change_requested');
   });
 
+  it('409s a managed account: its plan carries the Meta package (p16.2/B2)', async () => {
+    subscriptionOf(ACCOUNT_A).meta_billing = 'managed';
+    const res = await post({
+      action: 'change_plan',
+      planId: 'inicio',
+      cycle: 'month',
+    });
+    expect(res.status).toBe(409);
+    expect(paypal.reviseSubscription).not.toHaveBeenCalled();
+    expect(writesTo('subscriptions')).toHaveLength(0);
+  });
+
   it('writes no plan of its own — the UPDATED event reconciles it', async () => {
     await post({ action: 'change_plan', planId: 'negocio', cycle: 'month' });
     expect(writesTo('subscriptions')).toHaveLength(0);

@@ -178,8 +178,9 @@ function isSubscriptionStatus(value: unknown): value is SubscriptionStatus {
 /**
  * True when the account may only read: incomplete (never paid — s9.6),
  * suspended or expired outright, or past_due once the grace period has
- * run out. `cancelled` keeps access until the period ends (the gateway
- * then flips it to `expired`).
+ * run out. `cancelled` is not locked here: it keeps access until its paid
+ * period ends, and nothing flips it to `expired` (there is no expiry
+ * job), so `getEntitlements` checks `current_period_end` itself.
  */
 export function isReadOnly(
   status: SubscriptionStatus,
@@ -241,6 +242,8 @@ interface SubscriptionRow {
   trial_ends_at: string | null;
   grace_until: string | null;
   manual_hold_at: string | null;
+  current_period_end?: string | null;
+  cancel_at_period_end?: boolean | null;
   meta_billing?: string | null;
   payment_method?: string | null;
 }
@@ -269,7 +272,7 @@ export async function getEntitlements(
   const { data: sub, error: subErr } = await db
     .from('subscriptions')
     .select(
-      'plan_id, status, trial_ends_at, grace_until, manual_hold_at, meta_billing, payment_method'
+      'plan_id, status, trial_ends_at, grace_until, manual_hold_at, current_period_end, cancel_at_period_end, meta_billing, payment_method'
     )
     .eq('account_id', accountId)
     .maybeSingle();
@@ -300,10 +303,14 @@ export async function getEntitlements(
   // The manual hold of migration 058. Read off the row we were already
   // fetching, so honouring it costs nothing on the write path.
   const manualHold = Boolean(subscription?.manual_hold_at);
-  const subscriptionLock = isReadOnly(
-    status,
-    subscription?.grace_until ?? null
-  );
+  // A cancellation (PayPal's immediate one, or ours pending at period end)
+  // ends access once the paid period is over (or has no date).
+  const periodEnd = Date.parse(subscription?.current_period_end ?? '');
+  const cancelledAndOver =
+    (status === 'cancelled' || Boolean(subscription?.cancel_at_period_end)) &&
+    !(periodEnd >= Date.now());
+  const subscriptionLock =
+    isReadOnly(status, subscription?.grace_until ?? null) || cancelledAndOver;
   const metaBilling = asMetaBilling(subscription?.meta_billing);
   // s10.4: only a managed account has statements, so a direct one (every
   // account before fase 10) costs no extra query on the write path.

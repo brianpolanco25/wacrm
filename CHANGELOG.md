@@ -11,6 +11,12 @@ and polish.
 
 ## [Unreleased]
 
+### Billing fixes from the 2026-11-20 audit
+
+- A cancelled subscription (PayPal-cancelled, or cancelled at period end) now becomes read-only once its paid period is over; `/billing` and checkout stay open so the account can contract again. Inbound WhatsApp is not affected.
+- A managed account (Cabbity pays Meta) can no longer change its plan or contract a public plan on its own: `change_plan` and checkout answer 409; the operator changes it.
+- A statement issued late (missing rate, stopped scheduler) is now due three days after it was issued instead of three days after the cut-off, so it is never born overdue. No migration.
+
 ### Support sessions can mint, rotate and revoke API keys
 
 - During a support session the platform operator can now create, rotate and revoke the customer's API keys (to connect the account to Cabbity Health). Each action is recorded in the session's audit trail (`api_key.create|rotate|revoke`, never the key itself) before it is written, and keys minted by support show as "created by support" in Settings → API. Billing, ownership, team members and invitations stay blocked. No migration.

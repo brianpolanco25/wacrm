@@ -441,6 +441,40 @@ describe('POST /api/billing/checkout', () => {
     expect(createSubscription).not.toHaveBeenCalled();
   });
 
+  it('409s a managed account: a public plan would keep its Meta package (p16.2/B2)', async () => {
+    // Cancelled, so `alreadyContracted` alone would let it through.
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'gestionado',
+      status: 'cancelled',
+      provider_subscription_id: 'I-OLD',
+      current_period_end: null,
+      cancel_at_period_end: false,
+      meta_billing: 'managed',
+    });
+
+    const res = await post({ planId: 'pro', cycle: 'month' });
+    expect(res.status).toBe(409);
+    expect(createSubscription).not.toHaveBeenCalled();
+    expect(db.checkout_intents).toHaveLength(0);
+  });
+
+  it('lets a direct account whose cancelled period ran out contract again (p16.2/B1)', async () => {
+    // Read-only now that the period is over; this is its way back.
+    db.subscriptions.push({
+      account_id: ACCOUNT_A,
+      plan_id: 'pro',
+      status: 'active',
+      provider_subscription_id: 'I-OLD',
+      current_period_end: '2020-01-01T00:00:00Z',
+      cancel_at_period_end: true,
+      meta_billing: 'direct',
+    });
+
+    const res = await post({ planId: 'pro', cycle: 'month' });
+    expect(res.status).toBe(201);
+  });
+
   it('lets a trialing account contract', async () => {
     db.subscriptions.push({
       account_id: ACCOUNT_A,

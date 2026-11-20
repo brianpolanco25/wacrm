@@ -150,7 +150,8 @@ async function processOne(
   client: SupabaseClient,
   sub: DueSubscription,
   rateCard: RateCard,
-  summary: StatementSweep
+  summary: StatementSweep,
+  now: Date
 ): Promise<void> {
   const accountId = sub.account_id;
   const periodEnd = iso(sub.statement_period_end);
@@ -219,7 +220,11 @@ async function processOne(
     return;
   }
 
-  const dueAt = statementDueAt(periodEnd);
+  // Counted from the issue when it is late (a missing rate, a stopped
+  // scheduler): a statement must never be born overdue.
+  const dueAt = statementDueAt(
+    new Date(Math.max(Date.parse(periodEnd), now.getTime())).toISOString()
+  );
   const { data: inserted, error: insertErr } = await client
     .from('statements')
     .upsert(
@@ -279,7 +284,7 @@ export async function sweepStatements(
 
   for (const sub of due) {
     try {
-      await processOne(client, sub, rateCard, summary);
+      await processOne(client, sub, rateCard, summary, now);
     } catch (err) {
       const kind =
         err instanceof MetaRateMissingError
