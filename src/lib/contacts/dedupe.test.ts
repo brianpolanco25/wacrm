@@ -108,6 +108,42 @@ describe('findExistingContact', () => {
     expect(await findExistingContact(db, 'acct', '18295551234')).toBeNull();
   });
 
+  it('finds a national number saved without country code', async () => {
+    const db = stubDb([{ id: 'c1', phone: '809-555-1234' }]);
+    expect((await findExistingContact(db, 'acct', '18095551234'))?.id).toBe(
+      'c1'
+    );
+    const seven = stubDb([{ id: 'c7', phone: '555-1234' }]);
+    expect((await findExistingContact(seven, 'acct', '18095551234'))?.id).toBe(
+      'c7'
+    );
+  });
+
+  it('prefers the exact match over a suffix match', async () => {
+    const db = stubDb([
+      { id: 'suffix', phone: '8095551234' },
+      { id: 'exact', phone: '18095551234' },
+    ]);
+    expect((await findExistingContact(db, 'acct', '18095551234'))?.id).toBe(
+      'exact'
+    );
+  });
+
+  it('prefers the longest suffix', async () => {
+    const db = stubDb([
+      { id: 'short', phone: '5551234' },
+      { id: 'long', phone: '8095551234' },
+    ]);
+    expect((await findExistingContact(db, 'acct', '18095551234'))?.id).toBe(
+      'long'
+    );
+  });
+
+  it('ignores a suffix shorter than 7 digits', async () => {
+    const db = stubDb([{ id: 'c1', phone: '551234' }]);
+    expect(await findExistingContact(db, 'acct', '18095551234')).toBeNull();
+  });
+
   it('prefers the exact match over a trunk variant', async () => {
     const db = stubDb([
       { id: 'variant', phone: '370063949836' },

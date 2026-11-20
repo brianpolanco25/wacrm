@@ -10,7 +10,7 @@ import { sanitizeBsuid } from '@/lib/whatsapp/bsuid';
  * The canonical key is `normalizePhone` (digits-only) — the same form
  * the DB stores in the generated `contacts.phone_normalized` column
  * and enforces unique per account. `findExistingContact` also accepts
- * trunk-0 variants of the same number.
+ * trunk-0 variants and national numbers saved without country code.
  */
 
 /** Canonical de-dup key for a phone string (digits only). */
@@ -32,12 +32,14 @@ export interface ExistingContact {
 
 /**
  * Find an existing contact in `accountId` whose phone matches `phone`,
- * or null. Pre-filters in SQL by the last-8-digit suffix of the
- * digits-only `phone_normalized` (the raw `phone` keeps the user's
- * formatting, so `…555-1234` never matched `%95551234`), then prefers
- * an exact digits match and otherwise accepts only a trunk-0 variant
- * (`370063949836` ↔ `37063949836`). A bare last-8 match is NOT enough:
- * 1-809-555-1234 and 1-829-555-1234 are different people.
+ * or null. Pre-filters in SQL by the last 7 digits of the digits-only
+ * `phone_normalized` (the raw `phone` keeps the user's formatting, so
+ * `…555-1234` never matched `%95551234`; 7 so a 7-digit saved number
+ * still enters). Then, in order: exact digits; a trunk-0 variant
+ * (`370063949836` ↔ `37063949836`); one number a suffix of the other
+ * with the shorter ≥ 7 digits (`8095551234` saved without country code
+ * ↔ `18095551234`), longest suffix first. A bare shared tail is NOT
+ * enough: 1-809-555-1234 and 1-829-555-1234 are different people.
  */
 export async function findExistingContact(
   db: SupabaseClient,
@@ -47,7 +49,7 @@ export async function findExistingContact(
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
 
-  const suffix = normalized.length >= 8 ? normalized.slice(-8) : normalized;
+  const suffix = normalized.slice(-7);
 
   const { data, error } = await db
     .from('contacts')
@@ -60,9 +62,20 @@ export async function findExistingContact(
   const rows = data as ExistingContact[];
   const digits = (c: ExistingContact) => normalizePhone(c.phone ?? '');
   const variants = phoneVariants(normalized);
+  // Length of the shorter number when one ends with the other, else 0.
+  const suffixLen = (c: ExistingContact) => {
+    const d = digits(c);
+    const [short, long] =
+      d.length <= normalized.length ? [d, normalized] : [normalized, d];
+    return short.length >= 7 && long.endsWith(short) ? short.length : 0;
+  };
+  const bySuffix = rows
+    .filter((c) => suffixLen(c) > 0)
+    .sort((a, b) => suffixLen(b) - suffixLen(a))[0];
   return (
     rows.find((c) => digits(c) === normalized) ??
     rows.find((c) => variants.includes(digits(c))) ??
+    bySuffix ??
     null
   );
 }
