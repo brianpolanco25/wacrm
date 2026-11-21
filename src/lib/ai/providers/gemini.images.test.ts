@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { MAX_OUTPUT_TOKENS } from '../defaults';
+import { GEMINI_MAX_OUTPUT_TOKENS } from '../defaults';
 import { generateGemini, generateGeminiWithTools } from './gemini';
 import {
   IMAGE_TRANSCRIPT,
@@ -67,7 +67,7 @@ describe('Gemini adapter — images', () => {
           { role: 'model', parts: [{ text: 'ok' }] },
           { role: 'user', parts: [{ text: 'cita' }] },
         ],
-        generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+        generationConfig: { maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS },
       })
     );
   });

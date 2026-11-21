@@ -248,7 +248,7 @@ describe('generateReply — Gemini', () => {
 
     const body = JSON.parse(opts.body);
     expect(body.systemInstruction).toEqual({ parts: [{ text: 'sys' }] });
-    expect(body.generationConfig).toEqual({ maxOutputTokens: 1024 });
+    expect(body.generationConfig).toEqual({ maxOutputTokens: 9216 });
     expect(body.contents).toEqual([
       { role: 'user', parts: [{ text: 'Hi\n\nAre you open?' }] },
       { role: 'model', parts: [{ text: 'Yes, until 6.' }] },

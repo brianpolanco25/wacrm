@@ -11,6 +11,10 @@ and polish.
 
 ## [Unreleased]
 
+### AI replies on Gemini no longer arrive cut off
+
+- Gemini counts its reasoning against the output limit, so replies stopped mid-sentence (or on a lone «¿»). Gemini now gets its own, larger output budget (OpenAI and Anthropic keep theirs); a reply that still hits the limit is trimmed back to its last complete sentence instead of sending the dangling fragment, and the server logs a warning (model, finish reason, reasoning tokens) whenever Gemini does not stop on its own. Reasoning parts are never sent as reply text, with or without tools.
+
 ### Leaner install and an MCP server built on its own
 
 - `shadcn` (a CLI) is no longer a runtime dependency: its one stylesheet now lives in `src/app/shadcn.css`. The install drops from 803 to 608 packages, and the `hono`, `fast-uri` and `ip-address` overrides (only reached through it) are gone.

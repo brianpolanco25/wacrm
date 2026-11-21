@@ -30,6 +30,12 @@ export const HANDOFF_SENTINEL = '[[HANDOFF]]';
  *  bounds token spend on the caller's own key. */
 export const MAX_OUTPUT_TOKENS = 1024;
 
+/** Gemini's `maxOutputTokens` also counts thinking tokens
+ *  (ai.google.dev/gemini-api/docs/thinking#token-limits), so 1024 cut
+ *  replies mid-sentence. Reply length stays bounded by the prompt; this
+ *  only leaves room for the reasoning. */
+export const GEMINI_MAX_OUTPUT_TOKENS = MAX_OUTPUT_TOKENS + 8192;
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_CONTEXT_MESSAGE_LIMIT = 20;
 
