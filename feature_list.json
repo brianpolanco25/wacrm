@@ -1856,6 +1856,23 @@
         "p16.6"
       ],
       "note": "Auditoría ponytail 2026-11-20; Brian: «aplica las correcciones para todo»."
+    },
+    {
+      "id": "n13.12",
+      "name": "ai-reply-cut",
+      "phase": "13",
+      "status": "done",
+      "spec": null,
+      "sdd": false,
+      "branch": "fix/ai-reply-cut",
+      "worktree": ".claude/worktrees/ai-reply-cut",
+      "depends_on": [],
+      "note": "Bug reportado por Brian (2026-11-21, playground, Rehactive/Aura, gemini-3.5-flash): las respuestas salen cortadas. Msg 1 acaba tras «…día a día 🙏» sin el resto del ejemplo del prompt; msg 2 acaba en un «¿» suelto. No hay posproceso que recorte (grounding/weekday-fix no borran). Hipótesis del líder: los tokens de razonamiento de Gemini cuentan contra maxOutputTokens (MAX_OUTPUT_TOKENS=1024 en src/lib/ai/defaults.ts) → finishReason MAX_TOKENS y el texto parcial se envía tal cual (gemini.ts: `cut` solo anula toolCalls). Fix acotado, sin spec, todo en src/lib/ai/providers/gemini.ts (+ defaults.ts): (1) confirmar en la doc oficial de la API de Gemini cómo se cuenta el razonamiento contra maxOutputTokens y dar a Gemini un presupuesto propio que deje sitio al razonamiento sin cambiar el de Anthropic/OpenAI, en los DOS call sites (texto y tools); (2) red de seguridad: si finishReason es MAX_TOKENS y hay texto, no enviar el fragmento colgante: recortar hasta el último final de frase/párrafo completo (helper puro; «…sesiones.\\n\\n¿» → «…sesiones.»); si no queda nada, empty_response como hoy; (3) console.warn con accountId no disponible aquí → al menos modelo, finishReason y usageMetadata.thoughtsTokenCount cuando finishReason != STOP, para confirmarlo en producción; (4) el camino sin tools no filtra parts con thought===true: igualarlo al de tools. Tests vitest en gemini (o generate) para corte MAX_TOKENS con fragmento, con texto completo y vacío; helper puro con sus casos. CHANGELOG bajo Unreleased. Sin migración ni dependencias. Compuerta dirigida: typecheck + eslint src/lib/ai + vitest src/lib/ai.",
+      "base": "main @ 5ca5af3",
+      "commits": [
+        "2911833",
+        "d51aa95"
+      ]
     }
   ]
 }
