@@ -42,6 +42,21 @@ describe('trimDanglingFragment', () => {
     ['Versión 3.5 de', ''],
     ['sin final', ''],
     ['', ''],
+    // n13.12 ronda 2 (review)
+    ['Tenemos:\n1. Fisioterapia\n2. Masaje terap', 'Tenemos:\n1. Fisioterapia'],
+    ['Tenemos:\n1.', 'Tenemos:'],
+    ['Te atiende la Dra. Pérez el lun', ''],
+    ['Hola. Te atiende el Sr. Gómez y', 'Hola.'],
+    ['*Gracias por escribir.* Te cuen', '*Gracias por escribir.*'],
+    ['_Listo._ Y lue', '_Listo._'],
+    ['Precio: RD$ 4,000.00 por ses', ''],
+    [
+      'La sesión cuesta RD$ 4,000.00. Incluye eval',
+      'La sesión cuesta RD$ 4,000.00.',
+    ],
+    ['Te espero a las 2:00 p.m. para la eval', 'Te espero a las 2:00 p.m.'],
+    ['- Lunes 9:00 a.m.\n- Martes 10:0', '- Lunes 9:00 a.m.'],
+    ['Perfecto 😊\n\n¿Te', 'Perfecto 😊'],
   ])('%j -> %j', (input, out) => {
     expect(trimDanglingFragment(input)).toBe(out);
   });

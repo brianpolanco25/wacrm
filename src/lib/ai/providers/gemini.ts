@@ -77,7 +77,10 @@ function toGeminiContents(messages: ProviderArgs['messages']): GeminiContent[] {
  */
 export function trimDanglingFragment(text: string): string {
   let end = text.lastIndexOf('\n');
-  for (const m of text.matchAll(/[.!?…][)"'»”]*(?=\s|$)/g)) {
+  // A list marker ("2.") or a title ("Dra.") is not a sentence end; `*`/`_`
+  // close WhatsApp bold/italics.
+  const ends = /(?<!^[ \t]*\d+|\b(?:Dra?|Sra?))[.!?…][)"'»”*_]*(?=\s|$)/gm;
+  for (const m of text.matchAll(ends)) {
     end = Math.max(end, m.index + m[0].length);
   }
   return text.slice(0, Math.max(end, 0)).trim();
