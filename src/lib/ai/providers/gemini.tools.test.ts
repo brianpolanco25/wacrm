@@ -188,7 +188,7 @@ describe('generateGeminiWithTools', () => {
           {
             content: {
               role: 'model',
-              parts: [{ text: 'part' }, { functionCall: { name: 'x' } }],
+              parts: [{ text: 'part.' }, { functionCall: { name: 'x' } }],
             },
             finishReason: reason,
           },

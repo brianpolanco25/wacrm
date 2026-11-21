@@ -1,5 +1,5 @@
 import { AiError, type ProviderResult } from '../types';
-import { MAX_OUTPUT_TOKENS } from '../defaults';
+import { GEMINI_MAX_OUTPUT_TOKENS } from '../defaults';
 import {
   mergeConsecutive,
   normalizeUsage,
@@ -27,13 +27,14 @@ interface GeminiContent {
 
 interface GeminiResponse {
   candidates?: {
-    content?: { parts?: { text?: string }[] };
+    content?: { parts?: { text?: string; thought?: boolean }[] };
     finishReason?: string;
   }[];
   usageMetadata?: {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
     totalTokenCount?: number;
+    thoughtsTokenCount?: number;
   };
   promptFeedback?: { blockReason?: string };
 }
@@ -71,6 +72,37 @@ function toGeminiContents(messages: ProviderArgs['messages']): GeminiContent[] {
 }
 
 /**
+ * A reply cut by `MAX_TOKENS` ends mid-sentence: keep it up to the last
+ * complete sentence or paragraph ('' when there is none).
+ */
+export function trimDanglingFragment(text: string): string {
+  let end = text.lastIndexOf('\n');
+  for (const m of text.matchAll(/[.!?…][)"'»”]*(?=\s|$)/g)) {
+    end = Math.max(end, m.index + m[0].length);
+  }
+  return text.slice(0, Math.max(end, 0)).trim();
+}
+
+/** Visible text of a candidate, cut back to whole sentences on
+ *  `MAX_TOKENS`, and a warning whenever Gemini did not stop on its own. */
+function finalText(
+  model: string,
+  candidate: { finishReason?: string } | undefined,
+  usage: { thoughtsTokenCount?: number } | undefined,
+  text: string
+): string {
+  const finishReason = candidate?.finishReason;
+  if (finishReason && finishReason !== 'STOP') {
+    console.warn('[ai] gemini did not finish with STOP', {
+      model,
+      finishReason,
+      thoughtsTokenCount: usage?.thoughtsTokenCount,
+    });
+  }
+  return finishReason === 'MAX_TOKENS' ? trimDanglingFragment(text) : text;
+}
+
+/**
  * Call Gemini's `generateContent` with the caller's key. The key goes in
  * the `x-goog-api-key` header, never as `?key=` in the URL (URLs end up
  * in logs). Returns the raw text + token usage (handoff parsing happens
@@ -93,7 +125,7 @@ export async function generateGemini(
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents: toGeminiContents(messages),
-        generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+        generationConfig: { maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS },
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -107,11 +139,16 @@ export async function generateGemini(
 
   const data = (await res.json().catch(() => null)) as GeminiResponse | null;
   const candidate = data?.candidates?.[0];
-  const text = candidate?.content?.parts
-    ?.filter((p) => typeof p?.text === 'string')
-    .map((p) => p.text)
-    .join('')
-    .trim();
+  const text = finalText(
+    model,
+    candidate,
+    data?.usageMetadata,
+    (candidate?.content?.parts ?? [])
+      .filter((p) => typeof p?.text === 'string' && p.thought !== true)
+      .map((p) => p.text)
+      .join('')
+      .trim()
+  );
   if (!text) {
     const blocked =
       Boolean(data?.promptFeedback?.blockReason) ||
@@ -147,6 +184,7 @@ interface GeminiToolResponse {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
     totalTokenCount?: number;
+    thoughtsTokenCount?: number;
   };
 }
 
@@ -240,7 +278,7 @@ export async function generateGeminiWithTools(
             mode: toolChoice === 'none' ? 'NONE' : 'AUTO',
           },
         },
-        generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+        generationConfig: { maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS },
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -259,11 +297,16 @@ export async function generateGeminiWithTools(
   const parts = Array.isArray(candidate?.content?.parts)
     ? candidate.content.parts
     : [];
-  const text = parts
-    .filter((p) => typeof p?.text === 'string' && p.thought !== true)
-    .map((p) => p.text)
-    .join('')
-    .trim();
+  const text = finalText(
+    model,
+    candidate,
+    data?.usageMetadata,
+    parts
+      .filter((p) => typeof p?.text === 'string' && p.thought !== true)
+      .map((p) => p.text)
+      .join('')
+      .trim()
+  );
   const cut =
     typeof candidate?.finishReason === 'string' &&
     candidate.finishReason !== 'STOP';
